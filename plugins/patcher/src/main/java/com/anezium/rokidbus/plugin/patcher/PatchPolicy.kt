@@ -14,11 +14,15 @@ object PatchPolicy {
     fun validate(stock: Stock, allowSplit: Boolean = false, target: PatchTarget = PatchTargets.default) {
         require(stock.packageName == target.stockPackage) { "Choose stock ${target.displayName}, not a patched app." }
         require(stock.version in target.acceptedVersions) { "${target.displayName} ${target.versionLabel} is required." }
+        require(target.acceptedVersionCodes.isEmpty() || stock.versionCode in target.acceptedVersionCodes) {
+            "This ${target.displayName} version code is not supported by the glasses patch."
+        }
         require(stock.signers.size == 1 && stock.signers.single() in target.stockSigners) { "The APK does not match the target's trusted stock signer." }
         require(allowSplit || stock.split.isNullOrEmpty()) { "Choose the complete split bundle, not one split APK." }
     }
     data class Metadata(val version: String, val url: String)
     fun metadata(text: String, target: PatchTarget = PatchTargets.default): Metadata {
+        require(target.bundle.updatesEnabled) { "This preview bundle has no published update source." }
         val json = Json.parseToJsonElement(text).jsonObject
         val version = json.getValue("version").jsonPrimitive.content
         require(version.matches(Regex("[A-Za-z0-9._-]{1,80}"))) { "Invalid bundle version." }

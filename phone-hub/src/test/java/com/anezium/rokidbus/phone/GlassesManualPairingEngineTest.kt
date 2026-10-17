@@ -47,6 +47,39 @@ class GlassesManualPairingEngineTest {
     }
 
     @Test
+    fun onlyTheOwnersCancelAsksTheGlassesToAbandonTheirPairing() {
+        // A failed phone-side pairing step is not the owner leaving: the glasses may still finish
+        // their own pairing, so its CLOSE must not end that run.
+        val failed = fixture(FakeBackend(pairFailure = IOException("pairing failed")))
+        assertTrue(failed.engine.submit(HOST, PAIR_PORT, CODE, allowStartFromIdle = true))
+        assertTrue(failed.engine.state is GlassesManualPairingState.ERROR)
+        assertEquals(listOf<String?>(null), failed.control.abandonedPairingCloses)
+
+        val cancelled = fixture()
+        cancelled.engine.cancel(abandonSessionId = "session-1")
+        cancelled.engine.cancel()
+        assertEquals(listOf("session-1", null), cancelled.control.abandonedPairingCloses)
+
+        // The hub shutting down closes the engine; nobody cancelled anything.
+        val closed = fixture()
+        closed.engine.close()
+        assertEquals(listOf<String?>(null), closed.control.abandonedPairingCloses)
+    }
+
+    @Test
+    fun leavingAScreenThatStartedNoPairingAbandonsNothing() {
+        // Opened, looked at, left: an IDLE engine and no session adopted from the glasses. A
+        // Repair-now or background pairing running on the lens is not this screen's to end.
+        val fixture = fixture()
+        assertEquals(GlassesManualPairingState.IDLE, fixture.engine.state)
+
+        fixture.engine.cancel(abandonSessionId = null)
+        fixture.engine.cancel(abandonSessionId = "")
+
+        assertEquals(listOf<String?>(null, null), fixture.control.abandonedPairingCloses)
+    }
+
+    @Test
     fun submitAfterCloseFailsTheAttemptInsteadOfThrowing() {
         val fixture = fixture(
             worker = ManualPairingTaskExecutor { throw RejectedExecutionException("shut down") },
@@ -488,13 +521,17 @@ class GlassesManualPairingEngineTest {
         val actions = mutableListOf<GlassesManualControlAction>()
         val requestIds = mutableListOf<String>()
 
+        val abandonedPairingCloses = mutableListOf<String?>()
+
         override fun send(
             requestId: String,
             action: GlassesManualControlAction,
             armed: Boolean,
+            abandonSessionId: String?,
         ): String? {
             requestIds += requestId
             actions += action
+            if (action == GlassesManualControlAction.CLOSE) abandonedPairingCloses += abandonSessionId
             return null
         }
     }

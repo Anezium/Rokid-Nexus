@@ -9,6 +9,7 @@ import android.graphics.Rect
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
+import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
@@ -77,6 +78,14 @@ internal class SelfArmWirelessDebuggingAutomator(
     private var lastPhoneAssistedConnectPortReport = 0
     private var lastReportedProgressState = ""
     private val phonePairingOffer = SelfArmPhonePairingOfferTracker()
+    private val displayHold = SetupDisplayHoldLifecycle(
+        isInteractive = {
+            service.getSystemService(PowerManager::class.java)?.isInteractive != false
+        },
+        backstop = SetupDisplayHoldLifecycle.EXECUTOR_BACKSTOP,
+        onBackstopRelease = { android.util.Log.i(TAG, formatSetupDisplayHoldTransition(it)) },
+        sleptScope = SetupDisplaySleptScope.PROCESS,
+    )
 
     private var awaitingWirelessDebugConfirmation = false
     private var wirelessToggleRequestedAt = 0L
@@ -108,6 +117,7 @@ internal class SelfArmWirelessDebuggingAutomator(
         if (mode != OperationMode.WIFI_ONLY &&
             !SelfArmOnboardingStore.isCurrentSession(service.applicationContext, sessionId)
         ) {
+            releaseDisplayHold(SetupDisplayHoldEnd.SESSION_ENDED)
             return
         }
         runToken++
@@ -121,6 +131,7 @@ internal class SelfArmWirelessDebuggingAutomator(
             OperationMode.WIFI_ONLY -> SelfArmWifiAutomationPolicy.AUTOMATION_TIMEOUT_MS
             OperationMode.FULL_BOOTSTRAP -> TIMEOUT_MS
         }
+        renewDisplayHold(SystemClock.uptimeMillis())
         lastClickAt = 0L
         wifiConfirmed = false
         wifiClickIssued = false
@@ -205,8 +216,13 @@ internal class SelfArmWirelessDebuggingAutomator(
         onWifiEnabled()
     }
 
-    fun stop() {
+    fun stop(reason: SetupDisplayHoldEnd = SetupDisplayHoldEnd.STOPPED) {
         val wasManual = operationMode == OperationMode.MANUAL_NAVIGATION
+        if (reason == SetupDisplayHoldEnd.SERVICE_DESTROYED) {
+            releaseDisplayHoldNow(reason)
+        } else {
+            releaseDisplayHold(reason)
+        }
         cancelLiveWork()
         // Don't wipe the staged assets on a transient stop (the ROM churns the AccessibilityService
         // during the Wireless Debugging toggle); the phone still needs them. Terminal paths clear
@@ -324,6 +340,7 @@ internal class SelfArmWirelessDebuggingAutomator(
             finish("pairing_code_expired", false, diagnostic)
             return
         }
+        renewDisplayHold(now, pairingInFlight)
 
         if (!wifiConfirmed) {
             stepWifi()
@@ -1005,6 +1022,7 @@ internal class SelfArmWirelessDebuggingAutomator(
             return true
         }
 
+        releaseDisplayHold(SetupDisplayHoldEnd.SUCCEEDED)
         service.returnToOnboarding(resultSessionId)
         service.onWirelessBootstrapFinished(resultSessionId)
         cancelLiveWork()
@@ -1689,6 +1707,7 @@ internal class SelfArmWirelessDebuggingAutomator(
 
     private fun finish(setupState: String, success: Boolean, diagnostic: String = "") {
         if (!isLiveRun()) return
+        releaseDisplayHold(SetupDisplayHoldEnd.forFinish(setupState, success))
         val finishingMode = operationMode
         val finishingSessionId = sessionId
         report(setupState)
@@ -1749,7 +1768,10 @@ internal class SelfArmWirelessDebuggingAutomator(
         val expectedRunToken = runToken
         val expectedSessionId = sessionId
         val runnable = Runnable {
-            if (!isLiveRun(expectedRunToken, expectedSessionId)) return@Runnable
+            if (!isLiveRun(expectedRunToken, expectedSessionId)) {
+                releaseDisplayHold(SetupDisplayHoldEnd.SESSION_ENDED, expectedRunToken)
+                return@Runnable
+            }
             scheduledStepAt = SelfArmTickSchedulePolicy.NONE
             scheduledStepRunnable = null
             step(expectedRunToken, expectedSessionId)
@@ -1772,7 +1794,11 @@ internal class SelfArmWirelessDebuggingAutomator(
         action: () -> Unit,
     ) {
         val runnable = Runnable {
-            if (isLiveRun(expectedRunToken, expectedSessionId)) action()
+            if (isLiveRun(expectedRunToken, expectedSessionId)) {
+                action()
+            } else {
+                releaseDisplayHold(SetupDisplayHoldEnd.SESSION_ENDED, expectedRunToken)
+            }
         }
         handler.postAtTime(
             runnable,
@@ -1831,6 +1857,42 @@ internal class SelfArmWirelessDebuggingAutomator(
         phonePairingOffer.clear()
         sessionId = ""
         lastHeartbeatAt = 0L
+    }
+
+    private fun renewDisplayHold(nowMillis: Long, pairingInFlight: Boolean = false) {
+        // A running pairing may outlive deadlineAt, bounded by SelfArmPairingGracePolicy;
+        // the panel is held through it one lease at a time.
+        val holdDeadlineAt = if (pairingInFlight) {
+            maxOf(deadlineAt, nowMillis + SetupDisplayHoldLifecycle.LEASE_MS)
+        } else {
+            deadlineAt
+        }
+        // A session's chained runs answer to one wearer request; a sessionless run is its own.
+        val scope = sessionId.ifBlank { "run:$runToken" }
+        displayHold.renew(runToken, scope, nowMillis, holdDeadlineAt) {
+            SetupDisplayHoldLifecycle.newLease(service.applicationContext)
+        }
+            ?.takeIf { it !is SetupDisplayHoldTransition.Renew }
+            ?.let { android.util.Log.i(TAG, formatSetupDisplayHoldTransition(it)) }
+    }
+
+    /**
+     * Deferred to the end of the current main-thread message: the service often
+     * stops one run and starts the next in the same callback, and releasing in
+     * between would blank and relight the panel. A run started meanwhile takes
+     * the lease over, which turns this release into a no-op.
+     */
+    private fun releaseDisplayHold(
+        reason: SetupDisplayHoldEnd,
+        heldBy: Long? = displayHold.heldRunToken(),
+    ) {
+        val token = heldBy ?: return
+        handler.post { releaseDisplayHoldNow(reason, token) }
+    }
+
+    private fun releaseDisplayHoldNow(reason: SetupDisplayHoldEnd, heldBy: Long? = null) {
+        displayHold.release(reason, SystemClock.uptimeMillis(), heldBy)
+            ?.let { android.util.Log.i(TAG, formatSetupDisplayHoldTransition(it)) }
     }
 
     private fun selfPairingSuspendsExpiry(nowMillis: Long): Boolean =

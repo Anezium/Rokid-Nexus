@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reddit on Rokid glasses: A · Ledger with inline media (green monochrome HUD)</title>
+<style>
+/* =====================================================================
+   REVIEW SHELL. Not glasses UI. Transparent, fluid, inherits the host
+   (T3) theme: colours use host variables with system colour fallbacks.
+   ===================================================================== */
+:root{color-scheme:light dark}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:transparent;color:var(--foreground,CanvasText);overflow-x:hidden}
+body{font:13px/1.45 ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace}
+.shell{display:grid;grid-template-columns:minmax(0,480px) minmax(220px,1fr);gap:18px;padding:10px 0;max-width:1100px}
+@media (max-width:719px){.shell{grid-template-columns:minmax(0,1fr)}}
+.lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.65;margin:0 0 6px}
+.hudwrap{width:min(480px,100%);aspect-ratio:3/4;position:relative;overflow:hidden;outline:1px solid color-mix(in srgb,currentColor 30%,transparent);background:#000}
+.hudwrap.scene{background:
+  repeating-linear-gradient(90deg,transparent 0 46px,rgba(255,255,255,.05) 46px 48px),
+  linear-gradient(180deg,#2b2f33 0%,#3b3f44 42%,#5a564d 60%,#1e1c19 100%)}
+.hudwrap.scene::after{content:"SIMULATED SCENE · review only · not an app background";position:absolute;left:6px;top:4px;font:10px/1 ui-monospace,monospace;color:rgba(255,255,255,.55);letter-spacing:.06em;pointer-events:none;z-index:2}
+.hudwrap.scene .hud{background:transparent}
+.hud{position:absolute;left:0;top:0;width:480px;height:640px;transform-origin:0 0}
+.pad{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center}
+button,select,textarea,input{font:inherit}
+.pad button,.panel button{background:transparent;border:1px solid color-mix(in srgb,currentColor 55%,transparent);color:inherit;padding:6px 10px;cursor:pointer;border-radius:2px}
+.pad button:hover,.panel button:hover{background:color-mix(in srgb,currentColor 10%,transparent)}
+.pad button.tap{border-width:2px;border-color:currentColor}
+.pad .sp{flex:1}
+.panel h1{font-size:14px;font-weight:600;margin:0 0 2px}
+.panel .sub{opacity:.7;margin:0 0 12px}
+.routes{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0 10px}
+@media (max-width:959px){.routes{grid-template-columns:1fr}}
+.routes label{border:1px solid color-mix(in srgb,currentColor 35%,transparent);padding:7px 8px;cursor:pointer;border-radius:2px;display:block}
+.routes label:has(input:checked){border:2px solid currentColor;padding:6px 7px}
+.routes input{margin:0 6px 0 0;vertical-align:-1px}
+.routes b{display:block;font-weight:600}
+.routes small{display:block;opacity:.7;line-height:1.3;margin-top:3px}
+.row{display:grid;grid-template-columns:84px 1fr;gap:8px;align-items:center;margin:7px 0}
+.row select{width:100%;background:var(--card,Canvas);color:var(--foreground,CanvasText);border:1px solid color-mix(in srgb,currentColor 35%,transparent);padding:5px}
+.demos{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.demos button{border-width:2px}
+.phone{border:1px dashed color-mix(in srgb,currentColor 55%,transparent);padding:10px;margin:12px 0}
+.phone .ph{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.phone .st{opacity:.7;margin:6px 0}
+.phone .st.on{opacity:1;font-weight:600}
+.phone textarea{width:100%;min-height:68px;border:1px solid color-mix(in srgb,currentColor 35%,transparent);background:var(--card,Canvas);color:var(--foreground,CanvasText);padding:8px;resize:vertical}
+.phone textarea:disabled{opacity:.45}
+.phone small{display:block;opacity:.7;margin-top:4px}
+.state{white-space:pre-wrap;border-top:1px solid color-mix(in srgb,currentColor 25%,transparent);padding-top:8px;margin-top:8px}
+.steps{border:1px solid color-mix(in srgb,currentColor 35%,transparent);padding:6px 8px;margin-top:8px;white-space:pre-wrap}
+.log{opacity:.75;white-space:pre-wrap;min-height:3.6em}
+details{margin-top:8px;opacity:.85}
+kbd{border:1px solid color-mix(in srgb,currentColor 35%,transparent);padding:0 4px;border-radius:2px}
+.chk{display:flex;gap:12px;flex-wrap:wrap;margin:6px 0}
+.chk label{cursor:pointer}
+
+/* =====================================================================
+   GLASSES HUD. 480 x 640. #000 = off pixels = see-through.
+   One green hue. Intensity is the only variation. Direction A · Ledger.
+   ===================================================================== */
+.hud{--k:1;--g:#5dff8e;--g2:rgba(93,255,142,.68);--g3:rgba(93,255,142,.40);--g4:rgba(93,255,142,.22);
+  --fs-t:calc(22px*var(--k));--fs-b:calc(20px*var(--k));--fs-m:calc(16px*var(--k));--fs-h:calc(14px*var(--k));--lh:1.3;
+  background:#000;color:var(--g);display:flex;flex-direction:column;overflow:hidden;position:absolute;
+  font-family:"Bahnschrift SemiCondensed","Bahnschrift","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;padding:10px 16px 8px}
+.hud.rm *{animation:none!important;transition:none!important}
+.hud .top{display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:28px;border-bottom:1px solid var(--g4);padding-bottom:6px;margin-bottom:8px;font-size:var(--fs-m)}
+.hud .top .crumb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.06em;text-transform:uppercase;min-width:0}
+.hud .top .crumb.plain{text-transform:none;letter-spacing:0}
+.hud .top .pos{white-space:nowrap;color:var(--g2);display:flex;align-items:center;gap:6px;flex:none}
+/* page rail: one segment per page; the media page is a boxed glyph so the boundary is visible */
+.hud .top .rail{display:inline-flex;align-items:center;gap:3px}
+.hud .top .rail i{display:inline-block;width:12px;height:7px;border:1px solid var(--g3)}
+.hud .top .rail i.on{background:var(--g);border-color:var(--g)}
+.hud .top .rail i.md{width:auto;height:auto;font-style:normal;font-size:calc(12px*var(--k));line-height:1.1;padding:0 3px;border:1px solid var(--g2);color:var(--g2)}
+.hud .top .rail i.md.on{background:none;border:2px solid var(--g);color:var(--g);padding:0 2px}
+.hud .body{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
+.hud .foot{border-top:1px solid var(--g4);padding-top:6px;margin-top:8px;min-height:26px;display:flex;justify-content:space-between;gap:8px;color:var(--g2);font-size:var(--fs-h)}
+.hud .foot .toast{color:var(--g)}
+.hud .foot .hot{color:var(--g);font-weight:600}
+.hud .list{flex:1;min-height:0;overflow:hidden}
+.hud .dim{color:var(--g2)}
+.hud .dim2{color:var(--g3)}
+.hud b{font-weight:600;color:var(--g)}
+.hud .center{flex:1;display:flex;flex-direction:column;justify-content:center;gap:10px}
+.hud .big{font-size:var(--fs-t);line-height:1.2;font-weight:600}
+.hud .note{font-size:var(--fs-m);color:var(--g2);line-height:1.3;margin:4px 0}
+.hud .page{flex:1;min-height:0;overflow:hidden;font-size:var(--fs-b);line-height:var(--lh)}
+.hud .page .ln{white-space:pre;overflow:hidden}
+.hud .pulse{height:1px;background:var(--g);width:40%;animation:pu 1.2s ease-in-out infinite alternate;margin-top:10px}
+@keyframes pu{to{transform:translateX(150%)}}
+.hud .caret{display:inline-block;width:2px;height:1.05em;background:var(--g);vertical-align:text-bottom;margin-left:1px;animation:bl 1s steps(1) infinite}
+@keyframes bl{50%{opacity:0}}
+.hud .tag{display:inline-block;border:1px solid var(--g3);padding:0 6px;font-size:var(--fs-h);line-height:1.6;margin-right:6px;vertical-align:middle;letter-spacing:.04em;color:var(--g2)}
+.hud .tag.on{border-color:var(--g);color:var(--g);border-width:2px;line-height:1.45}
+.hud .editor{border:1px solid var(--g3);padding:8px 10px;font-size:var(--fs-b);line-height:1.3;white-space:pre-wrap;word-break:break-word;flex:1;min-height:0;overflow:hidden;margin:6px 0;position:relative}
+.hud .editor.focus{border:2px solid var(--g);padding:7px 9px}
+.hud .editor .ph{color:var(--g3)}
+.hud .ctx{border-left:2px solid var(--g3);padding:2px 0 2px 10px;margin:4px 0 6px;color:var(--g2);font-size:var(--fs-m);line-height:1.28;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.hud .media{border:1px solid var(--g3);position:relative;overflow:hidden;margin:6px 0;height:calc(180px*var(--k))}
+.hud .media.tall{flex:1;min-height:0}
+.hud .media svg{width:100%;height:100%;display:block}
+.hud .media .cap{position:absolute;left:8px;bottom:6px;font-size:var(--fs-m);color:var(--g);background:#000;padding:0 6px}
+.hud .hid{position:absolute;inset:0;background:#000;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;color:var(--g2);font-size:var(--fs-m);text-align:center;padding:12px}
+.hud .prog{height:2px;background:var(--g4);margin:8px 0 4px;position:relative;flex:none}
+.hud .prog i{position:absolute;left:0;top:0;bottom:0;background:var(--g)}
+.hud .prog b{position:absolute;top:-3px;width:1px;height:8px;background:var(--g3)}
+.hud .thumb{flex:none;border:1px solid var(--g3);overflow:hidden;position:relative}
+.hud .thumb svg{width:100%;height:100%;display:block}
+.hud .thumb .cap{position:absolute;right:4px;bottom:3px;font-size:calc(13px*var(--k));background:#000;padding:0 4px;color:var(--g2)}
+.hud .warn{border:1px solid var(--g);padding:2px 8px;font-size:var(--fs-m);display:inline-block}
+.hud .meta{font-size:var(--fs-m);color:var(--g2);line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- action menu ---------- */
+.hud .acts{border-top:1px solid var(--g3);margin-top:8px;padding-top:6px;display:flex;flex-direction:column;min-height:0;max-height:62%;flex:none}
+.hud .acts .ah{font-size:var(--fs-m);color:var(--g2);display:flex;justify-content:space-between;margin-bottom:4px;gap:8px}
+.hud .acts .ah span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hud .acts .al{overflow:hidden;min-height:0}
+.hud .act{position:relative;border:1px solid var(--g4);border-left:4px solid transparent;padding:5px 12px;margin:4px 0;font-size:var(--fs-b);line-height:1.25;display:flex;justify-content:space-between;gap:8px}
+.hud .act.sel{border:1px solid var(--g4);border-left:4px solid var(--g);outline:1px solid var(--g);outline-offset:-1px}
+.hud .act .n{color:var(--g2);font-size:var(--fs-m);align-self:center;white-space:nowrap}
+.hud .act.dis{opacity:.4}
+.hud .act .go{display:none;font-size:var(--fs-h);align-self:center;color:var(--g)}
+.hud .act.sel .go{display:inline}
+
+/* ---------- A · Ledger feed rows, with a thumbnail only in the selected row ---------- */
+.hud .fr{position:relative;padding:6px 8px 6px 14px;border-bottom:1px solid var(--g4);line-height:1.22}
+.hud .fr .m{font-size:var(--fs-m);color:var(--g2);display:flex;gap:8px;white-space:nowrap;overflow:hidden}
+.hud .fr .m .c{overflow:hidden;text-overflow:ellipsis}
+.hud .fr .m .r{margin-left:auto;color:var(--g2);letter-spacing:.04em}
+.hud .fr .t{font-size:var(--fs-b);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-top:1px}
+.hud .fr .x{display:none;font-size:var(--fs-m);color:var(--g2);line-height:1.25;margin-top:5px}
+.hud .fr .x .p{display:-webkit-box;-webkit-line-clamp:var(--pl,2);-webkit-box-orient:vertical;overflow:hidden}
+.hud .fr .x .hz{display:flex;gap:10px;align-items:stretch}
+.hud .fr .x .hz .xt{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:space-between}
+.hud .fr .x .hz .p{-webkit-line-clamp:3}
+.hud .fr .x .mt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+.hud .fr .thumb{width:calc(128px*var(--k));height:calc(84px*var(--k))}
+.hud .fr.sel{outline:2px solid var(--g);outline-offset:-2px;border-bottom-color:transparent}
+.hud .fr.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--g)}
+.hud .fr.sel .x{display:block}
+.hud .fr.sel .t{-webkit-line-clamp:3}
+.hud .fr.sel.hm .t{-webkit-line-clamp:2}
+.hud .fr.ghost{color:var(--g3)}
+.hud .fr.d1{margin-left:16px}.hud .fr.d2{margin-left:32px}.hud .fr.d3{margin-left:48px}.hud .fr.d4{margin-left:64px}
+.hud .fr.dN{border-left:1px solid var(--g4)}
+.hud .fr .pc{font-size:var(--fs-h);color:var(--g2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- post reader: title, meta, measured page box, inline media preview ---------- */
+.hud .rtitle{font-size:var(--fs-t);line-height:1.15;font-weight:600;margin:0 0 4px;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}
+.hud .rtitle.l3{-webkit-line-clamp:3}
+.hud .rtitle.l1{-webkit-line-clamp:1}
+.hud .page .pv{border:1px solid var(--g3);position:relative;overflow:hidden;margin-top:8px}
+.hud .page .pv.on{border:2px solid var(--g)}
+.hud .pv svg{width:100%;height:100%;display:block}
+.hud .pv .cap{position:absolute;left:8px;bottom:6px;background:#000;padding:0 6px;font-size:var(--fs-m);color:var(--g);white-space:nowrap}
+.hud .pv .cue{position:absolute;right:6px;bottom:6px;background:#000;padding:1px 7px;font-size:var(--fs-h);color:var(--g);letter-spacing:.04em;border:1px solid var(--g);white-space:nowrap}
+.hud .pv .cue.dim{border-color:var(--g3);color:var(--g2)}
+.hud .pvcap{font-size:var(--fs-m);color:var(--g2);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- full-screen media ---------- */
+.hud .fs{flex:1;min-height:0;border:1px solid var(--g3);position:relative;overflow:hidden}
+.hud .fs svg{width:100%;height:100%;display:block}
+.hud .fs .cap{position:absolute;left:8px;bottom:6px;font-size:var(--fs-m);color:var(--g);background:#000;padding:0 6px}
+.hud .fs .cnt{position:absolute;right:8px;top:6px;font-size:var(--fs-m);color:var(--g);background:#000;padding:0 6px;border:1px solid var(--g3)}
+.hud .fs .big{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:calc(44px*var(--k));line-height:1;background:#000;padding:4px 14px;border:2px solid var(--g)}
+
+/* generic menu rows */
+.hud .mr{position:relative;padding:7px 12px 7px 16px;border-bottom:1px solid var(--g4);font-size:var(--fs-b);line-height:1.25;display:flex;justify-content:space-between;gap:8px}
+.hud .mr .v{color:var(--g2);font-size:var(--fs-m);align-self:center;white-space:nowrap}
+.hud .mr.ghost{color:var(--g3)}
+.hud .mr.sel{outline:2px solid var(--g);outline-offset:-2px;border-bottom-color:transparent}
+.hud .mr.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--g)}
+</style>
+</head>
+<body>
+<main class="shell">
+  <section>
+    <p class="lbl">Glasses HUD · 480 × 640 · green on #000 · black is see-through</p>
+    <div class="hudwrap" id="wrap"><div class="hud" id="hud" role="application" aria-label="Reddit on glasses, direction A with inline media"></div></div>
+    <div class="pad" aria-label="Review controls (not glasses UI)">
+      <button type="button" data-k="prev" title="Swipe back / ArrowLeft / ArrowUp">◀ Prev</button>
+      <button type="button" data-k="tap" class="tap" title="Tap / Enter / Space">● Tap</button>
+      <button type="button" data-k="next" title="Swipe forward / ArrowRight / ArrowDown">Next ▶</button>
+      <button type="button" data-k="back" title="Back / Escape">◁ Back</button>
+      <span class="sp"></span>
+      <button type="button" data-k="pair" title="One physical swipe arriving as DPAD_RIGHT then DPAD_DOWN, 40 ms apart">⇉ paired swipe</button>
+    </div>
+    <div class="state" id="state" aria-live="polite"></div>
+    <div class="steps" id="steps"></div>
+    <div class="log" id="log"></div>
+  </section>
+  <aside class="panel">
+    <h1>Reddit on Rokid glasses: A · Ledger with inline media</h1>
+    <p class="sub"><strong>Design proposal for approval.</strong> Fable 5.1 round 3: the parent's media-menu null guard is kept; the comparison route is now a genuine single tap. Fictional data; nothing is sent anywhere.</p>
+    <p class="sub">Dense index kept. Thumbnail only in the selected row. Tap on a post opens it; swipe reads it; the media preview closes the text. Both routes below share the same screens; only the gesture at the preview differs. The step counter under the HUD shows the real difference.</p>
+    <p class="lbl">How the media opens from its preview</p>
+    <div class="routes" id="routes">
+      <label><input type="radio" name="rt" value="swipe" checked><b>Swipe opens media (recommended)</b><small>Preview is the last page. One more swipe = full screen. Tap stays “actions” on every page. Tap → “Open media” remains as the menu fallback.</small></label>
+      <label><input type="radio" name="rt" value="tap"><b>Tap opens media (direct, comparison)</b><small>Swipe stops at the preview. One tap on the preview page = full screen, no menu. Post actions on that page move inside the media view (tap there).</small></label>
+    </div>
+    <div class="row"><label for="flow">Screen</label><select id="flow"></select></div>
+    <div class="row"><label for="sim">Simulate</label><select id="sim">
+      <option value="none">Nothing (happy path)</option>
+      <option value="slow">Slow loading</option>
+      <option value="offline">Offline</option>
+      <option value="sendfail">Send fails once, then succeeds</option>
+      <option value="ratelimit">Rate limited</option>
+      <option value="expired">Login expired</option>
+      <option value="signedout">Signed out</option>
+      <option value="locked">Thread locked</option>
+      <option value="media">Media unavailable</option>
+    </select></div>
+    <div class="row"><label for="tsz">Text size</label><select id="tsz"><option value="0.88">S</option><option value="1" selected>M</option><option value="1.14">L</option></select></div>
+    <div class="chk"><label><input type="checkbox" id="scene"> See-through scene simulation (outside the app)</label></div>
+    <div class="demos">
+      <button type="button" id="d-cmp">Compare media opening (gallery post)</button>
+      <button type="button" id="d-rp">Reply to post demo</button>
+      <button type="button" id="d-rc">Reply to a comment demo</button>
+    </div>
+    <div class="phone">
+      <div class="ph"><strong>Phone · Keyboard &amp; remote</strong><span class="st" id="pst">Not connected to a glasses field</span></div>
+      <textarea id="ptxt" disabled placeholder="Type here when a glasses editor is focused. Enter = new line. Nothing publishes from here."></textarea>
+      <small>Simulates the Nexus phone keyboard. Arrow keys, Enter and Space inside this field never navigate the HUD.</small>
+    </div>
+    <details><summary>Keys and model</summary>
+      <p><kbd>←</kbd>/<kbd>↑</kbd> previous · <kbd>→</kbd>/<kbd>↓</kbd> next · <kbd>Enter</kbd>/<kbd>Space</kbd> tap · <kbd>Esc</kbd> back. Directional aliases are debounced together for 250 ms, so a paired swipe moves once, including across the preview-to-full-screen boundary.</p>
+      <p>Feed: one swipe = one post, tap = open the post. Post: swipe = next page; the media preview is always on the last page (merged into it when the text is short). Recommended route: one more swipe opens the media full screen; Back returns to that exact page; Back again returns to the exact feed row. Inside full screen, swipe = next image or ±10 s; swipes never exit. Tap = actions everywhere (Comments, Reply to post, votes, Save…). Back from the feed = main menu, which now also carries “Sort feed”.</p>
+      <p>Comparison route (direct tap): identical until the preview page. There, tap opens the media immediately and a forward swipe only says “end of post”. The post action menu for that page is reached by tapping inside the media view (it lists Play/Reveal/Retry first, then Back to post, Comments, Reply to post, votes, Save). On text pages, tap still opens actions.</p>
+    </details>
+  </aside>
+</main>
+
+<script>
+/* =====================================================================
+   FICTIONAL DATA (same set as the three-direction mockup, p4 body longer
+   so that a text-plus-gallery post needs its own media page at M)
+   ===================================================================== */
+const LONG_BODY = `I started leaving my running shoes directly in front of the apartment door every evening. Not in the closet, not by the bed: in the way. For the first week it was mildly annoying, which was the point. You have to touch them to leave, and once they are in your hands the decision has mostly been made for you.
+
+Two months later I run four mornings a week and have stopped negotiating with myself about it. The habit itself is tiny. What changed is that the first step no longer needs any willpower at all; the shoes are already a decision made by yesterday's version of me, who was less tired and more optimistic.
+
+A few other things that worked for people I know, collected from this thread's earlier incarnation:
+
+Writing tomorrow's single most important task on a sticky note before closing the laptop. Not a list, one line. Mornings start with a direction instead of a triage.
+
+Charging the phone in the kitchen. Reading in bed came back within days, and sleep got noticeably better, which nobody expected to be that fast.
+
+Keeping a glass of water on the desk and refilling it when it is empty rather than when thirsty. Dull, yes, but headaches in the afternoon stopped almost entirely.
+
+Saying the full sentence "I'll decide tomorrow" out loud when something is tempting but not urgent. Most of the time tomorrow never asks again.
+
+None of this is life changing on its own. The pattern seems to be: make the first step physical and visible, and remove the daily decision rather than trying to win it each time. Curious what else has worked for people here, especially habits that survived more than a year.`;
+
+const DESK_BODY = `Walnut top from two slabs, bookmatched and joined with a loose tenon. The legs are white oak, tapered on the band saw and cleaned up with a hand plane. Finish is three coats of hardwax oil, buffed between coats.
+
+The cable tray underneath took longer than the top. It is a folded steel channel that I powder coated in the garage with a borrowed gun, then bolted to threaded inserts so it can come off when the desk moves. Eight weekends total, most of them waiting for glue and finish.
+
+What I would change: the slabs were flattened on a router sled and I should have let them sit a week longer before the final pass; a hairline gap opened at the far end over the winter. The oak legs were a last-minute swap from walnut and I like the contrast more than the matching version in the mock-up.
+
+Pictures show the top before finish, the leg joinery with the loose tenons dry-fitted, and the finished desk in the room with the tray hidden underneath.`;
+
+const ISS_BODY = `Stacked 40 frames from a small refractor with a phone adapter. The transit lasted under a second, so this is mostly luck and a lot of waiting. Timing came from a transit finder site the night before; the cloud gap opened about ten minutes early.`;
+
+const HILL_BODY = `Rode the Madone descent on a wet afternoon. The road was empty, the braking was careful, and the camera is chest mounted. About ninety seconds, no music, just the rain and the freewheel.`;
+
+const BUILD_BODY = `Short write-up of a build that got 40 percent faster after we removed a single plugin line in the root config. The plugin was re-resolving the dependency graph on every task. Includes the before and after timings and how we found it with a build scan.`;
+
+const LOOP_BODY = `Filmed on a windless morning. The launcher is a rubber band on a stick; the plane comes back to within a hand's width of where it started. Took about sixty attempts.`;
+
+const SHOE_BODY = `The left one wears out at the heel twice as fast as the right one. Same shoes, same walks. I am mildly infuriated and apparently asymmetric.`;
+
+const SCAR_BODY = `Six months after the fall. The surgeon said it would fade; it mostly has. Posting for the people who asked in the original thread.`;
+
+const CAREER_BODY = `I studied chemistry, worked in a lab for fifteen years, and now run a small bakery with my partner. The moment was a Tuesday afternoon when I realised I had been staring at the same centrifuge for an hour and could not remember why. I would do it again, but earlier.`;
+
+const POSTS = [
+  {id:'p1', sub:'r/mildlyinfuriating', author:'u/leftfoot_first', age:'3h', score:'4.2k', comments:312, kind:'text', title:'The left shoe always wears out first', body:SHOE_BODY},
+  {id:'p2', sub:'r/space', author:'u/backyard_optics', age:'5h', score:'18k', comments:641, kind:'image', title:'Caught the ISS crossing the Moon from my backyard tonight', body:ISS_BODY, media:{type:'image', art:'moon'}},
+  {id:'p3', sub:'r/AskReddit', author:'u/quiet_habit', age:'7h', score:'9.8k', comments:2140, kind:'text', title:'What is a small habit that quietly improved your life?', body:LONG_BODY},
+  {id:'p4', sub:'r/woodworking', author:'u/slabsandsaws', age:'9h', score:'3.1k', comments:187, kind:'gallery', title:'Finished the walnut desk after eight weekends', body:DESK_BODY, media:{type:'gallery', n:3, art:'desk', caps:['Top before finish','Leg joinery, tenons dry-fitted','In the room, tray hidden']}},
+  {id:'p5', sub:'r/cycling', author:'u/wetdescender', age:'11h', score:'1.4k', comments:96, kind:'video', title:'Descending the Col de la Madone in the rain', body:HILL_BODY, media:{type:'video', dur:95, art:'road'}},
+  {id:'p6', sub:'r/programming', author:'u/gradle_gremlin', age:'12h', score:'2.7k', comments:433, kind:'link', title:'Why our build got 40% faster after deleting one line', body:BUILD_BODY, url:'example.com/build-40-percent'},
+  {id:'p7', sub:'r/oddlysatisfying', author:'u/paperflight', age:'14h', score:'22k', comments:510, kind:'gif', title:'Perfect loop of a paper airplane returning to the launcher', body:LOOP_BODY, media:{type:'gif', art:'plane'}},
+  {id:'p8', sub:'r/pics', author:'u/sixmonthslater', age:'16h', score:'870', comments:64, kind:'image', sensitive:true, title:'Scar six months after the climbing fall', body:SCAR_BODY, media:{type:'image', art:'scar'}},
+  {id:'p9', sub:'r/AskReddit', author:'u/secondactstory', age:'18h', score:'6.5k', comments:1580, kind:'text', title:'People who switched careers after 40 into something completely unrelated to what you studied: what was the single moment that made you decide, and would you do it again knowing what you know now?', body:CAREER_BODY},
+  {id:'p10', sub:'r/space', author:'u/orbital_notes', age:'1d', score:'1.1k', comments:72, kind:'text', title:'Weekly launch roundup: three missions, one scrub', body:'Two crewed rotations and one weather satellite went up this week. The third attempt scrubbed at T-40 s for a valve reading and is rescheduled for Saturday.'},
+];
+const FEEDS = {
+  home:{label:'Home', ids:['p2','p4','p5','p6','p10','p3']},
+  popular:{label:'Popular', ids:['p1','p2','p3','p4','p5','p6','p7','p8','p9','p10']},
+  latest:{label:'Latest', ids:['p1','p2','p3','p4','p5','p6','p7']},
+  community:{label:'r/space', ids:['p2','p10']},
+};
+const COMMUNITIES = [
+  {n:'r/space', m:'24M members', joined:true}, {n:'r/woodworking', m:'5.1M members', joined:true},
+  {n:'r/cycling', m:'1.3M members', joined:true}, {n:'r/programming', m:'6.4M members', joined:true},
+  {n:'r/AskReddit', m:'47M members', joined:false}, {n:'r/oddlysatisfying', m:'9.2M members', joined:false},
+];
+const C_LONG = `The sticky note one is underrated. I resisted it for years because it felt like something a productivity influencer would say, then tried it during a bad month and it stuck. The trick for me was writing it before closing the laptop, not in the morning. Morning me has opinions, evening me has context.
+
+A second thing that helped: the note goes on the laptop lid, not on the desk. You physically remove it to open the machine, which means you read it every single time.`;
+const THREADS = {
+  p3:[
+    {id:'c1', parent:null, author:'u/lidnote', age:'6h', score:'2.3k', body:C_LONG},
+    {id:'c2', parent:'c1', author:'u/quiet_habit', op:true, age:'5h', score:'640', body:'Evening me has context is going straight into my notes. That is exactly the difference I could not put into words.'},
+    {id:'c3', parent:'c2', author:'u/morning_me', age:'5h', score:'212', body:'Morning me would like to formally object but has not had coffee yet.'},
+    {id:'c4', parent:'c3', author:'u/lidnote', age:'4h', score:'98', body:'Objection noted and sustained until 9am.'},
+    {id:'c5', parent:null, author:'u/kitchen_charger', age:'6h', score:'1.1k', body:'Phone in the kitchen changed my sleep more than anything I have paid money for. Took three days to stop reaching for it.'},
+    {id:'c6', parent:'c5', author:'u/nightowl_dev', age:'5h', score:'300', body:'Same, but I had to buy an actual alarm clock, which felt like a small defeat.', hidden:3},
+    {id:'c7', parent:null, author:'[deleted]', age:'4h', score:'—', body:'[deleted by user]', deleted:true},
+    {id:'c8', parent:null, author:'u/hydration_skeptic', age:'3h', score:'77', body:'I will be the dissenting voice on the water glass thing: it just makes me get up more often. Which, now that I type it, might be the point.'},
+  ],
+  p4:[
+    {id:'d1', parent:null, author:'u/oakandash', age:'8h', score:'140', body:'The oak legs against the walnut are the right call. Matching would have looked like a catalogue.'},
+    {id:'d2', parent:'d1', author:'u/slabsandsaws', op:true, age:'7h', score:'62', body:'That is what my partner said. I was outvoted and I am glad.'},
+    {id:'d3', parent:null, author:'u/sledflattener', age:'6h', score:'88', body:'Hairline gap at the far end is almost always moisture. A week longer helps; two is safer in winter.'},
+  ],
+};
+const INBOX = [
+  {id:'n1', kind:'reply', who:'u/morning_me', what:'replied to your comment', where:'r/AskReddit', text:'Morning me would like to formally object…', unread:true, post:'p3', cid:'c3'},
+  {id:'n2', kind:'mention', who:'u/lidnote', what:'mentioned you', where:'r/AskReddit', text:'…as @you said in the earlier thread', unread:true, post:'p3', cid:'c1'},
+  {id:'n3', kind:'reply', who:'u/slabsandsaws', what:'replied to your comment', where:'r/woodworking', text:'Thanks! The oil is the same one you recommended.', unread:false, post:'p4', cid:null},
+];
+
+/* =====================================================================
+   MONOCHROME ART. Stroke-only SVG with dot tone. Green via currentColor;
+   the only fills are #000 masks.
+   ===================================================================== */
+function art(kind, w=320, h=200){
+  const defs=`<defs><pattern id="dt" width="6" height="6" patternUnits="userSpaceOnUse"><circle cx="3" cy="3" r="1" fill="currentColor" opacity=".55"/></pattern><pattern id="dt2" width="4" height="4" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r=".8" fill="currentColor" opacity=".3"/></pattern></defs>`;
+  const open=`<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid slice" style="color:var(--g)" stroke="currentColor" fill="none" stroke-width="1.5">${defs}`;
+  const close=`</svg>`;
+  switch(kind){
+    case 'moon': return open+`<circle cx="${w*.55}" cy="${h*.5}" r="${h*.38}" fill="url(#dt)"/><circle cx="${w*.55}" cy="${h*.5}" r="${h*.38}"/><circle cx="${w*.48}" cy="${h*.42}" r="${h*.07}"/><circle cx="${w*.64}" cy="${h*.6}" r="${h*.05}"/><g stroke-width="2"><line x1="${w*.52}" y1="${h*.33}" x2="${w*.58}" y2="${h*.33}"/><rect x="${w*.44}" y="${h*.31}" width="${w*.07}" height="${h*.04}" fill="#000"/><rect x="${w*.59}" y="${h*.31}" width="${w*.07}" height="${h*.04}" fill="#000"/></g>`+close;
+    case 'desk': return open+`<rect x="${w*.1}" y="${h*.35}" width="${w*.8}" height="${h*.08}" fill="url(#dt)"/><rect x="${w*.1}" y="${h*.35}" width="${w*.8}" height="${h*.08}"/><line x1="${w*.16}" y1="${h*.43}" x2="${w*.12}" y2="${h*.9}"/><line x1="${w*.84}" y1="${h*.43}" x2="${w*.88}" y2="${h*.9}"/><line x1="${w*.2}" y1="${h*.43}" x2="${w*.24}" y2="${h*.9}"/><line x1="${w*.8}" y1="${h*.43}" x2="${w*.76}" y2="${h*.9}"/><path d="M${w*.3} ${h*.33} q${w*.1} -${h*.12} ${w*.2} 0" stroke-dasharray="3 3"/>`+close;
+    case 'desk2': return open+`<rect x="${w*.25}" y="${h*.2}" width="${w*.5}" height="${h*.6}" fill="url(#dt2)"/><rect x="${w*.25}" y="${h*.2}" width="${w*.5}" height="${h*.6}"/><rect x="${w*.42}" y="${h*.2}" width="${w*.16}" height="${h*.6}" fill="url(#dt)"/><line x1="${w*.25}" y1="${h*.5}" x2="${w*.75}" y2="${h*.5}"/>`+close;
+    case 'desk3': return open+`<rect x="${w*.08}" y="${h*.12}" width="${w*.84}" height="${h*.76}" stroke-width="1" opacity=".5"/><rect x="${w*.15}" y="${h*.45}" width="${w*.7}" height="${h*.07}" fill="url(#dt)"/><rect x="${w*.15}" y="${h*.45}" width="${w*.7}" height="${h*.07}"/><line x1="${w*.2}" y1="${h*.52}" x2="${w*.18}" y2="${h*.85}"/><line x1="${w*.8}" y1="${h*.52}" x2="${w*.82}" y2="${h*.85}"/><rect x="${w*.4}" y="${h*.3}" width="${w*.2}" height="${h*.14}"/><rect x="${w*.1}" y="${h*.12}" width="${w*.25}" height="${h*.25}" fill="url(#dt2)"/>`+close;
+    case 'road': return open+`<path d="M${w*.5} ${h*.2} L${w*.1} ${h} M${w*.5} ${h*.2} L${w*.9} ${h}" stroke-width="2"/><path d="M${w*.5} ${h*.2} L${w*.5} ${h}" stroke-dasharray="8 10"/><path d="M0 ${h*.22} q${w*.25} -${h*.18} ${w*.5} 0 t${w*.5} 0" fill="url(#dt2)"/><g stroke-width="1" opacity=".6">${Array.from({length:9},(_,i)=>`<line x1="${w*.1+i*w*.1}" y1="${h*.05+(i%3)*8}" x2="${w*.08+i*w*.1}" y2="${h*.18+(i%3)*8}"/>`).join('')}</g>`+close;
+    case 'plane': return open+`<path d="M${w*.15} ${h*.5} L${w*.85} ${h*.3} L${w*.45} ${h*.55} Z"/><path d="M${w*.45} ${h*.55} L${w*.5} ${h*.75} L${w*.85} ${h*.3}" /><path d="M${w*.85} ${h*.3} q${w*.1} ${h*.4} -${w*.3} ${h*.5} t -${w*.4} -${h*.2}" stroke-dasharray="4 6" opacity=".6"/>`+close;
+    case 'scar': return open+`<rect width="${w}" height="${h}" fill="url(#dt2)"/><path d="M${w*.3} ${h*.3} q${w*.1} ${h*.2} ${w*.05} ${h*.4}" stroke-width="3"/>`+close;
+    case 'link': return open+`<rect x="${w*.15}" y="${h*.25}" width="${w*.7}" height="${h*.5}"/><line x1="${w*.15}" y1="${h*.37}" x2="${w*.85}" y2="${h*.37}"/><line x1="${w*.25}" y1="${h*.5}" x2="${w*.7}" y2="${h*.5}" opacity=".6"/><line x1="${w*.25}" y1="${h*.58}" x2="${w*.6}" y2="${h*.58}" opacity=".6"/>`+close;
+    default: return open+`<rect x="4" y="4" width="${w-8}" height="${h-8}"/><line x1="4" y1="4" x2="${w-4}" y2="${h-4}"/><line x1="${w-4}" y1="4" x2="4" y2="${h-4}"/>`+close;
+  }
+}
+const GALLERY_ART=['desk','desk2','desk3'];
+function hasMedia(p){ return !!(p.media||p.kind==='link'); }
+function mediaLabel(p){
+  if(p.kind==='image') return 'image'; if(p.kind==='gallery') return `gallery · ${p.media.n}`; if(p.kind==='gif') return 'gif';
+  if(p.kind==='video') return `video · ${fmt(p.media.dur)}`; if(p.kind==='link') return 'link'; return `text · ${pageCount(p.body)} pg`;
+}
+function mediaLong(p){
+  if(p.kind==='image') return 'image'; if(p.kind==='gallery') return `${p.media.n} images`; if(p.kind==='gif') return 'GIF';
+  if(p.kind==='video') return `video ${fmt(p.media.dur)}`; if(p.kind==='link') return p.url; return '';
+}
+function mediaIcon(p){ return {image:'▣',gallery:'▤',gif:'◎',video:'▶',link:'⇗',text:'¶'}[p.kind]; }
+function fmt(s){return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function k(n){return typeof n==='number'?(n>=1000?(n/1000).toFixed(1).replace(/\.0$/,'')+'k':String(n)):n}
+function first(s,n=6){const w=s.replace(/\s+/g,' ').trim().split(' ');return w.slice(0,n).join(' ')+(w.length>n?'…':'')}
+function pageCount(text, perPage=14){ return Math.max(1, Math.ceil(text.split(/\s+/).length/ (perPage*7))); }
+
+/* =====================================================================
+   STATE
+   ===================================================================== */
+const S = {route:'swipe', k:1, pl:2, hideSensitive:true, rm:false, sim:'none', drafts:{}, votes:{}, saved:{},
+  stack:[], lastNav:0, lastDir:0, sendLock:false, failedOnce:false, feedCache:{}, joined:new Set(['r/space','r/woodworking','r/cycling','r/programming']),
+  inboxRead:new Set(), toast:'', toastT:0, lastFeed:null, steps:null};
+const hud=document.getElementById('hud'), wrap=document.getElementById('wrap');
+const logEl=document.getElementById('log'), stateEl=document.getElementById('state'), stepsEl=document.getElementById('steps');
+const ptxt=document.getElementById('ptxt'), pst=document.getElementById('pst');
+function log(m){ logEl.textContent=(m+'\n'+logEl.textContent).split('\n').slice(0,6).join('\n'); }
+function cur(){ return S.stack[S.stack.length-1]; }
+function push(sc){ S.stack.push(sc); render(); }
+function pop(){ if(S.stack.length>1){ S.stack.pop(); render(); } }
+function toast(m){ S.toast=m; clearTimeout(S.toastT); S.toastT=setTimeout(()=>{S.toast='';render();},1800); }
+function post(id){ return POSTS.find(p=>p.id===id); }
+function feedIds(sc){
+  let ids=FEEDS[sc.feed].ids.slice();
+  if(sc.sort==='New') ids=FEEDS.latest.ids.filter(i=>ids.includes(i)).concat(ids.filter(i=>!FEEDS.latest.ids.includes(i)));
+  if(sc.sort==='Top') ids=ids.slice().sort((a,b)=>parseFloat(post(b).score)*(post(b).score.includes('k')?1000:1)-parseFloat(post(a).score)*(post(a).score.includes('k')?1000:1));
+  return ids;
+}
+function signedIn(){ return S.sim!=='signedout'; }
+
+/* =====================================================================
+   INPUT: one axis + tap + back, aliases debounced together (250 ms).
+   The debounce is global, so a paired swipe that opens full screen
+   cannot also move inside the media.
+   ===================================================================== */
+function nav(dir, src){
+  const now=performance.now();
+  if(now-S.lastNav<250 && S.lastDir===dir){ log(`ignored alias ${src} (${Math.round(now-S.lastNav)} ms after previous)`); return; }
+  S.lastNav=now; S.lastDir=dir;
+  const sc=cur();
+  if(S.steps&&(sc.type==='post'||sc.type==='media')) S.steps.sw++;
+  if(sc.acts){ sc.actSel=(sc.actSel+dir+sc.acts.length)%sc.acts.length; render(); return; }
+  (R[sc.type].nav||(()=>{}))(sc,dir); render();
+}
+function tap(){
+  const sc=cur();
+  if(S.steps&&(sc.type==='post'||sc.type==='media')) S.steps.tp++;
+  if(sc.acts){ const a=sc.acts[sc.actSel]; if(a.dis){ toast(a.why||'Not available'); render(); return; } sc.acts=null; a.run(); if(cur()===sc) render(); return; }
+  (R[sc.type].tap||(()=>{}))(sc); render();
+}
+function back(){
+  const sc=cur();
+  if(sc.acts){ sc.acts=null; render(); return; }
+  if(R[sc.type].back){ R[sc.type].back(sc); render(); return; }
+  if(S.stack.length>1) pop(); else { push({type:'menu', sel:0}); }
+}
+function openActs(sc, list, title, focus){ sc.acts=list.filter(Boolean); sc.actSel=0; sc.actTitle=title||''; if(focus){ const i=sc.acts.findIndex(a=>a.l===focus); if(i>=0) sc.actSel=i; } }
+
+/* =====================================================================
+   TEXT PAGING against the measured page box (font-aware)
+   ===================================================================== */
+const mctx=document.createElement('canvas').getContext('2d');
+function wrapLines(text, font, width){
+  mctx.font=font; const out=[];
+  text.split('\n').forEach(para=>{
+    if(!para.trim()){ out.push(''); return; }
+    let line='';
+    para.split(/\s+/).forEach(w=>{ const t=line?line+' '+w:w; if(!line||mctx.measureText(t).width<=width) line=t; else { out.push(line); line=w; } });
+    out.push(line);
+  });
+  while(out.length&&out[out.length-1]==='') out.pop();
+  return out;
+}
+function boxFont(el){ const cs=getComputedStyle(el); return {font:`${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`, lh:parseFloat(cs.lineHeight)||parseFloat(cs.fontSize)*1.3}; }
+function paginate(el, text){
+  const {font,lh}=boxFont(el);
+  const n=Math.max(1, Math.floor(el.clientHeight/lh)); const lines=wrapLines(text, font, el.clientWidth-2);
+  const pages=[]; for(let i=0;i<lines.length;i+=n) pages.push(lines.slice(i,i+n)); if(!pages.length) pages.push(['']);
+  return pages;
+}
+function fillPage(el, text, idx){
+  const pages=paginate(el, text); const i=Math.min(idx, pages.length-1);
+  el.innerHTML=pages[i].map(l=>`<div class="ln">${esc(l)||' '}</div>`).join('');
+  return {n:pages.length, i};
+}
+
+/* =====================================================================
+   SHARED RENDER HELPERS
+   ===================================================================== */
+function voteState(id){ return S.votes[id]||0; }
+function voteGlyph(id, score){ const v=voteState(id); return v>0?`<span class="tag on">▲ ${score} · upvoted</span>`:v<0?`<span class="tag on">▼ ${score} · downvoted</span>`:`▲ ${score}`; }
+function thumbCap(p, idx){
+  return p.kind==='gallery'?`▤ ${(idx||0)+1}/${p.media.n}`:p.kind==='video'?`▶ ${fmt(p.media.dur)}`:p.kind==='gif'?'◎ GIF':p.kind==='link'?'⇗ link':'▣';
+}
+function artFor(p, idx){ if(p.kind==='link') return art('link'); if(p.kind==='gallery') return art(GALLERY_ART[idx||0]); return art(p.media.art); }
+function thumb(p){
+  if(!hasMedia(p)) return '';
+  if(S.sim==='media'&&p.kind!=='link') return `<div class="thumb"><div class="hid" style="font-size:var(--fs-h)">media<br>unavailable</div><span class="cap">${thumbCap(p)}</span></div>`;
+  if(p.sensitive&&S.hideSensitive) return `<div class="thumb"><div class="hid" style="font-size:var(--fs-h)">sensitive<br>hidden</div><span class="cap">${thumbCap(p)}</span></div>`;
+  return `<div class="thumb">${artFor(p)}<span class="cap">${thumbCap(p)}</span></div>`;
+}
+/* post actions. ctx: 'post' (reader, any page), 'media' (full screen), 'comments' (post row in a thread).
+   The menu order is the same in every context so the user learns one list; Open media sits after Reply. */
+function postActs(sc, p, ctx){
+  const locked=S.sim==='locked'; const d=S.drafts['reply:'+p.id];
+  const openMedia=hasMedia(p)?{l:p.kind==='link'?'Open link':'Open media', n:mediaLong(p), run:()=>openFull(ctx==='comments'?null:sc, p)}:null;
+  const list=[
+    ctx==='comments'?{l:'Read post', n:`${pageCount(p.body)} pg${hasMedia(p)?' + media':''}`, run:()=>openPost(p.id)}:null,
+    ctx==='comments'?null:{l:'Comments', n:k(p.comments), run:()=>openComments(p.id)},
+    {l:'Reply to post', n:locked?'locked':d?'draft':'', dis:locked, why:'Thread is locked', run:()=>compose({kind:'post', id:p.id})},
+    openMedia,
+    {l:voteState(p.id)>0?'Remove upvote':'Upvote', run:()=>{S.votes[p.id]=voteState(p.id)>0?0:1; toast(S.votes[p.id]?'Upvoted (local only)':'Vote removed');}},
+    {l:voteState(p.id)<0?'Remove downvote':'Downvote', run:()=>{S.votes[p.id]=voteState(p.id)<0?0:-1; toast(S.votes[p.id]?'Downvoted (local only)':'Vote removed');}},
+    {l:S.saved[p.id]?'Unsave':'Save', run:()=>{S.saved[p.id]=!S.saved[p.id]; toast(S.saved[p.id]?'Saved':'Removed from saved');}},
+    {l:'Send link to phone', n:'proposed', run:()=>toast('Proposed: not built')},
+  ];
+  return list;
+}
+function compose(target){
+  if(!signedIn()){ push({type:'signin', sel:0, why:'Sign in to reply'}); return; }
+  const key=`reply:${target.id}`;
+  push({type:'compose', target, key, text:S.drafts[key]||''});
+}
+function openComments(pid, focus){
+  const sc={type:'comments', id:pid, sel:0, collapsed:new Set(), more:false, loading:S.sim==='slow', offline:S.sim==='offline', focus};
+  if(!THREADS[pid]) THREADS[pid]=[{id:pid+'c1', parent:null, author:'u/first_reply', age:'2h', score:'41', body:'Nice one. Saving this for later.'},{id:pid+'c2', parent:null, author:'u/second_reply', age:'1h', score:'12', body:'Came here to say the same thing.'}];
+  push(sc);
+  if(sc.loading) setTimeout(()=>{ sc.loading=false; if(cur()===sc) render(); }, 1400);
+}
+function commentRows(sc){
+  const list=THREADS[sc.id]; const rows=[]; const byParent={};
+  list.forEach(c=>{ (byParent[c.parent||'root']=byParent[c.parent||'root']||[]).push(c); });
+  (function walk(parent, depth){ (byParent[parent]||[]).forEach(c=>{ rows.push({c, depth}); if(!sc.collapsed.has(c.id)) walk(c.id, depth+1); }); })('root',0);
+  return rows;
+}
+function descendants(pid, cid){ const l=THREADS[pid]; let n=0; (function w(id){ l.filter(x=>x.parent===id).forEach(x=>{ n+=1+(x.hidden||0); w(x.id); }); })(cid); return n; }
+function parentOf(cid, pid){ const c=THREADS[pid].find(x=>x.id===cid); return c&&c.parent?THREADS[pid].find(x=>x.id===c.parent):null; }
+
+/* =====================================================================
+   POST / MEDIA OPENING
+   ===================================================================== */
+function openPost(id, fromFeed){
+  if(fromFeed){ S.steps={sw:0, tp:1, id, opened:null}; }
+  push({type:'post', id, page:0, idx:0, t:0, playing:false, muted:false, revealed:false});
+}
+/* ps = the post screen whose media state (image index, video time, reveal) is shared with full screen */
+function openFull(ps, p){
+  if(!ps){ ps={type:'post', id:p.id, page:0, idx:0, t:0, playing:false, muted:false, revealed:false}; }
+  if(p.kind==='link'){ push({type:'browser', url:p.url}); return; }
+  const m={type:'media', id:p.id, ps, openedAt:performance.now()};
+  if(p.kind==='gif') ps.playing=true;            /* GIFs are silent: play on explicit open */
+  if(p.kind==='video') ps.playing=false;         /* video enters paused; Play is the first tap action */
+  if(S.steps&&S.steps.id===p.id&&!S.steps.opened){ S.steps.opened=`${S.steps.sw} swipe(s) + ${S.steps.tp} tap(s) incl. the feed tap [${S.route} route]`; log(`full screen ${mediaLong(p)} reached after ${S.steps.opened}`); }
+  push(m);
+}
+
+/* =====================================================================
+   SCREEN RENDERERS. Each returns {crumb, pos, body, foot, ...}.
+   ===================================================================== */
+const R={};
+
+/* ---- main menu (kept), plus a contextual "Sort feed" row because the feed tap now opens the post ---- */
+const MENU=[
+  {l:'Home', run:()=>openFeed('home')}, {l:'Popular', run:()=>openFeed('popular')}, {l:'Latest', run:()=>openFeed('latest')},
+  {l:'Communities', run:()=>push({type:'communities', sel:0})}, {l:'Search', run:()=>push({type:'search', sel:0, q:'', results:null})},
+  {l:'Inbox', v:()=>`${INBOX.filter(n=>n.unread&&!S.inboxRead.has(n.id)).length} new`, run:()=>push({type:'inbox', sel:0})},
+  {l:'Profile', run:()=>push({type:'profile', sel:0})}, {l:'Saved', run:()=>push({type:'saved', sel:0})},
+  {l:'Create post', run:()=>push({type:'create', step:0, sel:0, kind:'Text', community:'', title:'', body:'', url:''})},
+  {l:'Settings', run:()=>push({type:'settings', sel:0})},
+];
+function menuItems(){
+  const f=S.lastFeed; if(!f) return MENU;
+  const name=f.feed==='community'?f.sub:FEEDS[f.feed].label;
+  return [{l:`Sort ${name}`, v:()=>`${f.sort} · cycle`, run:()=>{ f.sort={Hot:'New',New:'Top',Top:'Hot'}[f.sort]; f.sel=0; toast(`${name} sorted by ${f.sort}`); }}].concat(MENU);
+}
+function openFeed(feed, sub){
+  const key=feed+(sub||''); const cached=S.feedCache[key];
+  if(cached){ S.stack=[cached]; S.lastFeed=cached; render(); return; }
+  const sc={type:'feed', feed, sub, sort:'Hot', sel:0, loading:S.sim==='slow', offline:S.sim==='offline'};
+  S.feedCache[key]=sc; S.stack=[sc]; S.lastFeed=sc; render();
+  if(sc.loading) setTimeout(()=>{ sc.loading=false; if(cur()===sc) render(); },1400);
+}
+R.menu={
+  render(sc){ const items=menuItems(); sc.sel=Math.min(sc.sel, items.length-1);
+    return {crumb:'Reddit', pos:`${sc.sel+1}/${items.length}`, foot:['Swipe: route','Tap: open','Back: return'],
+    body:`<div class="list">${items.map((m,i)=>`<div class="mr ${i===sc.sel?'sel':''}"><span>${m.l}</span>${m.v?`<span class="v">${m.v()}</span>`:''}</div>`).join('')}</div>`}; },
+  nav(sc,d){ const n=menuItems().length; sc.sel=(sc.sel+d+n)%n; }, tap(sc){ menuItems()[sc.sel].run(); },
+  back(sc){ if(S.stack.length>1) pop(); else openFeed('popular'); }
+};
+
+/* ---- feed: A · Ledger; the selected row carries the thumbnail ---- */
+R.feed={
+  render(sc){
+    const ids=feedIds(sc); const n=ids.length; const name=sc.feed==='community'?sc.sub:FEEDS[sc.feed].label;
+    if(sc.loading) return {crumb:name, pos:'', body:`<div class="center"><div class="big">Loading ${name}…</div><div class="pulse"></div></div>`, foot:['','','Back: menu']};
+    if(sc.offline) return {crumb:name, pos:'', body:stateBody('Offline', 'Could not reach Reddit. Cached posts are not available for this feed.', 'Tap: retry'), foot:['','Tap: retry','Back: menu']};
+    if(!n) return {crumb:name, pos:'', body:stateBody('Nothing here yet', 'This feed has no posts. Join communities or try Popular.', ''), foot:['','','Back: menu']};
+    sc.sel=Math.min(sc.sel, n-1);
+    const foot=['Swipe: next post','Tap: open post','Back: menu'];
+    const rows=ids.map((id,i)=>{ const q=post(id); const sel=i===sc.sel; const hm=hasMedia(q);
+      const meta=`${q.author} · ${q.age} · ${voteGlyph(q.id,q.score)}${S.saved[q.id]?' · <span class="tag on">saved</span>':''}`;
+      const x=hm?`<div class="hz">${thumb(q)}<div class="xt"><div class="p">${esc(q.body)}</div><div class="mt">${meta}</div></div></div>`
+                 :`<div class="p">${esc(q.body)}</div><div class="mt">${meta}</div>`;
+      return `<div class="fr ${sel?'sel':''} ${hm?'hm':''}" data-i="${i}">
+        <div class="m"><span class="c">${q.sub}</span><span>${mediaIcon(q)} ${esc(mediaLabel(q))}</span><span class="r">${k(q.comments)} cmt</span></div>
+        <div class="t">${esc(q.title)}</div>
+        <div class="x">${x}</div></div>`; }).join('');
+    return {crumb:`${name} · ${sc.sort}`, pos:`${sc.sel+1}/${n}`, body:`<div class="list" style="--pl:${S.pl+1}">${rows}</div>`, foot};
+  },
+  nav(sc,d){ if(sc.loading||sc.offline) return; const n=feedIds(sc).length; const s=sc.sel+d; if(s<0||s>=n){ toast(s<0?'Top of feed':'End of feed'); return; } sc.sel=s; },
+  tap(sc){ if(sc.offline){ sc.offline=S.sim==='offline'; if(sc.offline) toast('Still offline'); return; } if(sc.loading) return; openPost(feedIds(sc)[sc.sel], true); },
+  back(sc){ S.lastFeed=sc; push({type:'menu', sel:0}); }
+};
+function stateBody(t, msg, cue){ return `<div class="center"><div class="big">${esc(t)}</div><div class="note">${esc(msg)}</div>${cue?`<div class="note"><b>${esc(cue)}</b></div>`:''}</div>`; }
+
+/* ---- post reader: text pages, then the media preview as the last page ---- */
+function previewHTML(p, sc, height, dedicated){
+  const sw=S.route==='swipe';
+  const cue=sw?`<span class="cue">swipe ▶ full screen</span>`:`<span class="cue">tap ▸ open media</span>`;
+  let inner;
+  if(p.kind==='link') inner=`${art('link')}<span class="cap">⇗ ${esc(p.url)}</span>`;
+  else if(S.sim==='media') inner=`<div class="hid"><span class="warn">media unavailable</span><span>${sw?'Swipe to open and retry, or go back.':'Tap to open and retry, or go back.'}</span></div><span class="cap">${thumbCap(p)}</span>`;
+  else if(p.sensitive&&S.hideSensitive&&!sc.revealed) inner=`<div class="hid"><span class="warn">sensitive · hidden</span><span>Hidden by your setting. Reveal is an explicit action in the full-screen view.</span></div><span class="cap">${thumbCap(p)}</span>`;
+  else inner=`${artFor(p, sc.idx)}<span class="cap">${thumbCap(p, sc.idx)}${p.kind==='video'?' · paused':''}</span>`;
+  const what=p.kind==='gallery'?`${p.media.n} images · ${esc(p.media.caps[0])}, …`:p.kind==='video'?`video ${fmt(p.media.dur)} · opens paused, no sound until Play`:p.kind==='gif'?'GIF · plays when opened':p.kind==='link'?'Opens in the stock in-app browser':'image';
+  const capLine=dedicated?`<div class="pvcap">${what}${sw?'':' · actions: tap inside'}</div>`:'';
+  return `<div class="pv on" style="height:${height}px">${inner}${cue}</div>${capLine}`;
+}
+/* page capacities are measured with the real title block, twice: 3-line title on page 1, 1-line title afterwards */
+function layoutPost(sc){
+  const p=post(sc.id); const pg=hud.querySelector('#pg'); const tt=hud.querySelector('#pt'); if(!pg||!tt) return;
+  tt.className='rtitle l3'; const h0=pg.clientHeight; tt.className='rtitle l1'; const h1=pg.clientHeight;
+  const {font,lh}=boxFont(pg); const lines=wrapLines(p.body, font, pg.clientWidth-2);
+  const n0=Math.max(1,Math.floor(h0/lh)), n1=Math.max(1,Math.floor(h1/lh));
+  const pvH=Math.round(170*S.k)+8; const pvL=Math.ceil(pvH/lh);
+  const pages=[]; let i=0;
+  while(i<lines.length){ const cap=pages.length?n1:n0; pages.push({lines:lines.slice(i,i+cap)}); i+=cap; }
+  if(!pages.length) pages.push({lines:[]});
+  if(hasMedia(p)){ const last=pages[pages.length-1]; const cap=pages.length===1?n0:n1; if(last.lines.length<=cap-pvL) last.media=true; else pages.push({lines:[], media:true}); }
+  sc.pages=pages; sc.page=Math.min(sc.page||0, pages.length-1);
+  const pgn=pages[sc.page]; tt.className=sc.page===0?'rtitle l3':'rtitle l1';
+  let html=pgn.lines.map(l=>`<div class="ln">${esc(l)||' '}</div>`).join('');
+  /* the preview fills what the text leaves on its page, never less than the 170 px it was budgeted at and never more
+     than 340 px, so full screen (about 540 px) is still a visible step up and not the same picture again */
+  if(pgn.media){ const dedicated=!pgn.lines.length; const free=pg.clientHeight-8-Math.round(pgn.lines.length*lh)-(dedicated?Math.round(lh):0);
+    const h=Math.min(Math.round(340*S.k), Math.max(Math.round(170*S.k), free)); html+=previewHTML(p, sc, h, dedicated); }
+  pg.innerHTML=html;
+  /* header: rail + position. The media page is a boxed glyph at the end of the rail. */
+  const rail=pages.map((q,j)=>q.media?`<i class="md ${j===sc.page?'on':''}">${mediaIcon(p)}</i>`:`<i class="${j===sc.page?'on':''}"></i>`).join('');
+  const textPages=pages.filter(q=>q.lines.length).length;
+  const posTxt=pgn.lines.length?`${sc.page+1}/${textPages}`:'media';
+  hud.querySelector('.pos').innerHTML=`<span class="rail">${rail}</span><span>${posTxt}</span>`;
+  /* footer depends on where the next swipe goes */
+  const f=hud.querySelector('.foot'); if(S.toast||sc.acts) return;
+  const last=sc.page===pages.length-1; const nextIsMedia=!last&&pages[sc.page+1].media&&!pages[sc.page+1].lines.length;
+  let s1='Swipe: next page', s2='Tap: actions';
+  if(pgn.media&&last){ s1=S.route==='swipe'?`<span class="hot">Swipe ▶: open ${p.kind==='link'?'link':'media'}</span>`:'Swipe: end of post'; s2=S.route==='swipe'?'Tap: actions':`<span class="hot">Tap: open ${p.kind==='link'?'link':'media'}</span>`; }
+  else if(nextIsMedia) s1='Swipe ▶: media preview';
+  else if(last) s1='Swipe: end of post';
+  f.innerHTML=`<span>${s1}</span><span>${s2}</span><span>Back: feed</span>`;
+}
+R.post={
+  render(sc){
+    const p=post(sc.id);
+    const head=`<div class="rtitle l3" id="pt">${esc(p.title)}</div><div class="meta">${p.sub} · ${p.author} · ${p.age} · ${voteGlyph(p.id,p.score)} · ${k(p.comments)} cmt${S.saved[p.id]?' · <span class="tag on">saved</span>':''}</div>`;
+    return {crumb:`${p.sub}`, pos:'', body:`${head}<div class="page" id="pg"></div>`, foot:['Swipe: next page','Tap: actions','Back: feed'], post:true};
+  },
+  nav(sc,d){
+    const p=post(sc.id); const pages=sc.pages||[{lines:[]}]; const s=sc.page+d;
+    if(d>0&&sc.page===pages.length-1){
+      if(pages[sc.page].media){ if(S.route==='swipe'){ openFull(sc, p); return; } toast(`End of post · Tap: open ${p.kind==='link'?'link':'media'}`); return; }
+      toast('End of post · Back: feed'); return;
+    }
+    if(s<0){ toast('First page'); return; }
+    sc.page=s;
+  },
+  tap(sc){
+    const p=post(sc.id); const pages=sc.pages||[]; const onPreview=pages.length&&pages[sc.page].media&&sc.page===pages.length-1;
+    /* direct-tap comparison route: on the preview page the tap IS the open; no menu in between.
+       The post actions for that page are reachable from the full-screen tap menu. */
+    if(onPreview&&S.route==='tap'){ openFull(sc, p); return; }
+    openActs(sc, postActs(sc,p,'post'), p.title);
+  },
+  back(sc){ pop(); }
+};
+
+/* ---- full-screen media. Swipes never exit; Back returns to the exact post page. ---- */
+R.media={
+  render(sc){
+    const p=post(sc.id); const ps=sc.ps; const crumb=esc(p.title);
+    const hid=S.sim==='media'?'unavailable':(p.sensitive&&S.hideSensitive&&!ps.revealed)?'sensitive':null;
+    if(hid==='unavailable') return {crumb, plain:true, pos:'full screen', foot:['','Tap: Retry / actions','Back: post'], body:`<div class="fs"><div class="hid"><span class="warn">media unavailable</span><span>The ${p.kind==='video'?'video':'image'} could not be loaded.</span></div></div>`};
+    if(hid==='sensitive') return {crumb, plain:true, pos:'full screen', foot:['','Tap: Reveal / actions','Back: post'], body:`<div class="fs"><div class="hid"><span class="warn">sensitive · hidden</span><span>Hidden by your setting. Tap, then choose Reveal, to show this ${p.kind} only.</span></div></div>`};
+    if(p.kind==='gallery'){
+      const i=ps.idx||0; return {crumb, plain:true, pos:`image ${i+1}/${p.media.n}`, foot:[i<p.media.n-1?'Swipe ▶: next image':'Swipe: last image','Tap: actions','Back: post'], body:`<div class="fs">${art(GALLERY_ART[i])}<span class="cnt">${i+1} / ${p.media.n}</span><span class="cap">${esc(p.media.caps[i])}</span></div>`};
+    }
+    if(p.kind==='video'){
+      const t=ps.t||0; const pct=Math.round(t/p.media.dur*100); const ticks=Array.from({length:Math.floor(p.media.dur/10)},(_,j)=>`<b style="left:${(j+1)*10/p.media.dur*100}%"></b>`).join('');
+      return {crumb, plain:true, pos:`${fmt(t)} / ${fmt(p.media.dur)}`, foot:['Swipe: seek ±10 s', ps.playing?'Tap: Pause / actions':'Tap: Play / actions','Back: post'], body:`<div class="fs">${art(p.media.art)}${ps.playing?'':'<span class="big">▶</span>'}<span class="cap">${ps.playing?'▶ playing':'❚❚ paused'} · ${ps.muted?'muted':'sound on'}</span><span class="cnt">video</span></div><div class="prog"><i style="width:${pct}%"></i>${ticks}</div><div class="meta">${ps.playing?'Playing':'Paused'} at ${fmt(t)} · each swipe seeks 10 s, never exits</div>`};
+    }
+    if(p.kind==='gif'){
+      return {crumb, plain:true, pos:'gif', foot:['Swipe: (single GIF)', ps.playing?'Tap: Pause / actions':'Tap: Play / actions','Back: post'], body:`<div class="fs">${art(p.media.art)}<span class="cap">${ps.playing?'◎ playing · silent':'❚❚ paused'}</span><span class="cnt">GIF</span></div>`};
+    }
+    return {crumb, plain:true, pos:'image', foot:['Swipe: (single image)','Tap: actions','Back: post'], body:`<div class="fs">${art(p.media.art)}<span class="cnt">image</span></div>`};
+  },
+  nav(sc,d){
+    const p=post(sc.id); const ps=sc.ps;
+    /* second guard beside the global alias debounce: nothing moves inside the media right after it opened */
+    if(performance.now()-sc.openedAt<300){ log('ignored: swipe within 300 ms of opening full screen'); return; }
+    if(S.sim==='media'||(p.sensitive&&S.hideSensitive&&!ps.revealed)){ toast('Tap for Retry / Reveal · Back: post'); return; }
+    if(p.kind==='gallery'){ const s=(ps.idx||0)+d; if(s<0||s>=p.media.n){ toast(s<0?'First image · Back: post':'Last image · Back: post'); return;} ps.idx=s; return; }
+    if(p.kind==='video'){ const t=Math.max(0, Math.min(p.media.dur, (ps.t||0)+10*d)); if(t===ps.t) toast(d<0?'Start of video':'End of video'); ps.t=t; if(ps.t>=p.media.dur) ps.playing=false; return; }
+    toast(`Only one ${p.kind==='gif'?'GIF':'image'} · Back: post`);
+  },
+  tap(sc){
+    const p=post(sc.id); const ps=sc.ps; const extra=[];
+    if(S.sim==='media') extra.push({l:'Retry', run:()=>{ if(S.sim==='media') toast('Still unavailable'); }});
+    else if(p.sensitive&&S.hideSensitive&&!ps.revealed) extra.push({l:'Reveal', n:'this post only', run:()=>{ ps.revealed=true; toast('Revealed'); }});
+    else {
+      if(p.kind==='video'||p.kind==='gif') extra.push({l:ps.playing?'Pause':'Play', run:()=>{ ps.playing=!ps.playing; if(p.kind==='video'&&ps.playing&&ps.t>=p.media.dur) ps.t=0; }});
+      if(p.kind==='video'){ extra.push({l:ps.muted?'Unmute':'Mute', run:()=>{ps.muted=!ps.muted;}}); extra.push({l:'Replay', run:()=>{ps.t=0; ps.playing=true;}}); }
+    }
+    extra.push({l:'Back to post', n:'text', run:()=>pop()});
+    openActs(sc, extra.concat(postActs(ps,p,'media').filter(a=>a&&!/Open media|Open link/.test(a.l))), p.title);
+  }
+};
+/* simulated playback clock for the video full screen */
+setInterval(()=>{ const sc=cur(); if(!sc||sc.type!=='media') return; const p=post(sc.id); if(p.kind!=='video'||!sc.ps.playing||sc.acts) return; sc.ps.t=Math.min(p.media.dur, sc.ps.t+1); if(sc.ps.t>=p.media.dur) sc.ps.playing=false; render(); }, 1000);
+R.browser={ render(sc){ return {crumb:'stock web view', pos:'', foot:['','','Back: post'], body:`<div class="note">Stock Reddit in-app browser (web content). Rendered by the official app, not by this HUD layer.</div><div class="media tall">${art('link')}<span class="cap">${esc(sc.url)}</span></div>`}; } };
+
+/* ---- comments ---- */
+R.comments={
+  render(sc){
+    const p=post(sc.id); const foot=['Swipe: comment','Tap: actions','Back: post'];
+    if(sc.loading) return {crumb:'comments', pos:'', foot:['','','Back'], body:`<div class="center"><div class="big">Loading ${k(p.comments)} comments…</div><div class="pulse"></div></div>`};
+    if(sc.offline) return {crumb:'comments', pos:'', foot:['','Tap: retry','Back'], body:stateBody('Offline','Comments could not be loaded.','Tap: retry')};
+    const rows=commentRows(sc); const items=[{post:true}].concat(rows); if(!sc.more) items.push({more:true});
+    if(sc.focus){ const i=items.findIndex(x=>x.c&&x.c.id===sc.focus); if(i>=0) sc.sel=i; sc.focus=null; }
+    sc.sel=Math.min(sc.sel, items.length-1);
+    const locked=S.sim==='locked';
+    const html=items.map((it,i)=>{
+      const sel=i===sc.sel?'sel':'';
+      if(it.post) return `<div class="fr ${sel}"><div class="m dim"><span class="c">${p.sub} · ${p.author}</span><span>${mediaIcon(p)} ${esc(mediaLabel(p))}</span><span class="r">${k(p.comments)} cmt${locked?' · <span class="tag on">locked</span>':''}</span></div><div class="t">${esc(p.title)}</div></div>`;
+      if(it.more) return `<div class="fr ghost ${sel}"><div class="t">Load 12 more comments…</div></div>`;
+      const c=it.c; const par=c.parent?THREADS[sc.id].find(x=>x.id===c.parent):null; const col=sc.collapsed.has(c.id);
+      const kids=descendants(sc.id,c.id)+(c.hidden||0);
+      const pc=par?`<div class="pc">↳ to ${par.author}: “${esc(first(par.body,5))}”</div>`:'';
+      const meta=`${c.author}${c.op?' <span class="tag on">OP</span>':''}${c.you?' <span class="tag on">you</span>':''} · ${c.score} · ${c.age}${c.status==='sent'?' · <span class="tag on">sent</span>':''}${c.status==='failed'?' · <span class="tag on">not sent</span>':''}`;
+      const body=col?`[+] ${kids} replies hidden`:esc(c.body);
+      return `<div class="fr d${Math.min(it.depth,4)} ${it.depth?'dN':''} ${sel} ${c.deleted?'ghost':''}">${sel&&par?pc:''}<div class="m"><span class="c">${meta}</span>${kids&&!col?`<span class="r">${kids}↳</span>`:''}</div><div class="t">${body}</div></div>`;
+    }).join('');
+    return {crumb:`comments · ${p.sub}`, pos:`${sc.sel}/${items.length-1}`, foot, body:`<div class="list">${html}</div>`};
+  },
+  nav(sc,d){ if(sc.loading||sc.offline) return; const n=commentRows(sc).length+1+(sc.more?0:1); const s=sc.sel+d; if(s<0||s>=n){ toast(s<0?'Top of thread':'End of thread'); return;} sc.sel=s; },
+  tap(sc){
+    if(sc.offline){ sc.offline=S.sim==='offline'; if(sc.offline) toast('Still offline'); return; }
+    if(sc.loading) return;
+    const p=post(sc.id); const rows=commentRows(sc); const items=[{post:true}].concat(rows); if(!sc.more) items.push({more:true});
+    const it=items[sc.sel];
+    if(it.post){ openActs(sc, postActs(sc,p,'comments'), p.title); return; }
+    if(it.more){ if(S.sim==='offline'){ toast('Offline: could not load more'); return; } sc.more=true; THREADS[sc.id].push({id:'cm'+Date.now(), parent:null, author:'u/late_arrival', age:'1h', score:'5', body:'Late to this one, but the sticky note trick also works for groceries if you tape it to the fridge handle.'}); toast('Loaded 1 of 12 (demo)'); return; }
+    const c=it.c; const locked=S.sim==='locked'; const col=sc.collapsed.has(c.id); const d=S.drafts['reply:'+c.id];
+    const kids=descendants(sc.id,c.id)+(c.hidden||0);
+    openActs(sc, [
+      {l:'Reply to this comment', n:c.deleted?'deleted':locked?'locked':d?'draft':'', dis:c.deleted||locked, why:c.deleted?'Cannot reply to a deleted comment':'Thread is locked', run:()=>compose({kind:'comment', id:c.id, post:sc.id})},
+      {l:'Read full comment', n:`~${pageCount(c.body,8)} pg`, run:()=>push({type:'readc', pid:sc.id, cid:c.id, page:0})},
+      c.status==='failed'?{l:'Retry send', run:()=>{ c.status='sent'; toast('Sent (demo retry)'); }}:null,
+      {l:voteState(c.id)>0?'Remove upvote':'Upvote', run:()=>{S.votes[c.id]=voteState(c.id)>0?0:1; toast('Local only');}},
+      {l:voteState(c.id)<0?'Remove downvote':'Downvote', run:()=>{S.votes[c.id]=voteState(c.id)<0?0:-1; toast('Local only');}},
+      {l:S.saved[c.id]?'Unsave':'Save comment', run:()=>{S.saved[c.id]=!S.saved[c.id]; toast(S.saved[c.id]?'Saved':'Unsaved');}},
+      kids?{l:col?`Expand ${kids} replies`:`Collapse ${kids} replies`, run:()=>{ col?sc.collapsed.delete(c.id):sc.collapsed.add(c.id); }}:null,
+      c.parent?{l:'Go to parent', n:THREADS[sc.id].find(x=>x.id===c.parent).author, run:()=>{ sc.focus=c.parent; }}:null,
+      c.you?{l:'Delete my comment', n:'proposed', run:()=>toast('Proposed: native delete not verified')}:{l:'Report', n:'proposed', run:()=>toast('Proposed: native report not verified')},
+      c.you?null:{l:'Block user', n:'proposed', run:()=>toast('Proposed: native block not verified')},
+    ], c.author);
+  }
+};
+R.readc={
+  render(sc){ const c=THREADS[sc.pid].find(x=>x.id===sc.cid); const par=parentOf(sc.cid, sc.pid);
+    return {crumb:`comment · ${c.author}`, pos:'', foot:['Swipe: page','Tap: reply','Back: thread'], text:c.body,
+      body:`${par?`<div class="ctx">↳ to <b>${par.author}</b>: ${esc(first(par.body,14))}</div>`:''}<div class="meta">${c.author}${c.op?' <span class="tag on">OP</span>':''} · ${c.score} · ${c.age}</div><div class="page" id="pg" style="margin-top:6px"></div>`}; },
+  nav(sc,d){ const s=sc.page+d; if(s<0||s>=(sc.pages||1)){ toast(s<0?'First page':'Last page'); return;} sc.page=s; },
+  tap(sc){ const c=THREADS[sc.pid].find(x=>x.id===sc.cid); openActs(sc,[{l:'Reply to this comment', dis:S.sim==='locked', why:'Thread is locked', run:()=>compose({kind:'comment', id:c.id, post:sc.pid})},{l:'Back to thread', run:()=>pop()}], c.author); }
+};
+
+/* ---- compose, preview, send (unchanged model: exact parent, phone editor, explicit Send) ---- */
+function targetCtx(t){
+  if(t.kind==='post'){ const p=post(t.id); return {head:'Replying to the post', quote:`<b>${p.author}</b> in ${p.sub}: ${esc(p.title)}`, pid:p.id}; }
+  const c=THREADS[t.post].find(x=>x.id===t.id); return {head:`Replying to ${c.author}'s comment`, quote:`<b>${c.author}</b>: ${esc(first(c.body,16))}`, pid:t.post};
+}
+R.compose={
+  render(sc){ const x=targetCtx(sc.target); const p=post(x.pid);
+    return {crumb:x.head, plain:true, pos:`${sc.text.length} ch`, foot:['Phone: type','Tap: preview','Back: keep draft'], editor:true,
+      body:`<div class="ctx">${x.quote}</div><div class="note dim2">${esc(p.sub)} · ${esc(first(p.title,8))}</div><div class="editor focus">${sc.text?esc(sc.text):'<span class="ph">Type on the phone (Keyboard &amp; remote). Enter adds a line; nothing is sent until you choose Send.</span>'}<span class="caret"></span></div>`}; },
+  tap(sc){ openActs(sc,[
+    {l:'Preview', n:sc.text.trim()?'':'empty', dis:!sc.text.trim(), why:'Write something first', run:()=>{ S.drafts[sc.key]=sc.text; push({type:'preview', target:sc.target, key:sc.key, text:sc.text, page:0, status:'idle'}); }},
+    {l:'Discard draft', n:sc.text?'confirm':'', run:()=>{ if(!sc.text){ pop(); return; } openActs(sc,[{l:'Yes, discard', run:()=>{ delete S.drafts[sc.key]; pop(); toast('Draft discarded'); }},{l:'No, keep writing', run:()=>{}}],'Discard this draft?'); }},
+  ], 'Composer'); },
+  back(sc){ if(sc.text.trim()) { S.drafts[sc.key]=sc.text; toast('Draft kept'); } pop(); }
+};
+R.preview={
+  render(sc){ const x=targetCtx(sc.target); const st=sc.status;
+    const crumb=st==='sending'?'Sending…':st==='sent'?'Sent':st==='failed'?'Not sent':'Preview';
+    const banner=st==='sending'?`<div class="note"><b>Sending…</b> tap is ignored until this finishes.</div><div class="pulse"></div>`:st==='failed'?`<div class="note"><span class="warn">${esc(sc.err)}</span></div><div class="note">Your draft is kept.</div>`:'';
+    return {crumb, pos:'', foot:['Swipe: page',st==='sending'?'':'Tap: Send / Edit','Back: editor'], text:sc.text,
+      body:`<div class="ctx">${x.quote}</div><div class="meta">${x.head} · as <b>u/you</b></div>${banner}<div class="page" id="pg" style="margin-top:6px"></div>`}; },
+  nav(sc,d){ const s=sc.page+d; if(s<0||s>=(sc.pages||1)) return; sc.page=s; },
+  tap(sc){
+    if(sc.status==='sending'){ log('tap ignored while sending (no duplicate send)'); return; }
+    const sendAct={l:sc.status==='failed'?'Retry send':'Send', n:'explicit', run:()=>send(sc)};
+    const acts=[ S.sim==='expired'&&sc.status==='failed'?{l:'Sign in on glasses', n:'phone keyboard', run:()=>push({type:'signin', sel:0, why:'Your session expired'})}:sendAct,
+      {l:'Edit', run:()=>pop()}, {l:'Discard', run:()=>openActs(sc,[{l:'Yes, discard', run:()=>{ delete S.drafts[sc.key]; pop(); pop(); toast('Draft discarded'); }},{l:'No, keep it', run:()=>{}}],'Discard this reply?')} ];
+    openActs(sc, acts, 'Reply');
+  },
+  back(sc){ pop(); }
+};
+function send(sc){
+  if(S.sendLock) { log('send blocked: already sending'); return; }
+  S.sendLock=true; sc.status='sending'; render();
+  setTimeout(()=>{
+    S.sendLock=false;
+    const sim=S.sim; let err=null;
+    if(sim==='offline') err='Offline: the reply could not be sent.';
+    else if(sim==='ratelimit') err='Rate limited by Reddit. Try again in a few minutes.';
+    else if(sim==='expired') err='Your login expired. Sign in again to send.';
+    else if(sim==='sendfail'&&!S.failedOnce){ S.failedOnce=true; err='Reddit returned an error. Nothing was posted.'; }
+    if(err){ sc.status='failed'; sc.err=err; render(); return; }
+    const t=sc.target; const pid=t.kind==='post'?t.id:t.post; const parent=t.kind==='post'?null:t.id;
+    const id='you'+Date.now(); const list=THREADS[pid]||(THREADS[pid]=[]);
+    const idx=parent?list.findIndex(c=>c.id===parent)+1:list.length; list.splice(idx,0,{id, parent, author:'u/you', you:true, age:'now', score:'1', body:sc.text, status:'sent'});
+    delete S.drafts[sc.key]; sc.status='sent'; toast('Sent');
+    /* return to the thread focused on the new comment; keep the originating screens below */
+    S.stack.pop(); S.stack.pop(); const below=cur();
+    if(below.type==='comments'&&below.id===pid){ below.focus=id; render(); } else openComments(pid, id);
+  }, 900);
+}
+
+/* ---- communities / search / inbox / profile / saved / settings / sign-in / create ---- */
+function rowsScreen(sc, items, crumb, foot){
+  sc.sel=Math.min(sc.sel, items.length-1);
+  return {crumb, pos:`${sc.sel+1}/${items.length}`, foot, body:`<div class="list">${items.map((it,i)=>`<div class="mr ${i===sc.sel?'sel':''} ${it.ghost?'ghost':''}"><span>${it.l}</span>${it.v?`<span class="v">${it.v}</span>`:''}</div>`).join('')}</div>`};
+}
+R.communities={
+  items(sc){ return COMMUNITIES.map(c=>({l:c.n, v:`${c.m}${S.joined.has(c.n)?' · joined':''}`, c})); },
+  render(sc){ return rowsScreen(sc, R.communities.items(sc), 'communities', ['Swipe: community','Tap: open','Back: menu']); },
+  nav(sc,d){ const n=COMMUNITIES.length; sc.sel=(sc.sel+d+n)%n; },
+  tap(sc){ const c=COMMUNITIES[sc.sel]; openActs(sc,[{l:'Browse posts', run:()=>{ FEEDS.community.ids=POSTS.filter(p=>p.sub===c.n).map(p=>p.id); delete S.feedCache['community'+c.n]; openFeed('community', c.n); }},{l:S.joined.has(c.n)?'Leave':'Join', n:'local', run:()=>{ S.joined.has(c.n)?S.joined.delete(c.n):S.joined.add(c.n); }},{l:'Create post here', run:()=>push({type:'create', step:1, sel:0, kind:'Text', community:c.n, title:'', body:'', url:''})}], c.n); }
+};
+R.search={
+  render(sc){
+    if(sc.results){ const foot=['Swipe: result','Tap: open post','Back: search'];
+      if(sc.offline) return {crumb:`search · ${esc(sc.q)}`, pos:'', foot:['','Tap: retry','Back'], body:stateBody('Offline','Search needs a connection.','Tap: retry')};
+      if(!sc.results.length) return {crumb:`search · ${esc(sc.q)}`, pos:'', foot:['','','Back: search'], body:stateBody('No results',`Nothing matched “${sc.q}” in ${sc.scope}. Try another word or scope.`,'')};
+      return rowsScreen(sc, sc.results.map(p=>({l:esc(p.title), v:`${p.sub} · ${mediaIcon(p)}`})), `${sc.scope} · “${esc(sc.q)}”`, foot); }
+    const recents=['walnut desk','ISS transit','build cache'];
+    return {crumb:'search', pos:sc.scope||'posts', foot:['Swipe: recent','Tap: search','Back: menu'], editor:true,
+      body:`<div class="editor focus" style="flex:none;min-height:2.4em">${sc.q?esc(sc.q):'<span class="ph">Type on the phone…</span>'}<span class="caret"></span></div><div class="note dim2">Recent</div><div class="list">${recents.map((r,i)=>`<div class="mr ${i===sc.sel?'sel':''}"><span>${r}</span></div>`).join('')}</div>`};
+  },
+  nav(sc,d){ const n=sc.results?sc.results.length:3; if(!n) return; sc.sel=(sc.sel+d+n)%n; },
+  tap(sc){
+    if(sc.results){ if(sc.offline){ sc.offline=S.sim==='offline'; return; } if(!sc.results.length) return; openPost(sc.results[sc.sel].id); return; }
+    const q=sc.q||['walnut desk','ISS transit','build cache'][sc.sel];
+    openActs(sc,[{l:`Search “${q}”`, run:()=>{ sc.q=q; sc.scope=sc.scope||'posts'; sc.offline=S.sim==='offline'; sc.results=sc.scope==='posts'?POSTS.filter(p=>(p.title+' '+p.body).toLowerCase().includes(q.split(' ')[0].toLowerCase())):[]; sc.sel=0; }},
+      {l:`Scope: ${sc.scope||'posts'}`, n:'cycle', run:()=>{ sc.scope={posts:'communities',communities:'people',people:'posts'}[sc.scope||'posts']; }},
+      {l:'Clear', run:()=>{ sc.q=''; }}],'Search');
+  },
+  back(sc){ if(sc.results){ sc.results=null; return; } pop(); }
+};
+R.inbox={
+  render(sc){ const items=INBOX.map(n=>({l:`${n.who} ${n.what}`, v:`${n.where}${n.unread&&!S.inboxRead.has(n.id)?' · <span class="tag on">new</span>':''}`, n}));
+    return rowsScreen(sc, items, 'inbox', ['Swipe: message','Tap: open','Back: menu']); },
+  nav(sc,d){ sc.sel=(sc.sel+d+INBOX.length)%INBOX.length; },
+  tap(sc){ const n=INBOX[sc.sel]; openActs(sc,[{l:'Open thread', n:n.cid?'at the comment':'', run:()=>{ S.inboxRead.add(n.id); openComments(n.post, n.cid); }},{l:'Mark read', run:()=>{ S.inboxRead.add(n.id); }}], n.text); }
+};
+R.profile={
+  items:()=>[{l:'u/you', v:'1,284 karma · 2y'},{l:'My posts', v:'3'},{l:'My comments', v:'41'},{l:'Saved', v:String(Object.values(S.saved).filter(Boolean).length)},{l:'Settings', v:''},{l:'Sign out', v:'confirm'}],
+  render(sc){ return rowsScreen(sc, R.profile.items(), 'profile', ['Swipe: row','Tap: open','Back: menu']); },
+  nav(sc,d){ const n=6; sc.sel=(sc.sel+d+n)%n; },
+  tap(sc){ const i=sc.sel; if(i===3) push({type:'saved', sel:0}); else if(i===4) push({type:'settings', sel:0}); else if(i===5) openActs(sc,[{l:'Yes, sign out', run:()=>{ S.sim='signedout'; document.getElementById('sim').value='signedout'; push({type:'signin', sel:0, why:'Signed out'}); }},{l:'No', run:()=>{}}],'Sign out of Reddit on the glasses?'); else if(i===1) toast('Would open your posts (same feed layout)'); else if(i===2) toast('Would open your comments'); }
+};
+R.saved={
+  render(sc){ const ids=Object.keys(S.saved).filter(k=>S.saved[k]); const items=ids.map(id=>{ const p=post(id); if(p) return {l:esc(p.title), v:`${p.sub} · ${mediaIcon(p)}`, p}; const c=Object.values(THREADS).flat().find(x=>x.id===id); return {l:esc(first(c.body,10)), v:`comment · ${c.author}`}; });
+    if(!items.length) return {crumb:'saved', pos:'', foot:['','','Back'], body:stateBody('Nothing saved','Use Save in a post or comment action menu. Saved items appear here.','')};
+    return rowsScreen(sc, items, 'saved', ['Swipe: item','Tap: open post','Back: menu']); },
+  nav(sc,d){ const n=Object.values(S.saved).filter(Boolean).length; if(n) sc.sel=(sc.sel+d+n)%n; },
+  tap(sc){ const ids=Object.keys(S.saved).filter(k=>S.saved[k]); const p=post(ids[sc.sel]); if(p) openPost(p.id); }
+};
+R.settings={
+  items:()=>[{l:'Text size', v:{0.88:'S',1:'M',1.14:'L'}[S.k]||'M'},{l:'Preview lines', v:String(S.pl)},{l:'Hide sensitive media', v:S.hideSensitive?'on':'off'},{l:'Open media by', v:S.route==='swipe'?'swipe':'tap'},{l:'Reduce motion', v:S.rm?'on':'off'},{l:'Autoplay video on open', v:'off · proposed'},{l:'Auto-open phone keyboard', v:'proposed'},{l:'Account', v:'u/you'}],
+  render(sc){ return rowsScreen(sc, R.settings.items(), 'settings', ['Swipe: setting','Tap: change','Back: menu']); },
+  nav(sc,d){ const n=8; sc.sel=(sc.sel+d+n)%n; },
+  tap(sc){ const i=sc.sel;
+    if(i===0){ S.k={0.88:1,1:1.14,1.14:0.88}[S.k]||1; document.getElementById('tsz').value=String(S.k); }
+    else if(i===1) S.pl=S.pl%3+1; else if(i===2) S.hideSensitive=!S.hideSensitive;
+    else if(i===3){ setRoute(S.route==='swipe'?'tap':'swipe'); }
+    else if(i===4) S.rm=!S.rm;
+    else if(i===5) toast('Proposed: would start playback on explicit open');
+    else if(i===6) toast('Proposed hub preference, not built'); else push({type:'profile', sel:0}); }
+};
+R.signin={
+  render(sc){ return {crumb:'account', pos:'', foot:['Swipe: option','Tap: choose','Back'], body:`<div class="center" style="justify-content:flex-start;gap:8px"><div class="big">${esc(sc.why||'Signed out')}</div><div class="note">Reddit on the glasses signs in with its own native screen. The Nexus phone keyboard types the password; the token stays in Reddit on the glasses.</div><div class="list" style="flex:none">${['Open Reddit sign-in (glasses)','Browse signed out'].map((l,i)=>`<div class="mr ${i===sc.sel?'sel':''}"><span>${l}</span>${i===0?'<span class="v">phone keyboard</span>':''}</div>`).join('')}</div><div class="note dim2">Design proposal: the hand-off to the native sign-in screen is not verified by this mockup.</div></div>`}; },
+  nav(sc,d){ sc.sel=(sc.sel+d+2)%2; },
+  tap(sc){ if(sc.sel===0){ S.sim='none'; document.getElementById('sim').value='none'; toast('Signed in (demo)'); pop(); } else pop(); }
+};
+const CREATE_STEPS=['community','type','title','body','review'];
+R.create={
+  render(sc){
+    const step=CREATE_STEPS[sc.step]; const crumb=`create post · ${step}`; const pos=`${sc.step+1}/5`;
+    if(step==='community'){ const items=COMMUNITIES.filter(c=>S.joined.has(c.n)).map(c=>({l:c.n, v:c.m})); return rowsScreen(sc, items, crumb, ['Swipe: community','Tap: choose','Back: menu']); }
+    if(step==='type'){ return rowsScreen(sc, [{l:'Text post', v:''},{l:'Link post', v:''}], `${crumb} · ${esc(sc.community)}`, ['Swipe: type','Tap: choose','Back: community']); }
+    if(step==='title'){ return {crumb, pos, editor:true, foot:['Phone: type','Tap: next','Back: keep draft'], body:`<div class="note dim2">${esc(sc.community)} · ${sc.kind} post · title</div><div class="editor focus" style="flex:none;min-height:3em">${sc.title?esc(sc.title):'<span class="ph">Title (required)</span>'}<span class="caret"></span></div>`}; }
+    if(step==='body'){ const isLink=sc.kind==='Link'; return {crumb, pos, editor:true, foot:['Phone: type','Tap: review','Back: title'], body:`<div class="note dim2">${esc(sc.community)} · ${esc(first(sc.title,8))}</div><div class="editor focus">${(isLink?sc.url:sc.body)?esc(isLink?sc.url:sc.body):`<span class="ph">${isLink?'URL (required)':'Body (optional). Enter adds a line.'}</span>`}<span class="caret"></span></div>`}; }
+    const st=sc.status; const banner=st==='sending'?`<div class="note"><b>Posting…</b></div><div class="pulse"></div>`:st==='failed'?`<div class="note"><span class="warn">${esc(sc.err)}</span> Draft kept.</div>`:st==='sent'?`<div class="note"><span class="tag on">posted</span> (demo) Your post would now appear in ${esc(sc.community)}.</div>`:'';
+    return {crumb, pos, foot:['Swipe: page','Tap: Post / Edit','Back: body'], text:sc.kind==='Link'?sc.url:(sc.body||'(no body)'),
+      body:`<div class="meta">${esc(sc.community)} · ${sc.kind} post · as <b>u/you</b></div><div class="rtitle" style="-webkit-line-clamp:2">${esc(sc.title)}</div>${banner}<div class="page" id="pg"></div>`};
+  },
+  nav(sc,d){ const step=CREATE_STEPS[sc.step]; if(step==='community'){ const n=COMMUNITIES.filter(c=>S.joined.has(c.n)).length; sc.sel=(sc.sel+d+n)%n; } else if(step==='type') sc.sel=(sc.sel+d+2)%2; else if(step==='review'){ const s=sc.page+d; if(s>=0&&s<(sc.pages||1)) sc.page=s; } },
+  tap(sc){ const step=CREATE_STEPS[sc.step];
+    if(step==='community'){ sc.community=COMMUNITIES.filter(c=>S.joined.has(c.n))[sc.sel].n; sc.step=1; sc.sel=0; return; }
+    if(step==='type'){ sc.kind=sc.sel===0?'Text':'Link'; sc.step=2; return; }
+    if(step==='title'){ openActs(sc,[{l:'Next: '+(sc.kind==='Link'?'URL':'body'), dis:!sc.title.trim(), why:'Title is required', run:()=>{ sc.step=3; }},{l:'Discard post', run:()=>pop()}],'Title'); return; }
+    if(step==='body'){ openActs(sc,[{l:'Review', dis:sc.kind==='Link'&&!sc.url.trim(), why:'URL is required', run:()=>{ sc.step=4; sc.page=0; sc.status='idle'; }},{l:'Discard post', run:()=>pop()}],'Body'); return; }
+    if(sc.status==='sending'){ log('tap ignored while posting'); return; }
+    if(sc.status==='sent'){ pop(); return; }
+    openActs(sc,[{l:sc.status==='failed'?'Retry post':'Post', n:'explicit', run:()=>{ if(!signedIn()){ push({type:'signin', sel:0, why:'Sign in to post'}); return; } sc.status='sending'; render(); setTimeout(()=>{ const sim=S.sim; sc.err=sim==='offline'?'Offline: not posted.':sim==='ratelimit'?'Rate limited by Reddit.':sim==='expired'?'Login expired. Sign in again.':(sim==='sendfail'&&!S.failedOnce)?(S.failedOnce=true,'Reddit returned an error. Nothing was posted.'):null; sc.status=sc.err?'failed':'sent'; render(); },900); }},
+      {l:'Edit title', run:()=>{ sc.step=2; }},{l:'Edit '+(sc.kind==='Link'?'URL':'body'), run:()=>{ sc.step=3; }},{l:'Discard post', run:()=>pop()}],'Review'); },
+  back(sc){ if(sc.step===0||sc.status==='sent'){ pop(); return; } if(sc.step===4&&sc.status==='sending') return; sc.step--; if(sc.step===0) sc.sel=0; toast('Draft kept'); }
+};
+
+/* =====================================================================
+   RENDER
+   ===================================================================== */
+function render(){
+  const sc=cur(); const out=R[sc.type].render(sc);
+  hud.className=`hud${S.rm?' rm':''}`;
+  hud.style.setProperty('--k', S.k);
+  const acts=sc.acts?`<div class="acts"><div class="ah"><span>${esc(sc.actTitle||'')}</span><span>${sc.actSel+1}/${sc.acts.length}</span></div><div class="al" id="al">${sc.acts.map((a,i)=>`<div class="act ${i===sc.actSel?'sel':''} ${a.dis?'dis':''}"><span>${esc(a.l)}</span><span class="n">${a.n?esc(a.n)+' ':''}<span class="go">tap</span></span></div>`).join('')}</div></div>`:'';
+  const foot=sc.acts?['Swipe: action','Tap: do it','Back: close']:out.foot;
+  hud.innerHTML=`<div class="top"><span class="crumb ${out.plain?'plain':''}">${out.crumb}</span><span class="pos">${out.pos||''}</span></div><div class="body">${out.body}${acts}</div><div class="foot">${S.toast?`<span class="toast">${esc(S.toast)}</span>`:`<span>${foot[0]||''}</span><span>${foot[1]||''}</span><span>${foot[2]||''}</span>`}</div>`;
+  /* text paging against the measured page box */
+  const pg=hud.querySelector('#pg');
+  if(out.post) layoutPost(sc);
+  else if(pg&&out.text!=null){ const r=fillPage(pg, out.text, sc.page||0); sc.pages=r.n; sc.page=r.i; hud.querySelector('.pos').textContent=`Page ${r.i+1}/${r.n}`; }
+  /* follow-scroll: keep the selected row inside the measured list viewport */
+  hud.querySelectorAll('.list, .al').forEach(list=>{ const sel=list.querySelector('.sel'); if(!sel) return; const top=sel.offsetTop-list.offsetTop, bot=top+sel.offsetHeight; if(top<list.scrollTop) list.scrollTop=top; else if(bot>list.scrollTop+list.clientHeight) list.scrollTop=bot-list.clientHeight; });
+  /* phone keyboard binding */
+  const ed=!!out.editor&&!sc.acts;
+  ptxt.disabled=!ed; pst.textContent=ed?'Connected to the focused glasses field':'Not connected to a glasses field'; pst.className='st'+(ed?' on':'');
+  if(ed){ const v=editorValue(sc); if(ptxt.value!==v) ptxt.value=v; }
+  const pageTxt=sc.type==='post'&&sc.pages?` · page ${sc.page+1}/${sc.pages.length}${sc.pages[sc.page].media?' (media preview)':''}`:'';
+  stateEl.textContent=`route ${S.route} · screen ${sc.type}${pageTxt} · stack ${S.stack.map(s=>s.type).join(' › ')}${sc.acts?' · actions open':''} · drafts ${Object.keys(S.drafts).length} · sim ${S.sim}`;
+  stepsEl.textContent=S.steps?`Since the feed tap on this post: ${S.steps.sw} swipe(s), ${S.steps.tp} tap(s)${S.steps.opened?`\nFull screen reached after ${S.steps.opened}`:''}`:'Open a post from the feed to count the steps to its media.';
+}
+function editorValue(sc){ if(sc.type==='compose') return sc.text; if(sc.type==='search') return sc.q; if(sc.type==='create') return CREATE_STEPS[sc.step]==='title'?sc.title:(sc.kind==='Link'?sc.url:sc.body); return ''; }
+function setEditorValue(sc, v){ if(sc.type==='compose'){ sc.text=v; S.drafts[sc.key]=v; } else if(sc.type==='search') sc.q=v; else if(sc.type==='create'){ if(CREATE_STEPS[sc.step]==='title') sc.title=v.replace(/\n/g,' '); else if(sc.kind==='Link') sc.url=v.trim(); else sc.body=v; } }
+ptxt.addEventListener('input', ()=>{ const sc=cur(); if(ptxt.disabled) return; setEditorValue(sc, ptxt.value); render(); ptxt.focus(); });
+ptxt.addEventListener('keydown', e=>{ e.stopPropagation(); if(e.key==='Enter') log('Enter in phone field: newline only, nothing sent'); });
+
+/* ---- scaling: whole HUD scales with its wrapper width; bottom never clipped ---- */
+function rescale(){ const s=wrap.clientWidth/480; hud.style.transform=`scale(${s})`; }
+new ResizeObserver(rescale).observe(wrap); rescale();
+
+/* ---- review controls ---- */
+document.querySelectorAll('.pad button').forEach(b=>b.addEventListener('click', ()=>{ const k=b.dataset.k;
+  if(k==='prev') nav(-1,'button'); else if(k==='next') nav(1,'button'); else if(k==='tap') tap(); else if(k==='back') back();
+  else if(k==='pair'){ nav(1,'DPAD_RIGHT'); setTimeout(()=>nav(1,'DPAD_DOWN'),40); } }));
+document.addEventListener('keydown', e=>{
+  const t=e.target; if(t&&(t.tagName==='TEXTAREA'||t.tagName==='INPUT'||t.tagName==='SELECT')) return;
+  const m={ArrowLeft:[-1,'ArrowLeft'],ArrowUp:[-1,'ArrowUp'],ArrowRight:[1,'ArrowRight'],ArrowDown:[1,'ArrowDown']}[e.key];
+  if(m){ e.preventDefault(); nav(m[0],m[1]); } else if(e.key==='Enter'||e.key===' '){ e.preventDefault(); tap(); } else if(e.key==='Escape'){ e.preventDefault(); back(); }
+});
+function setRoute(r){ S.route=r; document.querySelector(`#routes input[value="${r}"]`).checked=true; render(); }
+document.getElementById('routes').addEventListener('change', e=>{ setRoute(e.target.value); });
+document.getElementById('sim').addEventListener('change', e=>{ S.sim=e.target.value; S.failedOnce=false; render(); });
+document.getElementById('tsz').addEventListener('change', e=>{ S.k=parseFloat(e.target.value); render(); });
+document.getElementById('scene').addEventListener('change', e=>{ wrap.classList.toggle('scene', e.target.checked); });
+
+/* ---- flow chooser ---- */
+function feedAt(i){ openFeed('popular'); cur().sel=i; }
+const FLOWS=[
+  ['menu','Main menu (with Sort feed)', ()=>{ openFeed('popular'); push({type:'menu', sel:0}); }],
+  ['home','Home feed', ()=>openFeed('home')], ['popular','Popular feed', ()=>openFeed('popular')], ['latest','Latest feed', ()=>openFeed('latest')],
+  ['community','Community r/space', ()=>{ FEEDS.community.ids=['p2','p10']; openFeed('community','r/space'); }],
+  ['feed-gallery','Feed: gallery post selected (p4)', ()=>feedAt(3)],
+  ['feed-video','Feed: video post selected (p5)', ()=>feedAt(4)],
+  ['feed-long','Feed: long title, text only (p9)', ()=>feedAt(8)],
+  ['post-text','Post: long text only (p3)', ()=>{ feedAt(2); openPost('p3', true); }],
+  ['post-gallery','Post: text pages then gallery preview (p4)', ()=>{ feedAt(3); openPost('p4', true); }],
+  ['post-video','Post: short text + video preview on page 1 (p5)', ()=>{ feedAt(4); openPost('p5', true); }],
+  ['post-image','Post: image (p2)', ()=>{ feedAt(1); openPost('p2', true); }],
+  ['post-gif','Post: GIF (p7)', ()=>{ feedAt(6); openPost('p7', true); }],
+  ['post-link','Post: link (p6)', ()=>{ feedAt(5); openPost('p6', true); }],
+  ['acts','Post action menu', ()=>{ feedAt(2); openPost('p3', true); tap(); }],
+  ['fs-gallery','Full screen: gallery', ()=>{ feedAt(3); openPost('p4', true); const ps=cur(); ps.page=99; render(); openFull(ps, post('p4')); }],
+  ['fs-video','Full screen: video (paused)', ()=>{ feedAt(4); openPost('p5', true); openFull(cur(), post('p5')); }],
+  ['comments','Comments (nested)', ()=>{ feedAt(2); openPost('p3', true); openComments('p3'); }],
+  ['cacts','Comment action menu', ()=>{ feedAt(2); openPost('p3', true); openComments('p3'); cur().sel=2; tap(); }],
+  ['rpost','Reply to post', ()=>demoReplyPost()], ['rcomment','Reply to a comment', ()=>demoReplyComment()],
+  ['search','Search', ()=>{ openFeed('popular'); push({type:'search', sel:0, q:'', results:null}); }],
+  ['inbox','Inbox', ()=>{ openFeed('popular'); push({type:'inbox', sel:0}); }],
+  ['profile','Profile', ()=>{ openFeed('popular'); push({type:'profile', sel:0}); }],
+  ['saved','Saved', ()=>{ openFeed('popular'); S.saved.p4=true; push({type:'saved', sel:0}); }],
+  ['settings','Settings', ()=>{ openFeed('popular'); push({type:'settings', sel:0}); }],
+  ['signin','Sign-in (signed out)', ()=>{ openFeed('popular'); push({type:'signin', sel:0, why:'Signed out'}); }],
+  ['create','Create post', ()=>{ openFeed('popular'); push({type:'create', step:0, sel:0, kind:'Text', community:'', title:'', body:'', url:''}); }],
+  ['st-loading','State: loading', ()=>{ S.sim='slow'; document.getElementById('sim').value='slow'; delete S.feedCache.home; openFeed('home'); }],
+  ['st-empty','State: empty feed', ()=>{ FEEDS.community.ids=[]; delete S.feedCache['communityr/emptyville']; openFeed('community','r/emptyville'); }],
+  ['st-offline','State: offline', ()=>{ S.sim='offline'; document.getElementById('sim').value='offline'; delete S.feedCache.latest; openFeed('latest'); }],
+  ['st-locked','State: locked thread', ()=>{ S.sim='locked'; document.getElementById('sim').value='locked'; feedAt(2); openPost('p3', true); openComments('p3'); }],
+  ['st-expired','State: login expired on send', ()=>{ S.sim='expired'; document.getElementById('sim').value='expired'; demoReplyComment(); }],
+  ['st-sensitive','State: sensitive image (p8)', ()=>{ feedAt(7); openPost('p8', true); }],
+  ['st-media','State: media unavailable (p2)', ()=>{ S.sim='media'; document.getElementById('sim').value='media'; feedAt(1); openPost('p2', true); }],
+];
+const flow=document.getElementById('flow'); FLOWS.forEach(f=>{ const o=document.createElement('option'); o.value=f[0]; o.textContent=f[1]; flow.appendChild(o); });
+flow.addEventListener('change', ()=>{ const f=FLOWS.find(x=>x[0]===flow.value); S.feedCache={}; S.sim='none'; S.failedOnce=false; document.getElementById('sim').value='none'; f[2](); render(); });
+function demoReplyPost(){ S.feedCache={}; feedAt(2); openPost('p3', true); openComments('p3'); cur().sel=0; tap(); const sc=cur(); sc.actSel=sc.acts.findIndex(a=>a.l==='Reply to post'); render(); }
+function demoReplyComment(){ S.feedCache={}; feedAt(2); openPost('p3', true); openComments('p3'); cur().sel=2; tap(); render(); }
+document.getElementById('d-rp').addEventListener('click', demoReplyPost);
+document.getElementById('d-rc').addEventListener('click', demoReplyComment);
+document.getElementById('d-cmp').addEventListener('click', ()=>{ S.feedCache={}; feedAt(3); flow.value='feed-gallery'; log(`compare: now Tap to open p4, swipe to the preview, then ${S.route==='swipe'?'swipe once more':'tap once'}; the step counter records the route`); render(); });
+
+flow.value='popular';
+openFeed('popular');
+</script>
+</body>
+</html>

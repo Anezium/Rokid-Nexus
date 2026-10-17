@@ -90,6 +90,9 @@ called from `onNexusSkillInvoked`. After install, approve the plugin again (the
 catalog adds the `skills_provider` grant), then allow **Count words** for
 Assistant on the plugin's access screen. The call never opens the plugin.
 
+The demo route (`DEMO_ACTIVITY` intents) runs through the SDK's
+`NexusGuidancePlanner`, the planner Navigation and Transit use.
+
 To start a plugin, copy this module, rename its package and plugin ID consistently,
 then replace the sample service and settings content. Read
 [PLUGINS.md](../../docs/PLUGINS.md) for the headless and design-kit rules and

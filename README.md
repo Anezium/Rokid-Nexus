@@ -32,25 +32,27 @@ approval, and draw on the HUD through declarative surfaces — cards, synced
 timed lines, media decks, real images, and compiled interactive Ink pages. They
 can also speak, listen, and see:
 speech in and out, and the glasses camera, are platform capabilities the wearer
-grants one at a time and can take back.
+grants one at a time and can take back. And they can work for each other: with
+Skills, a plugin publishes typed operations that an approved assistant invokes
+through the phone hub, each operation allowed by the wearer on its own.
 
 ## Plugins
 
 | Plugin | What it puts on the HUD |
 |---|---|
-| **[Assistant](plugins/assistant/)** | Hold the touchpad and ask out loud: your words appear as you speak them, then the answer arrives on the band, in your ear, or as a native Ink page with charts and interactive controls — and it can look through the glasses camera to tell you what you are seeing. Ask it to remind you, set a timer, or take a note, and it does: the phone rings at the hour and the glasses raise it. It can also add, read, and safely delete phone-calendar events. Runs on your own ChatGPT plan, or any AI provider you bring a key for — OpenAI, OpenRouter, MiniMax, DeepSeek, GLM, Hermes, or your own server |
+| **[Assistant](plugins/assistant/)** | Hold the touchpad and ask out loud: your words appear as you speak them, then the answer arrives on the band, in your ear, or as a native Ink page with charts and interactive controls — and it can look through the glasses camera to tell you what you are seeing. Ask it to remind you, set a timer, or take a note, and it does: the phone rings at the hour and the glasses raise it. It can also add, read, and safely delete phone-calendar events, answer from a folder of documents on the phone — PDFs and images included, cited by file and page — and ask other plugins, such as Transit's departures or Media Deck's pause, through operations you approve. Runs on your own ChatGPT plan, or any AI provider you bring a key for — OpenAI, OpenRouter, MiniMax, DeepSeek, GLM, Hermes, or your own server |
 | **[Relay](plugins/relay/)** | Phone messages as a band over whatever you were looking at, answered out loud or typed from the phone — plus an inbox for the ones you let go |
-| **[Navigation](plugins/nav/)** | The route Google Maps or Citymapper is guiding you on, kept on the glasses as one live activity: the next turn and its distance, or the walk to the stop, the line to board and the stops left |
+| **[Navigation](plugins/nav/)** | The route Google Maps, Citymapper, OsmAnd, Organic Maps or Yandex Maps is guiding you on, kept on the glasses as one live activity: the next turn and its distance, or the walk to the stop, the line to board and the stops left |
 | **[Lens](plugins/lens/)** | Google-Lens-style live translation: the glasses camera streams to the phone, ML Kit OCR + translation run there (offline), translated overlays come back in real time — plus a freeze mode for full-resolution stills |
 | **[Feeds](plugin-feeds/)** | Bluesky and X timelines — browse posts, open threads, and view the actual photos full-screen |
-| **[Transit](plugins/transit/)** | Nearby stops and live departures (Transitous/MOTIS), with favourites |
+| **[Transit](plugins/transit/)** | Nearby stops and live departures (Transitous/MOTIS), with favourites — and "take me home" guidance and departures Assistant can ask for |
 | **[Lyrics](plugins/lyrics/)** | Time-synced lyrics for whatever is playing on the phone, from Spotify/Musixmatch/Netease/LrcLib |
-| **[Media Deck](plugins/media/)** | Universal now-playing surface with album art and transport controls |
+| **[Media Deck](plugins/media/)** | Universal now-playing surface with album art and transport controls; Assistant can ask what is playing and pause it |
 | **[Photos Sync](plugins/photosync/)** | Not a HUD plugin: copies the photos and videos you shoot on the glasses into the phone gallery by itself, and gives you the switches for it |
-| **[Patcher](plugins/patcher/)** | Phone-only APK patching; YouTube is its first target. Runs in the background and returns verified output to the hub for installation |
+| **[Patcher](plugins/patcher/)** | Phone-only APK patching for YouTube and Reddit (Preview), with both guided setups in Patcher. Runs locally and returns verified output to the hub for installation |
 | **[Wireless ADB](plugins/wireless-adb/)** | Enables Android's real wireless debugging service and creates a short-lived pairing command, so a trusted computer can connect to the glasses over the LAN without a cable or Settings automation |
 | **[Tasker](plugins/tasker/)** | Your named Tasker tasks on the HUD — swipe, tap, and the phone runs the automation. The glasses are the remote, Tasker does the work |
-| **[Sample](plugins/sample/)** | Minimal copyable reference plugin |
+| **[Sample](plugins/sample/)** | Minimal copyable reference plugin, with a copyable skill operation |
 
 And ten that are not in this repository at all, written by four other authors
 against the same SDK and listed in the same Store:
@@ -84,9 +86,12 @@ a plugin opens a field, the screen comes forward by itself and leaves once the
 field is done. Password fields are marked sensitive,
 the phone window becomes secure, and Nexus never mirrors the editor's existing
 text. These are trusted hub-to-hub controls, not plugin capabilities.
-**Glasses apps → Set up YouTube** downloads official Morphe MicroG-RE, imports
-your patched YouTube APK or launches Patcher, and installs or updates them over the Rokid link.
+**Patcher → YouTube** (the Patcher plugin's settings) guides the YouTube setup:
+the hub downloads official Morphe MicroG-RE, takes the patched YouTube APK back
+from Patcher or an explicit import, and installs or updates them over the Rokid link.
+Glasses apps keeps listing and opening the installed YouTube like any native app.
 Sign in on the glasses with the phone keyboard; account data stays in MicroG.
+**Patcher → Reddit** works the same way, without MicroG, and is a Preview.
 The glasses launcher lists native apps alongside phone plugins. See
 [YouTube setup](docs/YOUTUBE_GLASSES.md) for APK requirements and validation.
 
@@ -102,13 +107,21 @@ The glasses launcher lists native apps alongside phone plugins. See
 
 <p align="center"><i>The phone hub: your plugins, glasses-app status, and one-tap updates — and the Store they install from.</i></p>
 
+<p align="center">
+  <img src="docs/assets/shot-patcher.png" width="400" alt="Patcher on the phone, offering the YouTube setup and the Reddit setup marked Preview" />
+</p>
+
+<p align="center"><i>Patcher — YouTube and Reddit are patched on the phone, then checked and installed on the glasses by Nexus.</i></p>
+
 ### Glasses launcher
 
 <p align="center">
   <img src="docs/assets/shot-glasses-launcher.png" width="270" alt="Nexus launcher on the glasses HUD, listing installed plugins" />
+  &nbsp;
+  <img src="docs/assets/shot-glasses-native-apps.png" width="270" alt="The same launcher further down, listing the Android apps installed on the glasses with their own icons, Reddit selected" />
 </p>
 
-<p align="center"><i>Triple-tap the touchpad from anywhere to bring this up — the only gesture Nexus claims. Pick a plugin, hit back to return to whatever was underneath.</i></p>
+<p align="center"><i>Triple-tap the touchpad from anywhere to bring this up — the only gesture Nexus claims. Pick a plugin, hit back to return to whatever was underneath. &nbsp;·&nbsp; The apps installed on the glasses follow the plugins, with their own icons.</i></p>
 
 ### Plugins on the HUD
 
@@ -144,6 +157,14 @@ The glasses launcher lists native apps alongside phone plugins. See
 
 <p align="center"><i>Transit — nearby stops and live departures. &nbsp;·&nbsp; Lyrics — time-synced to whatever is playing.</i></p>
 
+<p align="center">
+  <img src="docs/assets/shot-youtube.png" width="270" alt="YouTube on the glasses: one video per card, with next, open and sections hints for the touchpad" />
+  &nbsp;
+  <img src="docs/assets/shot-reddit.png" width="270" alt="Reddit Preview on the glasses: a green menu of Home, Popular, Latest, Communities, Search and Inbox" />
+</p>
+
+<p align="center"><i>YouTube, patched by Patcher for the touchpad and the ring. &nbsp;·&nbsp; Reddit, in Preview, with its own green HUD.</i></p>
+
 ## Setup — a phone is all you need
 
 1. Install the Nexus phone app from this repository's
@@ -166,9 +187,10 @@ for the upstream certificate, fork build configuration, and key rotation.
 
 Trust model: any APK may request bus access, but capabilities (`surfaces`,
 `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`,
-`assistant`, `wireless_debugging`) are granted per
+`assistant`, `wireless_debugging`, `skills_provider`, `skills_client`) are granted per
 plugin by the user, keyed to package + plugin id + signing certificate. Installation alone never grants
-anything. The phone and glasses hubs also authenticate their SPP connection with
+anything. Skill operations need one more approval each, per caller, and a
+changed operation starts disabled again. The phone and glasses hubs also authenticate their SPP connection with
 an installation pairing key enrolled through the authorized Hi Rokid CXR link;
 each SPP frame has integrity and replay protection. The key is bound to the
 Hi Rokid-authorized CXR session, using its serial number, device name, or a single
@@ -200,7 +222,7 @@ A plugin is a headless phone APK against the published SDK:
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.21.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.23.0")
 }
 ```
 
@@ -216,13 +238,14 @@ registry ([plugins/README.md](plugins/README.md)).
 - `shared`: wire envelopes, paths, descriptors, capabilities, and route rules.
 - `bus-client`: the public Android SDK — `NexusPluginService`, lifecycle
   callbacks, typed card/timed-lines/media/image surfaces, notice bands and
-  activities, compiled Ink sessions, speech in and out, the NexusUi design kit,
-  and explicit hub targeting.
+  activities, compiled Ink sessions, speech in and out, skills for providers
+  and callers, the NexusUi design kit, and explicit hub targeting.
 - `ink-engine`: the bounded `.ink` compiler, data-binding engine, revisioned
   render document/patch codec, and strict compatibility limits shared by both
   hubs and the public SDK.
-- `phone-hub`: discovery, consent, identity enforcement, the Nexus Store, app
-  self-update, trusted native-app/keyboard controls, and the Rokid link.
+- `phone-hub`: discovery, consent, identity enforcement, skill routing, the
+  Nexus Store, app self-update, trusted native-app/keyboard controls, and the
+  Rokid link.
 - `glasses-hub`: the single HUD renderer/launcher anchor, the camera platform,
   native Ink renderer, Nexus IME/navigation bridge, and no-PC self-arm onboarding.
 - `plugins/` and `plugin-feeds/`: the plugin APKs, one folder per plugin with

@@ -12,7 +12,16 @@ internal object YoutubePackageInventory {
     fun result(context: Context, requestId: String): JSONObject = YoutubeSetupContract.result(
         requestId,
         Build.VERSION.SDK_INT,
-        YoutubeSetupContract.PACKAGES.map { packageName ->
+        packages(context, YoutubeSetupContract.PACKAGES),
+    )
+
+    fun redditResult(context: Context, requestId: String): JSONObject = com.anezium.rokidbus.shared.RedditSetupContract.result(
+        requestId, Build.VERSION.SDK_INT,
+        packages(context, com.anezium.rokidbus.shared.RedditSetupContract.PACKAGES),
+    )
+
+    private fun packages(context: Context, names: List<String>): List<YoutubePackage> =
+        names.map { packageName ->
             val pm = context.packageManager
             val info = try {
                 pm.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
@@ -31,6 +40,5 @@ internal object YoutubePackageInventory {
                     pm.getLaunchIntentForPackage(packageName) != null,
                 )
             }
-        },
-    )
+        }
 }

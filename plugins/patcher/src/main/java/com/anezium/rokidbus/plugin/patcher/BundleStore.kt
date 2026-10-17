@@ -90,6 +90,7 @@ class BundleStore internal constructor(
     }
     /** [activeVersion] is the bundle already loaded by [current]; it is not loaded again. */
     suspend fun checkForUpdate(activeVersion: String): Update {
+        if (!target.bundle.updatesEnabled) return Update(null, false)
         val job = coroutineContext
         val checkCancelled = { job.ensureActive() }
         val metadata = PatchPolicy.metadata(fetchText(target.bundle.metadataUrl), target)

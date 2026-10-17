@@ -2,9 +2,6 @@
 
 ## Unreleased
 
-- A copyable skill operation, `count_words`, with its catalog and handler. It
-  needs a phone hub that announces skills v1 and explicit approval of the
-  operation; the call never opens the plugin.
 - A todo example for the launcher bundle, through the public SDK only: the
   `hello:main` and `hello:todo` pages, a checklist whose rows carry `checked`
   and whose actions are typed `SetChecked` with the explicit desired state,
@@ -15,6 +12,14 @@
 - Declares `rokidbus.plugin.pages`, `rokidbus.plugin.quickActions=checklist`
   and a `checklist` glyph; no capability changes. The Applications row now opens
   `hello:main`, whose **Open the demos** row leads to the existing demos.
+
+## 1.0.5
+
+- The Hello Nexus Skills demonstration requires Nexus hubs 1.7.0 and explicit
+  approval of its operation. Word/character counting was exercised on devices.
+
+- A copyable skill operation, `count_words`, with its catalog and handler.
+- The demo route runs through the SDK's shared guidance planner.
 
 ## 1.0.4
 

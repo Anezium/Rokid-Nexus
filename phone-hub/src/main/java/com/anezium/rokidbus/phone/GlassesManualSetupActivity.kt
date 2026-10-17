@@ -1,9 +1,10 @@
 package com.anezium.rokidbus.phone
 
 import android.app.Activity
+import android.content.Context
+import android.content.Intent
 import android.graphics.Rect
 import android.graphics.Typeface
-import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -16,8 +17,11 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
+import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.SetupStage
 import java.io.Closeable
 import java.text.SimpleDateFormat
@@ -65,6 +69,16 @@ class GlassesManualSetupActivity : Activity() {
     private var pairSubmitInFlight = false
     private var lastState: GlassesManualPairingState = GlassesManualPairingState.IDLE
 
+    // Re-pair: the same screen, opened after setup by an owner whose helper keeps dying. Core
+    // readiness no longer ends it; the glasses' own pairing does.
+    private var repair = false
+    private var repairClient: BusClient? = null
+    private var repairRequestInFlight = false
+
+    // The glasses' pairing session this screen's Re-pair started, as their reply named it. Only
+    // that run is ended when the owner leaves: one started elsewhere is not this screen's to end.
+    private var pairingSessionId: String? = null
+
     // The preflight is drawn from what the lens has reported, so it has to redraw when that
     // changes — otherwise waking the glasses app leaves the screen still insisting it is down.
     // Marshalled, because these updates arrive on a Binder thread.
@@ -86,19 +100,27 @@ class GlassesManualSetupActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         BusHubService.noteGlassesSetupUserIntent()
+        repair = intent.getBooleanExtra(EXTRA_REPAIR, false) ||
+            savedInstanceState?.getBoolean(STATE_REPAIR, false) == true
         savedInstanceState?.let { saved ->
             advancedExpanded = saved.getBoolean(STATE_ADVANCED_EXPANDED, false)
             advancedEndpoint = saved.getString(STATE_ADVANCED_ENDPOINT).orEmpty()
             inlineStatus = saved.getString(STATE_INLINE_STATUS)
             inlineIsError = saved.getBoolean(STATE_INLINE_IS_ERROR, false)
+            pairingSessionId = saved.getString(STATE_PAIRING_SESSION)
         }
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
-        title = getString(R.string.guided_title)
+        title = getString(titleRes())
 
         root = NexusUi.fixedRoot(this)
         val content = NexusUi.contentColumn(this)
-        content.addView(NexusUi.wordmark(this, getString(R.string.guided_wordmark)))
+        content.addView(
+            NexusUi.wordmark(
+                this,
+                getString(if (repair) R.string.repair_pair_wordmark else R.string.guided_wordmark),
+            ),
+        )
         content.addView(BusTheme.gap(this, 16))
         stepper = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -168,13 +190,19 @@ class GlassesManualSetupActivity : Activity() {
         // business surviving in a saved bundle.
         outState.putString(STATE_INLINE_STATUS, inlineStatus)
         outState.putBoolean(STATE_INLINE_IS_ERROR, inlineIsError)
+        outState.putBoolean(STATE_REPAIR, repair)
+        outState.putString(STATE_PAIRING_SESSION, pairingSessionId)
     }
 
     override fun onDestroy() {
         engineSubscription?.let { runCatching { it.close() } }
         engineSubscription = null
-        // Leaving the wizard tears down any in-flight attempt so the glasses drop back to their HUD.
-        engine?.cancel()
+        repairClient?.close()
+        repairClient = null
+        // Leaving the wizard tears down any in-flight attempt so the glasses drop back to their HUD,
+        // and ends the self-pairing this screen started: left alone, a later Wi-Fi edge on the
+        // glasses would resume it with nobody watching. A rotation is not leaving.
+        engine?.cancel(abandonSessionId = pairingSessionId.takeIf { isFinishing })
         super.onDestroy()
     }
 
@@ -225,11 +253,17 @@ class GlassesManualSetupActivity : Activity() {
     private fun renderPreflight() {
         val preflight = currentPreflight()
         body.addView(
-            NexusUi.hero(this, 30f).apply { text = getString(R.string.guided_title) },
+            NexusUi.hero(this, 30f).apply { text = getString(titleRes()) },
             NexusUi.block(),
         )
         body.addView(BusTheme.gap(this, 12))
-        body.addView(NexusUi.cardBody(this, getString(R.string.guided_intro)), NexusUi.block())
+        body.addView(
+            NexusUi.cardBody(
+                this,
+                getString(if (repair) R.string.repair_pair_intro else R.string.guided_intro),
+            ),
+            NexusUi.block(),
+        )
         body.addView(BusTheme.gap(this, 14))
         body.addView(preflightCard(preflight), NexusUi.block())
         // Not one of the checks above, because it cannot be checked: the switch is a vendor
@@ -247,11 +281,38 @@ class GlassesManualSetupActivity : Activity() {
         if (preflight.alreadyComplete) {
             body.addView(BusTheme.gap(this, 20))
             body.addView(
-                NexusUi.statusLine(this).apply { text = getString(R.string.guided_status_success) },
+                NexusUi.statusLine(this).apply {
+                    text = getString(
+                        if (repair) R.string.repair_pair_status_paired else R.string.guided_status_success,
+                    )
+                },
                 NexusUi.block(),
             )
+            addInlineStatus()
             body.addView(BusTheme.gap(this, 12))
             body.addView(primary(getString(R.string.guided_action_cancel)) { finish() }, NexusUi.block())
+            // "Set up" is the glasses' verdict on accessibility and the grant, not on whether
+            // their helper survives a restart. This was the dead end of an owner whose helper
+            // kept dying: a success line and nothing to press.
+            body.addView(BusTheme.gap(this, 8))
+            body.addView(
+                NexusUi.textButton(
+                    this,
+                    getString(if (repair) R.string.repair_pair_again else R.string.repair_pair_offer),
+                ).apply {
+                    gravity = Gravity.CENTER
+                    setOnClickListener {
+                        if (repair) {
+                            requestSelfPairing()
+                        } else {
+                            repair = true
+                            inlineStatus = null
+                            rerenderCurrent()
+                        }
+                    }
+                },
+                NexusUi.block(),
+            )
             // Shown even when there is nothing left to do: an owner comes back here to send what
             // happened, and a successful run is still worth reading when the last one failed.
             body.addView(BusTheme.gap(this, 20))
@@ -301,6 +362,19 @@ class GlassesManualSetupActivity : Activity() {
                     gravity = Gravity.CENTER
                     setOnClickListener { rerenderCurrent() }
                 },
+                NexusUi.block(),
+            )
+        } else if (preflight.needsPairing) {
+            // The glasses drive their own Settings to the pairing screen; nobody can do that by
+            // hand on the lens. Pairing from this phone (below) revives the helper too, but only
+            // until the glasses restart, so it is the fallback rather than the offer.
+            body.addView(
+                NexusUi.cardBody(this, getString(R.string.repair_pair_needed)),
+                NexusUi.block(),
+            )
+            body.addView(BusTheme.gap(this, 14))
+            body.addView(
+                primary(getString(R.string.repair_pair_action)) { requestSelfPairing() },
                 NexusUi.block(),
             )
         } else {
@@ -397,7 +471,53 @@ class GlassesManualSetupActivity : Activity() {
             linkReady = engine != null,
             reportedStage = NexusPhoneState.glassesSetupStage,
             coreReady = NexusPhoneState.glassesCoreReady,
+            repair = repair,
+            maintenanceReady = NexusPhoneState.glassesMaintenanceReady,
         )
+
+    private fun titleRes(): Int = if (repair) R.string.repair_pair_title else R.string.guided_title
+
+    /**
+     * Asks the glasses to pair themselves again over the trusted repair route. Their own
+     * automation opens Wireless debugging and pairs locally; if that fails it may hand the last
+     * step to this phone, which only accepts it after an owner request like this one.
+     */
+    private fun requestSelfPairing() {
+        if (repairRequestInFlight) return
+        val client = repairClient ?: BusClient(
+            context = applicationContext,
+            clientId = "repair-pairing-ui",
+            // The reply is consumed by the request/reply correlation, but delivery still requires
+            // the prefix to be registered.
+            pathPrefixes = listOf(BusPaths.GLASSES_REPAIR_REPLY),
+        ) { }.also {
+            it.connect()
+            repairClient = it
+        }
+        BusHubService.noteGlassesSetupUserIntent()
+        SetupJournal.record(this, fromGlasses = false, code = "repair_pairing_requested")
+        repairRequestInFlight = true
+        inlineStatus = getString(R.string.repair_pair_asking)
+        inlineIsError = false
+        rerenderCurrent()
+        client.request(
+            BusPaths.GLASSES_REPAIR_REQUEST,
+            GlassesRepairContract.requestToJson(GlassesRepairContract.MODE_PAIR),
+            timeoutMs = GlassesRepairStatusText.REQUEST_TIMEOUT_MS,
+        ) { result ->
+            if (isDestroyed || isFinishing) return@request
+            repairRequestInFlight = false
+            val reply = result.getOrNull()
+            GlassesRepairContract.pairingSessionFromReply(reply)?.let { pairingSessionId = it }
+            inlineStatus = if (result.isSuccess) {
+                GlassesRepairStatusText.pairMessage(reply)
+            } else {
+                GlassesRepairStatusText.NO_ANSWER
+            }
+            inlineIsError = !GlassesRepairStatusText.pairIsGood(reply)
+            rerenderCurrent()
+        }
+    }
 
     private fun preflightCard(preflight: GuidedPreflight): View = NexusUi.card(this).apply {
         val host = this@GlassesManualSetupActivity
@@ -424,6 +544,7 @@ class GlassesManualSetupActivity : Activity() {
         GuidedCheckId.ACCESSIBILITY -> R.string.guided_check_accessibility
         GuidedCheckId.WIFI -> R.string.guided_check_wifi
         GuidedCheckId.DEVELOPER -> R.string.guided_check_developer
+        GuidedCheckId.SELF_PAIRING -> R.string.guided_check_self_pairing
     }
 
     /**
@@ -466,6 +587,7 @@ class GlassesManualSetupActivity : Activity() {
         GuidedCheckId.ACCESSIBILITY -> R.string.guided_check_accessibility_fail
         GuidedCheckId.WIFI -> R.string.guided_check_wifi_fail
         GuidedCheckId.DEVELOPER -> R.string.guided_check_developer_fail
+        GuidedCheckId.SELF_PAIRING -> R.string.repair_pair_needed
     }
 
     /**
@@ -951,17 +1073,24 @@ class GlassesManualSetupActivity : Activity() {
 
     private fun dp(value: Int): Int = NexusUi.dp(this, value)
 
-    private companion object {
+    companion object {
         /** The window is still resizing when focus lands; the second pass lands after it settles. */
-        const val KEYBOARD_SETTLE_MS = 250L
-        const val STEP_COUNT = 4
-        const val MAX_ENGINE_ATTACH_ATTEMPTS = 20
+        private const val KEYBOARD_SETTLE_MS = 250L
+        private const val STEP_COUNT = 4
+        private const val MAX_ENGINE_ATTACH_ATTEMPTS = 20
         /** Enough to see how the run ended without turning the screen into a log viewer. */
-        const val JOURNAL_LINES_SHOWN = 8
-        const val ENGINE_ATTACH_RETRY_MS = 150L
-        const val STATE_ADVANCED_EXPANDED = "advanced_expanded"
-        const val STATE_ADVANCED_ENDPOINT = "advanced_endpoint"
-        const val STATE_INLINE_STATUS = "inline_status"
-        const val STATE_INLINE_IS_ERROR = "inline_is_error"
+        private const val JOURNAL_LINES_SHOWN = 8
+        private const val ENGINE_ATTACH_RETRY_MS = 150L
+        private const val STATE_ADVANCED_EXPANDED = "advanced_expanded"
+        private const val STATE_ADVANCED_ENDPOINT = "advanced_endpoint"
+        private const val STATE_INLINE_STATUS = "inline_status"
+        private const val STATE_INLINE_IS_ERROR = "inline_is_error"
+        private const val STATE_REPAIR = "repair"
+        private const val STATE_PAIRING_SESSION = "pairing_session"
+        private const val EXTRA_REPAIR = "com.anezium.rokidbus.phone.extra.REPAIR_PAIRING"
+
+        /** The Re-pair glasses entry: reachable after setup, whatever the app's Developer mode. */
+        internal fun repairIntent(context: Context): Intent =
+            Intent(context, GlassesManualSetupActivity::class.java).putExtra(EXTRA_REPAIR, true)
     }
 }

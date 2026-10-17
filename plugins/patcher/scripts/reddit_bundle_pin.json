@@ -1,0 +1,8 @@
+{
+  "version": "1.39.1-rokid.3-reddit-preview.25",
+  "source_sha256": "68f18a16b5ef91e90cd61ec98f164918c59fad887f30b22183cdb83eafc697aa",
+  "asset_stem": "reddit",
+  "unpublished": false,
+  "download_url": "https://github.com/Anezium/morphe-patches/releases/download/v1.39.1-rokid.3-reddit-preview.25/patches-1.39.1-rokid.3-reddit-preview.25.mpp",
+  "baseline": "c06102d4b"
+}

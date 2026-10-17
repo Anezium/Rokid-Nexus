@@ -12,8 +12,8 @@ android {
         applicationId = "com.anezium.rokidbus.plugin.assistant"
         minSdk = 30
         targetSdk = 36
-        versionCode = 19
-        versionName = "1.5.0"
+        versionCode = 20
+        versionName = "1.5.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // ML Kit's recognizer is a native library; one ABI keeps it from multiplying the APK.

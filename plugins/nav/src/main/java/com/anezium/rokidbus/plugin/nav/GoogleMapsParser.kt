@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.nav
 
+import com.anezium.rokidbus.client.plugin.NexusGuidanceGlyphs
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 
 /**
@@ -57,7 +58,7 @@ internal object GoogleMapsParser {
             ?: return null
 
         val glyph = NavText.maneuverGlyph(instruction)
-        val arrived = glyph == "arrive" && distance == null
+        val arrived = glyph == NexusGuidanceGlyphs.ARRIVE && distance == null
         // Before the first maneuver ("Aller vers <street>") Maps gives no
         // distance. Its own verb leads then; keeping the previous step on
         // screen would show a turn that is no longer the instruction.
@@ -88,7 +89,7 @@ internal object GoogleMapsParser {
             detail = detail,
             stepKey = "${NavSource.GOOGLE_MAPS.name}|$glyph|${NavText.fold(instruction)}",
             imminent = !arrived && metres != null && metres <= IMMINENT_METRES &&
-                glyph != "straight" && glyph != NavText.ROUTE_GLYPH,
+                glyph != NexusGuidanceGlyphs.STRAIGHT && glyph != NavText.ROUTE_GLYPH,
             arrived = arrived,
             instruction = instruction,
         )
@@ -111,8 +112,8 @@ internal object GoogleMapsParser {
         val boarding = TRANSIT_BOARD.any(folded::startsWith) || TRANSIT_BOARD_KO.containsMatchIn(title)
         val line = transitLine(context) ?: TRANSIT_BOARD_KO.find(title)?.groupValues?.get(1)?.trim()
         val glyph = when {
-            arrived -> "arrive"
-            TRANSIT_WALK.any(folded::startsWith) || folded.contains("도보") -> "walk"
+            arrived -> NexusGuidanceGlyphs.ARRIVE
+            TRANSIT_WALK.any(folded::startsWith) || folded.contains("도보") -> NexusGuidanceGlyphs.WALK
             else -> transitVehicle(context) ?: line?.let(::vehicleOfLine) ?: NavText.ROUTE_GLYPH
         }
         val short = notification.shortCriticalText?.trim()
@@ -129,7 +130,7 @@ internal object GoogleMapsParser {
         val rest = parts.drop(1).filterNot { primary in it }
         // The walk's distance is its measure: "3 min - 250 m" expanded, "250 m"
         // under "3 min" in the chip, and the stop keeps the second line.
-        val measure = walkDistance?.takeIf { glyph == "walk" && it.length <= ActivitySurfaceContract.MAX_MEASURE_CHARS }
+        val measure = walkDistance?.takeIf { glyph == NexusGuidanceGlyphs.WALK && it.length <= ActivitySurfaceContract.MAX_MEASURE_CHARS }
         val detail = (rest + listOfNotNull(walkDistance.takeIf { measure == null }, title.takeIf { boarding }))
             .ifEmpty { listOf(title).takeIf { place != null }.orEmpty() }
             .take(ActivitySurfaceContract.MAX_DETAIL_LINES)
@@ -143,7 +144,7 @@ internal object GoogleMapsParser {
             secondary = NavText.fit(secondary, ActivitySurfaceContract.MAX_SECONDARY_CHARS),
             eta = NavText.clock(notification.subText),
             detail = detail,
-            badge = badge.takeIf { glyph != "walk" },
+            badge = badge.takeIf { glyph != NexusGuidanceGlyphs.WALK },
             measure = measure,
             // Minutes and metres tick down within one step; the step is the
             // kind of leg and where it leads.
@@ -155,15 +156,15 @@ internal object GoogleMapsParser {
     }
 
     private fun transitVehicle(context: String): String? = when {
-        Regex("""\b(rer|train|transilien|ter)\b""").containsMatchIn(context) -> "train"
-        Regex("""\b(metro|m\d{1,2})\b""").containsMatchIn(context) -> "metro"
-        Regex("""\btram(way)?\b""").containsMatchIn(context) -> "tram"
-        Regex("""\b(bus|autobus|noctilien)\b""").containsMatchIn(context) -> "bus"
+        Regex("""\b(rer|train|transilien|ter)\b""").containsMatchIn(context) -> NexusGuidanceGlyphs.TRAIN
+        Regex("""\b(metro|m\d{1,2})\b""").containsMatchIn(context) -> NexusGuidanceGlyphs.METRO
+        Regex("""\btram(way)?\b""").containsMatchIn(context) -> NexusGuidanceGlyphs.TRAM
+        Regex("""\b(bus|autobus|noctilien)\b""").containsMatchIn(context) -> NexusGuidanceGlyphs.BUS
         // Hangul has no \b around it in Java; these match anywhere.
-        Regex("""ktx|itx|srt|기차|열차""").containsMatchIn(context) -> "train"
-        Regex("""지하철|호선""").containsMatchIn(context) -> "metro"
-        context.contains("트램") -> "tram"
-        context.contains("버스") -> "bus"
+        Regex("""ktx|itx|srt|기차|열차""").containsMatchIn(context) -> NexusGuidanceGlyphs.TRAIN
+        Regex("""지하철|호선""").containsMatchIn(context) -> NexusGuidanceGlyphs.METRO
+        context.contains("트램") -> NexusGuidanceGlyphs.TRAM
+        context.contains("버스") -> NexusGuidanceGlyphs.BUS
         else -> null
     }
 
@@ -175,11 +176,11 @@ internal object GoogleMapsParser {
     private fun vehicleOfLine(line: String): String? {
         val plain = line.lowercase()
         return when {
-            Regex("""^[a-e]$""").matches(plain) -> "train"
-            Regex("""^t\d{1,2}[a-z]?$""").matches(plain) -> "tram"
-            Regex("""^m\d{1,2}$""").matches(plain) -> "metro"
-            plain.endsWith("호선") -> "metro"
-            Regex("""^\d{3,4}[a-z]?$""").matches(plain) || Regex("""^\d+-\d+$""").matches(plain) -> "bus"
+            Regex("""^[a-e]$""").matches(plain) -> NexusGuidanceGlyphs.TRAIN
+            Regex("""^t\d{1,2}[a-z]?$""").matches(plain) -> NexusGuidanceGlyphs.TRAM
+            Regex("""^m\d{1,2}$""").matches(plain) -> NexusGuidanceGlyphs.METRO
+            plain.endsWith("호선") -> NexusGuidanceGlyphs.METRO
+            Regex("""^\d{3,4}[a-z]?$""").matches(plain) || Regex("""^\d+-\d+$""").matches(plain) -> NexusGuidanceGlyphs.BUS
             else -> null
         }
     }

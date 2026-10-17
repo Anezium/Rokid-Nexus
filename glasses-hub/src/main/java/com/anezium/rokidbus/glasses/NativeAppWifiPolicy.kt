@@ -7,5 +7,6 @@ import com.anezium.rokidbus.shared.YoutubeSetupContract
  * opening one of these from Nexus brings the radio up first.
  */
 internal object NativeAppWifiPolicy {
-    fun needsWifi(packageName: String): Boolean = packageName in YoutubeSetupContract.PACKAGES
+    fun needsWifi(packageName: String): Boolean = packageName in YoutubeSetupContract.PACKAGES ||
+        packageName == com.anezium.rokidbus.shared.RedditSetupContract.REDDIT
 }

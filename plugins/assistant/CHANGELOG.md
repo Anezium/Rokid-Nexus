@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.1
+
+- **Conversations can stay open indefinitely.** Settings → Start fresh after now
+  offers **Unlimited**: the conversation never starts fresh on its own, only when
+  you start a new one. Requests still carry only the most recent turns, so a long
+  conversation does not grow what is sent to the AI provider.
+
 ## 1.5.0
 
 - Requires both Nexus hubs 1.7.0 for the published Skills flow. Enable

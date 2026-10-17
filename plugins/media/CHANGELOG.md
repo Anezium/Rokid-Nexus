@@ -2,12 +2,8 @@
 
 ## Unreleased
 
-- **Assistant operations.** Approved now-playing and pause operations for Assistant
-  through Nexus Skills. They need a phone hub that announces skills v1, notification
-  access, and operation approvals; a call does not open the plugin's HUD. Media
-  references stay tied to the observed session and stale targets are rejected. A
-  "Which player?" choice reaches only that player for that call and leaves the
-  surface, the activity and the page as they were.
+- A "Which player?" choice made through Assistant reaches only that player for that call
+  and leaves the surface, the activity and the page as they were.
 - **Show in activities.** A new setting, available once notification access is on, keeps
   what plays among the glasses' activities even with Media Deck closed: title, artist,
   Previous, Play or Pause, and Next. A tap on the card focuses Play/Pause; nothing plays on
@@ -24,6 +20,15 @@
 - The full surface shows "Nothing is playing" or the access message again whenever the
   session goes away, instead of keeping the last track; buffering now shows as playing with
   the clock held, as a tap would pause it.
+
+## 1.0.3
+
+- Expose approved now-playing and playback operations to Assistant through
+  Nexus Skills. Requires Nexus hubs 1.7.0, notification access, and operation
+  approvals; a call does not open the plugin's HUD.
+- Keep media references tied to the observed session and reject stale targets.
+- Device tests covered now-playing and pause with an Android test player.
+  Compatibility with real music players remains unverified.
 
 ## 1.0.2
 

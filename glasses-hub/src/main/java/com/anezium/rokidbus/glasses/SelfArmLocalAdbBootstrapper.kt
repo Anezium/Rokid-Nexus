@@ -160,9 +160,9 @@ internal class SelfArmLocalAdbBootstrapper(
         private val CERT_LOCK = Any()
         private var kadbCertConfigured = false
         private val certificateRejections = java.util.concurrent.atomic.AtomicInteger(0)
-        private val selfPairingStarted = java.util.concurrent.atomic.AtomicBoolean(false)
-        private val selfPairingAttempts = java.util.concurrent.atomic.AtomicInteger(0)
-        private const val MAX_SELF_PAIRING_ATTEMPTS = 6
+        private const val MAX_BACKGROUND_SELF_PAIRING_ATTEMPTS = 6
+        private val selfPairingGate = SelfArmSelfPairingGate(MAX_BACKGROUND_SELF_PAIRING_ATTEMPTS)
+        private val selfPairingLock = Any()
         private const val CERTIFICATE_REJECTIONS_BEFORE_RESET = 2
         private val CERTIFICATE_REJECTION_MARKERS = listOf(
             "CERTIFICATE_VERIFY_FAILED",
@@ -214,7 +214,12 @@ internal class SelfArmLocalAdbBootstrapper(
                 // here, which makes this the one spot the arm epoch is always put on record. That
                 // epoch is the app's only readable proof of which boot the bridge was alive on:
                 // the bridge's own heartbeat file is shell-owned and invisible to the app.
-                SelfArmBridgeLivenessStore.recordArmed(appContext, result.port, result.bridgeRunning)
+                SelfArmBridgeLivenessStore.recordArmed(
+                    appContext,
+                    result.port,
+                    result.bridgeRunning,
+                    result.helperRunningBefore,
+                )
             }
         }
 
@@ -348,19 +353,61 @@ internal class SelfArmLocalAdbBootstrapper(
          * session brings them back. So a unit that has lost its own pairing has also lost its
          * autonomy — it stays maintained only for as long as someone runs the manual flow from the
          * phone. Re-pairing is what gives it back.
+         *
+         * Pairing drives Settings over whatever the wearer is looking at, so a request nobody
+         * made from the phone needs the same standing consent as the boot repair — the automatic
+         * repair switch — or a pairing already asked for in the current session.
          */
-        internal fun requestSelfPairing(context: Context) {
-            if (selfPairingStarted.get()) return
-            // The first no-op usually lands before the accessibility service has connected, and
-            // that service is what drives the Settings screens. Keep asking on later attempts
-            // rather than burning the single try on a moment when nothing could have answered.
-            val attempt = selfPairingAttempts.incrementAndGet()
-            if (attempt > MAX_SELF_PAIRING_ATTEMPTS) return
-            val started = runCatching {
-                RokidBusAccessibilityService.requestWirelessBootstrap(context.applicationContext, force = true)
-            }.getOrDefault(false)
-            if (started) selfPairingStarted.set(true)
-            Log.w(TAG, "self-pairing requested attempt=$attempt started=$started")
+        internal fun requestSelfPairing(context: Context, owner: Boolean = false): SelfPairingOutcome {
+            val appContext = context.applicationContext
+            return synchronized(selfPairingLock) {
+                val backgroundPermitted = owner ||
+                    SelfArmBootRepairStore.isAutoRepairEnabled(appContext) ||
+                    SelfArmOnboardingStore.isPairingRequested(
+                        appContext,
+                        SelfArmOnboardingStore.currentActiveSessionId(appContext),
+                    )
+                // The first background request usually lands before the accessibility service has
+                // connected, and that service is what drives the Settings screens. Keep asking on
+                // later attempts rather than burning the single try on a moment when nothing
+                // could have answered.
+                // A paused session stays current until something ends it; one whose pairing
+                // intent has lapsed will never take over again, so it holds no latch either.
+                val admission = selfPairingGate.admit(owner, backgroundPermitted) { sessionId ->
+                    SelfArmOnboardingStore.isSessionLive(appContext, sessionId) &&
+                        !SelfArmOnboardingStore.isPairingAbandoned(appContext, sessionId)
+                }
+                admission.releasedSessionId?.let {
+                    log("self-pairing latch released reason=session_not_live")
+                }
+                val outcome = admission.refusal ?: run {
+                    val started = runCatching {
+                        RokidBusAccessibilityService.requestWirelessBootstrap(appContext, force = true)
+                    }.getOrDefault(false)
+                    val sessionId = SelfArmOnboardingStore.currentActiveSessionId(appContext)
+                    if (started && sessionId.isNotBlank()) {
+                        selfPairingGate.onStarted(sessionId)
+                        SelfPairingOutcome.STARTED
+                    } else {
+                        SelfPairingOutcome.SERVICE_UNAVAILABLE
+                    }
+                }
+                // On the repair log tag on purpose: an owner reading why a repair did nothing
+                // must find this line next to the repair's own.
+                log(
+                    "self-pairing requested owner=$owner outcome=${outcome.logValue} " +
+                        "backgroundAttempt=${admission.backgroundAttempt}/" +
+                        MAX_BACKGROUND_SELF_PAIRING_ATTEMPTS,
+                )
+                outcome
+            }
+        }
+
+        /** The run a pairing request started has ended, however it ended: the next may start. */
+        internal fun onSetupSessionEnded(sessionId: String) {
+            if (selfPairingGate.release(sessionId)) {
+                log("self-pairing latch released reason=session_ended")
+            }
         }
 
         /**

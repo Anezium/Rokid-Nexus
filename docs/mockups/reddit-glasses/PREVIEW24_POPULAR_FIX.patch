@@ -1,0 +1,339 @@
+--- a/extensions/reddit/src/main/java/app/morphe/extension/reddit/rokid/nativebridge/NativeBindings.java
++++ b/extensions/reddit/src/main/java/app/morphe/extension/reddit/rokid/nativebridge/NativeBindings.java
+@@ -26,6 +26,8 @@
+ 
+     private static Object latestGraph;
+     private static Object latestOwner;
++    private static Object popularGraph;
++    private static Object popularOwner;
+ 
+     public static void resetLatest() { latestGraph = null; latestOwner = null; }
+ 
+@@ -60,6 +62,7 @@
+         String provider;
+         switch (name) {
+             case "com.reddit.feeds.latest.impl.data.a": provider = "#latest"; break;
++            case NativePopular.SERVICE: provider = "#popular"; break;
+             case "com.reddit.search.remote.c": provider = "ii"; break;
+             case "com.reddit.data.remote.p": provider = "Gb"; break;
+             case "com.reddit.screens.listing.compose.usecase.a": provider = "Yl"; break;
+@@ -75,7 +78,12 @@
+             try {
+                 Object graph = accountGraph();
+                 Object current = currentSession();
+-                Object value = provider.equals("#latest") ? latest(graph) : provider.startsWith("@")
++                Object value;
++                if (provider.equals("#latest")) value = latest(graph);
++                else if (provider.equals("#popular")) {
++                    value = popularGraph == graph && popularOwner != null
++                            ? popularOwner : NativePopular.create(graph);
++                } else value = provider.startsWith("@")
+                         ? graph.getClass().getMethod(provider.substring(1)).invoke(graph)
+                         : NativeCalls.read(graph.getClass().getField(provider).get(graph), "get");
+                 if (!sameSession(current, currentSession()) || !graphMatches(graph, current)) {
+@@ -83,6 +91,10 @@
+                 }
+                 if (!Class.forName(name, false, graph.getClass().getClassLoader()).isInstance(value)) {
+                     throw new IllegalStateException("Native service type changed");
++                }
++                if (provider.equals("#popular")) {
++                    popularGraph = graph;
++                    popularOwner = value;
+                 }
+                 return value;
+             } catch (ReflectiveOperationException unavailable) {
+--- a/extensions/reddit/src/main/java/app/morphe/extension/reddit/rokid/core/DiscoveryPolicy.java
++++ b/extensions/reddit/src/main/java/app/morphe/extension/reddit/rokid/core/DiscoveryPolicy.java
+@@ -59,6 +59,13 @@
+                 && account.equals(currentAccount);
+     }
+ 
++    /** Public feeds allow anonymous sessions, but never another graph or session owner. */
++    public static boolean sameFeedOwner(Object graph, Object session, String account,
++                                        Object currentGraph, Object currentSession, String currentAccount) {
++        return graph != null && graph == currentGraph && session != null && session == currentSession
++                && account != null && account.equals(currentAccount);
++    }
++
+     private static boolean hasControl(String value) {
+         for (int i = 0; i < value.length(); i++) {
+             if (Character.isISOControl(value.charAt(i))) return true;
+--- a/extensions/reddit/src/main/java/app/morphe/extension/reddit/rokid/nativebridge/NativeFeed.java
++++ b/extensions/reddit/src/main/java/app/morphe/extension/reddit/rokid/nativebridge/NativeFeed.java
+@@ -6,7 +6,7 @@
+  */
+ package app.morphe.extension.reddit.rokid.nativebridge;
+ 
+-import android.util.Log;
++import app.morphe.extension.reddit.rokid.core.DiscoveryPolicy;
+ import java.lang.reflect.InvocationTargetException;
+ import java.lang.reflect.Method;
+ import java.util.ArrayList;
+@@ -35,21 +35,23 @@
+ 
+     public void load(Scope scope, String cursor, int feedSize, NativeCalls.Callback completion) {
+         try {
++            Snapshot snapshot = new Snapshot();
+             Object owner = NativeBindings.service(scope.service);
++            snapshot.check();
+             Class<?> paramsType = calls.type("com.reddit.feeds.data.paging.f");
+             Object params = paramsType.getConstructor(String.class, boolean.class, Integer.class, int.class)
+                     .newInstance(cursor, cursor == null, null, feedSize);
+             Method load = calls.type("com.reddit.feeds.data.paging.g")
+                     .getMethod("i", paramsType, calls.continuationType());
+-            String account = NativeBindings.account();
++            snapshot.check();
+             calls.invoke(owner, load, new Object[]{params}, (result, error) -> {
+                 if (error != null) fail(completion, error);
+                 else {
+                     try {
+-                        if (!account.equals(NativeBindings.account())) throw new IllegalStateException("Account changed");
++                        snapshot.check();
+                         if (failedResult(result, completion)) return;
+                         Object page = NativeCalls.success(result);
+-                        resolvePage(page, account, completion);
++                        resolvePage(page, snapshot, completion);
+                     } catch (ReflectiveOperationException | RuntimeException failure) {
+                         fail(completion, failure);
+                     }
+@@ -63,13 +65,19 @@
+     public void post(String id, NativeCalls.Callback callback) {
+         try {
+             if (id == null || !id.matches("t3_[a-z0-9]+")) throw new IllegalArgumentException("Invalid post");
+-            resolve(java.util.Collections.singletonList(id), null, NativeBindings.account(), callback);
++            resolve(java.util.Collections.singletonList(id), null, new Snapshot(), callback);
+         } catch (ReflectiveOperationException | RuntimeException error) { fail(callback, error); }
+     }
+ 
+     void resolvePage(Object page, String account, NativeCalls.Callback completion) {
+         try {
+-            if (!account.equals(NativeBindings.account())) throw new IllegalStateException("Account changed");
++            resolvePage(page, snapshot(account), completion);
++        } catch (ReflectiveOperationException | RuntimeException failure) { fail(completion, failure); }
++    }
++
++    private void resolvePage(Object page, Snapshot snapshot, NativeCalls.Callback completion) {
++        try {
++            snapshot.check();
+             List<?> units = (List<?>) page.getClass().getField("a").get(page);
+             String next = (String) page.getClass().getField("b").get(page);
+             List<String> ids = new ArrayList<>();
+@@ -86,12 +94,38 @@
+                 if (id.matches("t3_[a-z0-9]+") && unique.add(id)) ids.add(id);
+             }
+             if (ids.isEmpty()) {
++                snapshot.check();
+                 completion.complete(new Page(new ArrayList<>(), next), null);
+                 return;
+             }
+-            resolve(ids, next, account, completion);
++            resolve(ids, next, snapshot, completion);
+         } catch (ReflectiveOperationException | RuntimeException failure) {
+             fail(completion, failure);
++        }
++    }
++
++    private static Snapshot snapshot(String account) throws ReflectiveOperationException {
++        Snapshot snapshot = new Snapshot();
++        if (!snapshot.account.equals(account)) throw new IllegalStateException("Native account changed");
++        return snapshot;
++    }
++
++    private static final class Snapshot {
++        final Object graph;
++        final Object session;
++        final String account;
++
++        Snapshot() throws ReflectiveOperationException {
++            graph = NativeBindings.accountGraph();
++            session = NativeCalls.read(NativeBindings.service("com.reddit.session.o"), "t");
++            account = NativeBindings.account();
++            check();
++        }
++
++        void check() throws ReflectiveOperationException {
++            Object current = NativeCalls.read(NativeBindings.service("com.reddit.session.o"), "t");
++            if (!DiscoveryPolicy.sameFeedOwner(graph, session, account, NativeBindings.accountGraph(),
++                    current, NativeBindings.account())) throw new IllegalStateException("Native feed owner changed");
+         }
+     }
+ 
+@@ -114,13 +148,20 @@
+ 
+     void resolve(List<String> ids, String next, String account, NativeCalls.Callback completion)
+             throws ReflectiveOperationException {
++        resolve(ids, next, snapshot(account), completion);
++    }
++
++    private void resolve(List<String> ids, String next, Snapshot snapshot, NativeCalls.Callback completion)
++            throws ReflectiveOperationException {
++        snapshot.check();
+         Object repository = NativeBindings.service("com.reddit.link.impl.data.repository.l");
++        snapshot.check();
+         Method fetch = repository.getClass().getMethod("G", List.class, calls.continuationImplType());
+         calls.invoke(repository, fetch, new Object[]{ids}, (value, error) -> {
+             if (error != null) fail(completion, error);
+             else {
+                 try {
+-                    if (!account.equals(NativeBindings.account())) throw new IllegalStateException("Account changed");
++                    snapshot.check();
+                     if (failedResult(value, completion)) return;
+                     Object listing = NativeCalls.success(value);
+                     List<?> links = (List<?>) NativeCalls.read(listing, "getChildren");
+@@ -133,6 +174,7 @@
+                             }
+                         }
+                     }
++                    snapshot.check();
+                     completion.complete(new Page(posts, next), null);
+                 } catch (ReflectiveOperationException | RuntimeException failure) {
+                     fail(completion, failure);
+--- a/patches/src/test/kotlin/app/morphe/patches/reddit/interaction/rokidcontrols/DiscoveryPolicyTest.kt
++++ b/patches/src/test/kotlin/app/morphe/patches/reddit/interaction/rokidcontrols/DiscoveryPolicyTest.kt
+@@ -40,6 +40,24 @@
+         assertFalse(DiscoveryPolicy.sameAccount(original, "", original, ""))
+     }
+ 
++    @Test fun `public feeds allow anonymous ownership without accepting missing owners`() {
++        val graph = Any()
++        val session = Any()
++        assertTrue(DiscoveryPolicy.sameFeedOwner(graph, session, "", graph, session, ""))
++        assertFalse(DiscoveryPolicy.sameFeedOwner(null, session, "", null, session, ""))
++        assertFalse(DiscoveryPolicy.sameFeedOwner(graph, null, "", graph, null, ""))
++    }
++
++    @Test fun `feed callbacks reject replaced graph or session even with the same account name`() {
++        val graph = Any()
++        val session = Any()
++        assertTrue(DiscoveryPolicy.sameFeedOwner(graph, session, "reader", graph, session, "reader"))
++        assertFalse(DiscoveryPolicy.sameFeedOwner(graph, session, "reader", Any(), session, "reader"))
++        assertFalse(DiscoveryPolicy.sameFeedOwner(graph, session, "reader", graph, Any(), "reader"))
++        assertFalse(DiscoveryPolicy.sameFeedOwner(graph, session, "reader", graph, session, "another_reader"))
++        assertFalse(DiscoveryPolicy.sameFeedOwner(graph, session, "", graph, session, "reader"))
++    }
++
+     @Test fun `promoted context survives every search entry classification`() {
+         assertTrue(DiscoveryPolicy.organicSearchPost("Default", false))
+         assertTrue(DiscoveryPolicy.organicSearchPost("Hero", false))
+--- /dev/null
++++ b/extensions/reddit/src/main/java/app/morphe/extension/reddit/rokid/nativebridge/NativePopular.java
+@@ -0,0 +1,119 @@
++/*
++ * Copyright 2026 Morphe.
++ * https://github.com/MorpheApp/morphe-patches
++ *
++ * See the included NOTICE file for GPLv3 Section 7 terms that apply to this code.
++ */
++package app.morphe.extension.reddit.rokid.nativebridge;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.Method;
++
++/** The inspected Reddit 2026.14.0 Popular factory without a stock screen. */
++public final class NativePopular {
++    public static final String SERVICE = "com.reddit.feeds.popular.impl.data.paging.a";
++
++    private NativePopular() { }
++
++    /** The caller must validate this account graph against the active session before and after creation. */
++    public static Object create(Object validatedAccountGraph) throws ReflectiveOperationException {
++        if (validatedAccountGraph == null) throw new IllegalStateException("Native account graph is unavailable");
++        ClassLoader loader = validatedAccountGraph.getClass().getClassLoader();
++        Class<?> accountType = type(loader, "hc1.t1");
++        if (validatedAccountGraph.getClass() != accountType) throw new IllegalStateException("Unexpected native account graph");
++        Class<?> appType = type(loader, "hc1.u0");
++        Object app = field(validatedAccountGraph, "c", appType);
++        if (app == null || app.getClass() != appType) throw new IllegalStateException("Unexpected native app graph");
++
++        Class<?> cachedProvider = type(loader, "cl3.c");
++        Class<?> listingType = type(loader, "com.reddit.listing.repository.a");
++        Object listing = provider(validatedAccountGraph, "P4", cachedProvider, listingType);
++        Class<?> scopeType = type(loader, "eo.a");
++        Object scope = type(loader, "eo.d").getConstructor(String.class).newInstance("popular");
++        if (!scopeType.isInstance(scope)) throw new IllegalStateException("Unexpected native analytics scope");
++        Class<?> sessionsType = type(loader, "uj.a");
++        Object sessions = provider(validatedAccountGraph, "S4", cachedProvider, sessionsType);
++        Class<?> settingsType = type(loader, "zk1.f");
++        Object settings = provider(validatedAccountGraph, "C0", cachedProvider, settingsType);
++
++        Class<?> trendingType = type(loader, "com.reddit.feeds.popular.impl.data.b");
++        Class<?>[] trendingSignature = new Class<?>[]{
++                type(loader, "bx.b"), type(loader, "q71.c"), scopeType, sessionsType,
++                type(loader, "ia3.d"), type(loader, "ia3.b"), type(loader, "ia3.a"),
++                type(loader, "ul.a"), settingsType
++        };
++        Object trending = trendingType.getConstructor(trendingSignature).newInstance(
++                provider(app, "c", type(loader, "hc1.t0"), trendingSignature[0]),
++                provider(validatedAccountGraph, "ii", cachedProvider, trendingSignature[1]),
++                scope, sessions,
++                provider(validatedAccountGraph, "Kg", cachedProvider, trendingSignature[4]),
++                provider(validatedAccountGraph, "da", cachedProvider, trendingSignature[5]),
++                provider(validatedAccountGraph, "ea", cachedProvider, trendingSignature[6]),
++                provider(validatedAccountGraph, "h6", cachedProvider, trendingSignature[7]), settings);
++        Class<?> eventType = type(loader, "com.reddit.eventkit.b");
++        Object events = provider(validatedAccountGraph, "k", type(loader, "cl3.a"), eventType);
++        Class<?> analyticsType = type(loader, "com.reddit.feeds.impl.analytics.e");
++        Object analytics = analyticsType.getConstructor(scopeType, eventType, listingType).newInstance(scope, events, listing);
++        Class<?> correlationType = type(loader, "ek1.a");
++        Object correlation = correlationType.getConstructor().newInstance();
++        Class<?> unitsType = type(loader, "qt3.h");
++        Object units = unitsType.getConstructor().newInstance();
++        Class<?> feedType = type(loader, "com.reddit.feeds.data.FeedType");
++        if (!feedType.isEnum()) throw new IllegalStateException("Unexpected native feed type");
++        Object popular = feedType.getField("POPULAR").get(null);
++        if (popular == null || popular.getClass() != feedType) throw new IllegalStateException("Native Popular scope is unavailable");
++
++        // hc1.a1.L2 uses this constructor; its scope is eo.d("popular").
++        // Reuse the resulting owner for pagination, which retains native correlation state.
++        Class<?>[] signature = new Class<?>[]{
++                type(loader, "com.reddit.feeds.impl.domain.paging.d"),
++                type(loader, "com.reddit.graphql.d0"), type(loader, "zl1.e"),
++                type(loader, "zl1.g"), type(loader, "jn1.a"), type(loader, "ek1.h"),
++                listingType, correlationType, settingsType, type(loader, "ix1.c"),
++                trendingType, analyticsType, type(loader, "com.reddit.ads.impl.sessionslots.b"),
++                sessionsType, type(loader, "com.reddit.graphql.b1"), feedType, unitsType
++        };
++        Object[] arguments = new Object[]{
++                read(validatedAccountGraph, "v1", signature[0]),
++                provider(validatedAccountGraph, "C", type(loader, "cl3.a"), signature[1]),
++                provider(validatedAccountGraph, "f9", cachedProvider, signature[2]),
++                provider(validatedAccountGraph, "n9", cachedProvider, signature[3]),
++                provider(validatedAccountGraph, "o9", cachedProvider, signature[4]),
++                provider(validatedAccountGraph, "p9", cachedProvider, signature[5]),
++                listing, correlation, settings,
++                provider(app, "e", type(loader, "hc1.t0"), signature[9]), trending, analytics,
++                provider(validatedAccountGraph, "T4", cachedProvider, signature[12]), sessions,
++                read(validatedAccountGraph, "x2", signature[14]), popular, units
++        };
++        return type(loader, SERVICE).getConstructor(signature).newInstance(arguments);
++    }
++
++    private static Class<?> type(ClassLoader loader, String name) throws ClassNotFoundException {
++        return Class.forName(name, false, loader);
++    }
++
++    private static Object field(Object owner, String name, Class<?> expected) throws ReflectiveOperationException {
++        Field field = owner.getClass().getField(name);
++        if (field.getType() != expected) throw new IllegalStateException("Unexpected native Popular graph field");
++        return field.get(owner);
++    }
++
++    private static Object provider(Object owner, String name, Class<?> providerType, Class<?> expected)
++            throws ReflectiveOperationException {
++        Object provider = field(owner, name, providerType);
++        if (provider == null) throw new IllegalStateException("Native Popular dependency is unavailable");
++        Method get = providerType.getMethod("get");
++        if (get.getReturnType() != Object.class) throw new IllegalStateException("Unexpected native Popular provider");
++        Object result = get.invoke(provider);
++        if (!expected.isInstance(result)) throw new IllegalStateException("Unexpected native Popular dependency");
++        return result;
++    }
++
++    private static Object read(Object graph, String name, Class<?> expected) throws ReflectiveOperationException {
++        Method getter = graph.getClass().getMethod(name);
++        if (getter.getReturnType() != expected) throw new IllegalStateException("Unexpected native Popular graph method");
++        Object result = getter.invoke(graph);
++        if (!expected.isInstance(result)) throw new IllegalStateException("Native Popular dependency is unavailable");
++        return result;
++    }
++}

@@ -41,6 +41,43 @@ object PatcherContract {
      */
     const val EXTRA_RETURN_TO_HUB = "returnToHub"
     const val TARGET_YOUTUBE = "youtube"
+    const val TARGET_REDDIT = "reddit"
+
+    /**
+     * Reverse navigation for app targets whose setup belongs to the phone hub. Patcher
+     * starts this explicit hub activity with `startActivityForResult`, so Android stamps
+     * the calling package; the hub accepts it only from its approved Patcher and only for
+     * [SETUP_TARGETS], then opens its own non-exported setup screen. Nothing else is
+     * transferred, and the hub keeps every install, inventory and keyboard operation.
+     */
+    const val HUB_PACKAGE = "com.anezium.rokidbus.phone"
+    const val HUB_SETUP_ACTIVITY = "com.anezium.rokidbus.phone.PatcherSetupEntryActivity"
+    const val ACTION_OPEN_SETUP = "com.anezium.rokidbus.phone.action.OPEN_PATCHER_SETUP"
+    val SETUP_TARGETS = setOf(TARGET_YOUTUBE, TARGET_REDDIT)
+
+    /**
+     * Manifest meta-data on [HUB_SETUP_ACTIVITY] naming the setups that hub version opens,
+     * comma-separated. Hubs that predate it opened YouTube only, so Patcher keeps patching
+     * any other target itself rather than handing it to a hub that would silently refuse.
+     */
+    const val META_SETUP_TARGETS = "com.anezium.rokidbus.patcher.SETUP_TARGETS"
+    private val LEGACY_SETUP_TARGETS = setOf(TARGET_YOUTUBE)
+
+    fun hubSetupTargets(declared: String?): Set<String> =
+        declared?.split(',')?.map(String::trim)?.filter { it in SETUP_TARGETS }?.toSet() ?: LEGACY_SETUP_TARGETS
+
+    /**
+     * Optional informational job hint on setup requests and on patch results, including
+     * cancelled ones. The hub uses it only to word its next action; it is never evidence.
+     */
+    const val EXTRA_JOB_STATE = "jobState"
+    const val JOB_IDLE = "idle"
+    const val JOB_SOURCE_READY = "source_ready"
+    const val JOB_RUNNING = "running"
+    const val JOB_READY = "ready"
+    private val JOB_STATES = setOf(JOB_IDLE, JOB_SOURCE_READY, JOB_RUNNING, JOB_READY)
+
+    fun jobState(value: String?): String? = value?.takeIf { it in JOB_STATES }
 
     fun isTargetId(id: String): Boolean = id.matches(Regex("[a-z][a-z0-9._-]{0,63}"))
 }

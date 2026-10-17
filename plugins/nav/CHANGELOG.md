@@ -25,6 +25,9 @@
   time when the app gives one, the source and when it was received), kept
   live while it is on screen, and a Commands page that opens the full app.
   Read-only; the card and the activity are unchanged.
+- Plans its activity traffic through the SDK's shared guidance planner and
+  glyphs. No change to what the glasses show; a recorded transcript test pins
+  the traffic.
 
 ## 0.2.0
 

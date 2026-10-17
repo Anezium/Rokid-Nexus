@@ -8,7 +8,7 @@ lives entirely inside Nexus — launched from the glasses launcher, configured
 from the phone hub, removable from its own settings screen or the Store.
 
 Assistant, Relay, Navigation, Feeds, Transit, Lyrics, Media Deck, Lens,
-Photos Sync, Wireless ADB, and Tasker all ship this way as external headless APKs, and so do
+Photos Sync, Patcher, Wireless ADB, and Tasker all ship this way as external headless APKs, and so do
 the plugins written outside this repository. The phone hub registry has no
 built-in plugins.
 
@@ -301,6 +301,10 @@ NexusUi.uninstallCard(this, "My Plugin") {
   plugin that already had `surfaces`, say — returns the existing grant to
   Pending by design. The user must review and approve the new set before the
   plugin is launchable again.
+- Skill operations a plugin publishes are approved separately, for each
+  caller, on the provider's Plugin access screen, and all start off. A changed
+  operation needs approving again; an invalid catalog shows why there instead
+  of failing the plugin (see [PLUGIN_SDK.md §3.6](PLUGIN_SDK.md#36-skills)).
 - SharedPreferences live in the plugin's own package; name the main file
   `nexus_plugin_<id>`.
 - Uninstalling removes the plugin and all its state; the hub's grant becomes

@@ -9,6 +9,7 @@ data class PatchBundleSource(
     val projectUrl: String,
     val asset: String = "bundled.mpp",
     val assetMetadata: String = "bundled.json",
+    val updatesEnabled: Boolean = true,
 )
 
 data class PatchWarning(val patchName: String, val message: String)
@@ -29,10 +30,15 @@ data class PatchTarget(
     val outputPackage: String,
     val packageChangingPatch: String?,
     val warnings: List<PatchWarning>,
+    val acceptedVersionCodes: Set<Long> = emptySet(),
+    /** Multi-tone app marks keep their own greens; single-colour marks take the accent tint. */
+    val iconTinted: Boolean = true,
+    val preview: Boolean = false,
 ) {
     init {
         require(PatcherContract.isTargetId(id))
         require(acceptedVersions.isNotEmpty() && stockSigners.isNotEmpty())
+        require(acceptedVersionCodes.all { it > 0 })
         require(stockSigners.all { it.matches(Regex("[a-f0-9]{64}")) })
         require(minVerificationApi >= 30 && maxVerificationApi >= minVerificationApi)
         require(bundle.pinnedSourceSha256.matches(Regex("[a-f0-9]{64}")))
@@ -48,7 +54,7 @@ object PatchTargets {
     val youtube = PatchTarget(
         id = PatcherContract.TARGET_YOUTUBE,
         displayName = "YouTube",
-        icon = com.anezium.rokidbus.client.R.drawable.ic_plugin_bolt,
+        icon = R.drawable.ic_app_youtube,
         description = "Adds the glasses controls to YouTube.",
         stockPackage = "com.google.android.youtube",
         acceptedVersions = setOf("21.04.223"),
@@ -70,7 +76,35 @@ object PatchTargets {
         ),
     )
     val default get() = youtube
-    private val targets = listOf(youtube).associateBy { it.id }
+    val reddit = PatchTarget(
+        id = PatcherContract.TARGET_REDDIT,
+        displayName = "Reddit",
+        icon = R.drawable.ic_app_reddit,
+        description = "Adds a glasses HUD and reviewed post and comment replies to official Reddit.",
+        stockPackage = "com.reddit.frontpage",
+        acceptedVersions = setOf("2026.14.0"),
+        stockSigners = setOf("970b91143813b4c9d5f3634f672c9fcaa5621b4efaaedafd6c235cbbb869736f"),
+        minVerificationApi = 30, maxVerificationApi = 32,
+        bundle = PatchBundleSource(
+            metadataUrl = "", downloadPrefix = "",
+            pinnedSourceSha256 = "68f18a16b5ef91e90cd61ec98f164918c59fad887f30b22183cdb83eafc697aa",
+            projectUrl = "https://github.com/Anezium/morphe-patches",
+            asset = "reddit.mpp", assetMetadata = "reddit.json", updatesEnabled = false,
+        ),
+        defaultSelection = mapOf("Rokid Reddit controls" to true, "Spoof signature" to true, "Hide ads" to true,
+            "Change package name" to false),
+        featuredPatches = listOf("Rokid Reddit controls", "Spoof signature", "Hide ads"),
+        outputPackage = "com.reddit.frontpage", packageChangingPatch = null,
+        warnings = listOf(
+            PatchWarning("Rokid Reddit controls", "Rokid Reddit controls is off: the glasses HUD and replies will be unavailable."),
+            PatchWarning("Spoof signature", "Spoof signature is off: official Reddit can reject the patched APK."),
+        ),
+        acceptedVersionCodes = setOf(2614001),
+        iconTinted = false,
+        preview = true,
+    )
+    val all = listOf(youtube, reddit)
+    private val targets = all.associateBy { it.id }
     fun find(id: String?): PatchTarget? = targets[id]
     fun require(id: String): PatchTarget = requireNotNull(find(id)) { "Unknown patch target. Update Patcher and try again." }
 }

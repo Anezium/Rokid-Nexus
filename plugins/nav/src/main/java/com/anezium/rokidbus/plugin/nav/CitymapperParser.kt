@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.nav
 
+import com.anezium.rokidbus.client.plugin.NexusGuidanceGlyphs
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 
 /**
@@ -86,7 +87,7 @@ internal class CitymapperParser {
         val verb = if (HANGUL.containsMatchIn(title)) title.substringAfterLast(' ') else title.substringBefore(' ')
         val primary = prediction ?: verb.takeIf(String::isNotEmpty) ?: return null
         return guidance(
-            glyph = "walk",
+            glyph = NexusGuidanceGlyphs.WALK,
             primary = primary,
             secondary = subtitle ?: title,
             detail = if (subtitle != null) listOf(title) else emptyList(),
@@ -124,11 +125,11 @@ internal class CitymapperParser {
     private fun departure(match: MatchResult, platform: String, eta: String?): NavGuidance {
         rideDestination = null
         val (time, _, direction, status) = match.destructured
-        legGlyph = "train"
+        legGlyph = NexusGuidanceGlyphs.TRAIN
         legBadge = null
         val state = status.trim().removePrefix("(").removeSuffix(")").trim()
         return guidance(
-            glyph = "train",
+            glyph = NexusGuidanceGlyphs.TRAIN,
             primary = time,
             secondary = direction,
             detail = listOf(listOf(platform, state).filter(String::isNotEmpty).joinToString(" · ")),
@@ -172,7 +173,7 @@ internal class CitymapperParser {
     private fun arrived(title: String, eta: String?, labels: NavLabels): NavGuidance {
         reset()
         return guidance(
-            glyph = "arrive",
+            glyph = NexusGuidanceGlyphs.ARRIVE,
             primary = labels.arrived,
             secondary = title,
             eta = eta,
@@ -217,12 +218,12 @@ internal class CitymapperParser {
     private fun vehicleFor(line: String): String {
         val plain = NavText.fold(line)
         return when {
-            plain.startsWith("rer") || plain.startsWith("train") || plain.startsWith("transilien") -> "train"
-            Regex("""^m(etro)?\s?\d""").containsMatchIn(plain) -> "metro"
-            Regex("""^t(ram)?\s?\d""").containsMatchIn(plain) -> "tram"
-            plain.endsWith("호선") -> "metro"
-            plain.startsWith("ktx") || plain.startsWith("itx") || plain.startsWith("srt") -> "train"
-            Regex("""^\d+[a-z]?$""").matches(plain) || Regex("""^\d+-\d+$""").matches(plain) -> "bus"
+            plain.startsWith("rer") || plain.startsWith("train") || plain.startsWith("transilien") -> NexusGuidanceGlyphs.TRAIN
+            Regex("""^m(etro)?\s?\d""").containsMatchIn(plain) -> NexusGuidanceGlyphs.METRO
+            Regex("""^t(ram)?\s?\d""").containsMatchIn(plain) -> NexusGuidanceGlyphs.TRAM
+            plain.endsWith("호선") -> NexusGuidanceGlyphs.METRO
+            plain.startsWith("ktx") || plain.startsWith("itx") || plain.startsWith("srt") -> NexusGuidanceGlyphs.TRAIN
+            Regex("""^\d+[a-z]?$""").matches(plain) || Regex("""^\d+-\d+$""").matches(plain) -> NexusGuidanceGlyphs.BUS
             else -> NavText.ROUTE_GLYPH
         }
     }

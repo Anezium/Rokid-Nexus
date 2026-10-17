@@ -19,7 +19,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.21.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.23.0")
 }
 ```
 
@@ -684,8 +684,10 @@ keep every key. A tap on an island neither opens your plugin nor runs an action.
 Your actions are reached only inside the wearer's Nexus session, between hubs
 that negotiated the launcher bundle, where they arrive on
 `onNexusActivityCommand` (and, through its default, `onNexusActivityAction`).
-BACK is never claimed. `onNexusActivityClosed(reason)` reports `owner`,
-`replaced`, `disconnect`, or `max-duration`.
+Glasses hubs before 1.7.0 still let the idle-layer primary activity take
+forward/backward and center tap. BACK is never claimed.
+`onNexusActivityClosed(reason)` reports `owner`, `replaced`, `disconnect`, or
+`max-duration`.
 
 The phone hub owns canonical activity state and resends it after a glasses
 reconnect, after first clearing possible ghosts. You should still call
@@ -702,9 +704,9 @@ is already interactive spends no budget. Activity v1 does not include plan
 
 #### Guidance planner
 
-A plugin that guides a route (Transit from its own itinerary, for example)
-should not decide on its own
-which step flares and which beats. `NexusGuidancePlanner` turns successive
+A plugin that guides a route (Navigation from a navigation app's
+notifications, Transit from its own itinerary) should not decide on its own
+which step flares and which beats. `NexusGuidancePlanner` (SDK 0.22.0) turns successive
 `NexusGuidanceStep`s into activity traffic identically for every guide: the
 first step starts the activity, a new `stepKey` (the next maneuver or leg) or
 arrival is significant, the moment a step becomes `imminent` is urgent once
@@ -735,6 +737,7 @@ Call `reset()` whenever the activity is gone (ended, closed, or lost with a
 registration), so the next step starts it again. `NexusGuidanceGlyphs` names
 the shared maneuver, vehicle, walk, and arrival glyphs, and
 `forTransitMode(mode)` maps GTFS-style mode names onto the vehicle glyphs.
+The Sample plugin's demo route runs through the planner.
 The planner produces plain activity steps; an interactive activity
 (launcher bundle) adds its destination, commands, and activation to the
 `NexusActivity` the step returns.
@@ -742,7 +745,7 @@ The planner produces plain activity steps; an interactive activity
 **Ongoing work.** An activity ends when its owner disconnects. A plugin that
 keeps guiding after its surface or skill call ends, because the wearer asked
 it to, holds its one session foreground service with
-`holdNexusOngoingWork(additionalTypes)`, which also starts the service so it
+`holdNexusOngoingWork(additionalTypes)` (SDK 0.22.0), which also starts the service so it
 outlives the hub's binding, and calls `releaseNexusOngoingWork()` the moment
 the process ends. This is a narrow exception to dormancy for a process the
 wearer explicitly started and follows as an activity; never hold it to poll or
@@ -1845,7 +1848,7 @@ Assistant listens at once.
 
 ### 3.6 Skills
 
-Skills let an approved plugin publish typed
+Skills (SDK 0.22.0, phone hub 1.7.0) let an approved plugin publish typed
 operations that an approved caller, in practice Assistant, invokes through the phone hub. The provider
 keeps its domain logic, Android permissions, and data; the hub discovers the
 operations, asks the wearer which ones each caller may use, routes every call

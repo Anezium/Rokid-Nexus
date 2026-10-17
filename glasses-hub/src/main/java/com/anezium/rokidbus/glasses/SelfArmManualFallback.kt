@@ -165,16 +165,7 @@ internal object SelfArmPhoneArmConfirmation {
                 val posture = SelfArmNetworkPostureVerifier.awaitSafe(appContext)
                 if (!SelfArmOnboardingStore.isCurrentSession(appContext, sessionId)) return@runCatching
                 SelfArmOnboardingStore.heartbeat(appContext, sessionId)
-                SelfArmLocalAdbBootstrapper.recordBootstrapComplete(appContext, sessionId)
-                SelfArmOnboardingStore.recordNetworkPosture(appContext, posture, sessionId)
-                if (!SelfArmOnboardingStore.isCurrentSession(appContext, sessionId)) return@runCatching
-                SelfArmOnboardingStore.finish(
-                    appContext,
-                    sessionId = sessionId,
-                    setupState = "wireless_bootstrap_complete",
-                    success = true,
-                    completionMode = completionMode,
-                )
+                recordVerified(appContext, sessionId, posture, completionMode)
             }
             result.onFailure { failure ->
                 if (!SelfArmOnboardingStore.isCurrentSession(appContext, sessionId)) return@onFailure
@@ -199,6 +190,30 @@ internal object SelfArmPhoneArmConfirmation {
         }
         synchronized(workerLock) { worker = confirmationWorker }
         confirmationWorker.start()
+    }
+
+    /**
+     * Closes the session as set up without claiming the glasses paired themselves: the phone
+     * armed over its own pairing, and the glasses' key is still unknown to adbd. Recording
+     * bootstrap completion here revived the helper once and then sent every later re-arm down a
+     * TLS path that could only fail, while every screen said the unit maintained itself. The
+     * glasses stay "pairing required" until a bootstrap they ran themselves says otherwise.
+     */
+    internal fun recordVerified(
+        context: Context,
+        sessionId: String,
+        posture: SelfArmNetworkPosture,
+        completionMode: String,
+    ) {
+        SelfArmOnboardingStore.recordNetworkPosture(context, posture, sessionId)
+        if (!SelfArmOnboardingStore.isCurrentSession(context, sessionId)) return
+        SelfArmOnboardingStore.finish(
+            context,
+            sessionId = sessionId,
+            setupState = "wireless_bootstrap_complete",
+            success = true,
+            completionMode = completionMode,
+        )
     }
 
     fun cancel() {

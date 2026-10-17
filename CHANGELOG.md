@@ -1,5 +1,67 @@
 # Changelog
 
+## 1.7.1
+
+Update both Nexus hubs together. Glasses whose helper died after a reinstall can now be brought back from the phone, without a computer (#53).
+
+### Phone hub
+
+- **Re-pair glasses** in Settings → Maintenance, reachable after onboarding and without Developer mode. It has the glasses pair themselves again; the glasses drive their own Settings, nobody navigates by hand. Leaving the screen ends only the pairing it started. With an older glasses hub it asks for a glasses update instead of claiming success.
+- **Repair now** tells you what it found: repaired, nothing to repair, partly repaired, the glasses are pairing again, or the glasses could not be reached over Wi-Fi. A missing record no longer reads as healthy. Failure texts point at Re-pair glasses instead of a setup flow the app hides once setup is done.
+- Setup no longer stops at "Your glasses are set up" with only Cancel when the glasses lost their own pairing.
+
+### Glasses hub
+
+- A repair or re-pair always asks the glasses to pair themselves again when they need to, logs the outcome, and can be retried. A failed attempt no longer silences every later one until the hub restarts.
+- Background re-pairing respects the Auto-repair switch and is limited to six attempts per run.
+- The display stays on while the glasses drive Settings, so the 5-second screen timeout no longer stalls the run; it is released as soon as the run ends, and pressing the power button leaves the glasses asleep.
+- A repair that starts with Wi-Fi off waits until the glasses are reachable, checks the helper, and turns Wi-Fi back off. If another app or session needs Wi-Fi by then, it is left on.
+- Arming from the phone alone brings the helper back until the next restart and no longer marks the glasses as paired, so the next repair can finish the job.
+
+## 1.7.0
+
+Update both Nexus hubs together and install Patcher 1.1.0 for the integrated YouTube and Reddit guides. Reddit remains Preview: physical R08 and real Reddit writes have not been validated. This app release does not publish an Assistant update.
+
+Plugins that publish no skill catalog keep working unchanged, and a plugin built with the new SDK keeps working on older hubs: every skills call reports the hub as not supporting skills instead of sending.
+
+### Phone hub
+
+- Move the complete YouTube/MicroG tutorial and the Reddit tutorial into Patcher's app entries. Glasses apps keeps the installed-app inventory and opening actions, without duplicate setup cards. Keep the handoff caller authenticated and both tutorials private.
+- Add official Reddit 2026.14.0 complete-APKM verification, native installation inventory and the existing explicit auto-keyboard preference for Reddit search and replies. Credentials stay in Reddit.
+- **Skills.** A plugin can publish typed operations in a catalog the hub reads
+  without starting it; an approved caller, Assistant first, invokes them
+  through the hub. The hub stamps both identities, validates arguments and
+  results against a bounded schema, hands out opaque expiring references
+  instead of the provider's identifiers, reuses the outcome of an exact
+  duplicate, refuses excess work as busy, and ends every call within 15
+  seconds. A provider is bound for the call only, never opened, and cannot
+  draw, notify, or listen on the strength of it. Revocation, package changes,
+  and a caller or provider going away end calls, and late answers are
+  dropped. The bus inspector shows each outcome without its content.
+- **Per-operation consent.** A provider's Plugin access screen lists its
+  operations with one switch per operation and assistant, all off, under a
+  note that results may reach the assistant's AI provider. A changed
+  operation needs approving again; an invalid catalog shows why instead of
+  failing the plugin.
+- New grants `skills_provider` and `skills_client`, requested through their
+  own metadata keys so older hubs keep loading those plugins. Requesting one
+  returns an installed plugin to Pending for approval.
+
+### Plugin SDK
+
+- Skills for providers (`onNexusSkillInvoked`, `NexusSkillInvocation`) and
+  callers (`requestSkillCatalog`, `invokeSkill`, `cancelSkill`,
+  `closeSkillSession`), gated on `supportsSkills`.
+- `NexusGuidancePlanner`, `NexusGuidanceStep`, and `NexusGuidanceGlyphs`: the
+  guidance-to-activity planner Navigation used, now shared.
+- `holdNexusOngoingWork` / `releaseNexusOngoingWork` for an ongoing process
+  the wearer started, such as journey guidance.
+
+### Glasses hub
+
+- Preserve the launcher session stack and shared input arbiter, so Back returns through logical stops without trapping users in an app or reopening a dismissed overlay.
+- Keep native Reddit opening and inventory alongside YouTube, with the existing trusted hub-to-hub remote input path.
+
 ## 1.6.0
 
 Install both Nexus hubs 1.6.0 and Patcher 1.0.0 for guided YouTube setup.

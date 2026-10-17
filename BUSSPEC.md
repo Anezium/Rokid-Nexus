@@ -1581,6 +1581,12 @@ stay one-shot commands: no text entry, scrolling, plugin layout, or fourth
 action. Anything more involved is a page or a surface. BACK is never claimed or
 forwarded by an activity, and activity windows never take focus.
 
+Glasses hubs before 1.7.0 let the primary activity claim keys on the idle layer
+only (no active surface, visible notice, visible launcher, or camera overlay):
+with no actions, center tap opened the owner through `/system/plugin/open`; with
+actions, forward/backward selected one and center tap emitted `/activity/action`.
+The phone keeps that route valid for them.
+
 ### Lifecycle, reconnect, and errors
 
 Activities have no TTL or keep-alive requirement. An activity ends when its
@@ -3305,6 +3311,9 @@ characters; packages are validated before launch. If a full result does not fit
 the current transport, the glasses send the largest valid prefix that does.
 This protocol lists and opens apps that are already installed. It has no APK
 download, transfer, install, uninstall, or privilege-elevation operation.
+Launching one of the setup packages below (MicroG, YouTube, Reddit) also turns
+the glasses' Wi-Fi on when it is off and hands the radio to the wearer, so
+Nexus does not switch it off again; other apps launch without touching Wi-Fi.
 
 YouTube setup also uses these same trusted routes for `youtube_setup_request`
 and `youtube_setup_result` (version 1, matching `requestId`). The request has no
@@ -3317,10 +3326,15 @@ signers never authorize an update. This bounded inventory includes installed app
 without launcher icons and fits in 2,000 UTF-8 bytes. It contains no account state.
 Older hubs do not support this request; the phone times out with an update prompt.
 
-The phone's private YouTube setup screen downloads/imports and verifies APKs locally,
-then uses the existing CXR upload/install API. Installation adds no bus route or
-plugin capability. The phone hub may receive a patched APK from the Patcher
-plugin with the explicit YouTube target id as an Android activity-result content URI;
+Reddit setup (1.7.0) uses the same shape as `reddit_setup_request` and
+`reddit_setup_result`, with exactly one app, `com.reddit.frontpage`, under the
+same entry rules.
+
+The phone's private YouTube and Reddit setup screens download or import and verify
+APKs locally, then use the existing CXR upload/install API. Installation adds no bus
+route or plugin capability. The phone hub may receive a patched APK from the Patcher
+plugin with the explicit `youtube` or `reddit` target id as an Android activity-result
+content URI;
 it copies and validates the bytes
 through the same private import path, without trusting result metadata. A fresh inventory is required before upload and after the SDK
 reports success; Nexus never uninstalls an app to resolve a signature conflict.

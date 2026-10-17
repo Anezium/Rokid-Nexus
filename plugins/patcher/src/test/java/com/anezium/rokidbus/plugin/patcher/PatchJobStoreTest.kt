@@ -68,4 +68,58 @@ class PatchJobStoreTest {
         assertFalse(result.exists())
         assertTrue(store.state.value.message.contains("expired"))
     }
+
+    @Test fun runningJobRefusesKeyMaintenanceUntilItEnds() {
+        val store = PatchJobStore(temp.newFolder())
+        val job = store.prepare()
+        assertThrows(IllegalStateException::class.java) { store.beginKeyMaintenance() }
+        assertFalse(store.keyMaintenance.value)
+        store.change(job.id) { it.copy(status = PatchJobStatus.FAILURE) }
+        val lease = store.beginKeyMaintenance()
+        assertTrue(store.keyMaintenance.value)
+        store.endKeyMaintenance(lease)
+        assertFalse(store.keyMaintenance.value)
+    }
+
+    @Test fun keyMaintenanceRefusesPrepareAndPatchUntilReleased() {
+        val directory = temp.newFolder()
+        val store = PatchJobStore(directory)
+        val prepared = store.prepare()
+        java.io.File(store.work(prepared.workId), "prepare/stock.apk").apply { parentFile!!.mkdirs(); writeBytes(byteArrayOf(1)) }
+        store.change(prepared.id) { it.copy(status = PatchJobStatus.READY, stock = "prepare/stock.apk") }
+        val ready = store.state.value
+        val lease = store.beginKeyMaintenance()
+        assertThrows(IllegalStateException::class.java) { store.beginKeyMaintenance() }
+        assertThrows(IllegalStateException::class.java) { store.prepare() }
+        assertThrows(IllegalStateException::class.java) { store.patch("hash", listOf("patch")) }
+        assertEquals("refused starts leave the held source untouched", ready, store.state.value)
+        store.endKeyMaintenance(Any())
+        assertTrue("a stale lease cannot release the current one", store.keyMaintenance.value)
+        assertThrows(IllegalStateException::class.java) { store.patch("hash", listOf("patch")) }
+        store.endKeyMaintenance(lease)
+        assertEquals(PatchJobStatus.RUNNING, store.patch("hash", listOf("patch")).status)
+    }
+
+    @Test fun keyMaintenanceLeaseDoesNotSurviveProcessDeath() {
+        val directory = temp.newFolder()
+        PatchJobStore(directory).beginKeyMaintenance()
+        val restarted = PatchJobStore(directory)
+        assertFalse(restarted.keyMaintenance.value)
+        assertEquals(PatchJobStatus.PREPARING, restarted.prepare().status)
+    }
+
+    @Test fun keyMaintenanceAndJobStartsNeverOverlapUnderContention() {
+        repeat(200) {
+            val store = PatchJobStore(temp.newFolder())
+            val start = java.util.concurrent.CountDownLatch(1)
+            val job = java.util.concurrent.atomic.AtomicBoolean()
+            val key = java.util.concurrent.atomic.AtomicBoolean()
+            val threads = listOf(
+                Thread { start.await(); job.set(runCatching { store.prepare() }.isSuccess) },
+                Thread { start.await(); key.set(runCatching { store.beginKeyMaintenance() }.isSuccess) },
+            ).onEach { it.start() }
+            start.countDown(); threads.forEach { it.join() }
+            assertTrue("exactly one of the two may win", job.get() != key.get())
+        }
+    }
 }

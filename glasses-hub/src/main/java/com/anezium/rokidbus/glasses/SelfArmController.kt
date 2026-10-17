@@ -26,18 +26,28 @@ internal object SelfArmController {
      * instead of `restart`, and both scripts treat `start` as "no-op when the running version
      * matches, hand over when it does not" — so a healthy bridge is never killed just to prove it
      * was alive.
+     *
+     * [bindSetupSession] false is for a caller with its own lifecycle, the owner's repair: its
+     * arm takes no setup session that happens to be active, so a session that ends or is
+     * replaced mid-arm cannot swallow [onComplete].
      */
     fun ensureWatchdog(
         context: Context,
         reason: String,
         restartWatchdog: Boolean = true,
+        bindSetupSession: Boolean = true,
         onComplete: ((SelfArmWatchdogEnsureResult) -> Unit)? = null,
-    ): Boolean = runAsync(context, reason) { appContext, sessionId ->
+    ): Boolean = runAsync(context, reason, bindSetupSession = bindSetupSession) { appContext, sessionId ->
         val result = runCatching {
             runSelfArm(appContext, reason, restartWatchdog = restartWatchdog, sessionId = sessionId)
         }.onFailure {
             logError("Self-arm failed reason=$reason", it)
         }.getOrDefault(SelfArmWatchdogEnsureResult.FAILED)
+        // A successful arm put its own measurement on record; a failed one has to say so too, or
+        // an earlier success this boot keeps answering "already healthy" for a helper that died.
+        if (SelfArmOwnerRepairPolicy.armContradictsRecord(result)) {
+            SelfArmBridgeLivenessStore.recordArmFailed(appContext)
+        }
         if (sessionId == null ||
             SelfArmOnboardingStore.isCurrentSession(appContext, sessionId)
         ) {
@@ -45,9 +55,10 @@ internal object SelfArmController {
         }
     }
 
-    internal fun runWhenIdle(callback: () -> Unit) {
+    internal fun runWhenIdle(bindSetupSession: Boolean = true, callback: () -> Unit) {
         val context = SelfArmControllerContext.context
-        val sessionId = context?.let(SelfArmOnboardingStore::currentActiveSessionId).orEmpty()
+        val sessionId = context?.takeIf { bindSetupSession }
+            ?.let(SelfArmOnboardingStore::currentActiveSessionId).orEmpty()
         val guardedCallback = {
             if (sessionId.isBlank() ||
                 context == null ||
@@ -199,12 +210,13 @@ internal object SelfArmController {
         context: Context,
         reason: String,
         onComplete: (() -> Unit)? = null,
+        bindSetupSession: Boolean = true,
         operation: (Context, String?) -> Unit,
     ): Boolean {
         val appContext = context.applicationContext
         SelfArmControllerContext.context = appContext
         val sessionId = SelfArmOnboardingStore.currentActiveSessionId(appContext)
-            .takeIf(String::isNotBlank)
+            .takeIf { bindSetupSession && it.isNotBlank() }
         val accepted = synchronized(idleCallbacksLock) {
             operationRunning.compareAndSet(false, true)
         }
@@ -297,8 +309,10 @@ internal object SelfArmController {
             // Not bootstrapped means the unit cannot spawn its own watchdog or command bridge, and
             // never will until it pairs: those are shell processes that a privileged session has to
             // start, and every reboot takes them with it. Ask for that pairing instead of logging
-            // the same no-op forever.
+            // the same no-op forever. The owner's repair asks for it itself, because the answer
+            // to that request is what the owner is told.
             if (!bootstrapComplete &&
+                reason != SelfArmBootRepairCoordinator.OWNER_REPAIR_REASON &&
                 (sessionId == null || SelfArmOnboardingStore.isCurrentSession(context, sessionId))
             ) {
                 SelfArmLocalAdbBootstrapper.requestSelfPairing(context)

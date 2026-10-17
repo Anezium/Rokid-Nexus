@@ -1,9 +1,8 @@
 # Changelog — Transit
 
-## Unreleased
+## 1.0.5
 
-- Skills require a phone hub that announces skills v1 and explicit approval for
-  each operation.
+- Skills require Nexus hubs 1.7.0 and explicit approval for each operation.
   Favorite-stop and departure reads were exercised on devices while stationary;
   journey guidance during a real trip remains unverified.
 

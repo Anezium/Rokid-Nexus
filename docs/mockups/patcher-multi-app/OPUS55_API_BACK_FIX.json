@@ -1,0 +1,55 @@
+{
+  "metadata": {
+    "requested_model": "claude-opus-5-5",
+    "lookup_model": "claude-opus-5-5",
+    "source_sha256": "cdc16bfa2de670a3c0bc6a61eefe1c0c2a7be6db9528f197418d21bb6ff2ecf9",
+    "request_id": "req_011CfriBBAoZYvJdQF5LG31H",
+    "response_model": "claude-opus-5-5",
+    "usage": {
+      "input_tokens": 17699,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cache_creation": {
+        "ephemeral_5m_input_tokens": 0,
+        "ephemeral_1h_input_tokens": 0
+      },
+      "output_tokens": 5084,
+      "service_tier": "standard",
+      "inference_geo": "global",
+      "output_tokens_details": {
+        "thinking_tokens": 2837
+      }
+    },
+    "stop_reason": "end_turn"
+  },
+  "implementation": {
+    "edits": [
+      {
+        "path": "phone-hub/src/main/java/com/anezium/rokidbus/phone/YoutubeSetupActivity.kt",
+        "old": "import android.app.Activity\nimport android.content.Context\nimport android.content.Intent\nimport android.net.Uri\nimport android.os.Bundle\nimport android.view.View\nimport android.view.ViewGroup\nimport android.widget.LinearLayout\nimport android.widget.TextView\nimport android.widget.Toast\n",
+        "new": "import android.annotation.TargetApi\nimport android.app.Activity\nimport android.content.Context\nimport android.content.Intent\nimport android.net.Uri\nimport android.os.Build\nimport android.os.Bundle\nimport android.view.View\nimport android.view.ViewGroup\nimport android.widget.LinearLayout\nimport android.widget.TextView\nimport android.widget.Toast\nimport android.window.OnBackInvokedCallback\nimport android.window.OnBackInvokedDispatcher\n"
+      },
+      {
+        "path": "phone-hub/src/main/java/com/anezium/rokidbus/phone/YoutubeSetupActivity.kt",
+        "old": "    private var skipRefreshOnce = false\n",
+        "new": "    private var skipRefreshOnce = false\n    // API 33+ platform Back callback. Android 16 with targetSdk 36 never calls onBackPressed.\n    // Typed as Any so devices below API 33 never resolve android.window classes.\n    private var backCallback: Any? = null\n"
+      },
+      {
+        "path": "phone-hub/src/main/java/com/anezium/rokidbus/phone/YoutubeSetupActivity.kt",
+        "old": "            addView(footer, NexusUi.block())\n        })\n",
+        "new": "            addView(footer, NexusUi.block())\n        })\n        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerBackCallback()\n"
+      },
+      {
+        "path": "phone-hub/src/main/java/com/anezium/rokidbus/phone/YoutubeSetupActivity.kt",
+        "old": "    @Deprecated(\"Uses the platform back callback\")\n    override fun onBackPressed() {\n        if (route != Route.OVERVIEW) show(Route.OVERVIEW) else super.onBackPressed()\n    }\n",
+        "new": "    override fun onDestroy() {\n        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) unregisterBackCallback()\n        super.onDestroy()\n    }\n\n    /**\n     * Legacy fallback: below API 33, and on API 33 to 35 when the app has not opted in to\n     * OnBackInvokedCallback, the platform still dispatches Back here. Exactly one of the two\n     * paths receives a given Back event, so both share [navigateBack] without double handling.\n     */\n    @Deprecated(\"Uses the platform back callback on API 33+\")\n    override fun onBackPressed() {\n        navigateBack()\n    }\n\n    @TargetApi(Build.VERSION_CODES.TIRAMISU)\n    private fun registerBackCallback() {\n        if (backCallback != null) return\n        val callback = OnBackInvokedCallback { navigateBack() }\n        onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)\n        backCallback = callback\n    }\n\n    @TargetApi(Build.VERSION_CODES.TIRAMISU)\n    private fun unregisterBackCallback() {\n        (backCallback as? OnBackInvokedCallback)?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }\n        backCallback = null\n    }\n\n    /**\n     * The single Back rule for system Back and the header arrow: a step screen returns to the\n     * YouTube overview; the overview finishes and returns to the Patcher screen that opened it.\n     * finish() is explicit and nothing re-dispatches Back, so there is no recursion.\n     */\n    private fun navigateBack() {\n        if (route != Route.OVERVIEW) show(Route.OVERVIEW) else finish()\n    }\n"
+      },
+      {
+        "path": "phone-hub/src/main/java/com/anezium/rokidbus/phone/YoutubeSetupActivity.kt",
+        "old": "        ) { if (route == Route.OVERVIEW) finish() else show(Route.OVERVIEW) }, NexusUi.block())",
+        "new": "        ) { navigateBack() }, NexusUi.block())"
+      }
+    ],
+    "explanation": "Only YoutubeSetupActivity.kt changes. On API 33 and later, onCreate registers a platform OnBackInvokedCallback at PRIORITY_DEFAULT through onBackInvokedDispatcher, after setContentView. onDestroy unregisters it. The callback is stored as Any? and only cast inside @TargetApi(33) helpers behind SDK_INT checks, so older devices never resolve android.window classes. No dependency, manifest opt-out or theme change is added. The legacy onBackPressed override stays as the fallback for devices below API 33 and for API 33 to 35 without the manifest opt-in, where the platform ignores dispatcher callbacks. Android dispatches each Back event to only one of these paths. System Back, the legacy fallback and the header arrow now all call navigateBack(). A sub-page shows OVERVIEW through the existing show()/rerender path, which keeps the saved route and expanded state. On the overview it calls finish() explicitly, returning to the originating Patcher screen. The old super.onBackPressed() is removed and nothing re-dispatches Back, so there is no recursion. Authentication, patchPending and request-code rotation, source and picker locks, result handling, signing, keyboard settings and all NexusUi kit views are untouched. This is a behavioural fix, so the frontend-design skill was applied as restraint: no visual change, consistent with the round-4 kit approval. I did not execute builds, tests, emulator or device checks. The parent should still verify the following on the installed phone with KEYCODE_BACK and the header arrow: Nexus → Patcher → Set up YouTube → MicroG → Back reaches the YouTube overview, and a second Back returns to Patcher. The same check is still needed on a pre-33 or non-opted-in API 33 to 35 path, and Fable approval is required before building."
+  }
+}
