@@ -19,6 +19,42 @@ class AmbientForegroundPolicyTest {
     private val state = ActivityStateMachine()
 
     @Test
+    fun `an accessibility bridge overlay does not replace the home or native app underneath`() {
+        val bridge = ForegroundWindow("com.anezium.r08accessbridge", false, true, true, 10)
+        val home = ForegroundWindow("com.rokid.os.launcher", true)
+        assertTrue(resolver.onWindowsChanged(listOf(home, bridge)))
+        assertEquals(Foreground.Home, resolver.current)
+
+        val settings = ForegroundWindow("com.android.settings", true, true, true, 1)
+        assertTrue(resolver.onWindowsChanged(listOf(home, bridge, settings)))
+        assertEquals(Foreground.App("com.android.settings"), resolver.current)
+        assertTrue(resolver.onWindowsChanged(listOf(home, bridge)))
+        assertEquals(Foreground.Home, resolver.current)
+    }
+
+    @Test
+    fun `Nexus and keyboard windows cannot hide the foreground application and missing roots retain it`() {
+        val reader = ForegroundWindow("com.example.reader", true, layer = 2)
+        val own = ForegroundWindow("com.anezium.rokidbus.glasses", true, true, true, 9)
+        val keyboard = ForegroundWindow("com.example.keyboard", true, true, true, 10)
+        resolver.onWindowsChanged(listOf(reader, own, keyboard))
+        assertEquals(Foreground.App("com.example.reader"), resolver.current)
+        assertFalse(resolver.onWindowsChanged(emptyList()))
+        assertFalse(resolver.onWindowsChanged(listOf(own, keyboard)))
+        assertEquals(Foreground.App("com.example.reader"), resolver.current)
+    }
+
+    @Test
+    fun `a focused application wins over another visible application and layers break ties`() {
+        val rear = ForegroundWindow("com.example.reader", true, layer = 3)
+        val focused = ForegroundWindow("com.android.settings", true, true, true, 1)
+        resolver.onWindowsChanged(listOf(rear, focused))
+        assertEquals(Foreground.App("com.android.settings"), resolver.current)
+        resolver.onWindowsChanged(listOf(rear, focused.copy(isFocused = false, isActive = false)))
+        assertEquals(Foreground.App("com.example.reader"), resolver.current)
+    }
+
+    @Test
     fun `the resolver tells home from apps and ignores Nexus overlays, input methods and the system UI`() {
         assertEquals(Foreground.Unknown, resolver.current)
         assertTrue(resolver.onWindowState("com.example.reader"))

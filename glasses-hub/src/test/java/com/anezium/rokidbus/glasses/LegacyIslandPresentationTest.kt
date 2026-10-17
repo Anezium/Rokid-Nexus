@@ -112,7 +112,7 @@ class LegacyIslandPresentationTest {
         announce(phone(bundle = true))
         assertEquals(LauncherBackend.SESSION, NexusInput.backend)
         startActivity()
-        AmbientForeground.onWindowState(APP)
+        AmbientForeground.onWindowsChanged(listOf(ForegroundWindow(APP, isApplication = true)))
         idle()
         // No policy saved for this app: its default keeps only significant flares.
         assertEquals(ActivityPresentation.HIDDEN, island().presentation)
@@ -121,7 +121,7 @@ class LegacyIslandPresentationTest {
     /** Before the bundle, an app in front was the residents' own context: panel, then chip after the collapse. */
     private fun assertClassicIslandsOverAnApp() {
         startActivity()
-        AmbientForeground.onWindowState(APP)
+        AmbientForeground.onWindowsChanged(listOf(ForegroundWindow(APP, isApplication = true)))
         idle()
         assertEquals(ActivityPresentation.PANEL, island().presentation)
         assertNull(island().size)

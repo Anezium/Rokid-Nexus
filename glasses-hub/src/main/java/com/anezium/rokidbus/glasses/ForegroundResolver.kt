@@ -1,11 +1,13 @@
 package com.anezium.rokidbus.glasses
 
+import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
 import android.view.inputmethod.InputMethodManager
+import android.view.accessibility.AccessibilityWindowInfo
 import com.anezium.rokidbus.shared.ForegroundAmbientMode
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -21,8 +23,16 @@ internal sealed interface Foreground {
     data object Unknown : Foreground
 }
 
+internal data class ForegroundWindow(
+    val packageName: String?,
+    val isApplication: Boolean,
+    val isFocused: Boolean = false,
+    val isActive: Boolean = false,
+    val layer: Int = 0,
+)
+
 /**
- * Tells home from native apps from accessibility window events (plan 028a §8.2). Pure: the home
+ * Tells home from native apps from accessibility application windows (plan 028a §8.2). Pure: the home
  * packages and the input methods are asked of the caller.
  *
  * Nexus's own windows (the session, launcher, islands, surfaces) never count: they float over
@@ -37,10 +47,20 @@ internal class ForegroundResolver(
     var current: Foreground = Foreground.Unknown
         private set
 
+    fun onWindowsChanged(windows: List<ForegroundWindow>): Boolean {
+        val front = windows.asSequence()
+            .filter { it.isApplication && !isIgnored(it.packageName.orEmpty()) }
+            .maxWithOrNull(compareBy(ForegroundWindow::isFocused, ForegroundWindow::isActive, ForegroundWindow::layer))
+        return onWindowState(front?.packageName)
+    }
+
+    private fun isIgnored(name: String): Boolean =
+        name.isBlank() || name == ownPackage || name in IGNORED || isInputMethod(name)
+
     /** A window-state change from [packageName]; true when what is in front changed. */
     fun onWindowState(packageName: String?): Boolean {
         val name = packageName?.trim().orEmpty()
-        if (name.isEmpty() || name == ownPackage || name in IGNORED || isInputMethod(name)) return false
+        if (isIgnored(name)) return false
         val next = if (isHome(name)) Foreground.Home else Foreground.App(name)
         if (next == current) return false
         current = next
@@ -90,9 +110,22 @@ internal object AmbientForeground {
         return { listeners.remove(listener) }
     }
 
-    /** A TYPE_WINDOW_STATE_CHANGED event's package, from the accessibility service. */
-    fun onWindowState(packageName: CharSequence?) {
-        val changed = resolver?.onWindowState(packageName?.toString()) ?: return
+    /** Accessibility overlays can emit state changes while the application underneath stays put. */
+    fun onWindowsChanged(service: AccessibilityService) {
+        val windows = service.windows.orEmpty().mapNotNull { window ->
+            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@mapNotNull null
+            val root = window.root ?: return@mapNotNull null
+            try {
+                ForegroundWindow(root.packageName?.toString(), true, window.isFocused, window.isActive, window.layer)
+            } finally {
+                root.recycle()
+            }
+        }
+        onWindowsChanged(windows)
+    }
+
+    fun onWindowsChanged(windows: List<ForegroundWindow>) {
+        val changed = resolver?.onWindowsChanged(windows) ?: return
         if (!changed) return
         log("foreground ${describe(current)}")
         notifyChanged()

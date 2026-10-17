@@ -137,6 +137,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         SurfaceOverlayRenderer.onServiceConnected(this)
         PinOverlayRenderer.onServiceConnected(this)
         AmbientForeground.onServiceConnected(applicationContext)
+        AmbientForeground.onWindowsChanged(this)
         ActivityController.onServiceConnected(applicationContext)
         NoticeController.onServiceConnected(applicationContext) {
             performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
@@ -196,8 +197,9 @@ class RokidBusAccessibilityService : AccessibilityService() {
         wirelessDebuggingAutomator?.onAccessibilityEvent(event)
         developerOptionsEnabler?.onAccessibilityEvent(event)
         StatusBadgeOverlayRenderer.onAccessibilityEvent(event)
-        if (event != null && event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            AmbientForeground.onWindowState(event.packageName)
+        if (event != null && (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED)) {
+            AmbientForeground.onWindowsChanged(this)
         }
         if (event != null && isNativeAssistantDismissArmed()) {
             val packageName = event.packageName?.toString().orEmpty()
