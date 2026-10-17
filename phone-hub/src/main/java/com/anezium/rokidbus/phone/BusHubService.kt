@@ -1025,11 +1025,17 @@ class BusHubService : Service() {
         )
         // Before the startup reconcile below reads it.
         skillGrantStore = SkillGrantStore(applicationContext)
+        // What a previous process owed the glasses' notification history survives it.
+        noticeRouter.restore(SharedPreferencesNoticeOwnerLedger(applicationContext))
         executor.execute {
             val reconciliation = pluginGrantReconciler.reconcile()
             retainActivityChoices(reconciliation.validPrincipals)
             retainSkillApprovals(reconciliation.validPrincipals)
             restoreOfflineActivities(reconciliation.validPrincipals)
+            // An owner uninstalled, revoked or re-signed while the hub was not running loses its
+            // glasses history now, exactly as after a package change.
+            surfaceOwnerCache.clear()
+            noticeRouter.purgeOwnersWithoutAccess({ surfaceOwnerFor(it) != null }, "startup")
         }
         pluginGuardianCoordinator = PluginGuardianCoordinator(
             context = applicationContext,

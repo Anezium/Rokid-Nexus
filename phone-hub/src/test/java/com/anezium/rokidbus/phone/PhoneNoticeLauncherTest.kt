@@ -255,6 +255,92 @@ class PhoneNoticeLauncherTest {
         assertEquals("media", NoticeSurfaceContract.parsePurge(sink.remote.single().payload))
     }
 
+    /** A ledger that outlives the router, as the hub's preferences outlive its process. */
+    private class MemoryLedger : PhoneNoticeOwnerLedger {
+        var saved = PhoneNoticeOwners()
+
+        override fun load() = saved
+
+        override fun save(owners: PhoneNoticeOwners) {
+            saved = owners
+        }
+    }
+
+    /** A new phone hub process: fresh router state over the same ledger. */
+    private fun restartedRouter(ledger: PhoneNoticeOwnerLedger, sink: RecordingPhoneHudRouteSink = this.sink) = PhoneNoticeRouter(
+        state = PhoneNoticeState(nowMs = { nowMs }, initialSequence = 0L),
+        sink = sink,
+        launcherVersion = { launcherVersion },
+    ).also { it.restore(ledger) }
+
+    @Test
+    fun `an owner uninstalled after a hub restart is still purged by the package change`() {
+        val ledger = MemoryLedger()
+        router.restore(ledger)
+        router.handleLocal(conversationShow("relay"), hudSender("relay"))
+        sink.remote.clear()
+
+        val restarted = restartedRouter(ledger)
+        // reconcilePluginPackage names no changed owner: the restored inventory must.
+        restarted.purgeOwnersWithoutAccess({ false }, "ownerUnavailable")
+
+        assertEquals(listOf("relay"), sink.remote.map { NoticeSurfaceContract.parsePurge(it.payload) })
+        assertTrue(ledger.saved.historyOwners.isEmpty())
+        assertTrue(ledger.saved.pendingPurges.isEmpty())
+    }
+
+    @Test
+    fun `a purge owed while disconnected survives a hub restart and goes at the next announce`() {
+        val ledger = MemoryLedger()
+        router.restore(ledger)
+        router.handleLocal(conversationShow("relay"), hudSender("relay"))
+        sink.remote.clear()
+        sink.linkUp = false
+        router.purgeOwnersWithoutAccess({ false }, "authorizationChanged", "relay")
+        assertTrue(sink.remote.isEmpty())
+        assertEquals(setOf("relay"), ledger.saved.pendingPurges)
+
+        val linked = RecordingPhoneHudRouteSink(capabilityBits = BusCapabilityBits.NOTICE_SURFACE, linkUp = true)
+        restartedRouter(ledger, linked).onGlassesAnnounced()
+
+        assertEquals(listOf(BusPaths.CORE_NOTICE_PURGE), linked.remote.map { it.path })
+        assertEquals("relay", NoticeSurfaceContract.parsePurge(linked.remote.single().payload))
+        assertTrue(ledger.saved.pendingPurges.isEmpty())
+    }
+
+    @Test
+    fun `the startup reconcile purges an owner that lost access while the hub was not running`() {
+        val ledger = MemoryLedger()
+        router.restore(ledger)
+        router.handleLocal(conversationShow("relay"), hudSender("relay"))
+        router.handleLocal(conversationShow("assistant"), hudSender("assistant"))
+        sink.remote.clear()
+
+        // The new process has not heard the glasses yet: the purge waits, durably.
+        launcherVersion = null
+        val restarted = restartedRouter(ledger)
+        restarted.purgeOwnersWithoutAccess({ it == "assistant" }, "startup")
+        assertTrue(sink.remote.isEmpty())
+        assertEquals(setOf("relay"), ledger.saved.pendingPurges)
+        assertEquals(setOf("assistant"), ledger.saved.historyOwners)
+
+        launcherVersion = 1
+        restarted.onGlassesAnnounced()
+        assertEquals(listOf("relay"), sink.remote.map { NoticeSurfaceContract.parsePurge(it.payload) })
+    }
+
+    @Test
+    fun `the ledger keeps owner ids and nothing a notice said`() {
+        val ledger = MemoryLedger()
+        router.restore(ledger)
+        router.handleLocal(conversationShow("relay"), hudSender("relay"))
+
+        assertEquals(PhoneNoticeOwners(historyOwners = setOf("relay")), ledger.saved)
+        assertFalse(ledger.saved.toString().contains("Marie"))
+        assertFalse(ledger.saved.toString().contains("On my way"))
+        assertFalse(ledger.saved.toString().contains("9f2c"))
+    }
+
     @Test
     fun `a show to glasses without the bundle leaves no history owner to purge`() {
         launcherVersion = 0

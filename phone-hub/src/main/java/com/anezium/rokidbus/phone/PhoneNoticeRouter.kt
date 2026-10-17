@@ -31,6 +31,31 @@ internal class PhoneNoticeRouter(
     private val pendingPurges = linkedSetOf<String>()
     private val pendingWithdrawals = linkedSetOf<NoticeWithdrawal>()
 
+    /**
+     * Where [historyOwners] and [pendingPurges] outlive this process: the glasses keep their
+     * history across a phone hub restart, so a purge owed must survive it too. Owner ids only.
+     */
+    private var ledger: PhoneNoticeOwnerLedger? = null
+
+    /**
+     * Takes back what a previous process of the hub knew it owed the glasses. The caller then
+     * reconciles every restored owner against the current grants, as after a package change.
+     */
+    fun restore(ledger: PhoneNoticeOwnerLedger) {
+        synchronized(historyLock) {
+            val saved = ledger.load()
+            historyOwners += saved.historyOwners
+            pendingPurges += saved.pendingPurges
+            this.ledger = ledger
+            persist()
+        }
+    }
+
+    /** Called with [historyLock] held after either set changed. */
+    private fun persist() {
+        ledger?.save(PhoneNoticeOwners(historyOwners.toSet(), pendingPurges.toSet()))
+    }
+
     fun matches(path: String): Boolean =
         path == BusPaths.NOTICE_SHOW ||
             path == BusPaths.NOTICE_UPDATE ||
@@ -96,7 +121,7 @@ internal class PhoneNoticeRouter(
                         if (launcherBundle) {
                             val eventKey = result.notice.payload.optString(NoticeSurfaceContract.FIELD_EVENT_KEY)
                             synchronized(historyLock) {
-                                historyOwners += pluginId
+                                if (historyOwners.add(pluginId)) persist()
                                 // A withdrawal queued while the link was down is older than this
                                 // event; flushed after it, it would mark the new notice removed.
                                 if (eventKey.isNotEmpty()) {
@@ -211,10 +236,12 @@ internal class PhoneNoticeRouter(
             pendingWithdrawals.removeAll { it.ownerPluginId == pluginId }
             if (version != null && sink.pinLinkUp() && sink.sendRemote(purge) == null) {
                 pendingPurges.remove(pluginId)
+                persist()
                 sink.log("notice history purged owner=$pluginId reason=$reason")
                 return
             }
             pendingPurges.add(pluginId)
+            persist()
         }
         sink.log("notice history purge queued owner=$pluginId reason=$reason")
     }
@@ -240,6 +267,7 @@ internal class PhoneNoticeRouter(
             if (!bundleNegotiated()) {
                 pendingPurges.clear()
                 pendingWithdrawals.clear()
+                persist()
                 return
             }
             for (owner in pendingPurges.toList()) {
@@ -249,6 +277,7 @@ internal class PhoneNoticeRouter(
                 )
                 if (sink.sendRemote(purge) != null) return
                 pendingPurges.remove(owner)
+                persist()
                 sink.log("notice history purged owner=$owner reason=announce")
             }
             for (withdrawal in pendingWithdrawals.toList()) {
