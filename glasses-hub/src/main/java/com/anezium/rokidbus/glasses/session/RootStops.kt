@@ -104,6 +104,9 @@ internal object RootStops {
     const val PREVIEW_STOP_ID = "nexus:notice-preview"
     const val ACTIVITIES_PAGE_ID = "nexus:activities"
     const val NOTIFICATIONS_PAGE_ID = "nexus:notifications"
+
+    /** What a purged owner's notification stop says: that one was removed, and nothing of it. */
+    const val PURGED_TEXT = "Notification removed"
     const val APPLICATIONS_PAGE_ID = "nexus:applications"
 
     /** The local page of one history entry (its params name it), opened from a preview or a row. */
@@ -169,6 +172,36 @@ internal object RootStops {
             }
         }
     }
+
+    /**
+     * [ownerPluginId] was purged (revoked, disabled, uninstalled, re-signed): after the usual
+     * refresh, a notification stop still showing anything of it keeps its place as an inert,
+     * content-free placeholder, so nothing of the owner survives on a root kept open or beneath a
+     * page. A stop whose owner is not known is treated as the purged owner's. A withdrawal is
+     * not a purge: it keeps its readable card through [withHistory].
+     */
+    fun withPurged(stops: List<RootStop>, ownerPluginId: String, history: NotificationHistory, nowWallMs: Long): List<RootStop> =
+        withHistory(stops, history, nowWallMs).map {
+            val owner = it.notice?.ownerPluginId
+            if (it.kind == RootStopKind.NOTICE_PREVIEW && (owner == null || owner == ownerPluginId)) {
+                purgedNotice(it)
+            } else {
+                it
+            }
+        }
+
+    private fun purgedNotice(stop: RootStop): RootStop = stop.copy(
+        pageId = NOTIFICATIONS_PAGE_ID,
+        text = PURGED_TEXT,
+        count = null,
+        label = null,
+        detail = null,
+        measure = null,
+        atWallMs = null,
+        icon = null,
+        paramsJson = null,
+        notice = NoticeCard(NoticeCardKind.GENERIC, entryId = null, ownerPluginId = null, state = HistoryState.WITHDRAWN),
+    )
 
     private fun refreshNotice(stop: RootStop, history: NotificationHistory, nowWallMs: Long): RootStop {
         val card = stop.notice

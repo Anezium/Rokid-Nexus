@@ -195,7 +195,7 @@ internal class SessionReducer(
             history = history,
             draft = DraftStore.authorityLost(model.draft, owner, revision = threadRevision(model, owner, model.draft?.threadKey)),
             capture = if (capture != null) null else model.capture,
-            state = model.state.mapRootStops { RootStops.withHistory(it, history, wallClock()) },
+            state = model.state.mapRootStops { RootStops.withPurged(it, owner, history, wallClock()) },
         )
         val transition = withComposerRedraw(model, rootBookkeeping(model, updated))
         if (capture == null) return transition
