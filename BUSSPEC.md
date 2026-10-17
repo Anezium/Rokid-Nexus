@@ -1296,6 +1296,10 @@ mark the matching history entries withdrawn and withdraw reply authority for
 that thread. It is not proof that anything was read or delivered.
 `/core/notice/purge` `{ownerPluginId}` (phone to glasses only) removes every
 history entry of that owner on revoke, disable, uninstall or a signer change.
+The phone keeps, by owner id only, the owners whose notices reached a history
+and the purges it has not delivered, across its own restarts; at startup and on
+every package or grant change it purges each of those owners that is no longer
+an approved surfaces owner, and an undelivered purge goes at the next announce.
 
 ## Activity protocol v1
 
@@ -1825,8 +1829,10 @@ age (a display bound, not a reply lease). An entry holds its owner, its
 flag, its label, the text as shown on the band (the owner's redaction and the
 wearer's hide choices preserved), its arrival time, and a local state `new`,
 `seen`, `handed_off` or `withdrawn`. A withdraw marks matching entries
-withdrawn; a purge removes the owner's entries; a link loss keeps entries but
-leaves them read-only until the phone is back. The root's notification stop is
+withdrawn; a purge removes the owner's entries, and a root already open or
+beneath a page shows an inert `Notification removed` placeholder in place of any
+stop that showed that owner; a link loss keeps entries but leaves them read-only
+until the phone is back. The root's notification stop is
 an aggregate card (`<n> conversations`, opening the owner's main page) when the
 newest live conversation entries come from more than one thread of one owner;
 else a conversation card for the newest conversation entry, which opens its
@@ -2386,7 +2392,9 @@ microphone fallback. `reason` is `completed`, `cancelled`, `no_speech`, `busy`,
 text, yields a draft, and every other reason shows `Glasses mic unavailable` /
 `use Type` and focuses Type. `stop` with `cancel: false` finishes, with
 `cancel: true` cancels. Typing opens the phone's keyboard prompt (directly when
-possible, else as a heads-up) and never starts the glasses microphone; a commit
+possible, else as a heads-up, which needs the notification grant only from
+Android 13) and never starts the glasses microphone; when neither can come up the
+phone ends the capture at once with an uncommitted `type/done`. A commit
 carries its text, and an empty committed text is the only explicit discard. A
 link loss during a capture cancels it and keeps the previous draft.
 
@@ -2417,6 +2425,11 @@ the draft never goes to another recipient.
   (accessibility window events, with Nexus overlays and input methods excluded)
   tells home from apps; over an app the hub caps islands at `text`. Islands stay
   passive, and native apps and surfaces keep their input.
+- Both preferences apply only to the `SESSION` launcher over a phone whose last
+  announcement negotiated the bundle (a link loss keeps them, as it keeps the
+  backend). With an older phone or the `LEGACY` backend, islands are presented
+  as before the bundle: automatic sizes, no foreground mode, an app in front
+  treated as the home. Stored preferences stay for the next `SESSION` use.
 - A value this build does not know drops that entry, leaving its default.
 
 ### Launcher backend

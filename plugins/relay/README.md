@@ -3,6 +3,8 @@
 Relay forwards directly repliable Android notifications to a Nexus notice band,
 keeps a menu-launched in-memory inbox, and sends an explicitly confirmed reply
 through the source notification's `RemoteInput` action — dictated, or typed.
+A thread answered from Relay leaves that inbox until the app posts it again; the
+launcher's thread page keeps reading it with the reply it handed off.
 A *Type* chip appears about a second into dictation (or *Reply by typing* skips
 dictation altogether), and the reply is typed inside the notice band itself on
 a glasses hub from 1.4.13, from a bonded keyboard or the phone's Keyboard &

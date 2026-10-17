@@ -1,12 +1,14 @@
 # Launcher completion (plan 028) — implementation report
 
-Date: 2026-10-12. Branch `dev/launcher-complete` (local; integration checkout `dev/launcher-rework`
+Date: 2026-10-12, amended 2026-10-17 after GPT-6 Astra's independent review (section 2). Branch `dev/launcher-complete` (local; integration checkout `dev/launcher-rework`
 fast-forwarded to the same commit). Base `2d08f0a3` (approved plan 028, r17 mockup). Not pushed,
 released, tagged, installed or device-approved.
 
 **Status.** The whole approved scope of plans 028/028a is implemented in source, integrated, covered
-by unit and Robolectric tests, and accepted by independent review (last round: ACCEPT WITH ONE
-NONBLOCKING FIXTURE NIT, since fixed). The acceptance flip is applied: the new launcher is the default
+by unit and Robolectric tests, and was accepted by the Sol review rounds (last: ACCEPT WITH ONE
+NONBLOCKING FIXTURE NIT, since fixed). A later independent review by GPT-6 Astra found four blockers
+and one should-fix (two of them LEGACY regressions); all five are fixed below and await a fresh
+independent review. The acceptance flip is applied: the new launcher is the default
 when the phone's last capabilities announcement negotiated the launcher bundle. **Hardware acceptance
 is the remaining shipping gate**; nothing here was run on a phone or on glasses.
 
@@ -120,10 +122,12 @@ shipped default; offline boot keeps SESSION; an older phone's fresh announcement
 | Sol R4 | GPT-6.1 Sol | NOT READY: R4-1 retained bodies, R4-2 held identity, R4-3 fixture | `e421bcd7`…`00b08203` |
 | Sol R5 | GPT-6.1 Sol | NOT READY: R5-1 held destination before announcement, R5-2 tall retained chat, R5-3 hint | `3a33f2d3`…`bfde339f` |
 | Sol R6 | GPT-6.1 Sol | ACCEPT WITH ONE NONBLOCKING FIXTURE NIT (R6-1) | R6-1 fixed `36dc167c`; flip `f103fe3e`; docs `c82c077a` |
+| Astra R1 (2026-10-17) | GPT-6 Astra, independent of Sol | NOT OK: 4 blockers, 1 should-fix | 1 LEGACY islands `23f44c76`; 2 purge on frozen roots `e7bebd17`; 3 durable purge obligations `ed5d9cca`; 4 Relay classic inbox `f1d8c2c0`; 5 keyboard prompt on API 30-32 `4862d6a9`; record `ASTRA-R1-RESPONSE.md` |
 
 Local audit records (ignored, not published) are in the integration checkout under
 `build/launcher-complete/reviews/` (`R1B-A-CODE.md`, `R1B-B-PRODUCT-UI.md`, `R2-FINAL.md`,
-`SOL-R3…R6`, and the author responses `R2-RESPONSE-F1-F2.md`, `R3…R5-RESPONSE.md`).
+`SOL-R3…R6`, and the author responses `R2-RESPONSE-F1-F2.md`, `R3…R5-RESPONSE.md`,
+`ASTRA-R1-RESPONSE.md`).
 
 ## 3. Open items
 
@@ -148,6 +152,17 @@ inbound phone messages call `GlassesHub.onRemoteEnvelope` directly (the authenti
 the handshake, loss and outbound writes); the outbound record pairs only a failed CXR send with the
 session's drop on the next log line; the F1 link-loss mutation was not run.
 
+Known limits after the Astra fixes:
+- The phone's queued notice **withdrawals** are still memory-only (purges are now durable): a withdrawal
+  owed when the phone hub dies is lost, and the glasses keep that entry until the owner's next notice,
+  a purge, or their own restart.
+- A thread answered from Relay leaves the classic inbox but keeps its reply authority for the
+  launcher's thread page, as the accepted launcher design wants; it re-enters the classic inbox when the
+  app posts it again.
+- The phone-restart purge path is tested at the router with a ledger that outlives it and the exact
+  production calls (`purgeOwnersWithoutAccess` without a changed owner, startup reconcile, announce);
+  `BusHubService.onCreate` itself is not instantiated in a test.
+
 ## 4. Pending hardware acceptance (not done)
 
 1. A 60 s phone outage and return with an open conversation + draft, and with an open route page; both
@@ -160,12 +175,40 @@ session's drop on the next log line; the F1 link-loss mutation was not run.
    ribbon and lists.
 6. Media Deck monitoring across closing the full surface; todo opt-in and checked-state results.
 7. Skills: Media "Which player?" choice, stale choice, lease-only behaviour.
+8. From the Astra review: LEGACY island comparison (old phone, explicit LEGACY, saved SESSION sizes and
+   policies, home / native app / surface / launcher); purge of every visible copy (conversation card,
+   aggregate, generic preview, root visible and beneath a page); purge across phone process death
+   (restart then uninstall; revoke while disconnected then kill); Relay classic inbox after band Reply and
+   Type and full-app sends, clear-after-reply on and off; keyboard launch matrix on API 30/32 and 33+;
+   Android recreation and phone hub death during typing and dictation.
 
 ## 5. Evidence actually observed
 
 All builds ran in the configured integration checkout, hubs without `-PskipCxrGlobal`.
 
-Final, at `f103fe3e` (source equal to the final commit except documentation):
+After the Astra fixes, at `a2c46cc6` (source equal to the final commit except documentation), all ten
+suites re-executed with `--rerun-tasks`:
+
+`./gradlew :shared:test :bus-client:testDebugUnitTest :plugin-nav:testDebugUnitTest :plugin-relay:testDebugUnitTest :plugin-media:testDebugUnitTest :plugin-assistant:testDebugUnitTest :plugin-sample:testDebugUnitTest :plugin-transit:testDebugUnitTest -PskipCxrGlobal=true --rerun-tasks`
+
+```
+BUILD SUCCESSFUL in 1m 2s
+194 actionable tasks: 194 executed
+```
+
+`./gradlew :phone-hub:testDebugUnitTest :phone-hub:assembleDebug :glasses-hub:testDebugUnitTest :glasses-hub:assembleDebug --rerun-tasks`
+
+```
+BUILD SUCCESSFUL in 1m 45s
+160 actionable tasks: 160 executed
+```
+
+JUnit XML: **3700 tests, 0 failures, 0 errors, 0 skipped** — shared 485, bus-client 192, phone-hub 891,
+glasses-hub 1055, nav 134, relay 128, media 78, assistant 552, sample 55, transit 130. Debug APKs:
+phone hub 23,145,558 bytes, SHA-256 `1217840cf62cb866ec51aa604b766c586a4b964ef8b94cfb30633ba513cb3343`;
+glasses hub 24,230,268 bytes, SHA-256 `785c5aca9dac17fe917044521291bc075c45fe2ce2a67e9ef44da574dee91a82`.
+
+Earlier, at `f103fe3e`:
 `./gradlew :glasses-hub:testDebugUnitTest :glasses-hub:assembleDebug`
 
 ```
