@@ -71,9 +71,20 @@ internal object RoutePresentation {
     fun hasMap(body: PageBody.Route, live: RouteGeometry?): Boolean =
         body.follow != null || body.overview != null || live != null
 
-    fun degraded(body: PageBody.Route?, geometry: RouteGeometry?): Boolean =
-        (body != null && body.position != RoutePositionQuality.LIVE) ||
-            (geometry?.position?.quality?.let { it != RoutePositionQuality.LIVE } ?: false)
+    /**
+     * Whether the position the page stands on can no longer be trusted. A stale position says
+     * so itself, and a map drawn with no position is a journey that has lost or not yet found
+     * its fix. A route with no map at all, another app's text guidance, never had a position to
+     * lose: its glyph and figures are the app's own and nothing about GPS is said.
+     */
+    fun degraded(body: PageBody.Route?, geometry: RouteGeometry?): Boolean {
+        if (geometry?.position?.quality?.let { it != RoutePositionQuality.LIVE } == true) return true
+        return when (body?.position) {
+            null, RoutePositionQuality.LIVE -> false
+            RoutePositionQuality.STALE -> true
+            RoutePositionQuality.NONE -> hasMap(body, geometry)
+        }
+    }
 
     /** The heading the map turns to: Follow only, never on a degraded position. Null draws north-up. */
     fun heading(view: MapView, degraded: Boolean, headingDeg: Float?): Float? =
