@@ -332,12 +332,15 @@ internal object ActivityOverlayRenderer {
         }
 
         fun place(corner: PinSurfacePosition, topInsetDp: Int) {
-            if (corner == this.corner && topInsetDp == this.topInsetDp) return
+            val top = corner == PinSurfacePosition.TOP_LEFT || corner == PinSurfacePosition.TOP_RIGHT
+            val edgePx = dp(context, EDGE_MARGIN_DP + if (top) topInsetDp else 0)
+            val available = HudTopInset.ambientHeightPx(context, top, edgePx)
+            if (corner == this.corner && topInsetDp == this.topInsetDp && nav.maxHeightPx == available) return
+            nav.maxHeightPx = available
             this.corner = corner
             this.topInsetDp = topInsetDp
             val edge = dp(context, EDGE_MARGIN_DP)
             val topEdge = dp(context, EDGE_MARGIN_DP + topInsetDp)
-            val top = corner == PinSurfacePosition.TOP_LEFT || corner == PinSurfacePosition.TOP_RIGHT
             val gravity = when (corner) {
                 PinSurfacePosition.TOP_LEFT -> Gravity.TOP or Gravity.START
                 PinSurfacePosition.TOP_RIGHT -> Gravity.TOP or Gravity.END

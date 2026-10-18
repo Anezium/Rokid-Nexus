@@ -113,6 +113,15 @@ internal class RouteMapPainter {
             MapAttribution(text, right, baseline, MapBox(right - textWidth - 4f, baseline - PageStyle.CAPTION_PX - 2f, width, bottom))
         }
         val reserved = buildList {
+            fun mark(point: RoutePoint, radius: Float) {
+                val x = transform.x(point.x.toFloat(), point.y.toFloat())
+                val y = transform.y(point.x.toFloat(), point.y.toFloat())
+                add(MapBox(x - radius, y - radius, x + radius, y + radius))
+            }
+            geometry.position?.point?.let { mark(it, 26f) }
+            geometry.turn?.let { mark(it, TURN_RADIUS_PX + 4f) }
+            geometry.destination?.let { mark(it, DESTINATION_OUTER_PX + 4f) }
+            geometry.stops.forEach { mark(RoutePoint(it.x, it.y), 22f) }
             attribution?.let { add(it.box) }
             if (compassX != null && compassY != null) {
                 add(MapBox(compassX - COMPASS_RADIUS_PX - 2f, compassY - COMPASS_RADIUS_PX - 2f, compassX + COMPASS_RADIUS_PX + 2f, compassY + COMPASS_LETTER_DROP_PX + 4f))
@@ -131,7 +140,10 @@ internal class RouteMapPainter {
                 height = LABEL_PX,
             )
         }
-        val labels = RouteMapMath.placeLabels(candidates, input.form.maxLabels, MapBox(0f, input.insets.top, width, bottom), reserved)
+        val labels = RouteMapMath.placeLabels(
+            candidates, input.form.maxLabels, MapBox(0f, input.insets.top, width, bottom), reserved,
+            verticalOffsets = listOf(0f, -36f, 36f),
+        )
         return MapPlan(transform, style, scaleBar, labels, compassX, compassY, attribution)
     }
 
@@ -334,7 +346,7 @@ internal class RouteMapPainter {
         const val ROUTE_PX = 6f
         const val UNDERLAY_PX = 10f
         const val STOP_PATH_PX = 2f
-        const val LABEL_PX = 13f
+        const val LABEL_PX = 16f
         const val HALO_PX = 5f
         const val STOP_TEXT_PX = 16f
         const val TURN_RADIUS_PX = 12f

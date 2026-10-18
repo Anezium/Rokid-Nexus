@@ -78,7 +78,7 @@ internal data class NavRouteSnapshot(
         val arrived = quality == RouteQuality.ARRIVED
         val instruction = if (nextStep.direction == "ARRIVE") "Follow the route to ${route.destination.name}" else nextStep.instruction
         val stepDistance = distanceLabel(stepDistanceMeters)
-        val secondary = if (moving) nextStep.street.ifBlank { nextStep.instruction } else route.destination.name
+        val secondary = if (moving) nextStep.street.ifBlank { nextStep.instruction } else route.destination.name.substringBefore(", ")
         return NavGuidance(
             source = NavSource.NEXUS,
             glyph = if (arrived) "arrive" else if (moving && nextStep.direction != "ARRIVE") nextStep.glyph else NavText.ROUTE_GLYPH,

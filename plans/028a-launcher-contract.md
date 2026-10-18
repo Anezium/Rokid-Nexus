@@ -339,6 +339,12 @@ recipient, never a guess.
 
 ## 8. Navigation, ambient preferences, backend
 
+Owner correction, 2026-10-18: the user-facing size choice below is currently for
+Navigation only. Other plugins retain their developer-defined presentation; no
+universal per-plugin Text/Minimap/Panel editor is offered. Previously saved
+non-Navigation overrides remain stored for compatibility but do not override
+their rendering. The existing owner-scoped wire format is unchanged.
+
 8.1 Per-owner ambient size `text | minimap | panel` (absent = today's automatic behaviour).
 The phone is authoritative and stores it; glasses edits (display page) apply locally and are
 sent with `/core/ambient/sizes/set {ownerPluginId, size|null}`; the phone broadcasts the full map

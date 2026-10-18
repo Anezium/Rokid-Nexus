@@ -59,6 +59,33 @@ import org.robolectric.annotation.LooperMode
 @LooperMode(LooperMode.Mode.PAUSED)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class LauncherRenderingTest {
+    @Test
+    fun `an ambient panel fits before the ROM status row while preserving map credit`() {
+        val geometry = RouteGeometry(
+            500.0, listOf(RoutePath(RoutePathRole.ROUTE, listOf(RoutePoint(500, 500), RoutePoint(500, 100)))),
+            position = RoutePosition(RoutePositionQuality.STALE, RoutePoint(500, 500), fixAgeS = 77),
+            labels = listOf(RouteLabel("Test Street", 500, 500, 2)), attribution = "© OpenStreetMap",
+        )
+        val panel = NavIslandView(context, icons).apply {
+            maxHeightPx = 320
+            bind(IslandForm.PANEL, IslandContent.Guidance("gps-lost", "1.8 km", street = "Station",
+                map = MapInput(geometry, MapForm.PANEL, degraded = true), foot = IslandFoot("GPS lost · last fix 77 s")))
+            measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            layout(0, 0, measuredWidth, measuredHeight)
+        }
+        assertTrue(panel.height <= 320)
+        val map = requireNotNull(panel.mapView)
+        assertTrue(map.height in 60 until MapForm.PANEL.naturalHeightPx)
+        val plan = requireNotNull(map.planNow())
+        assertNotNull(plan.attribution)
+        val x = plan.transform.x(500f, 500f)
+        val y = plan.transform.y(500f, 500f)
+        val mark = MapBox(x - 26f, y - 26f, x + 26f, y + 26f)
+        assertTrue(plan.labels.isNotEmpty())
+        assertTrue(plan.labels.none { it.box(3f).intersects(mark) })
+        draw(panel)
+    }
+
     private val context = RuntimeEnvironment.getApplication()
 
     /** Every icon resolves to one stroke, so slots are filled without the hub's resources. */

@@ -915,7 +915,11 @@ internal object ActivityController {
             NexusInput.backend == LauncherBackend.SESSION
 
     private fun ambientSizes(ambient: Boolean): (String) -> AmbientSize? =
-        if (ambient) AmbientPreferences::effectiveSize else { _ -> null }
+        if (ambient) { owner ->
+            AmbientPreferences.effectiveSize(owner).takeIf {
+                com.anezium.rokidbus.shared.AmbientPreferencesContract.hasSizeChoice(owner)
+            }
+        } else { _ -> null }
 
     private fun ambientMode(ambient: Boolean): ForegroundAmbientMode =
         if (ambient) AmbientForeground.mode() else ForegroundAmbientMode.RESIDENTS

@@ -24,6 +24,28 @@ import org.junit.Test
 /** Guidance islands (plan 028a §8.1) and the launcher backend precedence (§8.3). */
 class GuidanceIslandTest {
     @Test
+    fun `a saved map override cannot turn Relay into navigation`() {
+        val original = item(ActivityPresentation.PANEL, AmbientSize.PANEL)
+        val relay = original.copy(activity = original.activity.copy(ownerPluginId = "relay"))
+        assertNull(GuidanceIslands.of(relay, null, null))
+        assertEquals(relay.activity.content, GuidanceIslands.lastKnown(relay))
+    }
+
+    @Test
+    fun `a lost map keeps distance in the header and GPS status only in the foot`() {
+        val original = item(ActivityPresentation.PANEL, AmbientSize.PANEL, measure = "1.2 km")
+        val lost = original.copy(activity = original.activity.copy(content = original.activity.content.copy(
+            primary = "GPS lost", detail = listOf("GPS signal lost"),
+        )))
+        val shown = GuidanceIslands.of(lost, geometry(RoutePositionQuality.STALE), null)!!.content
+        assertEquals("1.2 km", shown.figure)
+        assertNull(shown.measure)
+        assertNull(shown.then)
+        assertEquals("GPS lost · last fix 9 s", shown.foot?.left)
+        assertTrue(shown.approximate)
+    }
+
+    @Test
     fun `render authority follows actual ambient form collapse and foreground suppression`() {
         val map = geometry(RoutePositionQuality.LIVE)
         fun rendered(presentation: ActivityPresentation, size: AmbientSize?) =
@@ -223,7 +245,7 @@ class GuidanceIslandTest {
     ) = ActivityRenderItem(
         activity = NexusActivitySurface(
             surfaceId = "maps:activity",
-            ownerPluginId = "maps",
+            ownerPluginId = "nav",
             seq = 1,
             content = content(measure, actions),
             corner = PinSurfacePosition.TOP_LEFT,

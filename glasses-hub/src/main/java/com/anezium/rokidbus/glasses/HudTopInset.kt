@@ -29,6 +29,15 @@ internal object HudTopInset {
         state.effectiveDp
     }
 
+    /** The ROM draws its home status row above accessibility windows; keep ambient maps clear. */
+    fun ambientHeightPx(context: Context, top: Boolean, edgePx: Int): Int = synchronized(lock) {
+        ensureLoaded(context.applicationContext)
+        val metrics = context.resources.displayMetrics
+        val row = TOP_MODE_ROW_CENTER_PX + state.autoDp * metrics.density
+        val available = if (top) row - 24f - edgePx else metrics.heightPixels - edgePx - row - 24f
+        available.toInt().coerceAtLeast(0)
+    }
+
     fun set(context: Context, manualDp: Int, auto: Boolean) {
         val appContext = context.applicationContext
         val cleanManualDp = sanitize(manualDp)

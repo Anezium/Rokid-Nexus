@@ -48,6 +48,9 @@ data class AmbientPolicy(val revision: Long, val modes: Map<String, ForegroundAm
  * that owner or app on its default.
  */
 object AmbientPreferencesContract {
+    /** Only Navigation currently offers wearer-selected forms; other plugins own their layout. */
+    fun hasSizeChoice(ownerPluginId: String): Boolean = ownerPluginId == "nav"
+
     const val SIZES_SET_PATH = BusPaths.CORE_AMBIENT_SIZES_SET
     const val SIZES_PATH = BusPaths.CORE_AMBIENT_SIZES
     const val POLICY_PATH = BusPaths.CORE_AMBIENT_POLICY

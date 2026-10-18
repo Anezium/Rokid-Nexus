@@ -88,7 +88,7 @@ Implement the accepted Navigation text/minimap/panel and full-map excursion, usi
 
 Use bounded hub-rendered vector geometry from phone-side route/street data: the same route/heading/position at small, panel and full-page sizes. Respect the documented point/path/label and byte budgets, geometry clipping, heading smoothing and truthful north-up/degraded position behavior. Use a stop ribbon for transit rides as designed. Keep routing/lifecycle inputs from dev/nav-activity-widgets where useful, reviewing and adapting their contract rather than blindly merging its obsolete presentation.
 
-Persist per-owner ambient size and synchronize the phone editor/foreground-app ambient policy. Show the full map without mutating the preferred ambient size, and return to the same card/context. Native apps and existing surfaces keep their input while ambient islands are passive.
+Persist Navigation's ambient size and synchronize its phone editor/foreground-app ambient policy. Only Navigation currently offers user-selected Text/Minimap/Panel forms (owner correction, 2026-10-18); other plugins keep their developer-defined presentation. Show the full map without mutating the preferred ambient size, and return to the same card/context. Native apps and existing surfaces keep their input while ambient islands are passive.
 
 All accepted root/Application/Notification/Activity views carry their canonical app or place icons. Keep a 480x640 black/transparent HUD, outline-only controls, readable layout and one canonical selection model across touchpad, ring/accessibility, scrolling and activation. Never solve overflow with clipping or a theoretical fixed visible-row count.
 
