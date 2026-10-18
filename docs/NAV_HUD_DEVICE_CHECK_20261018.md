@@ -74,3 +74,16 @@ affected tests/builds, a new independent review and actual phone screenshots.
 
 Screenshots and raw route/device evidence stay in ignored local storage because
 they may reveal private location or device information.
+
+
+## Owner-requested current Navigation recapture
+
+After the compact release update, the owner explicitly requested a new capture.
+A real 1.8 km route to Gare de Goussainville was started and the current Nexus
+root, text island, OSM minimap, OSM panel and route page were captured. See
+`docs/GLASSES_COMPACT_VALIDATION_20261018.md` for scope, screenshots and cleanup.
+The current minimap/panel have streets, route/position, attribution and clear
+native status-row space. Initial GPS was sufficient; accuracy later degraded.
+The route was stopped and temporary permissions/Automatic preference restored.
+This supplies current appearance evidence; final owner visual approval and a
+new GPS-lost-specific screenshot are not claimed.

@@ -1,6 +1,6 @@
 # Compact glasses UI validation ? 2026-10-18
 
-Status: source/test integration approved by independent R8 review; 2,340 checks pass. Signed compact glasses and Navigation releases installed in place. Bounded on-device render/scroll checks pass; final owner visual approval and fresh GPS map appearance remain pending.
+Status: source/test integration approved by independent R8 review; 2,340 checks pass. Signed compact glasses and Navigation releases installed in place. Bounded on-device render/scroll checks pass; current GPS map captures are available; final owner visual approval remains pending.
 
 ## Latest check: R10 fixture correction
 
@@ -77,6 +77,43 @@ captures and three separately labelled source simulations). Gallery preview pass
 at widths 728 and 360 with no console errors. Owner visual approval and current
 Navigation/map/native-row appearance with a real GPS fix remain open; the owner's
 refusal of another GPS test is respected.
+
+## Owner-requested Navigation recapture
+
+The owner explicitly requested recapturing the installed Navigation UI. Started a
+new real walking journey to the previously supplied public destination, Gare de
+Goussainville, from the visible phone UI. Precise location was allowed once for
+this bounded test. The phone obtained a sufficient fix and planned a 1.8 km route.
+
+Fresh screenshots from the current installed releases now show:
+
+- Navigation activity plus the retained local Relay notification preview in the
+  actual Nexus root. This is an activity and a notification, not two promoted
+  plugin activities.
+- The smaller ambient text guidance above the native launcher/status row.
+- The compact minimap and wide panel with actual downloaded OpenStreetMap streets,
+  route/position geometry, scale and attribution. The native status row is clear.
+- The route page opened with one tap from the root. Its first screenshot preceded
+  the basemap response; the later ambient captures include the loaded street map.
+
+Evidence: `build/smoke/shots/nav-recapture-current-{root,ambient-text,minimap,panel,route-page}.png`
+and `build/glasses-ux-compact/nav-recapture-current-state.json`. These are real
+screenshots, replacing the former lack of current GPS appearance evidence; they
+are not simulated images. Initial captures reported on-route; later phone status
+reported low GPS accuracy before stopping. No claim of sustained GPS quality,
+physical wearer readability or a freshly captured GPS-lost variant is made.
+
+Stopped the journey through its visible Stop control after capture. Restored
+Navigation size Automatic (checked true, other three false). Removed only the
+new temporary location grants; exact observed permission/flag state matches the
+saved pre-test baseline, including the pre-existing ONE_TIME metadata. No journey
+service remains. Phone returned to Main, glasses to native home. Navigation's
+activity disappears after stop by design. No microphone, draft or Send action.
+
+The browser gallery now defaults to Navigation current and has 48 entries,
+including five fresh Navigation images. Successful previews at 728/360: no
+console errors, content heights 2,002/1,586. No source or build change was made
+for this recapture. Owner visual approval is still pending.
 
 ## Historical integrated checks
 
