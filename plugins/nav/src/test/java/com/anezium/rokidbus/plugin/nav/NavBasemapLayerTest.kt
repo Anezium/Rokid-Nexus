@@ -20,6 +20,32 @@ class NavBasemapLayerTest {
     private val sampleKey = TileKey(14, 8800, 5373)
 
     @Test
+    fun `accepted maximum vertices are rejected before view work regardless of tiny output`() {
+        val route = gateRoute()
+        // Repeated vertices would produce almost no output, but still cost 300000 visits.
+        val feature = line(*List(300_000) { (2048 + it % 2) to 2048 }.toTypedArray(), tags = mapOf("kind" to "residential"))
+        val decoded = ShortbreadTiles.decode(sampleKey, MvtFixtures.shortbread(listOf(feature)))
+        val local = LocalTile.of(decoded, route.line)
+        assertTrue(local.vertices >= 300_000)
+        assertFalse(NavBasemapLayer.withinWorkBudget(listOf(local)))
+        val snapshot = tracking(route, 100.0)
+        val loaded = snapshot.copy(basemap = NavBasemapTiles(OsmShortbreadSource.attribution, 14, mapOf(sampleKey to local)))
+        assertEquals(NavMapProjection.geometry(snapshot, NavMapView.FOLLOW), NavMapProjection.geometry(loaded, NavMapView.FOLLOW))
+    }
+
+    @Test
+    fun `preparation budget is aggregate and also bounds quadratic simplification`() {
+        fun tile(x: Int, count: Int, lineSize: Int): LocalTile = LocalTile(TileKey(14, x, 5373),
+            List(count) { LocalLine(StreetClass.STREET, DoubleArray(lineSize), DoubleArray(lineSize)) }, emptyList())
+        val modest = tile(8800, 1000, 4)
+        assertTrue(NavBasemapLayer.withinWorkBudget(listOf(modest)))
+        assertFalse(NavBasemapLayer.withinWorkBudget(List(5) { modest }))
+        val longLine = tile(8801, 1, 1000)
+        assertTrue(longLine.vertices < NavBasemapLayer.MAX_PREPARE_VERTICES)
+        assertFalse(NavBasemapLayer.withinWorkBudget(listOf(longLine)))
+    }
+
+    @Test
     fun `real streets and names from the public tile are drawn under the route in both views`() {
         val route = gateRoute()
         val snapshot = tracking(route, 120.0).copy(basemap = tiles(route, sampleKey to ShortbreadTiles.decode(sampleKey, MvtReaderTest.sample())))

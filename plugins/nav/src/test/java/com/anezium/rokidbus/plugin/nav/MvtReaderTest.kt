@@ -12,6 +12,31 @@ import org.junit.Test
 /** The vector tile reader: the line grammar, tags, layer selection, and every bound that refuses a tile whole. */
 class MvtReaderTest {
     @Test
+    fun `empty and non-line feature fields exhaust one tile-wide budget before retention`() {
+        fun layer(name: String, type: Long?) = MvtFixtures.Proto().apply {
+            repeat(4) { bytes(2, MvtFixtures.Proto().apply { type?.let { varint(3, it) } }.toByteArray()) }
+            // Name may legally follow the features; the early limit must not depend on ordering.
+            string(1, name)
+        }.toByteArray()
+        for (name in listOf("streets", "unrequested")) for (type in listOf(null, 0L, 1L, 3L)) {
+            val tile = MvtFixtures.Proto().apply { bytes(3, layer(name, type)) }.toByteArray()
+            assertThrows("$name/$type", MvtFormatException::class.java) {
+                MvtReader.read(tile, setOf("streets"), MvtLimits(maxFeatures = 3))
+            }
+        }
+        val tile = MvtFixtures.Proto().apply {
+            bytes(3, layer("unrequested", null))
+            bytes(3, layer("streets", null))
+        }.toByteArray()
+        assertThrows(MvtFormatException::class.java) { MvtReader.read(tile, setOf("streets"), MvtLimits(maxFeatures = 7)) }
+        val metadata = MvtFixtures.Proto().apply {
+            bytes(3, MvtFixtures.Proto().apply { string(1, "unrequested"); repeat(4) { string(3, "key") } }.toByteArray())
+        }.toByteArray()
+        assertThrows(MvtFormatException::class.java) { MvtReader.read(metadata, emptySet(), MvtLimits(maxKeysOrValues = 3)) }
+        assertThrows(MvtFormatException::class.java) { MvtReader.read(metadata, emptySet(), MvtLimits(maxFields = 3)) }
+    }
+
+    @Test
     fun `lines keep their parts, their tags of every value type, and negative deltas`() {
         val bytes = MvtFixtures.tile(
             Layer(

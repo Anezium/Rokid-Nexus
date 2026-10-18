@@ -24,18 +24,34 @@ internal data class TileFreshness(
     val staleIfErrorS: Long = 0,
     val lastModified: String? = null,
     val etag: String? = null,
+    val cacheControl: String? = null,
+    val expires: String? = null,
 ) {
     fun freshUntilMs(): Long = generatedAtMs + lifetimeS * 1000
 
     fun isFresh(nowMs: Long): Boolean = nowMs < freshUntilMs()
 
+    val requiresValidation: Boolean get() = cacheControl.orEmpty().split(',')
+        .any { it.substringBefore('=').trim().equals("no-cache", ignoreCase = true) }
+
     /** Stale, but explicitly allowed on screen while a new copy is fetched. */
-    fun mayShowWhileRevalidating(nowMs: Long): Boolean = nowMs < freshUntilMs() + staleWhileRevalidateS * 1000
+    fun mayShowWhileRevalidating(nowMs: Long): Boolean = !requiresValidation && nowMs < freshUntilMs() + staleWhileRevalidateS * 1000
 
     /** The same copy, confirmed unchanged by a 304 at [receivedAtMs] with [headers]. */
-    fun revalidated(receivedAtMs: Long, headers: Map<String, String>): TileFreshness =
-        of(receivedAtMs, headers)?.let { fresh -> fresh.copy(lastModified = fresh.lastModified ?: lastModified, etag = fresh.etag ?: etag) }
-            ?: copy(generatedAtMs = receivedAtMs)
+    fun revalidated(receivedAtMs: Long, headers: Map<String, String>): TileFreshness? {
+        val merged = buildMap {
+            // Entries created without raw metadata still retain their effective policy.
+            if (cacheControl != null) put("cache-control", cacheControl)
+            else if (expires == null && "expires" !in headers) {
+                put("cache-control", "max-age=$lifetimeS,stale-while-revalidate=$staleWhileRevalidateS,stale-if-error=$staleIfErrorS")
+            }
+            expires?.let { put("expires", it) }
+            lastModified?.let { put("last-modified", it) }
+            etag?.let { put("etag", it) }
+            putAll(headers)
+        }
+        return of(receivedAtMs, merged)
+    }
 
     companion object {
         const val DEFAULT_LIFETIME_S = 7L * 24 * 60 * 60
@@ -44,13 +60,17 @@ internal data class TileFreshness(
 
         /** The freshness of a response with [headers] (names lower-case) received at [receivedAtMs], or null for `no-store`. */
         fun of(receivedAtMs: Long, headers: Map<String, String>): TileFreshness? {
+            if (headers["cache-control"].orEmpty().length > MAX_METADATA_CHARS ||
+                headers["expires"].orEmpty().length > MAX_METADATA_CHARS) return null
             val directives = headers["cache-control"].orEmpty().split(',').associate { part ->
                 val name = part.substringBefore('=').trim().lowercase(Locale.ROOT)
                 name to part.substringAfter('=', "").trim().trim('"')
             }
             if ("no-store" in directives) return null
             fun seconds(name: String): Long? = directives[name]?.toLongOrNull()?.takeIf { it >= 0 }?.coerceAtMost(MAX_LIFETIME_S)
-            val age = headers["age"]?.trim()?.toLongOrNull()?.coerceIn(0, MAX_LIFETIME_S) ?: 0L
+            val headerAge = headers["age"]?.trim()?.toLongOrNull()?.coerceIn(0, MAX_LIFETIME_S) ?: 0L
+            val apparentAge = httpDate(headers["date"])?.let { ((receivedAtMs - it) / 1000).coerceIn(0, MAX_LIFETIME_S) } ?: 0L
+            val age = maxOf(headerAge, apparentAge)
             val generatedAt = receivedAtMs - age * 1000
             val lifetime = when {
                 "no-cache" in directives -> 0L
@@ -70,6 +90,8 @@ internal data class TileFreshness(
                 staleIfErrorS = seconds("stale-if-error") ?: 0,
                 lastModified = headers["last-modified"]?.takeIf { it.length <= MAX_VALIDATOR_CHARS && it.none(Char::isISOControl) },
                 etag = headers["etag"]?.takeIf { it.length <= MAX_VALIDATOR_CHARS && it.none(Char::isISOControl) },
+                cacheControl = headers["cache-control"],
+                expires = headers["expires"],
             )
         }
 
@@ -82,6 +104,8 @@ internal data class TileFreshness(
                 null
             }
         }
+
+        private const val MAX_METADATA_CHARS = 4096
     }
 }
 
@@ -115,6 +139,8 @@ internal class BasemapCache(
                     staleIfErrorS = input.readLong(),
                     lastModified = input.readUTF().ifEmpty { null },
                     etag = input.readUTF().ifEmpty { null },
+                    cacheControl = input.readUTF().ifEmpty { null },
+                    expires = input.readUTF().ifEmpty { null },
                 )
                 val length = input.readInt()
                 if (length !in 0..MAX_ENTRY_BYTES) throw IOException("entry too large")
@@ -148,6 +174,8 @@ internal class BasemapCache(
                 output.writeLong(tile.freshness.staleIfErrorS)
                 output.writeUTF(tile.freshness.lastModified.orEmpty())
                 output.writeUTF(tile.freshness.etag.orEmpty())
+                output.writeUTF(tile.freshness.cacheControl.orEmpty())
+                output.writeUTF(tile.freshness.expires.orEmpty())
                 output.writeInt(tile.body.size)
                 output.write(tile.body)
             }
@@ -203,7 +231,7 @@ internal class BasemapCache(
         const val DEFAULT_MAX_ENTRIES = 1024
         const val DEFAULT_MAX_AGE_MS = 30L * 24 * 60 * 60 * 1000
         const val MAX_ENTRY_BYTES = 2 * 1024 * 1024
-        private const val MAGIC = 0x4e425431
+        private const val MAGIC = 0x4e425432
         private const val SUFFIX = ".tile"
     }
 }

@@ -26,6 +26,10 @@ internal class LocalLine(val streetClass: StreetClass, val xs: DoubleArray, val 
  * Mercator coordinates.
  */
 internal class LocalTile(val key: TileKey, val streets: List<LocalLine>, val names: List<LocalLine>) {
+    // Computed on the decoding worker. The view rejects excess work before clipping or allocating.
+    val vertices: Long = streets.sumOf { it.xs.size.toLong() } + names.sumOf { it.xs.size.toLong() }
+    val simplifyWork: Long = streets.sumOf { 4L * it.xs.size * it.xs.size }
+
     companion object {
         fun of(tile: BasemapTile, line: RouteLine): LocalTile {
             val n = (1 shl tile.key.z).toDouble()
@@ -91,10 +95,18 @@ internal object NavBasemapLayer {
     /** The most the streets may add to a geometry: the link carries one a second, and two per page revision. */
     const val MAX_BASEMAP_BYTES = 8 * 1024
 
+    const val MAX_PREPARE_VERTICES = 16_000L
+    const val MAX_SIMPLIFY_WORK = 2_000_000L
+    private const val MAX_NAME_VERTICES = 256
+
+    internal fun withinWorkBudget(tiles: List<LocalTile>): Boolean =
+        tiles.sumOf { it.vertices } <= MAX_PREPARE_VERTICES &&
+            tiles.sumOf { it.simplifyWork } <= MAX_SIMPLIFY_WORK
+
     const val SIMPLIFY_UNITS = 1.2
     private const val EXTENT = RouteGeometryContract.EXTENT
     private const val COVER_MARGIN = 1.02
-    private const val MAX_CANDIDATE_EDGES = 4_000
+    private const val MAX_CANDIDATE_EDGES = 512
     private const val LABEL_RESERVE_BYTES = 320
     private const val PATH_JSON_CHARS = 23
     private const val LABEL_MARGIN = 40
@@ -121,6 +133,7 @@ internal object NavBasemapLayer {
         val cover = cover(window, line, view, basemap.maxZoom) ?: return route
         val tiles = cover.keys.mapNotNull(basemap.tiles::get)
         if (tiles.isEmpty()) return route
+        if (!withinWorkBudget(tiles)) return route
         val field = FocusField(route)
         val edges = edges(tiles, window, field)
         if (edges.isEmpty()) return route
@@ -342,8 +355,11 @@ internal object NavBasemapLayer {
         val candidates = HashMap<String, Triple<Double, RoutePoint, String>>()
         val low = LABEL_MARGIN.toDouble()
         val high = (EXTENT - LABEL_MARGIN).toDouble()
+        var visited = 0
         for (tile in tiles) {
             for (name in tile.names) {
+                if (visited + name.xs.size > MAX_NAME_VERTICES) continue
+                visited += name.xs.size
                 val text = NavText.fit(name.name ?: continue, RouteGeometryContract.MAX_LABEL_CHARS)
                 if (text.isBlank()) continue
                 val points = name.xs.indices.map { window.normalized(MapMeters(name.xs[it], name.ys[it])) }
@@ -385,10 +401,17 @@ internal object NavBasemapLayer {
             for (edge in edges) {
                 val a = pointOf(edge.a)
                 val b = pointOf(edge.b)
-                for (column in cell(min(a.x, b.x))..cell(max(a.x, b.x))) {
-                    for (row in cell(min(a.y, b.y))..cell(max(a.y, b.y))) {
-                        buckets.getOrPut(column * BUCKETS + row) { ArrayList() } += a to b
-                    }
+                val segment = a to b
+                val steps = max(kotlin.math.abs(b.x - a.x), kotlin.math.abs(b.y - a.y)) / BUCKET_UNITS + 1
+                var previous = -1
+                // Queries include neighbouring cells: sample the line once per cell width,
+                // rather than allocating every cell of a diagonal's bounding rectangle.
+                for (step in 0..steps) {
+                    val column = cell(a.x + (b.x - a.x) * step / steps)
+                    val row = cell(a.y + (b.y - a.y) * step / steps)
+                    val key = column * BUCKETS + row
+                    if (key != previous) buckets.getOrPut(key) { ArrayList() } += segment
+                    previous = key
                 }
             }
         }

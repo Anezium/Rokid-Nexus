@@ -32,6 +32,24 @@ class NavBasemapTest {
     private var changes = 0
 
     @Test
+    fun `an expired rendered lease cannot start a queued request or apply a late completed tile`() {
+        val loader = basemap()
+        var displayed = true
+        loader.demand(listOf(keys[0])) { displayed }
+        displayed = false
+        settle()
+        assertTrue(transport.urls.isEmpty())
+        assertTrue(loader.tiles.tiles.isEmpty())
+        displayed = true
+        loader.demand(listOf(keys[0])) { displayed }
+        executor.runAll()
+        displayed = false
+        drainPosted()
+        assertEquals(1, transport.urls.size)
+        assertTrue(loader.tiles.tiles.isEmpty())
+    }
+
+    @Test
     fun `nothing is asked for until a view needs tiles, then only those tiles`() {
         val basemap = basemap()
         assertEquals(BasemapState.NONE, basemap.state)
@@ -204,6 +222,128 @@ class NavBasemapTest {
             settle()
         }
         assertEquals(NavBasemap.MAX_REQUESTS_PER_MINUTE, transport.urls.size)
+    }
+
+    @Test
+    fun `metadata-light 304 preserves disk policy and next refresh timing including no-cache`() {
+        for (policy in listOf("max-age=300,stale-while-revalidate=600,stale-if-error=900", "no-cache,max-age=300")) {
+            val cache = BasemapCache(folder.newFolder()) { wall }
+            cache.write(OsmShortbreadSource, keys[0], CachedTile(tile, TileFreshness.of(wall - 600_000,
+                mapOf("cache-control" to policy, "etag" to "v1"))!!))
+            transport.urls.clear()
+            transport.headers.clear()
+            transport.respond = { _, _ -> TileResponse(304, mapOf("etag" to "v2", "age" to "10")) }
+            val loader = basemap(cache)
+            loader.demand(listOf(keys[0]))
+            settle()
+            val stored = cache.read(OsmShortbreadSource, keys[0])!!.freshness
+            assertEquals(if (policy.startsWith("no-cache")) 0L else 300L, stored.lifetimeS)
+            assertEquals(policy, stored.cacheControl)
+            assertEquals("v2", stored.etag)
+            assertEquals(wall - 10_000, stored.generatedAtMs)
+            elapsed += NavBasemap.MIN_REFRESH_MS
+            wall += NavBasemap.MIN_REFRESH_MS
+            loader.demand(listOf(keys[0]))
+            settle()
+            assertEquals(if (policy.startsWith("no-cache")) 2 else 1, transport.urls.size)
+            elapsed += 301_000
+            wall += 301_000
+            loader.demand(listOf(keys[0]))
+            settle()
+            assertEquals(if (policy.startsWith("no-cache")) 3 else 2, transport.urls.size)
+            loader.close()
+        }
+    }
+
+    @Test
+    fun `304 replaces supplied cache policy and no-store evicts disk and already shown stale tile`() {
+        val cache = BasemapCache(folder.root) { wall }
+        cache.write(OsmShortbreadSource, keys[0], CachedTile(tile, TileFreshness.of(wall - 600_000,
+            mapOf("cache-control" to "max-age=300,stale-while-revalidate=3600", "etag" to "v1"))!!))
+        transport.respond = { _, _ -> TileResponse(304, mapOf("cache-control" to "max-age=60")) }
+        val loader = basemap(cache)
+        loader.demand(listOf(keys[0]))
+        settle()
+        assertEquals(60L, cache.read(OsmShortbreadSource, keys[0])!!.freshness.lifetimeS)
+        assertEquals(0L, cache.read(OsmShortbreadSource, keys[0])!!.freshness.staleWhileRevalidateS)
+        elapsed += 61_000
+        wall += 61_000
+        transport.respond = { _, _ -> TileResponse(304, mapOf("cache-control" to "no-store")) }
+        loader.demand(listOf(keys[0]))
+        settle()
+        assertNull(cache.read(OsmShortbreadSource, keys[0]))
+        assertTrue(loader.tiles.tiles.isEmpty())
+        assertTrue(folder.root.walkTopDown().none { it.isFile && it.name.endsWith(".tile") })
+        loader.close()
+
+        transport.respond = { _, _ -> throw IOException("offline") }
+        val reopened = basemap(cache)
+        reopened.demand(listOf(keys[0]))
+        settle()
+        assertTrue(reopened.tiles.tiles.isEmpty())
+        assertTrue(transport.headers.last().isEmpty())
+    }
+
+    @Test
+    fun `no-cache remains stored for validators but cannot be resurrected offline after revalidation fails`() {
+        val cache = BasemapCache(folder.root) { wall }
+        cache.write(OsmShortbreadSource, keys[0], CachedTile(tile, TileFreshness.of(wall,
+            mapOf("cache-control" to "no-cache,max-age=300,stale-while-revalidate=3600", "etag" to "v1"))!!))
+        transport.respond = { _, _ -> TileResponse(304, emptyMap()) }
+        val loader = basemap(cache)
+        loader.demand(listOf(keys[0]))
+        settle()
+        assertTrue(loader.tiles.tiles.isNotEmpty())
+        assertTrue(cache.read(OsmShortbreadSource, keys[0])!!.freshness.requiresValidation)
+        elapsed += NavBasemap.MIN_REFRESH_MS
+        wall += NavBasemap.MIN_REFRESH_MS
+        transport.respond = { _, _ -> throw IOException("offline") }
+        loader.demand(listOf(keys[0]))
+        settle()
+        assertTrue(loader.tiles.tiles.isEmpty())
+        assertEquals("v1", cache.read(OsmShortbreadSource, keys[0])!!.freshness.etag)
+    }
+
+    @Test
+    fun `200 no-store removes an older disk copy and cannot be reused after view hide`() {
+        val cache = BasemapCache(folder.root) { wall }
+        cache.write(OsmShortbreadSource, keys[0], CachedTile(tile, TileFreshness(wall - 600_000, 300)))
+        transport.respond = { _, _ -> TileResponse(200, mapOf("cache-control" to "no-store"), tile) }
+        val loader = basemap(cache)
+        loader.demand(listOf(keys[0]))
+        settle()
+        assertNull(cache.read(OsmShortbreadSource, keys[0]))
+        loader.demand(emptyList())
+        assertTrue(loader.tiles.tiles.isEmpty())
+        elapsed += NavBasemap.MIN_REFRESH_MS
+        transport.respond = { _, _ -> throw IOException("offline") }
+        loader.demand(listOf(keys[0]))
+        settle()
+        assertTrue(loader.tiles.tiles.isEmpty())
+    }
+
+    @Test
+    fun `no-store invalidation survives hiding before the response callback and cannot resurrect RAM streets`() {
+        val cache = BasemapCache(folder.root) { wall }
+        cache.write(OsmShortbreadSource, keys[0], CachedTile(tile, TileFreshness.of(wall,
+            mapOf("cache-control" to "max-age=300", "etag" to "v1"))!!))
+        val loader = basemap(cache)
+        loader.demand(listOf(keys[0]))
+        settle()
+        assertTrue(loader.tiles.tiles.isNotEmpty())
+        elapsed += 600_000
+        wall += 600_000
+        transport.respond = { _, _ -> TileResponse(304, mapOf("cache-control" to "no-store")) }
+        loader.demand(listOf(keys[0]))
+        executor.runAll()
+        loader.demand(emptyList())
+        drainPosted()
+        assertNull(cache.read(OsmShortbreadSource, keys[0]))
+        assertTrue(loader.tiles.tiles.isEmpty())
+        transport.respond = { _, _ -> throw IOException("offline") }
+        loader.demand(listOf(keys[0]))
+        settle()
+        assertTrue(loader.tiles.tiles.isEmpty())
     }
 
     private fun basemap(cache: BasemapCache? = null) = NavBasemap(

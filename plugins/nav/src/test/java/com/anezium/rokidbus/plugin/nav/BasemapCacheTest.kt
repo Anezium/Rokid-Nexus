@@ -49,7 +49,7 @@ class BasemapCacheTest {
         assertEquals(0, TileFreshness.of(now, mapOf("expires" to "0"))!!.lifetimeS)
         // A 304 renews the copy's freshness and keeps its validator.
         val stored = TileFreshness.of(now, mapOf("cache-control" to "max-age=300", "etag" to "\"v1\""))!!
-        val renewed = stored.revalidated(now + 600_000, mapOf("cache-control" to "max-age=300"))
+        val renewed = stored.revalidated(now + 600_000, mapOf("cache-control" to "max-age=300"))!!
         assertEquals(now + 600_000, renewed.generatedAtMs)
         assertEquals("\"v1\"", renewed.etag)
     }
