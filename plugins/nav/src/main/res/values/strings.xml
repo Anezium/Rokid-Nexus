@@ -24,6 +24,7 @@
     <string name="nav_settings_access_title">Read navigation guidance</string>
     <string name="nav_settings_access_sub">Navigation reads guidance from the apps enabled above. Notifications from every other app are ignored before they are read.</string>
     <string name="nav_settings_access_on">Allowed</string>
+    <string name="nav_settings_access_connecting">Allowed · not connected yet</string>
     <string name="nav_settings_access_off">Not allowed yet: tap above</string>
     <string name="nav_settings_route">Route</string>
     <string name="nav_settings_how">Start guidance in an enabled app. The glasses follow the distance, street or stop, and arrival time that its notification provides.</string>
