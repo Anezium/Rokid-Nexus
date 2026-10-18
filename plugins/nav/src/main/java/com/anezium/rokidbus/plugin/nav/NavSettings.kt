@@ -158,6 +158,14 @@ internal object NavControl {
         pageListener?.invoke()
     }
 
+    /** Told when a map view appears or goes, so a running journey asks for its street tiles; set by the journey. */
+    @Volatile
+    var mapDemandListener: (() -> Unit)? = null
+
+    fun mapDemandChanged() {
+        mapDemandListener?.invoke()
+    }
+
     private var busBinding: ServiceConnection? = null
 
     fun attach(service: NavNotificationListener, routeRuntime: NavRuntime) {

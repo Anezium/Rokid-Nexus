@@ -29,6 +29,13 @@ internal class NavMapPublisher(
     private var sentGeometryAtMs: Long? = null
     private var headingFixMs: Long? = null
     private var headingAtMs: Long? = null
+    private var dataPlane = true
+
+    /**
+     * The activity's map can reach the glasses: the activity is live, the hubs draw maps, and the
+     * last geometry was not refused for want of the data plane. Street tiles are asked for only then.
+     */
+    val showing: Boolean get() = activityLive && dataPlane && supported()
 
     /**
      * The journey moved on: remember it and, unless [send] is false because its text goes first,
@@ -42,6 +49,7 @@ internal class NavMapPublisher(
     /** The hub accepted the activity's start: its geometry can follow now. */
     fun activityStarted() {
         activityLive = true
+        dataPlane = true
         sentGeometry = null
         sentGeometryAtMs = null
         flush()
@@ -57,6 +65,7 @@ internal class NavMapPublisher(
 
     /** The link changed: what the data plane missed is the current journey, sent again whole. */
     fun linkChanged() {
+        dataPlane = true
         sentGeometry = null
         sentGeometryAtMs = null
         flush()
@@ -75,9 +84,13 @@ internal class NavMapPublisher(
         val last = sentGeometryAtMs
         if (last == null || at - last >= MIN_GEOMETRY_INTERVAL_MS) {
             val geometry = geometryOf(current)
-            if (geometry != sentGeometry && sendGeometry(nextRevision(), geometry) == NexusSdkResult.SENT) {
-                sentGeometry = geometry
-                sentGeometryAtMs = at
+            if (geometry != sentGeometry) {
+                val result = sendGeometry(nextRevision(), geometry)
+                dataPlane = result != NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+                if (result == NexusSdkResult.SENT) {
+                    sentGeometry = geometry
+                    sentGeometryAtMs = at
+                }
             }
         }
         val bearing = current.liveBearing ?: return

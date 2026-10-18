@@ -78,7 +78,7 @@ internal class NavJourneyPanel(private val activity: NavSettingsActivity) : Line
         planner.apply {
             addView(NexusUi.rowTitle(activity, "Where are you walking?"))
             addView(BusTheme.gap(activity, 4))
-            addView(NexusUi.cardBody(activity, "Search a place, then start. Your position and the destination go to Transitous once, to plan the route."))
+            addView(NexusUi.cardBody(activity, DISCLOSURE))
             addView(BusTheme.gap(activity, 14))
             addView(
                 LinearLayout(activity).apply {
@@ -133,6 +133,11 @@ internal class NavJourneyPanel(private val activity: NavSettingsActivity) : Line
         addView(
             NexusUi.textButton(activity, "Transitous · OpenStreetMap · Data sources").apply {
                 setOnClickListener { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://transitous.org/sources/"))) }
+            },
+        )
+        addView(
+            NexusUi.textButton(activity, "Map data © OpenStreetMap contributors").apply {
+                setOnClickListener { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.openstreetmap.org/copyright"))) }
             },
         )
         search.setOnClickListener { search() }
@@ -357,5 +362,12 @@ internal class NavJourneyPanel(private val activity: NavSettingsActivity) : Line
         worker.shutdownNow()
     }
 
-    companion object { const val LOCATION_REQUEST = 42 }
+    companion object {
+        const val LOCATION_REQUEST = 42
+
+        /** Everything a journey sends off the phone, said before it starts. */
+        const val DISCLOSURE = "Search a place, then start. Your position and the destination go to Transitous once, to plan the route. " +
+            "While a route map is on the glasses, street map tiles for the area it shows are downloaded from OpenStreetMap: " +
+            "the tiles asked for reveal roughly where you are, never your exact position."
+    }
 }

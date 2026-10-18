@@ -28,6 +28,14 @@ internal object NavState {
     @Volatile
     var listenerConnected: Boolean = false
 
+    /** The route page, with its maps, is on the glasses now. */
+    @Volatile
+    var routePageVisible: Boolean = false
+
+    /** Whether the running journey's street map is drawn, loading or unavailable, for its page. */
+    @Volatile
+    var basemapState: BasemapState = BasemapState.NONE
+
     /** The last hub answer to the listener's registration, for the settings screen. */
     @Volatile
     var registration: Int? = null

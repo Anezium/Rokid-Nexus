@@ -18,9 +18,11 @@ import com.anezium.rokidbus.shared.RouteStopState
  *
  * A walking journey the wearer started carries its maneuver, its facts and both map views (follow
  * and whole route) with the wearer's position as it truly is: live, stale with the age of the last
- * fix, or none. Guidance read from another app's notification has no geometry behind it, so its
- * page is text only with no position: no street is drawn that nobody measured. A transit ride gets
- * a stop ribbon from what the app counted; only the stop to get off at has a name.
+ * fix, or none. The maps draw the OpenStreetMap streets loaded for them, and a fact says whose
+ * streets they are, or that the map is the route alone for now. Guidance read from another app's
+ * notification has no geometry behind it, so its page is text only with no position: no street is
+ * drawn that nobody measured. A transit ride gets a stop ribbon from what the app counted; only the
+ * stop to get off at has a name.
  */
 internal object NavRoutePage {
     const val END_JOURNEY = "end-journey"
@@ -29,6 +31,8 @@ internal object NavRoutePage {
     const val UNNAMED_STOP = "·"
     const val ESTIMATE_NOTE = "Between two stops: estimated from the stops left, not a live position."
     const val ROUTE_DATA = "Transitous · OpenStreetMap"
+    const val STREETS_LOADING = "Loading"
+    const val STREETS_UNAVAILABLE = "Not available, route only"
 
     private const val TITLE = "Navigation"
     private const val BETWEEN_ESTIMATE = 0.5
@@ -85,6 +89,11 @@ internal object NavRoutePage {
             )
         }
         val position = snapshot.positionQuality
+        val follow = NavMapProjection.geometry(snapshot, NavMapView.FOLLOW)
+        val overview = NavMapProjection.geometry(snapshot, NavMapView.OVERVIEW)
+        // Beside the map, whose streets they are; or, truthfully, that it shows the route alone.
+        val streets = (follow.attribution ?: overview.attribution)?.let { "$it contributors" }
+            ?: if (state.basemap == BasemapState.LOADING || state.basemap == BasemapState.NONE) STREETS_LOADING else STREETS_UNAVAILABLE
         return PageBody.Route(
             position = position,
             maneuver = maneuver,
@@ -94,9 +103,10 @@ internal object NavRoutePage {
                 destination?.let { PageFact("destination", "To", fit(it, MAX_VALUE)) },
                 PageFact("source", "Source", NavSource.NEXUS.label),
                 PageFact("data", "Route data", ROUTE_DATA),
+                PageFact("streets", "Street map", streets),
             ),
-            follow = NavMapProjection.geometry(snapshot, NavMapView.FOLLOW),
-            overview = NavMapProjection.geometry(snapshot, NavMapView.OVERVIEW),
+            follow = follow,
+            overview = overview,
             fixAgeS = snapshot.fixAgeS.takeIf { position == RoutePositionQuality.STALE },
         )
     }

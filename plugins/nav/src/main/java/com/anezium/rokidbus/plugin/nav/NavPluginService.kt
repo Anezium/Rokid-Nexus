@@ -51,6 +51,7 @@ class NavPluginService : NexusPluginService() {
                 journeyDestination = NavState.journeyDestination,
                 journeyMessage = NavState.journeyMessage,
                 extended = nexusClient?.supportsLauncherInteractive() == true,
+                basemap = NavState.basemapState,
             )
         },
         text = {
@@ -61,6 +62,11 @@ class NavPluginService : NexusPluginService() {
             )
         },
         journey = { NavControl.journeyEpoch },
+        // Only the route page draws maps; the older summary page has none to fetch streets for.
+        visibilityChanged = { visible ->
+            NavState.routePageVisible = visible && nexusClient?.supportsLauncherInteractive() == true
+            NavControl.mapDemandChanged()
+        },
         now = SystemClock::elapsedRealtime,
         schedule = { delayMs, task ->
             val runnable = Runnable { scheduled = null; task() }

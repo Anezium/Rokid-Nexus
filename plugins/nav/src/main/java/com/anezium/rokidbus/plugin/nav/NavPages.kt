@@ -24,6 +24,8 @@ internal data class NavPageState(
     val journeyMessage: String? = null,
     /** Both hubs negotiated the launcher bundle, so `nav:main` is a route page. */
     val extended: Boolean = false,
+    /** Whether the journey's street map is loading or unavailable when its maps draw no street. */
+    val basemap: BasemapState = BasemapState.NONE,
 )
 
 /** The plugin's own words for the states without a route. */
@@ -125,6 +127,8 @@ internal class NavPageProvider<R : Any>(
     private val cancelScheduled: () -> Unit,
     /** The running journey's epoch, or null; recorded with each revision of the main page. */
     private val journey: () -> Long? = { null },
+    /** The main page came on screen or left it; its maps need street tiles only while it is there. */
+    private val visibilityChanged: (Boolean) -> Unit = {},
 ) {
     private var revision = 0L
     private val shownJourneys = LinkedHashMap<Long, Long?>()
@@ -146,6 +150,7 @@ internal class NavPageProvider<R : Any>(
 
     fun onVisibility(pageId: String, isVisible: Boolean) {
         if (pageId != NavPages.MAIN || current == null) return
+        if (visible != isVisible) visibilityChanged(isVisible)
         visible = isVisible
         if (!visible) {
             cancelScheduled()
@@ -187,6 +192,7 @@ internal class NavPageProvider<R : Any>(
     /** Link, registration or service gone: nothing more is sent for the old request. */
     fun forget() {
         cancelScheduled()
+        if (visible) visibilityChanged(false)
         current = null
         visible = false
         dirty = false

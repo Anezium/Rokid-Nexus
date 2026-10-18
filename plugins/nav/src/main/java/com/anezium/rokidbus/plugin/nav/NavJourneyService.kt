@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
@@ -17,6 +18,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -34,6 +36,11 @@ import java.util.concurrent.Executors
  * It is started with a plain `startService` from the foreground settings screen, then promotes
  * itself: a refusal (no permission, location off) can then simply stop it, with no foreground
  * promise left unkept.
+ *
+ * Once the route is planned, its maps draw OpenStreetMap streets ([NavBasemap]): street tiles are
+ * asked for only for the map views on the glasses at that moment (the activity's follow map while
+ * it can be drawn, both views while the route page is on screen), and the loader closes with the
+ * journey. A tile that does not come changes nothing about guidance.
  */
 class NavJourneyService : Service(), LocationListener {
     private val main = Handler(Looper.getMainLooper())
@@ -42,6 +49,8 @@ class NavJourneyService : Service(), LocationListener {
     private var destination: NavDestination? = null
     private var tracker: NavRouteTracker? = null
     private var planner: TransitousPlanner? = null
+    private var basemap: NavBasemap? = null
+    private val mapDemand: () -> Unit = { main.post { if (!stopping && tracker != null) publish(SystemClock.elapsedRealtime()) } }
     private var lastFix: NavFix? = null
     private var startedAtMs = 0L
     private var generation = 0
@@ -119,6 +128,7 @@ class NavJourneyService : Service(), LocationListener {
         NavState.journeyDestination = selected.name
         NavState.journeyMessage = RouteQuality.WAITING.message
         NavControl.attachJourney(runtime) { message -> main.post { finishJourney(message) } }
+        NavControl.mapDemandListener = mapDemand
         runtime.onGuidance(
             NavGuidance(
                 source = NavSource.NEXUS,
@@ -187,6 +197,9 @@ class NavJourneyService : Service(), LocationListener {
                 result.fold(
                     onSuccess = { route ->
                         tracker = NavRouteTracker(route)
+                        basemap = newBasemap(applicationContext, route.line, { main.post(it) }) {
+                            if (!stopping) publish(SystemClock.elapsedRealtime())
+                        }
                         publish(SystemClock.elapsedRealtime())
                     },
                     onFailure = {
@@ -205,12 +218,31 @@ class NavJourneyService : Service(), LocationListener {
             return
         }
         val current = tracker ?: return
-        val snapshot = current.update(lastFix, now)
+        val snapshot = withStreets(current.update(lastFix, now))
         NavState.journey = snapshot
         NavState.journeyMessage = snapshot.quality.message
         runtime.onJourney(snapshot)
         updateNotification(snapshot.guidance().instruction ?: snapshot.quality.message)
         if (snapshot.quality == RouteQuality.ARRIVED && arrivalAtMs == null) arrivalAtMs = now
+    }
+
+    /**
+     * [snapshot] with the street tiles its shown map views need, which it also asks for: the follow
+     * view while the activity's map or the route page can be drawn, the whole route only on the
+     * page. With no map on the glasses nothing is asked for and in-flight requests are cancelled.
+     */
+    private fun withStreets(snapshot: NavRouteSnapshot): NavRouteSnapshot {
+        val streets = basemap ?: return snapshot
+        val page = NavState.routePageVisible
+        val views = listOfNotNull(
+            NavMapView.FOLLOW.takeIf { page || runtime.mapShown },
+            NavMapView.OVERVIEW.takeIf { page },
+        )
+        val keys = views.flatMap { NavMapProjection.tiles(snapshot, it, BASEMAP_SOURCE) }
+        streets.demand(keys)
+        // A shown view too wide for street tiles has none to wait for.
+        NavState.basemapState = if (views.isNotEmpty() && keys.isEmpty()) BasemapState.UNAVAILABLE else streets.state
+        return snapshot.copy(basemap = streets.tiles)
     }
 
     private fun finishJourney(message: String) {
@@ -226,6 +258,10 @@ class NavJourneyService : Service(), LocationListener {
         stopping = true
         generation++
         planner?.cancel()
+        basemap?.close()
+        basemap = null
+        NavState.basemapState = BasemapState.NONE
+        if (NavControl.mapDemandListener === mapDemand) NavControl.mapDemandListener = null
         worker.shutdownNow()
         main.removeCallbacks(tick)
         runCatching { getSystemService(LocationManager::class.java).removeUpdates(this) }
@@ -304,5 +340,22 @@ class NavJourneyService : Service(), LocationListener {
         /** Builds the planner each journey uses; tests swap in canned responses. */
         @Volatile
         internal var newPlanner: () -> TransitousPlanner = { TransitousPlanner() }
+
+        internal val BASEMAP_SOURCE: BasemapSource = OsmShortbreadSource
+
+        /** Builds a journey's street loader once its route is planned; tests swap in a fake transport. */
+        @Volatile
+        internal var newBasemap: (context: Context, line: RouteLine, post: (Runnable) -> Unit, onChanged: () -> Unit) -> NavBasemap =
+            { context, line, post, onChanged ->
+                NavBasemap(
+                    source = BASEMAP_SOURCE,
+                    line = line,
+                    cache = BasemapCache(File(context.cacheDir, "nav-basemap")),
+                    transport = HttpTileTransport(),
+                    post = post,
+                    onChanged = onChanged,
+                    elapsed = SystemClock::elapsedRealtime,
+                )
+            }
     }
 }
