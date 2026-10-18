@@ -132,7 +132,15 @@ class LauncherRenderingTest {
                     assertEquals(budget, nav.maxHeightPx)
                     assertTrue(nav.height in 1..budget)
                     assertEquals(622, nav.bottom)
-                    assertEquals(listOf("100 m", "Test Street", if (hasInstruction) instruction else "2.1 km"), nav.texts())
+                    // The regular form is kept where it fits the budget whole (the smaller head does
+                    // at 73 px without a next step); otherwise the fallback reflows the same facts.
+                    val expected = if (nav.compactShown) {
+                        listOf("100 m", "Test Street", if (hasInstruction) instruction else "2.1 km")
+                    } else {
+                        listOf("100 m", "2.1 km", "Test Street") + listOfNotNull(instruction.takeIf { hasInstruction })
+                    }
+                    assertEquals("budget=$budget instruction=$hasInstruction compact=${nav.compactShown}", expected, nav.texts())
+                    if (budget == 54) assertTrue(nav.compactShown)
                     val cue = find<ImageView>(nav).single { it.isShown }
                     assertEquals("turn-$direction", cue.contentDescription)
                     val cueBounds = Rect(0, 0, cue.width, cue.height)

@@ -140,11 +140,12 @@ class RootCompactRenderingTest {
 
     @Test
     fun `the Activities page draws the three cards whole at the card sizes`() {
+        // Every live activity carries its command line as its third line, as the page builds it.
         val cards = listOf(nav, relay, todo).mapIndexed { index, stop ->
             ScreenBlock.Card(
                 key = stop.id, label = stop.ownerLabel!!.uppercase(), time = "12:24", primary = stop.text, secondary = stop.detail,
                 measure = stop.measure, figure = true, ended = false, selected = index == 2, icon = stop.icon,
-                tertiary = if (index == 2) "tap open · 4 commands" else null,
+                tertiary = listOf("tap open · 3 commands", "tap open · reply", "tap open · 4 commands")[index],
             )
         }
         render(SessionScreen(ScreenHeader(LocalPages.TITLE_ACTIVITIES.uppercase(), "3/3"), cards, ScreenHint("swipe next · tap open", "back root"), focusKey = "sample:todo"), "activities-three")
@@ -154,7 +155,7 @@ class RootCompactRenderingTest {
         assertEquals(PageStyle.CARD_FIGURE_PX, todoTexts.first { it.text == "4 to do" }.textSize, 0f)
         assertEquals(PageStyle.CAPTION_PX, todoTexts.first { it.text == "tap open · 4 commands" }.textSize, 0f)
         val heights = view.blockViews.values.map { it.height }
-        assertEquals("cards without a command strip share one height", 1, heights.distinct().size)
+        assertEquals("cards with the same lines and no command strip share one height", 1, heights.distinct().size)
     }
 
     @Test

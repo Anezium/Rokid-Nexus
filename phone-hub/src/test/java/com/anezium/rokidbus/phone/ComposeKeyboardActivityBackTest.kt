@@ -1,6 +1,9 @@
 package com.anezium.rokidbus.phone
 
 import android.app.Activity
+import android.content.Context
+import android.content.pm.ApplicationInfo
+import android.os.Build
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -35,6 +38,11 @@ class ComposeKeyboardActivityBackTest {
     private val app = RuntimeEnvironment.getApplication()
     private val request = ComposeTypeStart("cap-back", "Unsent UI check.", 1000)
 
+    private companion object {
+        /** `ApplicationInfo.PRIVATE_FLAG_EXT_ONBACK_INVOKED_CALLBACK_ENABLED`, hidden in the SDK. */
+        const val PRIVATE_FLAG_EXT_ONBACK_INVOKED_CALLBACK_ENABLED = 1 shl 3
+    }
+
     private class RecordingSink : ComposeKeyboardSink {
         val texts = mutableListOf<String>()
         val done = mutableListOf<Triple<String, Boolean, String>>()
@@ -46,6 +54,7 @@ class ComposeKeyboardActivityBackTest {
 
     @Before
     fun setUp() {
+        optInToPlatformBack()
         ComposeKeyboardPrompt.sink = sink
         ShadowSettings.setCanDrawOverlays(true)
         assertTrue(ComposeKeyboardPrompt.open(app, request))
@@ -60,6 +69,27 @@ class ComposeKeyboardActivityBackTest {
 
     private fun open(): ActivityController<ComposeKeyboardActivity> =
         Robolectric.buildActivity(ComposeKeyboardActivity::class.java).setup()
+
+    /**
+     * Opts the app into the platform back callback, as Android 16 does by default for targetSdk
+     * 36: the manifest attribute sets this ApplicationInfo flag and the window's checker reads it
+     * for every application registration. Robolectric's API 34 framework has no targetSdk 36
+     * rule, so without the flag it drops the screen's registration with a warning and the
+     * Activity's own default callback stays on top, which finishes the screen without ending the
+     * capture: the device defect, reproduced by the fixture rather than fixed by it.
+     */
+    private fun optInToPlatformBack() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val info = app.applicationInfo
+        val flags = ApplicationInfo::class.java.getField("privateFlagsExt")
+        flags.setInt(info, flags.getInt(info) or PRIVATE_FLAG_EXT_ONBACK_INVOKED_CALLBACK_ENABLED)
+    }
+
+    /** What the window's checker answers for [activity]: the gate every application callback passes. */
+    private fun platformBackEnabled(activity: Activity): Boolean =
+        Class.forName("android.window.WindowOnBackInvokedDispatcher")
+            .getMethod("isOnBackInvokedCallbackEnabled", Context::class.java)
+            .invoke(null, activity) as Boolean
 
     private fun views(root: View): List<View> =
         listOf(root) + ((root as? ViewGroup)?.let { group -> (0 until group.childCount).flatMap { views(group.getChildAt(it)) } } ?: emptyList())
@@ -94,6 +124,7 @@ class ComposeKeyboardActivityBackTest {
     fun `the Back the dispatcher routes ends the capture uncommitted with the edited text`() {
         val screen = open()
         val activity = screen.get()
+        assertTrue("the app is opted into the platform back callback", platformBackEnabled(activity))
         editor(activity).append(" Temporary change.")
         assertEquals(listOf("Unsent UI check. Temporary change."), sink.texts)
 

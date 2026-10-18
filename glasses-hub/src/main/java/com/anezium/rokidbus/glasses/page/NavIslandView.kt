@@ -380,6 +380,9 @@ internal class NavIslandView(
         return SpannableString(text).apply { setSpan(ForegroundColorSpan(PageStyle.ink), at, at + part.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
     }
 
+    /** Whether the short-budget fallback is what is drawn, rather than the regular form; for tests. */
+    val compactShown: Boolean get() = compact?.visibility == VISIBLE
+
     /** The texts drawn, in order; for tests. */
     fun texts(): List<String> {
         fun walk(view: View): List<String> {
