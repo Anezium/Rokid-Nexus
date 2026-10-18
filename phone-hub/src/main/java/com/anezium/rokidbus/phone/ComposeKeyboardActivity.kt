@@ -14,6 +14,7 @@ import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
@@ -21,8 +22,8 @@ import com.anezium.rokidbus.shared.ComposeTypeStart
 
 /**
  * The phone keyboard for a glasses composer capture. Every change is mirrored to the glasses;
- * Done hands the text to the glasses' draft and Cancel leaves the draft as it was. Nothing is sent
- * to anyone from here: sending stays a deliberate step on the glasses.
+ * Keep draft hands the text to the glasses' draft and Cancel or Back leaves the draft as it was.
+ * Nothing is sent to anyone from here: sending stays a deliberate step on the glasses.
  */
 internal class ComposeKeyboardActivity : Activity(), ComposeKeyboardScreen {
     private lateinit var editor: EditText
@@ -109,7 +110,7 @@ internal class ComposeKeyboardActivity : Activity(), ComposeKeyboardScreen {
         window.navigationBarColor = NexusUi.BG
 
         editor = EditText(this).apply {
-            hint = "Your reply"
+            hint = "Type for the glasses"
             setHintTextColor(NexusUi.INK4)
             setTextColor(NexusUi.INK)
             typeface = Typeface.create("sans-serif", Typeface.NORMAL)
@@ -143,6 +144,18 @@ internal class ComposeKeyboardActivity : Activity(), ComposeKeyboardScreen {
         }
         counter = NexusUi.metaLabel(this, "", NexusUi.INK3)
 
+        // The glasses say "draft · not sent yet" over this text; the phone says the same, so
+        // neither Keep draft nor leaving the screen reads as having sent anything.
+        val status = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(
+                NexusUi.metaLabel(this@ComposeKeyboardActivity, "Draft · not sent yet", NexusUi.AMBER),
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(counter)
+        }
+
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL or Gravity.END
@@ -156,7 +169,7 @@ internal class ComposeKeyboardActivity : Activity(), ComposeKeyboardScreen {
                 LinearLayout.LayoutParams(NexusUi.dp(this@ComposeKeyboardActivity, 8), 1),
             )
             addView(
-                NexusUi.pillButton(this@ComposeKeyboardActivity, "Done").apply {
+                NexusUi.pillButton(this@ComposeKeyboardActivity, "Keep draft").apply {
                     NexusUi.stylePillAsPrimary(this@ComposeKeyboardActivity, this)
                     setOnClickListener { end(commit = true) }
                 },
@@ -167,23 +180,36 @@ internal class ComposeKeyboardActivity : Activity(), ComposeKeyboardScreen {
             addView(
                 NexusUi.cardBody(
                     this@ComposeKeyboardActivity,
-                    "Typed here, read on your glasses. Done puts the text in the glasses draft; " +
-                        "nothing is sent until you choose Send on the glasses.",
+                    "What you type shows on your glasses as you go. Keep draft leaves it there as the " +
+                        "draft; Send is a separate step on the glasses. Cancel or Back keeps the draft " +
+                        "as it was before.",
                 ),
                 NexusUi.block(),
             )
             addView(BusTheme.gap(this@ComposeKeyboardActivity, 18))
             addView(editor, NexusUi.block())
             addView(BusTheme.gap(this@ComposeKeyboardActivity, 8))
-            addView(counter, NexusUi.block())
+            addView(status, NexusUi.block())
             addView(BusTheme.gap(this@ComposeKeyboardActivity, 14))
             addView(actions, NexusUi.block())
+        }
+
+        // Scrollable so the buttons stay reachable over the keyboard once the field has grown to
+        // its eight lines on a short screen.
+        val scroll = ScrollView(this).apply {
+            setBackgroundColor(NexusUi.BG)
+            isFillViewport = true
+            isVerticalScrollBarEnabled = false
+            addView(
+                content,
+                ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            )
         }
 
         setContentView(
             NexusUi.fixedRoot(this).apply {
                 addView(titleHeader(), NexusUi.block())
-                addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+                addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             },
         )
     }
@@ -202,7 +228,7 @@ internal class ComposeKeyboardActivity : Activity(), ComposeKeyboardScreen {
                 )
                 addView(backButton())
                 addView(
-                    NexusUi.metaLabel(this@ComposeKeyboardActivity, "GLASSES REPLY", NexusUi.INK).apply {
+                    NexusUi.metaLabel(this@ComposeKeyboardActivity, "PHONE KEYBOARD", NexusUi.INK).apply {
                         textSize = 12f
                         letterSpacing = 0.2f
                     },

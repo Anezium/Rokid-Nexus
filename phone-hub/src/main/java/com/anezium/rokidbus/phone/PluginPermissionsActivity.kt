@@ -190,6 +190,14 @@ class PluginPermissionsActivity : Activity() {
                     card.addView(row, NexusUi.block())
                     card.addView(BusTheme.gap(this, 8))
                 }
+            } else if (capability == PluginCapability.SURFACES && live && principal.descriptor.quickActionFamilies.isNotEmpty()) {
+                // The activity and one-tap choices still exist, they just cannot apply: say why
+                // the rows are gone instead of leaving a plugin that declares them with none.
+                card.addView(
+                    NexusUi.cardBody(this, "Allow \"Show on your glasses\" to manage its activity and one-tap actions."),
+                    NexusUi.block(),
+                )
+                card.addView(BusTheme.gap(this, 8))
             }
         }
 
@@ -267,7 +275,7 @@ class PluginPermissionsActivity : Activity() {
         val rows = mutableListOf(
             switchRow(
                 title = "Show its activity on the glasses",
-                note = "Off ends the activity it shows now and refuses new ones.",
+                note = "Its live card among the glasses activities. Off ends the one it shows now and refuses new ones.",
                 checked = preference.enabled,
             ) { checked ->
                 preferences.setEnabled(key, checked)
@@ -275,7 +283,7 @@ class PluginPermissionsActivity : Activity() {
             },
             switchRow(
                 title = "Pin its activity",
-                note = "Kept first and never replaced by another plugin's. Stays as last known when the plugin stops.",
+                note = "Always first, never pushed out by another plugin's. Kept as last known when the plugin stops.",
                 checked = preference.pinned,
             ) { checked ->
                 preferences.setPinned(key, checked)
@@ -286,8 +294,8 @@ class PluginPermissionsActivity : Activity() {
         val approved = quickPolicy.approvedFamilies(key)
         principal.descriptor.quickActionFamilies.sortedBy { it.wireValue }.forEach { family ->
             val title = when (family) {
-                QuickActionFamily.CHECKLIST -> "One-tap checklist actions"
-                QuickActionFamily.MEDIA -> "One-tap media controls"
+                QuickActionFamily.CHECKLIST -> "Check tasks with one tap"
+                QuickActionFamily.MEDIA -> "Play, pause and skip with one tap"
             }
             rows += switchRow(
                 title = title,
@@ -688,8 +696,8 @@ class PluginPermissionsActivity : Activity() {
         private const val PREFERENCES = "plugin_access_ui"
         private const val KEY_DEVELOPER_DETAILS = "developer_details"
         private const val QUICK_ACTION_NOTE =
-            "One tap runs these actions without a confirmation. Nexus checks the owner, the revision " +
-                "and the action type, but cannot verify what the plugin's code does."
+            "Off, each tap on the glasses asks to confirm first. On, it runs at once: Nexus checks " +
+                "which plugin asked and what kind of action it is, but not what the plugin then does."
 
         fun intent(context: Context, target: PluginGrantTarget): Intent =
             Intent(context, PluginPermissionsActivity::class.java)

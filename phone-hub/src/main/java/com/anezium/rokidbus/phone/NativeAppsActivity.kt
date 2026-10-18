@@ -184,19 +184,27 @@ class NativeAppsActivity : Activity() {
             NexusUi.block(),
         )
         addView(BusTheme.gap(this@NativeAppsActivity, 10))
-        addView(NexusUi.rowSub(this@NativeAppsActivity, "Over this app, the glasses show"))
+        addView(
+            NexusUi.rowSub(
+                this@NativeAppsActivity,
+                "While this app is in front, Nexus activities show as: everything, as on the home " +
+                    "screen; a brief flare on an important update only; or nothing at all.",
+            ).apply { maxLines = 4 },
+        )
+        addView(BusTheme.gap(this@NativeAppsActivity, 4))
         addView(ambientModeRow(app))
     }
 
     /**
      * What ambient islands may show while this app is in front on the glasses. An app never set
-     * shows signals only, so choosing that stores nothing.
+     * shows signals only, so choosing that stores nothing. The labels say what the wearer sees,
+     * not the policy's names for it.
      */
     private fun ambientModeRow(app: NativeGlassesApp): View {
         val store = PhoneAmbientPreferencesStore.shared(this)
         val options = listOf(
-            ForegroundAmbientMode.RESIDENTS to "Residents",
-            ForegroundAmbientMode.SIGNALS to "Signals only",
+            ForegroundAmbientMode.RESIDENTS to "Activities",
+            ForegroundAmbientMode.SIGNALS to "Alerts only",
             ForegroundAmbientMode.NOTHING to "Nothing",
         )
         val current = store.modeFor(app.id) ?: AmbientPreferencesContract.defaultMode(isHome = false)
