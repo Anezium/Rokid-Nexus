@@ -15,6 +15,7 @@ import com.anezium.rokidbus.shared.PageSurfaceValidationResult
 import com.anezium.rokidbus.shared.PageTemplateContract
 import com.anezium.rokidbus.shared.QuickActionFamily
 import com.anezium.rokidbus.shared.QuickActionPolicyContract
+import com.anezium.rokidbus.shared.RenderedMapContract
 import com.anezium.rokidbus.shared.plugin.PathRules
 import org.json.JSONObject
 
@@ -23,6 +24,7 @@ data class PageRegistration(val epoch: String, val pluginId: String, val grantKe
 
 /** What the broker needs from the hub around it; every call is made outside the broker's lock. */
 interface PhonePageHost {
+    fun renderedMapsSupported(): Boolean = false
     fun nowMs(): Long
 
     /** The approved catalog principal providing pages under [pluginId], with `surfaces` granted, or null. */
@@ -77,6 +79,7 @@ class PhonePageBroker(
         var actions: Map<String, PageSurfaceAction> = emptyMap(),
         /** The shown revision's composer, when it is a conversation page that offers one. */
         var composer: ConversationComposer? = null,
+        var routeMap: Boolean = false,
         /**
          * The glasses hold an accepted answer of the current request, so its advertised actions
          * may be forwarded. Separate from [shownRevision], which only ever rises.
@@ -112,6 +115,7 @@ class PhonePageBroker(
         val dataPlane: Boolean,
         /** An answer to the current request, which makes its actions available. */
         val answersRequest: Boolean,
+        val routeMap: Boolean = false,
     )
 
     private val lock = Any()
@@ -230,6 +234,27 @@ class PhonePageBroker(
 
     /** Whether the broker holds [pluginId]'s page-only binding because the glasses want its pages. */
     fun holdsProviderBinding(pluginId: String): Boolean = synchronized(lock) { bound.containsKey(pluginId) }
+
+    fun onRenderedMap(payload: JSONObject) = mutate {
+        if (!host.renderedMapsSupported() || !RenderedMapContract.validEvent(payload)) return@mutate
+        val context = RenderedMapContract.context(payload) ?: return@mutate
+        if (context.kind != RenderedMapContract.PAGE) return@mutate
+        val frame = frames[FrameKey(context.sessionGeneration, context.frameIndex)] ?: return@mutate
+        val visible = payload.getBoolean("visible")
+        if (frame.pageId != context.id) return@mutate
+        if (visible && (frame.requestId != context.requestId || frame.shownRevision != context.revision ||
+            !frame.routeMap || !frame.actionable || frame.pending || frame.leaseUntil?.let { host.nowMs() < it } != true)) return@mutate
+        val registration = currentRegistration(frame) ?: return@mutate
+        val outgoing = RenderedMapContract.delivery(payload, frame.owner)
+        later {
+            val current = synchronized(lock) {
+                frames[frame.key] === frame && currentRegistration(frame) == registration && (!visible ||
+                    (frame.requestId == context.requestId && frame.shownRevision == context.revision &&
+                        frame.leaseUntil?.let { host.nowMs() < it } == true))
+            }
+            if (current) host.deliver(registration, RenderedMapContract.PATH, outgoing)
+        }
+    }
 
     /** Re-checks every owner against the catalog after packages or grants change. */
     fun onCatalogChanged() {
@@ -405,6 +430,7 @@ class PhonePageBroker(
                         val candidate = Candidate(
                             value.revision, value.live, value.actions.associateBy { it.id }, body.composer,
                             PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, outgoing), answersRequest = true,
+                            routeMap = body.routeMap,
                         )
                         forwardPage(BusPaths.PAGE_RESPONSE, outgoing, frame, candidate)
                     }
@@ -429,6 +455,7 @@ class PhonePageBroker(
         val candidate = Candidate(
             page.revision, page.live, page.actions.associateBy { it.id }, body.composer,
             PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, outgoing), answersRequest = false,
+            routeMap = body.routeMap,
         )
         forwardPage(BusPaths.PAGE_RESPONSE, outgoing, frame, candidate)
         return null
@@ -466,6 +493,7 @@ class PhonePageBroker(
             Candidate(
                 it.revision, it.live, it.actions.associateBy { action -> action.id }, body.composer,
                 PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESULT, outgoing), answersRequest = false,
+                routeMap = body.routeMap,
             )
         }
         releaseInvocation(frame)
@@ -674,6 +702,7 @@ class PhonePageBroker(
         frame.live = candidate.live
         frame.actions = candidate.actions
         frame.composer = candidate.composer
+        frame.routeMap = candidate.routeMap
         frame.dataPlane = candidate.dataPlane
         if (candidate.answersRequest) frame.actionable = true
     }
@@ -693,7 +722,7 @@ class PhonePageBroker(
             .put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, registration.epoch)
 
     /** What the broker keeps of a page's body beside its actions. */
-    private class AcceptedBody(val composer: ConversationComposer?)
+    private class AcceptedBody(val composer: ConversationComposer?, val routeMap: Boolean = false)
 
     /**
      * Null when the body is invalid for its template. A template these glasses cannot draw (the
@@ -706,7 +735,7 @@ class PhonePageBroker(
         if (!PageTemplateContract.isSupported(page.template, extended)) return AcceptedBody(null)
         val decoded = PageTemplateContract.decode(page, owner, extended) as? PageSurfaceValidationResult.Valid
             ?: return null
-        return AcceptedBody((decoded.value as? PageBody.Conversation)?.composer)
+        return AcceptedBody((decoded.value as? PageBody.Conversation)?.composer, decoded.value is PageBody.Route)
     }
 
     /**

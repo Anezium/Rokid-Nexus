@@ -141,6 +141,7 @@ class NavPluginService : NexusPluginService() {
     }
 
     override fun onNexusActivityClosed(reason: String) = NavControl.activityClosed(reason)
+    override fun onNexusRenderedMapsChanged() = NavControl.mapDemandChanged()
 
     override fun onDestroy() {
         NavControl.pageListener = null

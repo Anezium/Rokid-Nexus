@@ -86,13 +86,18 @@ sanctioned exceptions:
    boot start, background location, or journey the user did not start. Planning
    the route sends the first accurate position and the chosen destination to
    Transitous (a third-party, OpenStreetMap-based planner) once per journey.
-   While that journey runs and one of its maps is on the glasses (the
-   activity's map while it can be drawn, or the route page), the phone may also
+   While that journey runs and authenticated, unexpired rendered-map feedback
+   confirms one of its maps is drawn on the glasses, the phone may also
    fetch the OpenStreetMap Foundation's vector tiles for the area those maps
    show: only the tiles the visible views need, never ahead along the route or
    for offline use, at most two at a time and thirty a minute, cached by their
    HTTP freshness and credited on the map. The journey's end stops them, and
-   nothing is fetched for a journey that is not running. `INTERNET` is declared
+   generic launcher support or page visibility never authorizes requests:
+   Text, collapse, hidden/covered maps and Commands have no map demand. Only
+   the selected Follow or Overview view counts, unless both are independently
+   drawn. Without both hubs' rendered-map/attribution support, keep route-only
+   guidance. Re-check demand before a request starts and cancel it on expiry.
+   Nothing is fetched for a journey that is not running. `INTERNET` is declared
    for these two uses only; the phone screen says so before the journey starts,
    and nothing else leaves the phone.
 
@@ -266,6 +271,10 @@ deliveries into your `/plugin/<id>/…` namespace. An opted-in page provider als
 receives `/page/request`, `/page/action`, `/page/visibility` and `/page/closed`,
 and its effective page version on `/system/hub/capabilities`, owner-scoped and
 with no receive prefix (none may be declared under `/page`).
+`/map/rendered` is an owner-scoped direct callback, with no receive prefix,
+only after both hubs negotiate rendered-map feedback and attribution v1. Use
+`renderedMapViews` and `onNexusRenderedMapsChanged`; its short lease is not a
+page lease or permission to extend a journey. A plugin can never send it.
 Reserved sender roots you can never use: `/launcher`, `/surface/input`, `/ink/event`,
 `/core`, `/system`, `/security`, `/error`, and every `/page` path except the two
 answers above. Rejections and undeliverable traffic

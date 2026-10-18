@@ -12,6 +12,8 @@ import com.anezium.rokidbus.shared.ActivitySurfaceContent
 import com.anezium.rokidbus.shared.AmbientSize
 import com.anezium.rokidbus.shared.RouteGeometry
 import com.anezium.rokidbus.shared.RoutePathRole
+import com.anezium.rokidbus.shared.RenderedMapContext
+import com.anezium.rokidbus.shared.RenderedMapContract
 
 /** A guidance island as decided, before any view: its ambient form and what it says. */
 internal data class GuidanceIsland(val form: IslandForm, val content: IslandContent.Guidance)
@@ -45,7 +47,9 @@ internal object GuidanceIslands {
         /** Three residents share the home: the minimap keeps a shorter map. */
         crowded: Boolean = false,
         clock: (Long) -> String = ::clockOf,
+        geometryRevision: Long? = null,
     ): GuidanceIsland? {
+        if (item.presentation == ActivityPresentation.HIDDEN) return null
         val size = item.size
         if (size == null && geometry == null) return null
         val form = when (size) {
@@ -63,6 +67,9 @@ internal object GuidanceIslands {
                 view = MapView.FOLLOW,
                 headingDeg = RoutePresentation.heading(MapView.FOLLOW, degraded, headingDeg),
                 degraded = degraded,
+                renderContext = geometryRevision?.takeUnless { item.stale }?.let { revision ->
+                    RenderedMapContext(RenderedMapContract.AMBIENT, item.activity.surfaceId, revision, seq = item.activity.seq)
+                },
             )
         }
         val minimap = form == IslandForm.MINIMAP

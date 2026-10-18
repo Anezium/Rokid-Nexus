@@ -12,6 +12,7 @@ import com.anezium.rokidbus.glasses.session.MapView
 import com.anezium.rokidbus.shared.RouteGeometry
 import com.anezium.rokidbus.shared.RoutePathRole
 import com.anezium.rokidbus.shared.RoutePoint
+import com.anezium.rokidbus.shared.RenderedMapContext
 
 /** What one map draw is given: the provider's geometry and the hub's own view of it. */
 internal data class MapInput(
@@ -24,6 +25,7 @@ internal data class MapInput(
     val insets: MapInsets = MapInsets(),
     /** r17 draws no compass on the small walk-to-stop island; everywhere else it stays. */
     val compass: Boolean = true,
+    val renderContext: RenderedMapContext? = null,
 )
 
 /** Everything decided for one draw, before a pixel is touched; kept for tests. */
@@ -352,7 +354,8 @@ internal class RouteMapPainter {
  * One map, measured: [MapForm.naturalHeightPx] tall unless its parent gives it an exact height,
  * and drawn by [RouteMapPainter] at whatever size it is laid out.
  */
-internal class RouteMapView(context: Context) : View(context) {
+internal class RouteMapView(context: Context, leaseFactory: (View) -> RenderedMapLease = { RenderedMapLease(it) }) : View(context) {
+    private val renderedLease = leaseFactory(this)
     private val painter = RouteMapPainter()
     private val clip = Path()
 
@@ -372,6 +375,7 @@ internal class RouteMapView(context: Context) : View(context) {
 
     fun bind(input: MapInput) {
         if (input == this.input) return
+        renderedLease.bind(input.renderContext, input.view)
         val resized = input.form != this.input?.form
         this.input = input
         plan = null
@@ -412,5 +416,21 @@ internal class RouteMapView(context: Context) : View(context) {
         }
         painter.draw(canvas, current, plan, width.toFloat(), height.toFloat())
         canvas.restoreToCount(saved)
+        renderedLease.drawn()
+    }
+
+    override fun onDetachedFromWindow() {
+        renderedLease.detach()
+        super.onDetachedFromWindow()
+    }
+
+    override fun onVisibilityAggregated(isVisible: Boolean) {
+        super.onVisibilityAggregated(isVisible)
+        if (!isVisible) renderedLease.detach() else invalidate()
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility != VISIBLE) renderedLease.detach() else invalidate()
     }
 }

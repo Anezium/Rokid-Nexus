@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.shared.plugin
 
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.RenderedMapContract
 
 object PathRules {
     private const val PAGE_ROOT = "/page"
@@ -16,6 +17,7 @@ object PathRules {
         "/skills",
     )
     private val hubOnlyPaths = setOf(
+        RenderedMapContract.PATH,
         BusPaths.TTS_CANCEL,
         BusPaths.SKILLS_CATALOG_REPLY,
         BusPaths.SKILLS_RESULT,
@@ -86,6 +88,7 @@ object PathRules {
      * third-party plugin to discover it needed one.
      */
     fun isDirectReply(path: String): Boolean = when (normalizeAbsolute(path)) {
+        RenderedMapContract.PATH -> true
         BusPaths.NOTICE_CLOSED, BusPaths.NOTICE_INPUT, BusPaths.NOTICE_ACTION,
         BusPaths.ACTIVITY_ACTION, BusPaths.ACTIVITY_CLOSED,
         BusPaths.TTS_STARTED, BusPaths.TTS_DONE,
@@ -100,6 +103,7 @@ object PathRules {
     }
 
     fun isOwnerScoped(path: String): Boolean = when (normalizeAbsolute(path)) {
+        RenderedMapContract.PATH -> true
         BusPaths.NOTICE_CLOSED, BusPaths.NOTICE_INPUT, BusPaths.NOTICE_ACTION,
         BusPaths.ACTIVITY_ACTION, BusPaths.ACTIVITY_CLOSED,
         BusPaths.TTS_STARTED, BusPaths.TTS_DONE,

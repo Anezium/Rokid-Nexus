@@ -848,8 +848,9 @@ stops, 16 KiB, coordinates 0..1,000 in a north-up frame spanning `spanMeters`)
 and `publishActivityHeading(deg, accuracyDeg)` the compass heading. If your
 `street` or `major` paths come from a map source that must be credited, set
 `attribution` (1 to 40 printable characters, for OpenStreetMap
-`"© OpenStreetMap"`); the glasses draw it in the corner of every map, and
-older hubs ignore it, so credit the source beside the map too. Latest wins;
+`"© OpenStreetMap"`); the glasses draw it in the corner of every map. Gate
+provider streets on `supportsRenderedMaps`, which guarantees both hubs preserve
+and render that credit; unsupported pairs retain route-only geometry. Latest wins;
 neither is ever queued. Geometry needs the SPP data plane and returns
 `CAPABILITY_NOT_AVAILABLE` over the control link alone, so your text guidance
 must stand without it. The hub keeps at most five headings a second and treats
@@ -857,6 +858,22 @@ one older than three seconds as absent. Clip your paths with Liang-Barsky to a
 window covering the rotated viewport, never by clamping vertices, and mark a
 stale or missing fix in `position.quality` rather than leaving an old position
 looking live.
+
+`supportsRenderedMaps` requires the separate `RENDERED_MAP` v1 bit through both
+hubs, the launcher bundle, the `surfaces` grant and live SPP. It is false with
+either older hub, even if `supportsLauncherInteractive()` is true.
+`renderedMapViews: Set<NexusRenderedMapView>` contains only `FOLLOW` and/or
+`OVERVIEW` under unexpired hub feedback, and is empty otherwise. The SDK keeps
+at most ambient Follow plus one selected page view. `onRenderedMapsChanged()`
+(`onNexusRenderedMapsChanged()` on the service) reports feedback changes; expiry
+is checked on read, so re-read immediately before each request and use existing
+journey lifecycle checks to cancel pending work on expiry. Page visibility or
+successful geometry publication alone never authorize view-driven networking.
+`clearRenderedMapDemand()` discards this plugin's feedback when replacing its
+journey. The SDK also clears applicable slots on registration reset, SPP loss,
+page hide/close and activity end/close. No receive prefix or new grant is needed.
+Plugins cannot send `/map/rendered` or claim their own visibility. See
+`BUSSPEC.md` "Rendered map feedback v1" for the bounded hub-only authority.
 
 ### Notice bands
 

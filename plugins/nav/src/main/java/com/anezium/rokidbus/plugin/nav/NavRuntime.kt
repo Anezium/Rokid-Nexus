@@ -50,9 +50,6 @@ internal class NavRuntime(context: Context) {
 
     private val client get() = NavControl.serviceClient
 
-    /** This runtime owns the route and its activity's map can be drawn on the glasses now. */
-    val mapShown: Boolean get() = NavControl.owns(this) && map.showing
-
     fun onGuidance(guidance: NavGuidance) = onMain {
         if (!NavControl.owns(this)) return@onMain
         NavState.guidance = guidance

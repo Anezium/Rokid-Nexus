@@ -121,9 +121,12 @@ route's own geometry, where the hub draws them dim under the bright route.
 Nothing heavier runs on the glasses.
 
 - **Only for maps on the glasses.** Tiles are asked for only while the
-  journey runs and one of its maps is shown: the follow map while the
-  activity's map can reach the glasses (both hubs draw maps and the data plane
-  is up), and both views while the route page is on screen. That is at most
+  journey runs and both hubs confirm the map was actually drawn. Feedback
+  expires after five seconds and is checked again before each request; Text,
+  automatic collapse, hidden/covered maps and Commands authorize no tiles.
+  Only the selected Follow or Overview view counts, unless both are drawn
+  independently. Unknown feedback and either older hub keep route-only
+  guidance, even with launcher support. That is at most
   four zoom-14 tiles for the follow view and nine tiles, from zoom 14 down to
   12, for the whole route. Nothing is fetched along the route ahead, for
   offline use, before a route is planned, or after the journey ends; a request
@@ -136,7 +139,10 @@ Nothing heavier runs on the glasses.
   most 32 MiB and 1,024 tiles, least recently used first, none older than 30
   days) by their HTTP freshness: the service currently allows five minutes,
   then a tile is shown while it is checked again with `If-Modified-Since`.
-  Offline, a stored tile is still drawn. The cache holds map tiles only,
+  A 304 preserves omitted cache metadata; `no-cache` remains revalidated and
+  `no-store` evicts the previous disk copy. Offline, stored tiles remain useful
+  unless their policy requires successful revalidation (`no-cache`).
+  The cache holds map tiles only,
   never a journey, and Android may clear it at any time.
 - **Route first.** The route, the wearer, the next turn, the destination and
   the planner's street names are fitted first and never change. Streets fill
@@ -146,6 +152,9 @@ Nothing heavier runs on the glasses.
   few paths that only ever stroke real streets; in dense areas, small
   disconnected footways and the farthest streets are left out. A few real
   street names are added where they fit, after the planner's.
+  Before view processing, tiles exceeding an aggregate 16,000 vertices or
+  2,000,000 estimated simplification steps degrade to route-only. Candidate
+  edges are capped at 512 and name searches at 256 vertices.
 - **Honest when absent.** A tile that has not arrived, failed or does not
   exist leaves that part of the map as the route alone; nothing is drawn in
   its place. A whole route too wide for nine zoom-12 tiles (from about ten
@@ -154,8 +163,9 @@ Nothing heavier runs on the glasses.
 - **Credited.** Every map that shows streets says "© OpenStreetMap" in its
   bottom-right corner, the route page adds a "Street map" fact (or says the
   map shows the route alone for now), and the phone screen links to
-  OpenStreetMap's copyright page. A glasses hub older than this credit still
-  draws the streets and the page fact, without the in-map credit.
+  OpenStreetMap's copyright page. Both hubs must negotiate the new rendered-map
+  and attribution support before any OSM street data is fetched or published;
+  either older peer retains route-only guidance.
 - **Privacy.** OpenStreetMap receives requests for the tiles shown, which
   reveal roughly where the wearer is (a zoom-14 tile is 2.4 km across at the
   equator, about 1.6 km in Paris), and the phone's IP address; never the position,

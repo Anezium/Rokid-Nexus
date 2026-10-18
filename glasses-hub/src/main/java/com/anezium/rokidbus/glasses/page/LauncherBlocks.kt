@@ -116,7 +116,9 @@ internal object LauncherBlocks {
             MapSize.PANEL -> MapForm.PANEL
             MapSize.FULL -> MapForm.FULL
         }
-        val map = RouteMapView(context).apply { bind(MapInput(block.geometry, form, block.view, block.headingDeg, block.degraded)) }
+        val map = RouteMapView(context).apply {
+            bind(MapInput(block.geometry, form, block.view, block.headingDeg, block.degraded, renderContext = block.renderContext))
+        }
         if (block.size == MapSize.FULL) return map
         return MapCardView(context, map).apply { bind(block) }
     }

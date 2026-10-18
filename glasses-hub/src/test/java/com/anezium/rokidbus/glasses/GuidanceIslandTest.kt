@@ -24,6 +24,24 @@ import org.junit.Test
 /** Guidance islands (plan 028a §8.1) and the launcher backend precedence (§8.3). */
 class GuidanceIslandTest {
     @Test
+    fun `render authority follows actual ambient form collapse and foreground suppression`() {
+        val map = geometry(RoutePositionQuality.LIVE)
+        fun rendered(presentation: ActivityPresentation, size: AmbientSize?) =
+            GuidanceIslands.of(item(presentation, size), map, null, geometryRevision = 9)?.content?.map?.renderContext
+        assertEquals(9L, rendered(ActivityPresentation.PANEL, AmbientSize.MINIMAP)?.revision)
+        assertNull(rendered(ActivityPresentation.PANEL, AmbientSize.TEXT))
+        assertNull(rendered(ActivityPresentation.HIDDEN, AmbientSize.PANEL))
+        val collapsed = selectActivityPresentation(ActivityPresentationContext.IDLE_HOME, false, false, ActivityCollapseState.ELAPSED)
+        assertNull(rendered(collapsed, null))
+        val foregroundSize = ambientIslandSize(AmbientSize.PANEL, ActivityPresentationContext.NATIVE_APP)
+        assertNull(rendered(ActivityPresentation.PANEL, foregroundSize))
+        val hidden = applyForegroundMode(ActivityPresentation.PANEL, com.anezium.rokidbus.shared.ForegroundAmbientMode.NOTHING)
+        assertNull(rendered(hidden, AmbientSize.PANEL))
+        assertNull(GuidanceIslands.of(item(ActivityPresentation.PANEL, AmbientSize.PANEL, stale = true),
+            map, null, geometryRevision = 9)?.content?.map?.renderContext)
+    }
+
+    @Test
     fun `an owner without a size or live geometry keeps the existing island`() {
         assertNull(GuidanceIslands.of(item(ActivityPresentation.PANEL, size = null), geometry = null, headingDeg = 30f))
     }

@@ -2366,9 +2366,9 @@ The `follow` and `overview` of a `route` page and the payload of
   through 3. `stops`: at most 4, label at most 4 characters.
 - `attribution`: optional, 1 to 40 printable characters crediting the source
   of the `street` and `major` paths. The glasses draw it in the bottom-right
-  corner of every map size. A glasses hub that predates it ignores it, and a
-  phone hub that predates it drops it when it re-encodes the geometry; the
-  paths themselves are unchanged.
+  corner of every map size. Providers requiring that credit must gate street
+  data on the separately negotiated `RENDERED_MAP` bit below; older hub pairs
+  keep route-only guidance because they cannot guarantee preservation and display.
 - `position.quality`: `live`, `stale` (the last fix, with its age in
   `fixAgeS`) or `none` (no position; any coordinates are ignored).
 - The serialized geometry is at most 16 KiB. Anything outside the schema is
@@ -2377,6 +2377,47 @@ The `follow` and `overview` of a `route` page and the payload of
   that covers the rotated viewport. With a degraded position the hub draws
   north-up, a dashed route and a dot without an arrow, and prefixes distances
   with `~`.
+
+### Rendered map feedback v1
+
+`BusCapabilityBits.RENDERED_MAP` (`1 << 15`) means both in-map attribution and
+rendered-view feedback v1. Each hub advertises its own bit in `features`;
+the phone exposes it to approved plugins only with the launcher bundle, the
+glasses' bit and authenticated SPP up. Generic launcher support is insufficient.
+Old phone/new glasses and new phone/old glasses therefore remain route-only
+for Navigation's OSM data. The old launcher fallback is unchanged.
+
+`/map/rendered` is a hub-generated, owner-scoped direct callback, never a
+plugin send path or receive prefix. It grants no `/core/*` access. The glasses
+send immediately over authenticated SPP, without a reconnect queue, only after
+the real map renderer draws a fully visible, attached map. A render heartbeat
+requests another draw every 2 seconds while that view exists; the timer itself
+does not renew authorization. Text, automatic collapse, hidden foreground
+policy, an absent map, page Commands, frame cover, detach and window hiding
+produce no positive feedback. A covering notice suppresses feedback. Follow
+and Overview are reported only when selected; both can authorize tiles only
+when independently drawn maps exist.
+
+The hub-to-hub payload has `kind` (`ambient` or `page`), `id`, `revision`,
+`view` (`follow` or `overview`), `visible` (boolean), and an opaque `token`
+(1..64 printable characters). Ambient authority additionally has `seq`, with
+`id` equal to the phone-stamped activity surface id and `revision` equal to
+the forwarded geometry revision. Page authority additionally has
+`sessionGeneration`, `frameIndex` (1..5) and `requestId`, with `id` equal to
+the page id and `revision` equal to the accepted route page revision. The phone
+checks the live owner/sequence/geometry or accepted request/frame/revision,
+unexpired page lease, grant and single current registration. A negative event
+may revoke its exact token after an intervening revision of the same owner.
+
+Only `{pluginId, kind, token, view, visible, leaseMs: 5000}` reaches that owner's
+SDK; rendering authority and other owners' identities never reach a plugin.
+There are at most two SDK slots, ambient Follow and one selected page view.
+A new token/view replaces its slot; an old token's hide cannot clear its
+replacement. Unknown, absent, malformed or expired feedback fails closed.
+SPP loss, registration reset, end/close and page hide clear applicable slots;
+expiry is checked on read. Consumers must re-check before every network request
+and cancel work when demand disappears, including expiry. Feedback never opens
+a plugin, binds a provider, starts a journey or extends any existing lease.
 
 ### Composer capture (`/core/compose/*`)
 

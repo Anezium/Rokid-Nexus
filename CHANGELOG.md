@@ -4,10 +4,17 @@
 
 ### Glasses hub
 
+- Report only actually rendered route map views under a short owner-scoped
+  lease. Both hubs negotiate this feedback and in-map attribution together;
+  Navigation retains route-only guidance with an older peer.
+
 - Route maps draw the credit a provider gives for its street data in the
   bottom-right corner, at every size, clear of street names and the scale bar.
 
 ### SDK
+
+- `supportsRenderedMaps`, `renderedMapViews`, `clearRenderedMapDemand()` and
+  `onRenderedMapsChanged()` expose bounded, expiring hub-issued map demand.
 
 - `RouteGeometry.attribution` (optional, at most 40 printable characters)
   credits the source of a geometry's `street` and `major` paths. Older hubs

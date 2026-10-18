@@ -173,6 +173,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     final override fun onActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult? =
         onNexusActivityCommand(command)
     final override fun onActivityClosed(reason: String) = onNexusActivityClosed(reason)
+    final override fun onRenderedMapsChanged() = onNexusRenderedMapsChanged()
     final override fun onSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) =
         onNexusSurfaceTextCommitted(surfaceId, text, cancelled)
     final override fun onInkReady(surfaceId: String) = onNexusInkReady(surfaceId)
@@ -263,6 +264,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
 
     /** This plugin's activity ended, once, whatever ended it. */
     protected open fun onNexusActivityClosed(reason: String) = Unit
+    protected open fun onNexusRenderedMapsChanged() = Unit
 
     /** The wearer submitted or cancelled a card's [NexusCard.editable] field. */
     protected open fun onNexusSurfaceTextCommitted(

@@ -8,6 +8,14 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Looper
 import android.os.SystemClock
+import com.anezium.rokidbus.client.plugin.NexusPluginClient
+import com.anezium.rokidbus.client.plugin.NexusPluginCallbacks
+import com.anezium.rokidbus.shared.BusCapabilityBits
+import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.RenderedMapContract
+import com.anezium.rokidbus.shared.plugin.NexusInputEvent
+import com.anezium.rokidbus.shared.plugin.PluginCapability
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,11 +47,14 @@ class NavJourneyLifecycleTest {
     private val defaultBasemap = NavJourneyService.newBasemap
     private val runtimes = mutableListOf<NavRuntime>()
     private val services = mutableListOf<NavJourneyService>()
+    private val clients = mutableListOf<NexusPluginClient>()
+    private var feedbackId = 0
     private var listener: NavNotificationListener? = null
 
     @After
     fun cleanUp() {
         services.forEach { it.onDestroy() }
+        clients.forEach { NavControl.serviceDestroyed(it); it.close() }
         runtimes.forEach {
             it.shutdown()
             NavControl.detachJourney(it)
@@ -197,13 +208,17 @@ class NavJourneyLifecycleTest {
         assertTrue(streets.urls.isEmpty())
         assertEquals(BasemapState.NONE, NavState.basemapState)
 
+        // A visible page alone never authorizes tiles, including its Commands mode.
         NavState.routePageVisible = true
         NavControl.mapDemandChanged()
         idle(0)
+        assertTrue(streets.urls.isEmpty())
+        val client = feedbackClient()
+        renderFeedback(client, "follow")
+        idle(0)
         assertTrue(streets.urls.isNotEmpty())
         assertTrue(streets.urls.all { it.startsWith("https://vector.openstreetmap.org/shortbread_v1/") })
-        // Follow and overview each stay within their own few tiles.
-        assertTrue(streets.urls.size <= NavBasemapLayer.FOLLOW_MAX_TILES + NavBasemapLayer.OVERVIEW_MAX_TILES)
+        assertTrue(streets.urls.size <= NavBasemapLayer.FOLLOW_MAX_TILES)
         idle(0)
         assertTrue(NavState.journey!!.basemap.tiles.isNotEmpty())
         assertEquals(BasemapState.READY, NavState.basemapState)
@@ -211,7 +226,7 @@ class NavJourneyLifecycleTest {
 
         // The page goes: no new tile is asked for, whatever the wearer walks past.
         NavState.routePageVisible = false
-        NavControl.mapDemandChanged()
+        renderFeedback(client, "follow", visible = false)
         idle(NavJourneyService.TICK_MS * 3)
         assertEquals(asked, streets.urls.size)
 
@@ -228,8 +243,8 @@ class NavJourneyLifecycleTest {
     fun `losing location permission closes the street loader with the journey`() {
         val streets = StreetRecorder()
         planParisJourney(streets)
-        NavState.routePageVisible = true
-        NavControl.mapDemandChanged()
+        val client = feedbackClient()
+        renderFeedback(client, "follow")
         idle(0)
         val asked = streets.urls.size
         shadowOf(app).denyPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -241,27 +256,129 @@ class NavJourneyLifecycleTest {
         assertEquals(asked, streets.urls.size)
     }
 
-    /** Records every street tile request a journey makes, and answers each with a small real tile. */
-    private class StreetRecorder {
-        val urls = java.util.concurrent.CopyOnWriteArrayList<String>()
-        val executor = object : java.util.concurrent.AbstractExecutorService() {
-            @Volatile private var shut = false
-            override fun execute(command: Runnable) {
-                if (shut) throw java.util.concurrent.RejectedExecutionException()
-                command.run()
+    @Test
+    fun `expired or unsupported map feedback cancels demand without extending the journey lifetime`() {
+        val streets = StreetRecorder()
+        planParisJourney(streets)
+        val client = feedbackClient()
+        renderFeedback(client, "follow")
+        idle(0)
+        assertTrue(streets.urls.isNotEmpty())
+        idle(RenderedMapContract.LEASE_MS + NavJourneyService.TICK_MS)
+        assertEquals(BasemapState.NONE, NavState.basemapState)
+        assertTrue(NavState.journey!!.basemap.tiles.isEmpty())
+        assertTrue(NavControl.journeyActive)
+        ReflectionHelpers.setField(client, "hubCapabilities", BusCapabilityBits.LAUNCHER_INTERACTIVE)
+        renderFeedback(client, "overview")
+        idle(0)
+        assertEquals(BasemapState.NONE, NavState.basemapState)
+    }
+
+    @Test
+    fun `only the selected rendered page view requests its disjoint Follow or Overview tiles`() {
+        val service = planParisJourney(StreetRecorder())
+        ReflectionHelpers.getField<NavBasemap>(service, "basemap").close()
+        val points = listOf(GeoPoint(48.853, 2.349), GeoPoint(48.853, 2.45))
+        val longRoute = NavRoute(NavDestination("There", points.last()), points, 6000,
+            listOf(RouteStep(RouteLine(points).lengthMeters, "ARRIVE", "There")))
+        val streets = StreetRecorder()
+        val loader = NavBasemap(OsmShortbreadSource, longRoute.line, null, streets.transport,
+            { android.os.Handler(Looper.getMainLooper()).post(it) }, {}, streets.executor, SystemClock::elapsedRealtime)
+        ReflectionHelpers.setField(service, "tracker", NavRouteTracker(longRoute))
+        ReflectionHelpers.setField(service, "basemap", loader)
+        val client = feedbackClient()
+        renderFeedback(client, "follow")
+        idle(0)
+        val snapshot = NavState.journey!!
+        val follow = NavMapProjection.tiles(snapshot, NavMapView.FOLLOW, OsmShortbreadSource)
+        val overview = NavMapProjection.tiles(snapshot, NavMapView.OVERVIEW, OsmShortbreadSource)
+        assertTrue(follow.isNotEmpty() && overview.isNotEmpty())
+        assertTrue(follow.toSet().intersect(overview.toSet()).isEmpty())
+        assertEquals(follow.map(OsmShortbreadSource::url).toSet(), streets.urls.toSet())
+        val asked = streets.urls.size
+        renderFeedback(client, "overview")
+        idle(0)
+        assertEquals(overview.map(OsmShortbreadSource::url).toSet(), streets.urls.drop(asked).toSet())
+        renderFeedback(client, "overview", visible = false)
+        idle(NavJourneyService.TICK_MS)
+        assertEquals(BasemapState.NONE, NavState.basemapState)
+    }
+
+    @Test
+    fun `Stop and permission teardown remain available with tile preparation pending on its worker`() {
+        for (permissionLost in listOf(false, true)) {
+            val entered = java.util.concurrent.CountDownLatch(1)
+            val release = java.util.concurrent.CountDownLatch(1)
+            val streets = StreetRecorder(java.util.concurrent.Executors.newSingleThreadExecutor())
+            streets.beforeExecute = { entered.countDown(); release.await(5, java.util.concurrent.TimeUnit.SECONDS) }
+            val service = planParisJourney(streets)
+            renderFeedback(feedbackClient(), "follow")
+            idle(0)
+            try {
+                assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                if (permissionLost) {
+                    shadowOf(app).denyPermissions(Manifest.permission.ACCESS_FINE_LOCATION)
+                    idle(NavJourneyService.TICK_MS)
+                } else {
+                    service.onStartCommand(Intent(app, NavJourneyService::class.java).setAction(NavJourneyService.ACTION_STOP), 0, 2)
+                }
+                assertFalse(NavControl.journeyActive)
+                assertTrue(streets.executor.isShutdown)
+                assertNull(NavState.journey)
+            } finally {
+                release.countDown()
             }
-            override fun shutdown() { shut = true }
-            override fun shutdownNow(): MutableList<Runnable> = mutableListOf<Runnable>().also { shut = true }
-            override fun isShutdown() = shut
-            override fun isTerminated() = shut
-            override fun awaitTermination(timeout: Long, unit: java.util.concurrent.TimeUnit) = true
         }
+    }
+
+    private fun feedbackClient(): NexusPluginClient {
+        val callbacks = object : NexusPluginCallbacks {
+            override fun onOpen() = Unit
+            override fun onClose() = Unit
+            override fun onInput(event: NexusInputEvent) = Unit
+            override fun onLinkState(state: Int) = Unit
+            override fun onRegistrationState(result: Int) = Unit
+            override fun onRenderedMapsChanged() = NavControl.mapDemandChanged()
+        }
+        return NexusPluginClient.create(app, "nav", callbacks).also { client ->
+            // The real SDK consumes owner-scoped feedback; the Binder peer is replaced only here.
+            ReflectionHelpers.setField(client, "registrationState", com.anezium.rokidbus.client.PluginRegistrationResult.APPROVED)
+            ReflectionHelpers.setField(client, "approvedCapabilities", setOf(PluginCapability.SURFACES))
+            ReflectionHelpers.setField(client, "hubCapabilities", BusCapabilityBits.LAUNCHER_INTERACTIVE or BusCapabilityBits.RENDERED_MAP)
+            ReflectionHelpers.setField(client, "currentLinkState", LinkStateBits.SPP_DATA_UP)
+            clients += client
+            NavControl.serviceCreated(client)
+        }
+    }
+
+    private fun renderFeedback(client: NexusPluginClient, view: String, visible: Boolean = true) {
+        client.onMessage(RenderedMapContract.PATH, "render-${feedbackId++}", JSONObject()
+            .put("pluginId", "nav").put("kind", "page").put("token", "rendered-page").put("view", view)
+            .put("visible", visible).put("leaseMs", RenderedMapContract.LEASE_MS))
+    }
+
+    /** Records every street tile request a journey makes, and answers each with a small real tile. */
+    private class StreetRecorder(val executor: java.util.concurrent.ExecutorService = object : java.util.concurrent.AbstractExecutorService() {
+        @Volatile private var shut = false
+        override fun execute(command: Runnable) {
+            if (shut) throw java.util.concurrent.RejectedExecutionException()
+            command.run()
+        }
+        override fun shutdown() { shut = true }
+        override fun shutdownNow(): MutableList<Runnable> = mutableListOf<Runnable>().also { shut = true }
+        override fun isShutdown() = shut
+        override fun isTerminated() = shut
+        override fun awaitTermination(timeout: Long, unit: java.util.concurrent.TimeUnit) = true
+    }) {
+        var beforeExecute: () -> Unit = {}
+        val urls = java.util.concurrent.CopyOnWriteArrayList<String>()
         private val tile = MvtFixtures.gzip(
             MvtFixtures.shortbread(listOf(MvtFixtures.line(0 to 2048, 4096 to 2048, tags = mapOf("kind" to "residential")))),
         )
         val transport = TileTransport { url, _, _ ->
             object : TileCall {
                 override fun execute(): TileResponse {
+                    beforeExecute()
                     urls += url
                     return TileResponse(200, mapOf("cache-control" to "max-age=300"), tile)
                 }

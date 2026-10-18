@@ -18,6 +18,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import com.anezium.rokidbus.client.plugin.NexusRenderedMapView
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -38,8 +39,8 @@ import java.util.concurrent.Executors
  * promise left unkept.
  *
  * Once the route is planned, its maps draw OpenStreetMap streets ([NavBasemap]): street tiles are
- * asked for only for the map views on the glasses at that moment (the activity's follow map while
- * it can be drawn, both views while the route page is on screen), and the loader closes with the
+ * asked for only for the authenticated, unexpired rendered map views reported by the hubs,
+ * and the loader closes with the
  * journey. A tile that does not come changes nothing about guidance.
  */
 class NavJourneyService : Service(), LocationListener {
@@ -227,22 +228,26 @@ class NavJourneyService : Service(), LocationListener {
     }
 
     /**
-     * [snapshot] with the street tiles its shown map views need, which it also asks for: the follow
-     * view while the activity's map or the route page can be drawn, the whole route only on the
-     * page. With no map on the glasses nothing is asked for and in-flight requests are cancelled.
+     * Only hub-authenticated rendered views authorize street data. Page visibility and accepted
+     * geometry say nothing about the selected map, ambient Text, collapse or foreground cover.
      */
     private fun withStreets(snapshot: NavRouteSnapshot): NavRouteSnapshot {
         val streets = basemap ?: return snapshot
-        val page = NavState.routePageVisible
-        val views = listOfNotNull(
-            NavMapView.FOLLOW.takeIf { page || runtime.mapShown },
-            NavMapView.OVERVIEW.takeIf { page },
-        )
-        val keys = views.flatMap { NavMapProjection.tiles(snapshot, it, BASEMAP_SOURCE) }
-        streets.demand(keys)
+        val rendered = NavControl.serviceClient?.renderedMapViews.orEmpty()
+        val keysByView = rendered.associateWith {
+            val view = when (it) {
+                NexusRenderedMapView.FOLLOW -> NavMapView.FOLLOW
+                NexusRenderedMapView.OVERVIEW -> NavMapView.OVERVIEW
+            }
+            NavMapProjection.tiles(snapshot, view, BASEMAP_SOURCE)
+        }
+        val keys = keysByView.values.flatten()
+        streets.demand(keys) { key ->
+            NavControl.serviceClient?.renderedMapViews.orEmpty().any { key in keysByView[it].orEmpty() }
+        }
         // A shown view too wide for street tiles has none to wait for.
-        NavState.basemapState = if (views.isNotEmpty() && keys.isEmpty()) BasemapState.UNAVAILABLE else streets.state
-        return snapshot.copy(basemap = streets.tiles)
+        NavState.basemapState = if (rendered.isNotEmpty() && keys.isEmpty()) BasemapState.UNAVAILABLE else streets.state
+        return snapshot.copy(basemap = if (rendered.isEmpty()) NavBasemapTiles.NONE else streets.tiles)
     }
 
     private fun finishJourney(message: String) {

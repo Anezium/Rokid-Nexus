@@ -86,6 +86,9 @@ interface NexusPluginCallbacks {
      */
     fun onActivityClosed(reason: String) = Unit
 
+    /** Rendered map feedback changed. Leases also expire silently; re-read before each fetch. */
+    fun onRenderedMapsChanged() = Unit
+
     /**
      * The wearer submitted or cancelled this card's editable field (see
      * [NexusCard.editable]). Fires at most once per field: ask again by

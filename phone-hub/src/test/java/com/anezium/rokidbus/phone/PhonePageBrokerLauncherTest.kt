@@ -19,6 +19,8 @@ import org.junit.Test
 /** The page broker with the launcher bundle: stamps, typed bodies, invocation modes, result codes. */
 class PhonePageBrokerLauncherTest {
     private class FakeHost : PhonePageHost {
+        var mapsSupported = true
+        override fun renderedMapsSupported(): Boolean = mapsSupported
         var now = 10_000L
         val providers = linkedMapOf<String, PhonePluginPrincipal>()
         val live = linkedMapOf<String, MutableList<PageRegistration>>()
@@ -127,6 +129,35 @@ class PhonePageBrokerLauncherTest {
     private fun responses() = host.glasses.filter { it.first == BusPaths.PAGE_RESPONSE }.map { it.second }
     private fun invocations() = host.delivered.filter { it.second == BusPaths.PAGE_ACTION }.map { it.third }
     private fun capabilities() = host.delivered.filter { it.second == BusPaths.HUB_CAPABILITIES }.map { it.third }
+
+    @Test
+    fun `render feedback needs the accepted route revision request frame lease and registration`() {
+        val registration = open()
+        val route = JSONObject().put("position", "none").put("follow", com.anezium.rokidbus.shared.RouteGeometryContract.encode(
+            com.anezium.rokidbus.shared.RouteGeometry(spanMeters = 400.0, paths = emptyList())))
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE,
+            page(template = "route", body = route, actions = JSONArray()), registration))
+        visible()
+        val event = com.anezium.rokidbus.shared.RenderedMapContext("page", "relay:main", 1,
+            sessionGeneration = 1, frameIndex = 1, requestId = "r1").toPayload()
+            .put("visible", true).put("view", "overview").put("token", "p1").put("pluginId", "forged")
+        broker.onRenderedMap(event)
+        val delivered = host.delivered.filter { it.second == com.anezium.rokidbus.shared.RenderedMapContract.PATH }
+        assertEquals(1, delivered.size)
+        assertEquals("relay-a", delivered.single().first)
+        assertEquals("relay", delivered.single().third.getString("pluginId"))
+        assertFalse(delivered.single().third.has("requestId"))
+        broker.onRenderedMap(JSONObject(event.toString()).put("revision", 0))
+        broker.onRenderedMap(JSONObject(event.toString()).put("requestId", "old"))
+        broker.onRenderedMap(JSONObject(event.toString()).put("sessionGeneration", 0))
+        broker.onRenderedMap(JSONObject(event.toString()).put("id", "other:main"))
+        host.mapsSupported = false
+        broker.onRenderedMap(event)
+        host.mapsSupported = true
+        host.now += PageSurfaceContract.LEASE_MS
+        broker.onRenderedMap(event)
+        assertEquals(1, host.delivered.count { it.second == com.anezium.rokidbus.shared.RenderedMapContract.PATH })
+    }
 
     @Test
     fun `providers hear the launcher bundle version beside the page version`() {

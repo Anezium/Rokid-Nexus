@@ -163,6 +163,7 @@ internal object RouteLive {
     }
 
     fun geometry(owner: String): RouteGeometry? = state.geometry(owner)
+    fun geometryRevision(owner: String): Long? = state.geometryRevision(owner)
 
     fun heading(owner: String): Float? = state.heading(owner, SystemClock.uptimeMillis())
 

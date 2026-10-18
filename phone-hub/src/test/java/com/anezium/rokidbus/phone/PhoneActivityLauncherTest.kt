@@ -70,6 +70,37 @@ class PhoneActivityLauncherTest {
     private val state = newState()
     private val router = newRouter(state, orderedSink, host)
 
+    @Test
+    fun `render feedback is authenticated against live owner sequence and forwarded geometry revision`() {
+        sink.capabilityBits = sink.capabilityBits or BusCapabilityBits.RENDERED_MAP
+        router.handleLocal(local(start("nav")), hudSender("nav"))
+        router.handleLocal(local(start("other")), hudSender("other"))
+        val seq = sink.remote.first { it.payload.optString("ownerPluginId") == "nav" }.payload.getLong("seq")
+        router.handleLocal(geometry("nav", 7), hudSender("nav"))
+        val event = com.anezium.rokidbus.shared.RenderedMapContext("ambient", "nav:activity", 7, seq).toPayload()
+            .put("token", "map1").put("visible", true).put("view", "follow").put("pluginId", "other")
+        router.handleRenderedMap(event)
+        val delivered = sink.local.single { it.path == com.anezium.rokidbus.shared.RenderedMapContract.PATH }.payload
+        assertEquals("nav", delivered.getString("pluginId"))
+        assertFalse(delivered.has("id"))
+        assertFalse(delivered.has("seq"))
+        val count = sink.local.size
+        router.handleRenderedMap(JSONObject(event.toString()).put("seq", seq - 1))
+        router.handleRenderedMap(JSONObject(event.toString()).put("revision", 6))
+        router.handleRenderedMap(JSONObject(event.toString()).put("id", "other:activity"))
+        host.registrations["nav"] = 2
+        router.handleRenderedMap(event)
+        host.registrations["nav"] = 1
+        host.dataPlane = false
+        router.handleRenderedMap(event)
+        host.dataPlane = true
+        assertEquals(count, sink.local.size)
+        router.handleLocal(local(identity("nav"), BusPaths.ACTIVITY_END), hudSender("nav"))
+        val afterEnd = sink.local.size
+        router.handleRenderedMap(event)
+        assertEquals(afterEnd, sink.local.size)
+    }
+
     private fun newState(initialSequence: Long = 40L) = PhoneActivityState(
         nowMs = { now },
         initialSequence = initialSequence,

@@ -106,6 +106,7 @@ internal object ActivityOverlayRenderer {
             .forEach { processedMotionTokens[it.activity.surfaceId] = it.activity.motionToken }
 
         val visible = state.items.filter { it.presentation != ActivityPresentation.HIDDEN }
+        state.items.filter { it.presentation == ActivityPresentation.HIDDEN }.forEach { nodes[it.activity.surfaceId]?.visibility = View.GONE }
         if (visible.isEmpty()) {
             // The camera needs the glasses clear now, not after a fold.
             teardown(keepMotionTokens = true)
@@ -194,6 +195,7 @@ internal object ActivityOverlayRenderer {
             item, RouteLive.geometry(owner), RouteLive.heading(owner),
             sourceLabel = GlassesHub.launcherDisplayName(owner),
             crowded = residents >= 3,
+            geometryRevision = RouteLive.geometryRevision(owner),
         )
     }
 

@@ -77,28 +77,6 @@ class NavMapPublisherTest {
     }
 
     @Test
-    fun `the activity's map counts as shown only while it can reach the glasses`() {
-        assertFalse(publisher.showing)
-        publisher.update(live(100.0), send = false)
-        publisher.activityStarted()
-        assertTrue(publisher.showing)
-        // Refused for want of the data plane: nothing is drawn, so no street tile is worth asking for.
-        geometryResult = NexusSdkResult.CAPABILITY_NOT_AVAILABLE
-        now += 2_000
-        publisher.update(live(160.0))
-        assertFalse(publisher.showing)
-        // The link changed: the next geometry tries again, and goes.
-        geometryResult = NexusSdkResult.SENT
-        publisher.linkChanged()
-        assertTrue(publisher.showing)
-        supported = false
-        assertFalse(publisher.showing)
-        supported = true
-        publisher.activityEnded()
-        assertFalse(publisher.showing)
-    }
-
-    @Test
     fun `a refused geometry is not queued, the next one is built from the current journey`() {
         geometryResult = NexusSdkResult.CAPABILITY_NOT_AVAILABLE
         publisher.update(live(100.0), send = false)

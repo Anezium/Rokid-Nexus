@@ -114,6 +114,8 @@ class PluginRoutePolicyTest {
 
     @Test
     fun `plugins cannot send hub control routes`() {
+        assertEquals(PluginRouteDecision.Denied("SYSTEM_ROUTE_DENIED"),
+            PluginRoutePolicy.authorize(plugin(PluginCapability.SURFACES), com.anezium.rokidbus.shared.RenderedMapContract.PATH))
         listOf("/launcher/list", "/launcher/open", "/surface/input", "/system/plugin/open", "/security/grants", "/error")
             .forEach { path -> assertTrue(path, PluginRoutePolicy.authorize(plugin(), path) is PluginRouteDecision.Denied) }
         assertEquals(

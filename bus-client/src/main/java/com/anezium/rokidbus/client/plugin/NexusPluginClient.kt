@@ -22,6 +22,7 @@ import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceValidationResult
 import com.anezium.rokidbus.shared.RouteGeometry
+import com.anezium.rokidbus.shared.RenderedMapContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PathRules
 import com.anezium.rokidbus.shared.plugin.CapabilityParseResult
@@ -50,6 +51,19 @@ class NexusPluginClient internal constructor(
     private val transport: NexusPluginTransport,
     private val monotonicClockMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ) : NexusPluginTransport.Listener, AutoCloseable {
+    private val renderedMaps = NexusRenderedMaps(monotonicClockMs)
+
+    /** Both hubs preserve map credit and support authenticated rendered-view feedback over SPP. */
+    val supportsRenderedMaps: Boolean
+        get() = supportsLauncherInteractive() && RenderedMapContract.supported(hubCapabilities) &&
+            currentLinkState and LinkStateBits.SPP_DATA_UP != 0
+
+    /** Empty for unknown, hidden, unsupported or expired views. Read again before requesting data. */
+    val renderedMapViews: Set<NexusRenderedMapView>
+        get() = if (supportsRenderedMaps) renderedMaps.views() else emptySet()
+
+    /** Discard this plugin's feedback, for example when its journey is replaced. */
+    fun clearRenderedMapDemand() = renderedMaps.clear()
     // A page answer is current or it is nothing: it never waits in the reconnect queue.
     private val pages = NexusPageChannel(pluginId, monotonicClockMs) { path, id, payload ->
         !closed && isApproved && transport.sendImmediate(path, id, payload)
@@ -68,11 +82,11 @@ class NexusPluginClient internal constructor(
     private val speechSessionLock = Any()
     private val ttsSessionLock = Any()
     private val snapshotSessionLock = Any()
-    private var registrationState = PluginRegistrationResult.REGISTRATION_FAILED
+    @Volatile private var registrationState = PluginRegistrationResult.REGISTRATION_FAILED
     private var opened = false
     private var backgrounded = false
-    private var closed = false
-    private var approvedCapabilities: Set<PluginCapability> = emptySet()
+    @Volatile private var closed = false
+    @Volatile private var approvedCapabilities: Set<PluginCapability> = emptySet()
     private var noticeInteractionVersion = 0
     private var noticeApprovalAwaitingMetadata = false
     private var currentNoticeToken: String? = null
@@ -621,6 +635,8 @@ class NexusPluginClient internal constructor(
     }
 
     fun endActivity(): NexusSdkResult {
+        renderedMaps.clear(RenderedMapContract.AMBIENT)
+        callbacks.onRenderedMapsChanged()
         activityPreflight()?.let { return it }
         return if (
             send(
@@ -645,6 +661,7 @@ class NexusPluginClient internal constructor(
 
     fun send(path: String, id: String, payload: JSONObject): Boolean {
         if (closed || !isApproved) return false
+        if (PathRules.normalizeAbsolute(path) == RenderedMapContract.PATH) return false
         val outgoingPath = canonicalNoticePath(path)
         if (!supportsNoticePatch(outgoingPath, payload)) return false
         val sent = transport.send(outgoingPath, id, prepareNoticePayload(outgoingPath, payload))
@@ -842,6 +859,7 @@ class NexusPluginClient internal constructor(
 
     override fun onRegistrationState(result: Int) {
         if (closed) return
+        renderedMaps.clear()
         // A new registration holds no page work; the hub announces its page support afresh.
         pages.onRegistrationReset()
         registrationGeneration++
@@ -873,6 +891,7 @@ class NexusPluginClient internal constructor(
             }
         }
         if (result != PluginRegistrationResult.APPROVED) {
+            renderedMaps.clear()
             approvedCapabilities = emptySet()
             skillsVersion = 0
             cancelLiveInvocations()
@@ -907,6 +926,10 @@ class NexusPluginClient internal constructor(
         if (!hasUsableLink(state)) pages.onLinkUnusable()
         currentLinkState = state
         hubCapabilities = transport.capabilities()
+        if (!supportsRenderedMaps) {
+            renderedMaps.clear()
+            callbacks.onRenderedMapsChanged()
+        }
         callbacks.onLinkState(state)
     }
 
@@ -947,6 +970,17 @@ class NexusPluginClient internal constructor(
             return
         }
         if (payload.optString("pluginId") != pluginId || !rememberEvent(id)) return
+        if (path == RenderedMapContract.PATH) {
+            if (supportsRenderedMaps) {
+                if (!renderedMaps.receive(payload)) renderedMaps.clear()
+                callbacks.onRenderedMapsChanged()
+            }
+            return
+        }
+        if (path == BusPaths.PAGE_CLOSED || (path == BusPaths.PAGE_VISIBILITY && !payload.optBoolean("visible"))) {
+            renderedMaps.clear(RenderedMapContract.PAGE)
+            callbacks.onRenderedMapsChanged()
+        }
         if (routeSkillMessage(path, payload)) return
         if (routeSnapshotMessage(path, id, payload)) return
         if (routeSpeechMessage(path, payload)) return
@@ -1024,6 +1058,8 @@ class NexusPluginClient internal constructor(
             return
         }
         if (path == BusPaths.ACTIVITY_CLOSED) {
+            renderedMaps.clear(RenderedMapContract.AMBIENT)
+            callbacks.onRenderedMapsChanged()
             val activityId = payload.optString("activityId")
             val reason = payload.optString("reason")
             if (
@@ -1078,6 +1114,8 @@ class NexusPluginClient internal constructor(
                 )
             }
             BusPaths.PLUGIN_REGISTRATION -> {
+                renderedMaps.clear()
+                callbacks.onRenderedMapsChanged()
                 // Metadata follows synchronous approval, whose callback may already
                 // have shown a notice, including after a reconnect.
                 if (!noticeApprovalAwaitingMetadata) clearNoticeContext()
@@ -1154,6 +1192,7 @@ class NexusPluginClient internal constructor(
 
     override fun close() {
         if (closed) return
+        renderedMaps.clear()
         closed = true
         clearNoticeContext()
         terminateAudioSession(

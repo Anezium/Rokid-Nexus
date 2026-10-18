@@ -81,7 +81,7 @@ class NexusLauncherInteractiveTest {
         link: Int = LinkStateBits.SPP_DATA_UP or LinkStateBits.CXR_CONTROL_UP,
     ): Pair<NexusPluginClient, FakeTransport> {
         val transport = FakeTransport()
-        val client = NexusPluginClient("media", callbacks, transport)
+        val client = NexusPluginClient("media", callbacks, transport, monotonicClockMs = { 0L })
         client.connect()
         transport.featureBits = featureBits
         transport.listener.onMessage(
@@ -94,6 +94,52 @@ class NexusLauncherInteractiveTest {
     }
 
     private var nextEvent = 0
+
+    @Test
+    fun `launcher support alone never authorizes streets and other owners cannot create demand`() {
+        val (client, wire) = client(LegacyCallbacks())
+        val event = JSONObject().put("kind", "ambient").put("view", "follow").put("visible", true)
+            .put("token", "a").put("leaseMs", 5000)
+        wire.deliver(com.anezium.rokidbus.shared.RenderedMapContract.PATH, event)
+        assertFalse(client.supportsRenderedMaps)
+        assertTrue(client.renderedMapViews.isEmpty())
+        wire.featureBits = interactive or BusCapabilityBits.RENDERED_MAP
+        wire.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        wire.listener.onMessage(com.anezium.rokidbus.shared.RenderedMapContract.PATH, "other-owner", event.put("pluginId", "other"))
+        assertTrue(client.renderedMapViews.isEmpty())
+        wire.deliver(com.anezium.rokidbus.shared.RenderedMapContract.PATH, event)
+        assertEquals(setOf(NexusRenderedMapView.FOLLOW), client.renderedMapViews)
+        wire.deliver(com.anezium.rokidbus.shared.RenderedMapContract.PATH, JSONObject(event.toString()).put("view", "unknown"))
+        assertTrue(client.renderedMapViews.isEmpty())
+        wire.deliver(com.anezium.rokidbus.shared.RenderedMapContract.PATH, event)
+        wire.listener.onLinkState(LinkStateBits.CXR_CONTROL_UP)
+        assertTrue(client.renderedMapViews.isEmpty())
+        wire.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
+        assertTrue(client.renderedMapViews.isEmpty())
+        assertFalse(client.send(com.anezium.rokidbus.shared.RenderedMapContract.PATH, "forge", event))
+    }
+
+    @Test
+    fun `map leases select one page view, permit independent ambient Follow and expire closed`() {
+        var now = 0L
+        val maps = NexusRenderedMaps { now }
+        fun event(kind: String, token: String, view: String, visible: Boolean = true, lease: Long = 5000) = JSONObject()
+            .put("kind", kind).put("token", token).put("view", view).put("visible", visible).put("leaseMs", lease)
+        assertTrue(maps.views().isEmpty())
+        maps.receive(event("page", "p1", "follow"))
+        maps.receive(event("page", "p2", "overview"))
+        maps.receive(event("page", "p1", "follow", false))
+        assertEquals(setOf(NexusRenderedMapView.OVERVIEW), maps.views())
+        maps.receive(event("ambient", "a", "follow"))
+        assertEquals(setOf(NexusRenderedMapView.FOLLOW, NexusRenderedMapView.OVERVIEW), maps.views())
+        now = 5000
+        assertTrue(maps.views().isEmpty())
+        assertFalse(maps.receive(event("page", "p3", "overview", lease = 5001)))
+        assertTrue(maps.views().isEmpty())
+        maps.receive(event("ambient", "a", "follow"))
+        maps.clear()
+        assertTrue(maps.views().isEmpty())
+    }
 
     private fun FakeTransport.deliver(path: String, payload: JSONObject) {
         listener.onMessage(path, "event-${nextEvent++}", payload.put("pluginId", "media"))

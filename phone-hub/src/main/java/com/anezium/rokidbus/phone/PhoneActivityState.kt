@@ -422,6 +422,13 @@ internal class PhoneActivityState(
         }
     }
 
+    @Synchronized
+    fun ownerForRenderedMap(surfaceId: String, seq: Long): String? {
+        val owner = ownerForActivity(surfaceId) ?: return null
+        val activity = residents[owner]?.takeUnless { it.offline } ?: return null
+        return owner.takeIf { activity.seq == seq }
+    }
+
     /**
      * The v1 resolution: only an action still present in the live canonical activity. This
      * prevents a delayed glasses event from firing an action that a newer update removed.

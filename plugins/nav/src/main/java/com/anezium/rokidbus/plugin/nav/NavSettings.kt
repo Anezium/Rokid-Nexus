@@ -117,6 +117,7 @@ internal object NavControl {
 
     /** The journey takes the route over: the notification route ends before the journey's starts. */
     fun attachJourney(candidate: NavRuntime, stop: (String) -> Unit) {
+        serviceClient?.clearRenderedMapDemand()
         // The service stays bound: the journey's activity goes through the same registration.
         activeRuntime?.takeIf { it !== candidate }?.shutdown(releaseBus = false)
         journeyRuntime = candidate
@@ -194,6 +195,7 @@ internal object NavControl {
     fun serviceDestroyed(client: NexusPluginClient) {
         if (serviceClient !== client) return
         serviceClient = null
+        mapDemandChanged()
         cardOpen = false
         activeRuntime?.onBusLost()
     }

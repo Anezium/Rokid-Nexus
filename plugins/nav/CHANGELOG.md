@@ -4,13 +4,18 @@
 
 - Street map. A walking route's maps now draw the real streets around it,
   from OpenStreetMap vector tiles the phone downloads only for the maps on
-  the glasses: the follow map while it can be drawn, both views while the
-  route page is up. The route stays on top and is never trimmed for streets;
+  the glasses, confirmed by authenticated, expiring render feedback for the
+  selected view. Both hubs must support map attribution and this feedback;
+  older peers keep route-only guidance. The route stays on top and is never trimmed for streets;
   the nearest streets and major roads come first, with a few real names.
   Tiles are cached by their HTTP freshness and still drawn offline; a missing
   tile leaves the route alone there. Every map with streets credits
   OpenStreetMap, and the phone screen says before a journey starts that the
   tiles for the area shown are downloaded.
+- Bound parser allocations across all layers and features before retaining
+  readers, and reject excess aggregate view preparation before clipping or
+  packing streets. Merge 304 cache metadata, preserving omitted policy and
+  evicting previous data on `no-store`.
 - Walking routes. Search a place on Navigation's phone screen and tap Start:
   your position and the destination go to Transitous once to plan a walking
   route, and the glasses guide you turn by turn. Location is asked for at

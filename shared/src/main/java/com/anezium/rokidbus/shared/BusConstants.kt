@@ -300,6 +300,9 @@ object BusCapabilityBits {
      * Exposed to plugins only when both hubs negotiated it, like [ACTIVITY_EXTRAS].
      */
     const val LAUNCHER_INTERACTIVE = 1 shl 14
+
+    /** Rendered map feedback v1 AND in-map attribution, negotiated through both hubs. */
+    const val RENDERED_MAP = 1 shl 15
 }
 
 object LinkStateBits {

@@ -46,6 +46,7 @@ import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
+import com.anezium.rokidbus.shared.RenderedMapContract
 import com.anezium.rokidbus.shared.SetupNoteContract
 import com.anezium.rokidbus.shared.ImageSurfaceMetadata
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
@@ -455,6 +456,8 @@ class BusHubService : Service() {
     private val pageProviderCache = ConcurrentHashMap<String, java.util.Optional<PhonePluginPrincipal>>()
     private val pageBroker: PhonePageBroker = PhonePageBroker(
         host = object : PhonePageHost {
+            override fun renderedMapsSupported(): Boolean =
+                RenderedMapContract.supported(capabilities())
             override fun nowMs(): Long = SystemClock.uptimeMillis()
             override fun pageProvider(pluginId: String): PhonePluginPrincipal? = pageProviderFor(pluginId)
             override fun registrations(principal: PhonePluginPrincipal): List<PageRegistration> =
@@ -539,6 +542,7 @@ class BusHubService : Service() {
      * since the hub started. Kept across link loss like activity support.
      */
     @Volatile private var remoteLauncherInteractiveVersion: Int? = null
+    @Volatile private var remoteRenderedMaps = false
     @Volatile private var remoteInkSurfaceVersion = 0
     @Volatile private var remoteEditableSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
@@ -1670,6 +1674,16 @@ class BusHubService : Service() {
 
     private fun routeRemote(envelope: BusEnvelope) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
+        if (envelope.path == RenderedMapContract.PATH) {
+            if (RenderedMapContract.supported(capabilities())) {
+                if (envelope.payload.optString("kind") == RenderedMapContract.AMBIENT) {
+                    activityRouter.handleRenderedMap(envelope.payload)
+                } else {
+                    pageBroker.onRenderedMap(envelope.payload)
+                }
+            }
+            return
+        }
         // Skills are phone-local: nothing arriving over CXR or SPP may enter that family.
         if (PathRules.matchesPrefix(envelope.path, SKILLS_ROOT)) {
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.REJECTED)
@@ -5375,7 +5389,7 @@ class BusHubService : Service() {
     private fun announcePhoneCapabilities() {
         val hudPosition = PhoneHudPositionStore(this)
         val announced = PhoneHubCapabilitiesContract.create(
-            features = PhoneAssistedSetupCapabilityPolicy.advertised(phoneCameraCapabilities()),
+            features = PhoneAssistedSetupCapabilityPolicy.advertised(phoneCameraCapabilities()) or BusCapabilityBits.RENDERED_MAP,
             cameraConsumerName = cameraConsumerReadiness.resolveApproved()?.descriptor?.displayName,
             activityAlwaysExpanded =
                 PhoneActivityPresentationSettings(this).isAlwaysExpanded(),
@@ -5448,6 +5462,9 @@ class BusHubService : Service() {
         // hubs negotiated the bundle, so a plugin never sends its fields to glasses that drop them.
         if (remoteLauncherInteractiveVersion?.let(LauncherInteractiveContract::isActive) == true) {
             capabilities = capabilities or BusCapabilityBits.LAUNCHER_INTERACTIVE
+            if (remoteRenderedMaps && linkState() and LinkStateBits.SPP_DATA_UP != 0) {
+                capabilities = capabilities or BusCapabilityBits.RENDERED_MAP
+            }
         }
         // Same reasoning as the notice gate above: a card opened to type into is a
         // live interactive moment, not state a plugin can just resend once the
@@ -5515,6 +5532,7 @@ class BusHubService : Service() {
             }
         // Set before the activity resend below: its stamps, capacity and trim follow this version.
         remoteLauncherInteractiveVersion = GlassesHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(advertised)
+        remoteRenderedMaps = RenderedMapContract.negotiated(BusCapabilityBits.RENDERED_MAP, advertised.features)
         remoteInkSurfaceVersion = acceptedInkVersion
         remoteEditableSurfaceVersion = if (editableSupported) EditableSurfaceContract.VERSION else 0
         remoteMaxImageBytes = if (imageSupported) advertised.maxImageBytes else 0

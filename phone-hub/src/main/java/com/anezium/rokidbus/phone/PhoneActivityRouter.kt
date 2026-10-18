@@ -7,6 +7,7 @@ import com.anezium.rokidbus.shared.ActivitySurfaceValidationResult
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.RenderedMapContract
 import org.json.JSONObject
 
 /**
@@ -221,6 +222,19 @@ internal class PhoneActivityRouter(
                         "reason=${reason.wireValue}",
                 )
         }
+    }
+
+    /** Feedback comes only from the authenticated peer, for a live owner and its current geometry. */
+    fun handleRenderedMap(payload: JSONObject): Unit = synchronized(wireLock) {
+        if (!RenderedMapContract.supported(sink.capabilities()) || !launcher.dataPlaneUp() ||
+            !RenderedMapContract.validEvent(payload)) return@synchronized
+        val context = RenderedMapContract.context(payload) ?: return@synchronized
+        if (context.kind != RenderedMapContract.AMBIENT || payload.optString("view") != RenderedMapContract.FOLLOW) return@synchronized
+        val visible = payload.getBoolean("visible")
+        val owner = if (visible) state.ownerForRenderedMap(context.id, context.seq) else state.ownerForActivity(context.id)
+        if (owner == null || launcher.registrationCount(owner) != 1 ||
+            (visible && geometryRevisions[owner] != context.revision)) return@synchronized
+        sink.deliverLocal(BusEnvelope(path = RenderedMapContract.PATH, payload = RenderedMapContract.delivery(payload, owner)))
     }
 
     fun expireCanonical(): Unit = synchronized(wireLock) {

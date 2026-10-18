@@ -84,12 +84,21 @@ walking route to a public place:
    dim streets around the bright route, a few street names, and
    "© OpenStreetMap" bottom right. The route page's Street map fact credits
    OpenStreetMap.
-3. With the route page closed and the activity in Text mode or the data plane
-   down, no tile request is made (phone proxy or `adb shell dumpsys netstats`,
-   without logging coordinates).
+3. With the route page closed, Text, automatic collapse, foreground hiding,
+   notice cover and data-plane loss produce no tile requests. On a route long
+   enough for disjoint Follow/Overview tiles, only the selected view requests
+   tiles; Commands requests none unless an independent ambient map is drawn.
+   Let feedback expire without another draw: queued work must not start.
+   Check with a phone proxy or `adb shell dumpsys netstats`, without logging
+   coordinates. These checks remain unobserved on a device.
 4. Airplane mode mid-route: stored tiles still drawn, missing ones route only,
    guidance unaffected, GPS status unchanged.
 5. Stop, End from the glasses, and revoking location each end tile requests.
+
+Also check old-phone/new-glasses and new-phone/old-glasses: route-only maps,
+no OSM tile traffic, and the original launcher fallback. Dense/hostile inputs
+over the aggregate preparation bound must remain route-only while Stop and
+permission teardown stay responsive. Timing has not been measured on a phone.
 
 ## Adversarial review and resolution
 

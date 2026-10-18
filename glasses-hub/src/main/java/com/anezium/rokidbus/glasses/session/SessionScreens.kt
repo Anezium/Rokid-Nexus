@@ -10,6 +10,8 @@ import com.anezium.rokidbus.shared.PageSegment
 import com.anezium.rokidbus.shared.PageSegmentKind
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageTemplateContract
+import com.anezium.rokidbus.shared.RenderedMapContext
+import com.anezium.rokidbus.shared.RenderedMapContract
 import com.anezium.rokidbus.shared.RouteGeometry
 import com.anezium.rokidbus.shared.RouteRibbonBetween
 import com.anezium.rokidbus.shared.RouteRibbonStop
@@ -185,6 +187,7 @@ internal sealed interface ScreenBlock {
         val selected: Boolean = false,
         val label: String? = null,
         val trail: String? = null,
+        val renderContext: RenderedMapContext? = null,
     ) : ScreenBlock
 
     /** A transit ride's stops, with the vehicle [between] two of them. */
@@ -494,7 +497,7 @@ internal class SessionScreens(
                     frame, status, FrameIdentity(generation, frameIndex), body, title, back,
                     statusText ?: frame.outcome?.takeIf { it.status in SPOKEN_OUTCOMES }?.let(::outcomeText), facts.composer,
                 )
-                is PageBody.Route -> route(frame, status, body, title, parent, back, statusText ?: outcomeText, facts)
+                is PageBody.Route -> route(frame, status, FrameIdentity(generation, frameIndex), body, title, parent, back, statusText ?: outcomeText, facts)
                 else -> shown(frame, status, FrameIdentity(generation, frameIndex), title, parent, back, statusText ?: outcomeText, facts)
             }
         }
@@ -747,6 +750,7 @@ internal class SessionScreens(
     private fun route(
         frame: Frame,
         status: FrameStatus.Shown,
+        identity: FrameIdentity,
         body: PageBody.Route,
         title: String,
         parent: String,
@@ -758,6 +762,12 @@ internal class SessionScreens(
         val live = liveRoute(owner)
         val view = facts.mapViews[owner] ?: MapView.FOLLOW
         val geometry = RoutePresentation.geometry(body, view, live.geometry)
+        val renderContext = status.leaseUntilMs?.let {
+            RenderedMapContext(
+                RenderedMapContract.PAGE, frame.pageId, status.revision,
+                sessionGeneration = identity.sessionGeneration, frameIndex = identity.frameIndex, requestId = status.requestId,
+            )
+        }
         val degraded = RoutePresentation.degraded(body, geometry)
         val heading = RoutePresentation.heading(view, degraded, live.headingDeg)
         val maneuver = body.maneuver?.let {
@@ -779,6 +789,7 @@ internal class SessionScreens(
             val map = ScreenBlock.Map(
                 "map", geometry, heading, MapSize.FULL, view, degraded,
                 label = RoutePresentation.mapLabel(view), trail = RoutePresentation.mapTrail(view),
+                renderContext = renderContext,
             )
             // The header and hint float over the map; no app mark sits on it (r17 3.5, 3.6).
             return SessionScreen(
@@ -850,6 +861,7 @@ internal class SessionScreens(
                 "row:${rows[mapIndex].key}", geometry, heading, MapSize.COMPACT, view, degraded,
                 selected = frame.tombstone == null && mapIndex == frame.selected,
                 label = RoutePresentation.mapLabel(view), trail = RoutePresentation.mapTrail(view),
+                renderContext = renderContext,
             )
         }
         body.ribbon?.let { blocks += ScreenBlock.Ribbon("ribbon", it.line, it.stops, it.between, it.note) }

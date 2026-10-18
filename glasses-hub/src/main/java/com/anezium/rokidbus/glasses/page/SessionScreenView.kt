@@ -9,6 +9,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.glasses.session.IconRef
 import com.anezium.rokidbus.glasses.session.MapSize
+import com.anezium.rokidbus.glasses.session.MapView
 import com.anezium.rokidbus.glasses.session.ScreenBlock
 import com.anezium.rokidbus.glasses.session.SessionEvent
 import com.anezium.rokidbus.glasses.session.SessionScreen
@@ -24,6 +25,7 @@ import com.anezium.rokidbus.glasses.session.TextRole
 internal class SessionScreenView(
     context: Context,
     private val icons: SessionIconSource = HubIconSource,
+    leaseFactory: (View) -> RenderedMapLease = { RenderedMapLease(it) },
 ) : LinearLayout(context) {
     /** The document's or conversation's measured pages, reported back to the session's pure state. */
     var onDocumentPaged: ((SessionEvent.DocumentPaged) -> Unit)? = null
@@ -64,6 +66,7 @@ internal class SessionScreenView(
     private var conversation: ConversationView? = null
     private var shownTitle: String? = null
     private val fullMapPainter = RouteMapPainter()
+    private val renderedLease = leaseFactory(this)
     private var fullMapPlan: MapPlan? = null
 
     /** The chromeless screen's full map, drawn under the whole HUD; null otherwise. */
@@ -124,7 +127,9 @@ internal class SessionScreenView(
         if (document?.parent !== viewport) document?.forgetReport()
         if (conversation?.parent !== viewport) conversation?.forgetReport()
         val full = if (chromeless) screen.blocks.filterIsInstance<ScreenBlock.Map>().firstOrNull { it.size == MapSize.FULL } else null
-        fullMap = full?.let { MapInput(it.geometry, MapForm.FULL, it.view, it.headingDeg, it.degraded, fullMap?.insets ?: MapInsets()) }
+        fullMap = full?.let { MapInput(it.geometry, MapForm.FULL, it.view, it.headingDeg, it.degraded,
+            fullMap?.insets ?: MapInsets(), renderContext = it.renderContext) }
+        renderedLease.bind(fullMap?.renderContext, fullMap?.view ?: MapView.FOLLOW)
         fullMapPlan = null
         viewport.removeAllViews()
         blockViews.clear()
@@ -172,8 +177,26 @@ internal class SessionScreenView(
     }
 
     override fun dispatchDraw(canvas: Canvas) {
-        fullMap?.let { input -> fullMapPlan()?.let { fullMapPainter.draw(canvas, input, it, width.toFloat(), height.toFloat()) } }
+        fullMap?.let { input -> fullMapPlan()?.let {
+            fullMapPainter.draw(canvas, input, it, width.toFloat(), height.toFloat())
+            renderedLease.drawn()
+        } }
         super.dispatchDraw(canvas)
+    }
+
+    override fun onDetachedFromWindow() {
+        renderedLease.detach()
+        super.onDetachedFromWindow()
+    }
+
+    override fun onVisibilityAggregated(isVisible: Boolean) {
+        super.onVisibilityAggregated(isVisible)
+        if (!isVisible) renderedLease.detach() else invalidate()
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility != VISIBLE) renderedLease.detach() else invalidate()
     }
 
     /** Shows [ref] in [view] at [tone]; false, with the slot emptied, when nothing honest can be drawn. */

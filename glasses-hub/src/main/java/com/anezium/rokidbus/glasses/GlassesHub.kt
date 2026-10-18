@@ -26,6 +26,7 @@ import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.ComposeContract
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.RenderedMapContract
 import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.GlassesAccessibilityCheckContract
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
@@ -148,6 +149,7 @@ object GlassesHub {
     @Volatile private var cxrUp = false
     @Volatile private var phoneConnected = false
     @Volatile private var remotePhoneCapabilities = PhoneHubCapabilities(0, null)
+    @Volatile private var remoteRenderedMaps = false
     /** The last announcement negotiated the launcher bundle; a link loss does not change it. */
     @Volatile private var launcherBundleAnnounced = false
 
@@ -768,6 +770,7 @@ object GlassesHub {
                 BusCapabilityBits.INK_SURFACE or
                 BusCapabilityBits.EDITABLE_SURFACE or
                 BusCapabilityBits.LAUNCHER_INTERACTIVE or
+                BusCapabilityBits.RENDERED_MAP or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             pinSurfaceVersion = PinSurfaceContract.VERSION,
@@ -1386,6 +1389,8 @@ object GlassesHub {
 
     internal fun launcherInteractiveActive(): Boolean = LauncherInteractiveContract.isActive(launcherInteractiveVersion())
 
+    internal fun renderedMapsActive(): Boolean = launcherInteractiveActive() && remoteRenderedMaps && SppServerManager.isConnected()
+
     /**
      * The link went while the bundle was negotiated and no announcement has come since: what the
      * bundle validated may still be shown, read-only. Nothing may act on it, and the next
@@ -1467,6 +1472,7 @@ object GlassesHub {
     private fun updateRemotePhoneCapabilities(payload: JSONObject) {
         val released = launcherBundleHeldThroughLoss()
         val advertised = PhoneHubCapabilitiesContract.parse(payload)
+        remoteRenderedMaps = RenderedMapContract.negotiated(advertised.features, BusCapabilityBits.RENDERED_MAP)
         val next = PhoneHubCapabilitiesContract.create(
             features = supportedPhoneCapabilities(advertised.features),
             cameraConsumerName = advertised.cameraConsumerName,
