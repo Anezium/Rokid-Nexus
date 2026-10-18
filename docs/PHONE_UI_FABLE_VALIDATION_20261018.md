@@ -2,6 +2,9 @@
 
 ## Current status
 
+The earlier source/build and enlarged-font sections below describe the R2 artifact;
+the current phone Back upgrade and device proof are linked separately.
+
 Fable 5.1 authored five isolated-worktree commits, independently accepted by the
 second GPT-6.1 Sol review. The configured integration checkout contains the exact
 accepted source at `fad3b8b2326b3ce717e9e8c791bd395dd18a3716`. Tests and debug/release
@@ -14,10 +17,16 @@ exclusive choices, full explanations and readable native-app/quick-action notes.
 The original font and Navigation choice were restored. No reset or environment
 repair was used.
 
-**Device validation found one remaining composer Back defect.** Cancel works and
-Keep draft retains unsent text, but system Back can leave the glasses capture
-active after the phone Activity exits. Fable is correcting this bounded behavior;
-the whole keyboard flow is not accepted yet. No message was sent during this run.
+**The composer Back defect was corrected and passed current-artifact device QA.**
+After the owner reconnected USB, the signed phone update containing `5226fccf`
+was installed in place. On the Android 16 phone, first Back hid the IME without
+ending capture; second Back closed capture and restored the prior unsent draft on
+the glasses, without the temporary suffix. The compose notification disappeared.
+Only the exact synthetic test draft was then cleared; no Send or microphone was
+used. See [the current device report](PHONE_COMPOSER_BACK_DEVICE_20261018.md).
+
+This resolves DEVICE-BACK-01 for the tested phone/installed glasses pairing.
+The separate compact-glasses changes and final visual approval remain incomplete.
 
 The separate GPS-dependent HUD map appearance check is also open. The owner
 declined moving the phone to obtain a first fix; no new journey was started.
@@ -89,7 +98,7 @@ upgrade. No APK, key, credential or private device data is committed here.
 | Foreground modes and action grants | Native-app note captured at normal/1.5x, checklist/media notes and confirmation warnings captured without changing any grant |
 | Keyboard with IME and long text | 629 synthetic characters; Cancel and Keep draft both inside the resized viewport after scrolling; ignored `composer-layout-device.json` |
 | Cancel and Keep draft | Cancel restored the initially empty draft; Keep draft produced a right-side unsent synthetic draft; no Send action used |
-| Android system Back | **Failed:** after two Back events the phone left the keyboard screen but the glasses still showed a live typing capture |
+| Android system Back | Initial pre-fix run failed; current signed phone retest passed the IME-hide, cancel, restored-draft and notification-dismissal checks. See the current device report. |
 
 The failing Back image is unfortunately named
 `phone-ui-fixture-back-keeps-draft.png`; its content shows the failure, not a pass.

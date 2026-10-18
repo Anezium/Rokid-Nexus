@@ -40,8 +40,9 @@ BUILD FAILED in 1m 21s
 
 Evidence: `build/glasses-ux-compact/canonical-r5-fixtures-tests.log` and
 `r5-fixtures-test-results.json`. The five phone Back regressions pass at this pin;
-first Back hiding the IME and second Back restoring the retained draft still need
-current-artifact device validation. Earlier debug/release assembly results do not
+first Back hiding the IME and second Back restoring the retained draft subsequently
+passed signed-phone device validation; see
+[the current device report](PHONE_COMPOSER_BACK_DEVICE_20261018.md). Earlier debug/release assembly results do not
 make this failed verification successful.
 
 ## Independent review and interrupted corrections
@@ -96,8 +97,9 @@ been dispatched. The partial review is not final acceptance.
    fresh independent review of a complete immutable pin.
 3. Run affected suites and signed APK builds from the configured checkout; verify
    certificates before any in-place installation.
-4. Validate phone Back and permitted non-GPS compact UI behavior on devices, record
-   actual captures, and obtain the owner's final visual approval.
+4. Validate permitted non-GPS compact UI behavior on devices, record actual captures
+   and obtain the owner's final visual approval. Phone Back has separately passed
+   its signed-artifact device check.
 
 The owner declined further GPS testing. No new journey, location request,
 microphone capture or message Send was performed. Navigation's current map/island
