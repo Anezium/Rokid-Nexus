@@ -387,6 +387,8 @@ class NavBasemapTest {
     @Test
     fun `production HTTP no-store headers evict prior cache when declared or streamed bodies are rejected`() {
         for (declared in listOf(false, true)) for (hideBeforeCatch in listOf(false, true)) {
+            // Match HttpServer's real Date before advancing the fixture clock for expiry.
+            wall = System.currentTimeMillis()
             val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
             val source = object : BasemapSource by OsmShortbreadSource {
                 override fun url(key: TileKey) = "http://127.0.0.1:${server.address.port}/tile"
