@@ -78,3 +78,46 @@ Local ignored evidence includes `build/glasses-ux-compact/transit-qa-state.json`
 historical Navigation screenshots and source simulations. Current transit detail
 is explicitly marked as an unresolved defect. Gallery previews at 728 and 360
 reported no console errors, with content heights 1,489 and 1,301.
+
+
+## Fable correction received
+
+Fable delivered clean commit `17c36035eca033492714420805827250e127379b`,
+merged into canonical `a484fb4616b7449e8944e3b8aef5edfaf999d141`. The
+production change is limited to `RoutePresentation.degraded`: explicit stale
+positions remain degraded; NONE without any supplied map preserves text guidance;
+NONE on a mapped route still degrades. No publisher is marked LIVE or given
+invented geometry. The regression preserves the source walking glyph/exact
+value/facts without a false GPS warning, then verifies mapped NONE still shows
+lost-position treatment in the same session.
+
+Affected full glasses/Navigation tests and glasses debug/signed-release build
+are running at the configured canonical checkout. New independent Sol High
+review uses an immutable clean detached snapshot at the author commit. Prior
+2340-case evidence is not a result for this new change. No corrected candidate
+is installed yet; source review, observed checks and physical recapture remain
+pending.
+
+
+## Actual checks for the candidate fix
+
+The parent's command completed at canonical `a484fb46` with exit 0:
+
+```text
+BUILD SUCCESSFUL in 2m 44s
+259 actionable tasks: 16 executed, 243 up-to-date
+```
+
+Full glasses suite: 1,178 cases, zero failures/errors/skips, newly executed.
+Navigation: 211 cases, zero failures/errors/skips, up-to-date output reused.
+The 15-case RouteNavigationTest suite includes the new regression. The phone
+suite was not part of this invocation; its earlier 952 cases are prior evidence.
+Glasses debug and release assemblies succeeded. The frozen signed candidate is
+`build/glasses-ux-compact/apks/transit-gps-glasses-17c36035.apk`, SHA-256
+`ee083e1e0076e4fffb26b1841b0a7d9db1639818aa34bebab7ea71d13d315bbc`.
+The existing release signer was verified.
+
+Actual log: `build/glasses-ux-compact/transit-false-gps-r11-tests-build.log`;
+XML summary: `transit-r11-test-results.json`. Independent source review is still
+running and has received these observed results. Candidate not yet installed;
+physical corrected-page recapture and final approval remain pending.
