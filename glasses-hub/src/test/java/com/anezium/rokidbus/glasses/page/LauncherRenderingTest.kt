@@ -91,7 +91,14 @@ class LauncherRenderingTest {
         position.edit().clear().commit()
         HudTopInset.restore(activity)
         val events = mutableListOf<Boolean>()
-        val nav = NavIslandView(activity, HubIconSource) { map ->
+        // Resolve the merged app assets rather than a library R table in the test classpath.
+        val turnIcons = SessionIconSource { ctx, ref ->
+            val name = (ref as IconRef.Glyph).name.replace('-', '_')
+            val resource = ctx.resources.getIdentifier("ic_glyph_$name", "drawable", ctx.packageName)
+            require(resource != 0) { "Missing merged glyph $name" }
+            ctx.getDrawable(resource)
+        }
+        val nav = NavIslandView(activity, turnIcons) { map ->
             RenderedMapLease(map, { true }, { events += it.getBoolean("visible"); true })
         }
         val island = ActivityOverlayRenderer.ActivityIsland(activity, nav)
