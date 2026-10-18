@@ -219,7 +219,13 @@ internal class SessionScreenView(
 
     override fun onVisibilityAggregated(isVisible: Boolean) {
         super.onVisibilityAggregated(isVisible)
-        if (!isVisible) renderedLease.detach() else invalidate()
+        if (!isVisible) {
+            renderedLease.detach()
+            // A screen hidden and shown again starts its lines over, even ones drawn meanwhile.
+            overflowMemory.clear()
+        } else {
+            invalidate()
+        }
     }
 
     override fun onWindowVisibilityChanged(visibility: Int) {

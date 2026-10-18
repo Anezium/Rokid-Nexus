@@ -242,4 +242,35 @@ class OverflowLineTest {
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(0, streetLine().scrollX)
     }
+
+    @Test
+    fun `an island rebound while hidden, as a flare hides it, starts its street over when shown`() {
+        val street = "W".repeat(28)
+        val nav = NavIslandView(context)
+        val content = IslandContent.Guidance("turn-left", "120 m", street = street)
+        nav.bind(IslandForm.TEXT, content)
+        attach(host(FrameLayout.LayoutParams.WRAP_CONTENT, nav))
+        fun streetLine(): OverflowLineView = (0 until nav.childCount).map(nav::getChildAt)
+            .flatMap { child -> if (child is android.view.ViewGroup) (0 until child.childCount).map(child::getChildAt) else listOf(child) }
+            .flatMap { child -> if (child is android.view.ViewGroup) (0 until child.childCount).map(child::getChildAt) else listOf(child) }
+            .filterIsInstance<OverflowLineView>().single()
+        idle(OverflowScroll.HOLD_MS + 1_000)
+        assertTrue(streetLine().scrollX > 0)
+
+        // The flare hides the form; a changed distance rebinds it meanwhile; the fold shows it again.
+        nav.visibility = View.INVISIBLE
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(streetLine().scrolling)
+        nav.bind(IslandForm.TEXT, content.copy(figure = "110 m"))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(streetLine().scrolling)
+        nav.visibility = View.VISIBLE
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(streetLine().scrolling)
+        assertEquals("shown again after a hide: a fresh hold, not the old phase", 0, streetLine().scrollX)
+        idle(OverflowScroll.HOLD_MS - 200)
+        assertEquals(0, streetLine().scrollX)
+        idle(1_000)
+        assertTrue(streetLine().scrollX > 0)
+    }
 }
