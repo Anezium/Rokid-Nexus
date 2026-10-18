@@ -19,7 +19,6 @@ import com.anezium.rokidbus.glasses.session.MapView;
 import com.anezium.rokidbus.plugin.nav.*;
 import com.anezium.rokidbus.shared.*;
 import com.anezium.rokidbus.shared.plugin.PluginCapability;
-import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.time.Duration;
 import java.util.Collections;
@@ -79,10 +78,10 @@ public class RenderedMapJourneyFeedbackTest {
         NavRouteTracker tracker = new NavRouteTracker(route);
         NavBasemap loader = new NavBasemap(OsmShortbreadSource.INSTANCE, route.getLine(), null,
             (url, headers, limit) -> new TileCall() {
-                @Override public TileResponse execute() throws IOException {
+                @Override public TileResponse execute() {
                     entered.countDown();
                     try { release.await(10, TimeUnit.SECONDS); }
-                    catch (InterruptedException interrupted) { throw new IOException("cancelled", interrupted); }
+                    catch (InterruptedException interrupted) { throw new AssertionError("Pending tile wait interrupted", interrupted); }
                     return new TileResponse(200, Collections.singletonMap("cache-control", "max-age=300"), new byte[0]);
                 }
                 @Override public void cancel() { cancelled.incrementAndGet(); release.countDown(); }

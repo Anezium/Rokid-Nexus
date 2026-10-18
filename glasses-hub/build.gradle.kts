@@ -58,10 +58,10 @@ dependencies {
     testImplementation("org.json:json:20240303")
     testImplementation("org.robolectric:robolectric:4.13")
     // Close the Nav page/draw/SDK/journey feedback loop against its actual compiled phone code.
-    testImplementation(files(project(":plugin-nav").layout.buildDirectory.file(
+    testImplementation(files(rootProject.project(":plugin-nav").layout.buildDirectory.file(
         "intermediates/runtime_app_classes_jar/debug/bundleDebugClassesToRuntimeJar/classes.jar",
     )).builtBy(":plugin-nav:bundleDebugClassesToRuntimeJar"))
-    testRuntimeOnly(files(project(":plugin-nav").layout.buildDirectory.file(
+    testRuntimeOnly(files(rootProject.project(":plugin-nav").layout.buildDirectory.file(
         "intermediates/compile_and_runtime_r_class_jar/debug/processDebugResources/R.jar",
     )).builtBy(":plugin-nav:processDebugResources"))
 }

@@ -64,7 +64,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     testImplementation("org.robolectric:robolectric:4.13")
-    testImplementation(files(project(":plugin-nav").layout.buildDirectory.file(
+    testImplementation(files(rootProject.project(":plugin-nav").layout.buildDirectory.file(
         "intermediates/runtime_app_classes_jar/debug/bundleDebugClassesToRuntimeJar/classes.jar",
     )).builtBy(":plugin-nav:bundleDebugClassesToRuntimeJar"))
 }
