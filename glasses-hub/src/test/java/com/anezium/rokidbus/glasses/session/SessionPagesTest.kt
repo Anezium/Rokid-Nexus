@@ -130,7 +130,7 @@ class SessionPagesTest {
             val close = effects.filterIsInstance<SendClosed>().single()
             val refresh = requested()
             assertTrue(effects.indexOf(lease) < effects.indexOf(close))
-            // A refresh prunes deeper broker/SDK frames, so the close must precede it.
+            // A refresh prunes deeper broker frames, so the close must precede it.
             assertTrue(effects.indexOf(close) < effects.indexOf(refresh))
             assertEquals(FrameIdentity(model.generation, 1), lease.frame)
             assertTrue(lease.visible)

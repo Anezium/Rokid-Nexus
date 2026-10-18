@@ -777,7 +777,8 @@ internal class SessionReducer(
         val frames = below.dropLast(if (covered == null) 0 else 1) + listOfNotNull(covered?.first) + frame
         return SessionTransition(
             counted.copy(state = SessionState.InPage(frames, root)),
-            listOfNotNull(covered?.second) + requestEffect(request, nowMs, null) + ShowFrame,
+            // Keep page demand continuous when both frames belong to the same provider.
+            listOf(requestEffect(request, nowMs, null)) + listOfNotNull(covered?.second) + ShowFrame,
         )
     }
 
@@ -858,7 +859,9 @@ internal class SessionReducer(
         )
         return SessionTransition(
             counted.copy(state = state.copy(frames = below.dropLast(1) + frame)),
-            closed + SendVisibility(uncovered.pageId, true, lease, identity(model, below.lastIndex)) +
+            // Lease the return page before closing the last demanded frame. Close still precedes
+            // refresh, which prunes deeper frames from the phone broker.
+            listOf(SendVisibility(uncovered.pageId, true, lease, identity(model, below.lastIndex))) + closed +
                 requestEffect(request, nowMs, uncovered.revisionFloor) + ShowFrame,
         )
     }

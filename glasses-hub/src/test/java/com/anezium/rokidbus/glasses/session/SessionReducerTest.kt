@@ -281,8 +281,8 @@ class SessionReducerTest {
         val refresh = requested()
         assertEquals(
             listOf(
-                SendClosed("detail", "back"),
                 SendVisibility("maps:route", true, 6_000 + PageSurfaceContract.LEASE_MS),
+                SendClosed("detail", "back"),
                 RequestPage(refresh),
                 ShowFrame,
             ),
@@ -466,7 +466,8 @@ class SessionReducerTest {
         val snapshot = (top().status as FrameStatus.Shown).snapshot
 
         send(Enter(5_000))
-        assertEquals(SendVisibility("maps:route", false), effects.first())
+        assertTrue(effects.first() is RequestPage)
+        assertEquals(SendVisibility("maps:route", false), effects[1])
         assertNull((frames().first().status as FrameStatus.Shown).leaseUntilMs)
 
         send(Back(6_000))
