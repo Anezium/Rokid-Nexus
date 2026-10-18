@@ -287,7 +287,7 @@ internal class NavIslandView(
         val footStatus = content.foot?.left?.takeIf(String::isNotBlank)
         val warning = "GPS lost".takeIf { content.glyph == HudGlyphs.GPS_LOST && footStatus?.startsWith(it) != true }
         val status = listOfNotNull(warning, footStatus, content.foot?.right?.takeUnless { content.approximate })
-            .joinToString(" · ").ifBlank { content.measure ?: content.then.orEmpty() }
+            .joinToString(" · ").ifBlank { content.then ?: content.measure.orEmpty() }
         if (status.isNotBlank()) {
             addView(PageStyle.text(context, status, PageStyle.BODY_PX, PageStyle.muted, PageStyle.sans, 1),
                 LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = 2 })

@@ -78,6 +78,70 @@ import org.robolectric.annotation.LooperMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class LauncherRenderingTest {
     @Test
+    @Config(qualifiers = "w320dp-h640dp-hdpi")
+    fun `compact bottom guidance distinguishes live turns with a remaining distance`() {
+        val controller = Robolectric.buildActivity(Activity::class.java).create().start().resume()
+        val activity = controller.get()
+        val metrics = activity.resources.displayMetrics
+        val oldHeight = metrics.heightPixels
+        val oldMotion = HudMotion.enabled
+        metrics.heightPixels = 640
+        HudMotion.enabled = false
+        val position = activity.getSharedPreferences("hud_position", Context.MODE_PRIVATE)
+        position.edit().clear().commit()
+        HudTopInset.restore(activity)
+        val events = mutableListOf<Boolean>()
+        val nav = NavIslandView(activity, icons) { map ->
+            RenderedMapLease(map, { true }, { events += it.getBoolean("visible"); true })
+        }
+        val island = ActivityOverlayRenderer.ActivityIsland(activity, nav)
+        val corner = allocateActivityCorners(listOf("media:activity", "nav:activity"), emptyMap(), PinSurfacePosition.TOP_RIGHT).getValue("nav:activity")
+        assertEquals(PinSurfacePosition.BOTTOM_LEFT, corner)
+        val geometry = RouteGeometry(
+            500.0, listOf(RoutePath(RoutePathRole.ROUTE, listOf(RoutePoint(500, 500), RoutePoint(500, 100)))),
+            position = RoutePosition(RoutePositionQuality.LIVE, RoutePoint(500, 500)),
+        )
+        try {
+            island.show(nav)
+            VisibleMapTestWindow.attach(controller, island)
+            for ((row, budget) in listOf(524 to 73, 544 to 54)) {
+                HudTopInset.onRomRowMeasured(activity, row, metrics.density)
+                island.place(corner, HudTopInset.current(activity))
+                for (direction in listOf("left", "right", "left")) {
+                    val instruction = "Turn $direction onto Test Street"
+                    island.renderGuidance(GuidanceIsland(IslandForm.PANEL, IslandContent.Guidance(
+                        "turn-$direction", "100 m", measure = "2.1 km", street = "Test Street", then = instruction,
+                        map = MapInput(geometry, MapForm.PANEL,
+                            renderContext = RenderedMapContext("ambient", "nav:activity", 7, seq = 10)),
+                    )))
+                    shadowOf(Looper.getMainLooper()).idle()
+                    island.measure(View.MeasureSpec.makeMeasureSpec(480, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(640, View.MeasureSpec.EXACTLY))
+                    island.layout(0, 0, 480, 640)
+                    assertEquals(budget, nav.maxHeightPx)
+                    assertTrue(nav.height in 1..budget)
+                    assertEquals(622, nav.bottom)
+                    assertEquals(listOf("100 m", "Test Street", instruction), nav.texts())
+                    assertEquals(View.GONE, requireNotNull(nav.mapView).visibility)
+                    for (text in find<TextView>(nav).filter { it.isShown }) {
+                        val rect = Rect(0, 0, text.width, text.height)
+                        nav.offsetDescendantRectToMyCoords(text, rect)
+                        assertTrue(rect.top >= 0 && rect.bottom <= nav.height && rect.left >= 0 && rect.right <= nav.width)
+                        assertEquals(0, requireNotNull(text.layout).getEllipsisCount(0))
+                        assertTrue(text.layout.height <= text.height - text.totalPaddingTop - text.totalPaddingBottom)
+                    }
+                    draw(island)
+                    assertTrue(events.none { it })
+                }
+            }
+        } finally {
+            controller.pause().stop().destroy()
+            metrics.heightPixels = oldHeight
+            HudMotion.enabled = oldMotion
+        }
+    }
+
+    @Test
     fun `compact lost guidance keeps its warning without promoting the old arrival time`() {
         val nav = NavIslandView(context, icons).apply {
             maxHeightPx = 54
