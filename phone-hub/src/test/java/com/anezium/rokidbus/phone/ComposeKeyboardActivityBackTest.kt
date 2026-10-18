@@ -70,11 +70,24 @@ class ComposeKeyboardActivityBackTest {
     private fun button(activity: Activity, label: String): Button =
         views(activity.findViewById(android.R.id.content)).filterIsInstance<Button>().single { it.text.toString() == label }
 
-    /** The callback the window's dispatcher would invoke for a system Back right now. */
-    private fun topBackCallback(activity: Activity): OnBackInvokedCallback? {
-        val dispatcher = activity.onBackInvokedDispatcher
-        return dispatcher.javaClass.getMethod("getTopCallback").invoke(dispatcher) as OnBackInvokedCallback?
+    /**
+     * The dispatcher a system Back really goes through. The Activity hands out the window's
+     * proxy, which only forwards: once the decor view is attached, PhoneWindow points it at the
+     * ViewRootImpl's WindowOnBackInvokedDispatcher, where the registered callbacks live and the
+     * top one is resolved. That is the object asked here, as on a device; both accessors are
+     * public framework methods outside the SDK stubs.
+     */
+    private fun windowBackDispatcher(activity: Activity): Any {
+        val decor = activity.window.decorView
+        val viewRoot = decor.javaClass.getMethod("getViewRootImpl").invoke(decor)
+            ?: error("the decor view has no ViewRootImpl: the screen was never made visible")
+        return viewRoot.javaClass.getMethod("getOnBackInvokedDispatcher").invoke(viewRoot)
+            ?: error("the ViewRootImpl has no back dispatcher")
     }
+
+    /** The callback the window's dispatcher would invoke for a system Back right now. */
+    private fun topBackCallback(dispatcher: Any): OnBackInvokedCallback? =
+        dispatcher.javaClass.getMethod("getTopCallback").invoke(dispatcher) as OnBackInvokedCallback?
 
     @Test
     @Config(sdk = [34])
@@ -84,8 +97,8 @@ class ComposeKeyboardActivityBackTest {
         editor(activity).append(" Temporary change.")
         assertEquals(listOf("Unsent UI check. Temporary change."), sink.texts)
 
-        val back = topBackCallback(activity)
-        assertNotNull("the screen owns the top Back callback", back)
+        val back = topBackCallback(windowBackDispatcher(activity))
+        assertNotNull("the screen owns the window's top Back callback", back)
         back!!.onBackInvoked()
 
         assertEquals(listOf(Triple("cap-back", false, "Unsent UI check. Temporary change.")), sink.done)
@@ -103,12 +116,14 @@ class ComposeKeyboardActivityBackTest {
     fun `Keep draft commits, and the destroyed screen leaves no Back callback behind`() {
         val screen = open()
         val activity = screen.get()
+        val dispatcher = windowBackDispatcher(activity)
+        assertNotNull("the screen registered on the window's dispatcher", topBackCallback(dispatcher))
         button(activity, "Keep draft").performClick()
         assertEquals(listOf(Triple("cap-back", true, "Unsent UI check.")), sink.done)
         assertTrue(activity.isFinishing)
 
         screen.pause().stop().destroy()
-        assertNull(topBackCallback(activity))
+        assertNull(topBackCallback(dispatcher))
         assertEquals(1, sink.done.size)
     }
 
