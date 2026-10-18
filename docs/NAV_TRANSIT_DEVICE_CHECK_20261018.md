@@ -121,3 +121,47 @@ Actual log: `build/glasses-ux-compact/transit-false-gps-r11-tests-build.log`;
 XML summary: `transit-r11-test-results.json`. Independent source review is still
 running and has received these observed results. Candidate not yet installed;
 physical corrected-page recapture and final approval remain pending.
+
+
+## Approved fix installed; recapture blocked before ingestion
+
+Fresh independent Sol review approved `17c36035` after reading the full prior
+context, affected source/callers and observed test/build evidence. Verified the
+frozen candidate hash and established release certificate again, then installed
+that glasses APK in place with `-r`: Success. Navigation's APK was unchanged; its
+installed SHA-256 still matches the accepted `555122c8...` release.
+
+A new real Maps bus 1611 guidance session posted valid ongoing navigation
+instructions, but Navigation no longer ingested them. Its Android notification
+access remained allowed and its source switches on, while NMS's 19 live listener
+records contained no Navigation listener. An ActivityManager service record alone
+was misleading: its binder was null, requested/received/hasBound were all false
+and no hosting process was shown in that binding block. The precise OS cause is
+not established. This occurs before parser/publication/rendering, not in the
+reviewed glasses GPS presentation decision.
+
+Bounded recovery attempts used ordinary UI: opened the glasses hub; stopped and
+started the phone hub; rescanned the Maps source while restoring its enabled
+state; and cycled only Navigation's existing notification access, restoring it
+to allowed. Global DND mode and notification-policy access list were explicitly
+compared before/after and unchanged. No USB/ADB reset, uninstall, app-data clear,
+clock/location simulation or account/signing change occurred. None of these
+attempts restored a live listener, so they are not repeated as a watcher.
+
+Astra's separate read-only diagnosis confirmed the ingestion boundary and the
+supported in-process `NotificationListenerService.requestRebind` API under the
+existing grant. The current Navigation source has no hook for it. Fable is now
+implementing a bounded foreground/settings-entry recovery, without granting
+access or retrying in the background. New source/tests/review and actual device
+verification will be required for that separate change.
+
+The attempted `transit-fixed*-detail` and similarly named PNGs from this pass
+actually show the Notifications collection because no Navigation activity was
+present. They are excluded from acceptance and the published gallery. No fixed
+external detail-page appearance is claimed.
+
+Maps was explicitly ended through Fin again; phone returned to Main and glasses
+to native home. No internal journey or microphone/draft/Send action ran in this
+pass. Navigation's runtime location/notification permissions remain at their
+false baseline; Maps' original grants were unchanged. Devices are released while
+the author works. New source acceptance does not erase this device-QA limitation.
