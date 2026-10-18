@@ -5,12 +5,18 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * When the listener is asked to bind again: only with the grant, only with guidance on, only
  * while it is not connected, once per visit however often the screen refreshes, and a platform
- * refusal is that visit's one attempt. Nothing here ever reports a connection.
+ * refusal is that visit's one attempt. Nothing here ever reports a connection. Robolectric, as
+ * the policy's component names and its logged refusal are real Android classes, not stubs.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [32])
 class NavListenerRebindTest {
     private val component = ComponentName("com.anezium.rokidbus.plugin.nav", "com.anezium.rokidbus.plugin.nav.NavNotificationListener")
     private val requests = mutableListOf<ComponentName>()
