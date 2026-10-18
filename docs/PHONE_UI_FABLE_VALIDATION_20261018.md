@@ -7,11 +7,17 @@ second GPT-6.1 Sol review. The configured integration checkout contains the exac
 accepted source at `fad3b8b2326b3ce717e9e8c791bd395dd18a3716`. Tests and debug/release
 builds passed; both release APK signatures match the existing signer.
 
-**The corrected phone UI is not installed or device-validated yet.** The supplied
-Wi-Fi ADB endpoint refused reconnection before the first installation; one
-automatically discovered endpoint also failed. No reset or environment repair was
-attempted. Current devices retain the earlier signed `0aa3eb1b` HUD build. New phone
-screenshots, enlarged-font checks and keyboard interaction proof remain pending.
+Both exact signed phone/Navigation candidates installed in place after the owner
+supplied the current Wi-Fi ADB port. The glasses retain the `0aa3eb1b` HUD build.
+Actual phone screenshots confirm the display layout at normal, 1.3x and 1.5x fonts,
+exclusive choices, full explanations and readable native-app/quick-action notes.
+The original font and Navigation choice were restored. No reset or environment
+repair was used.
+
+**Device validation found one remaining composer Back defect.** Cancel works and
+Keep draft retains unsent text, but system Back can leave the glasses capture
+active after the phone Activity exits. Fable is correcting this bounded behavior;
+the whole keyboard flow is not accepted yet. No message was sent during this run.
 
 The separate GPS-dependent HUD map appearance check is also open. The owner
 declined moving the phone to obtain a first fix; no new journey was started.
@@ -73,20 +79,42 @@ records in `build/phone-ui-ux/apk-verification-r2.json`. The earlier unsigned bu
 was compilation evidence only; it was not installed or substituted for a signed
 upgrade. No APK, key, credential or private device data is committed here.
 
-## Remaining phone validation
+## Actual phone checks and remaining validation
 
-1. Install the exact two accepted signed candidates in place after connection is
-   available, preserving accounts, pairing, preferences and drafts.
-2. Capture Display at normal and enlarged fonts; check complete explanations,
-   readable choices, exclusive selection and restoration of the original choice.
-3. Capture native-app modes and relevant plugin availability/approval sections
-   without changing grants merely to obtain a screenshot.
-4. Exercise the phone composer with a synthetic conversation, long text and IME:
-   actions remain reachable; Keep draft stays unsent; Cancel/Back preserve the
-   prior draft. No real message Send is required.
-5. Restore any temporary font/preference changes exactly and record actual device
-   results before labeling new images as after evidence.
+| Check | Observed result |
+| --- | --- |
+| Current signed phone and Nav APK upgrade | Both install-r operations returned Success; hashes/results in ignored `install-r2.json` |
+| Display at normal, 1.3x and 1.5x fonts | Explanations wrap completely; Automatic/Text/Minimap/Panel labels remain readable; real `phone-ui-after-display-*` screenshots |
+| Choice persistence and exclusivity | Panel, Minimap and Text each selected alone; Automatic restored; ignored `choice-device-check.json` |
+| Foreground modes and action grants | Native-app note captured at normal/1.5x, checklist/media notes and confirmation warnings captured without changing any grant |
+| Keyboard with IME and long text | 629 synthetic characters; Cancel and Keep draft both inside the resized viewport after scrolling; ignored `composer-layout-device.json` |
+| Cancel and Keep draft | Cancel restored the initially empty draft; Keep draft produced a right-side unsent synthetic draft; no Send action used |
+| Android system Back | **Failed:** after two Back events the phone left the keyboard screen but the glasses still showed a live typing capture |
 
-Existing `hud-fixed-phone-*` images are BEFORE captures from `0aa3eb1b`, not images
-of Fable's accepted source. The older OSM gallery also predates these phone changes
-and the current HUD map correction. Private screenshots and raw evidence stay local.
+The failing Back image is unfortunately named
+`phone-ui-fixture-back-keeps-draft.png`; its content shows the failure, not a pass.
+The later `phone-ui-composer-back-current.png` shows the phone back on Relay
+settings. The composer currently overrides legacy onBackPressed at target SDK 36;
+the root cause and supported modern Back handling are assigned to Fable rather
+than inferred as already fixed.
+
+During explicit cleanup, a glasses capture-finish action committed the temporary
+test suffix to an unsent synthetic draft. The parent reopened Type, verified the
+known synthetic prefix, and cleared only that test draft using an empty Keep draft
+commit. It did not press Send. The initial empty draft was restored and glasses
+returned to native home. The older "Nexus smoke QA / handed to the app" bubble in
+some images belongs to the previous smoke, not a send in this run.
+
+Font scale was read back at its original 1.0, Navigation Automatic was restored,
+other settings/grants were not changed, and no journey or audio capture started.
+Synthetic harness history may remain locally. Raw proofs and screenshots stay in
+ignored `build/phone-ui-ux/` and `build/smoke/`.
+
+Remaining work: implement and independently review the Back correction, run the
+affected suite/signed build, upgrade the phone in place, then repeat real Back
+cancellation and draft-retention checks with the IME. No real message Send is needed.
+
+Existing `hud-fixed-phone-*` images are BEFORE captures from `0aa3eb1b`.
+`phone-ui-after-*` images show the installed Fable phone layout. The older OSM
+gallery images predate these phone changes and the current HUD map correction;
+their category is labeled historical. Private screenshots and raw evidence stay local.
