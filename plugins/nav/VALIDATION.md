@@ -75,8 +75,16 @@ rendering remain outside this emulator check.
 
 ## Street map check (walking route)
 
-Not yet observed on a device. With both hubs built from this change and a
-walking route to a public place:
+Observed in the bounded [2026-10-18 device smoke](../../docs/NAV_OSM_DEVICE_SMOKE_20261018.md):
+route-page and full-map Follow/Overview streets, names and credit; ambient Minimap
+and Panel streets; Text without a map; cached street rendering with Wi-Fi and
+mobile data off; foreground hiding and permission teardown. This was a stationary
+indoor run, not a physical walk. Device traffic tracing and old-peer hardware
+combinations remain unobserved. The owner also rejected the generic per-plugin
+size editor; its Navigation-only correction is still open.
+
+Repeatable checklist with both hubs built from this change and a walking route
+to a public place:
 
 1. Before starting, the phone screen states the Transitous request and the
    OpenStreetMap tile downloads, and links to the copyright page.

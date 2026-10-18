@@ -1,5 +1,9 @@
 # Launcher device smoke, 2026-10-18
 
+The later [OSM street-basemap smoke](NAV_OSM_DEVICE_SMOKE_20261018.md) supersedes
+the route-only Navigation screenshots below for street-map appearance. This
+earlier launcher smoke did not establish a surrounding street basemap.
+
 The authorized device smoke is complete. Three defects found on hardware were fixed:
 ambient foreground selection under an accessibility bridge, provider lifetime during
 page navigation, and duplicated walking guidance. The affected suites passed, and
