@@ -3,6 +3,7 @@ package com.anezium.rokidbus.glasses.page
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.os.Looper
 import android.view.View
 import com.anezium.rokidbus.glasses.session.MapSize
@@ -24,7 +25,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [32])
+@Config(sdk = [32], qualifiers = "w480dp-h640dp-mdpi")
 @LooperMode(LooperMode.Mode.PAUSED)
 class RenderedMapLeaseTest {
     private val events = mutableListOf<JSONObject>()
@@ -38,13 +39,19 @@ class RenderedMapLeaseTest {
 
     private fun attach(activity: Activity, view: View) {
         activity.setContentView(view)
-        val decor = activity.window.decorView
-        decor.measure(View.MeasureSpec.makeMeasureSpec(480, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(640, View.MeasureSpec.EXACTLY))
-        decor.layout(0, 0, 480, 640)
+        // Let the real window traversal lay out content inside its frame, including decor insets.
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(view.isAttachedToWindow)
+        assertTrue(view.isShown)
+        assertEquals(View.VISIBLE, view.windowVisibility)
+        assertTrue(view.width > 0 && view.height > 0)
+        val visible = Rect()
+        assertTrue(view.getLocalVisibleRect(visible))
+        assertEquals(Rect(0, 0, view.width, view.height), visible)
     }
 
     private fun draw(view: View) {
+        shadowOf(Looper.getMainLooper()).idle()
         view.draw(Canvas(Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)))
     }
 
