@@ -188,6 +188,13 @@ internal class NavIslandView(
         super.onMeasure(width, heightMeasureSpec)
     }
 
+    override fun onVisibilityAggregated(isVisible: Boolean) {
+        super.onVisibilityAggregated(isVisible)
+        // Hidden, for a flare or a fold: whatever street is shown next starts over, even one
+        // rebuilt meanwhile, which never saw the hiding itself.
+        if (!isVisible) overflowMemory.clear()
+    }
+
     override fun dispatchDraw(canvas: Canvas) {
         // Like r17's island, nothing inside is drawn past its rounded edge.
         val saved = canvas.save()

@@ -172,10 +172,22 @@ internal class OverflowLineView(context: Context) : TextView(context) {
             sync()
         } else {
             // Hidden: the same line shown again starts over. A detach also passes here, and the
-            // flag then dies with this view while the memory keeps the successor's place.
+            // flag then dies with this view while the memory keeps the successor's place. An
+            // owner rebuilt while hidden resets its own memory, so its new line starts over too.
             if (scrolling) hiddenSinceStart = true
             stop()
         }
+    }
+
+    /**
+     * TextView's own pre-draw brings a layout wider than the view back to its start, which
+     * would draw a continued line at its first character once before the next tick moved it
+     * again. The phase is put back after it, so the first drawn frame is the continued one.
+     */
+    override fun onPreDraw(): Boolean {
+        val proceed = super.onPreDraw()
+        if (scrolling) scrollTo(OverflowScroll.offsetAt(SystemClock.uptimeMillis() - startedAtMs, overflowPx()), 0)
+        return proceed
     }
 
     private fun shouldScroll(): Boolean = active && isAttachedToWindow && isShown && overflowPx() > 0
