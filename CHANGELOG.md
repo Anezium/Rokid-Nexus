@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Glasses hub
+
+- Route maps draw the credit a provider gives for its street data in the
+  bottom-right corner, at every size, clear of street names and the scale bar.
+
+### SDK
+
+- `RouteGeometry.attribution` (optional, at most 40 printable characters)
+  credits the source of a geometry's `street` and `major` paths. Older hubs
+  ignore it.
+
 ## 1.7.1
 
 Update both Nexus hubs together. Glasses whose helper died after a reinstall can now be brought back from the phone, without a computer (#53).

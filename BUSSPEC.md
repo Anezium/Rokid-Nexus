@@ -2351,7 +2351,8 @@ The `follow` and `overview` of a `route` page and the payload of
   "position": {"x": 500, "y": 700, "quality": "live", "fixAgeS": 1},
   "turn": {"x": 500, "y": 500},
   "destination": {"x": 800, "y": 500},
-  "stops": [{"x": 300, "y": 400, "label": "A"}]
+  "stops": [{"x": 300, "y": 400, "label": "A"}],
+  "attribution": "© OpenStreetMap"
 }
 ```
 
@@ -2363,6 +2364,11 @@ The `follow` and `overview` of a `route` page and the payload of
   1,024 points in total.
 - `labels`: at most 4, text at most 24 characters, priority 0 (most important)
   through 3. `stops`: at most 4, label at most 4 characters.
+- `attribution`: optional, 1 to 40 printable characters crediting the source
+  of the `street` and `major` paths. The glasses draw it in the bottom-right
+  corner of every map size. A glasses hub that predates it ignores it, and a
+  phone hub that predates it drops it when it re-encodes the geometry; the
+  paths themselves are unchanged.
 - `position.quality`: `live`, `stale` (the last fix, with its age in
   `fixAgeS`) or `none` (no position; any coordinates are ignored).
 - The serialized geometry is at most 16 KiB. Anything outside the schema is

@@ -845,7 +845,11 @@ A navigation plugin can draw its route with the activity:
 `publishActivityGeometry(revision, geometry)` sends a `RouteGeometry`
 (`com.anezium.rokidbus.shared`; at most 24 paths, 1,024 points, 4 labels, 4
 stops, 16 KiB, coordinates 0..1,000 in a north-up frame spanning `spanMeters`)
-and `publishActivityHeading(deg, accuracyDeg)` the compass heading. Latest wins;
+and `publishActivityHeading(deg, accuracyDeg)` the compass heading. If your
+`street` or `major` paths come from a map source that must be credited, set
+`attribution` (1 to 40 printable characters, for OpenStreetMap
+`"© OpenStreetMap"`); the glasses draw it in the corner of every map, and
+older hubs ignore it, so credit the source beside the map too. Latest wins;
 neither is ever queued. Geometry needs the SPP data plane and returns
 `CAPABILITY_NOT_AVAILABLE` over the control link alone, so your text guidance
 must stand without it. The hub keeps at most five headings a second and treats

@@ -108,7 +108,63 @@ when no route was planned within two minutes, after ten minutes without GPS
 and after twelve hours. It is never started at boot or restarted by the
 system, and nothing about it is stored. While it runs it owns the route:
 other apps' guidance is ignored, and picked up again from what they post when
-it ends. Route data: Transitous and OpenStreetMap contributors.
+it ends. Route data: Transitous and OpenStreetMap contributors. Map data
+© OpenStreetMap contributors, under the Open Database License.
+
+### Street map
+
+A walking route's maps draw the real streets around it, from OpenStreetMap.
+The phone downloads the OpenStreetMap Foundation's vector tiles
+(`vector.openstreetmap.org`, Shortbread schema 1, served to zoom 14), keeps
+the walkable streets and their names, and sends them to the glasses inside the
+route's own geometry, where the hub draws them dim under the bright route.
+Nothing heavier runs on the glasses.
+
+- **Only for maps on the glasses.** Tiles are asked for only while the
+  journey runs and one of its maps is shown: the follow map while the
+  activity's map can reach the glasses (both hubs draw maps and the data plane
+  is up), and both views while the route page is on screen. That is at most
+  four zoom-14 tiles for the follow view and nine tiles, from zoom 14 down to
+  12, for the whole route. Nothing is fetched along the route ahead, for
+  offline use, before a route is planned, or after the journey ends; a request
+  in flight for a view that went away is cancelled.
+- **Gently.** Two requests at a time and thirty a minute at most, with the
+  app's own User-Agent and no `no-cache`. A failed tile waits at least thirty
+  seconds before it is asked again, a `429` or `503` pauses every request for
+  at least a minute, and a tile that came is not asked again within a minute.
+- **Cached on the phone.** Tiles are kept in the app's cache directory (at
+  most 32 MiB and 1,024 tiles, least recently used first, none older than 30
+  days) by their HTTP freshness: the service currently allows five minutes,
+  then a tile is shown while it is checked again with `If-Modified-Since`.
+  Offline, a stored tile is still drawn. The cache holds map tiles only,
+  never a journey, and Android may clear it at any time.
+- **Route first.** The route, the wearer, the next turn, the destination and
+  the planner's street names are fitted first and never change. Streets fill
+  what is left of the geometry's budget (24 paths, 1,024 points, 16 KiB, of
+  which streets take at most 8 KiB), nearest to the route and the wearer
+  first, major roads ahead of footways. Connected streets are packed into a
+  few paths that only ever stroke real streets; in dense areas, small
+  disconnected footways and the farthest streets are left out. A few real
+  street names are added where they fit, after the planner's.
+- **Honest when absent.** A tile that has not arrived, failed or does not
+  exist leaves that part of the map as the route alone; nothing is drawn in
+  its place. A whole route too wide for nine zoom-12 tiles (from about ten
+  kilometres across, depending on latitude) shows the route alone. Street tiles never hold up or
+  end guidance, and the GPS status is shown on its own.
+- **Credited.** Every map that shows streets says "© OpenStreetMap" in its
+  bottom-right corner, the route page adds a "Street map" fact (or says the
+  map shows the route alone for now), and the phone screen links to
+  OpenStreetMap's copyright page. A glasses hub older than this credit still
+  draws the streets and the page fact, without the in-map credit.
+- **Privacy.** OpenStreetMap receives requests for the tiles shown, which
+  reveal roughly where the wearer is (a zoom-14 tile is 2.4 km across at the
+  equator, about 1.6 km in Paris), and the phone's IP address; never the position,
+  destination or anything identifying the wearer. The phone screen says so
+  before a journey starts.
+
+The tile address is fixed in the app (`OsmShortbreadSource`) and built from
+tile numbers only. Moving to another Shortbread provider is a change to that
+one object, shipped as an update; there is no setting for it.
 
 ## Pages
 
@@ -125,10 +181,11 @@ When both hubs negotiated the launcher bundle, the activity opens `nav:main`
 directly and it is a route page instead. A walking route carries the next
 turn, its distance, street and time left, facts, and two maps the hub draws
 (follow, heading-up; whole route, north-up) from the planned route and the
-street names the planner returned, with the position live, stale with its
-age, or none. The map (at most once a second) and the heading (at most five a
-second) follow the activity over the data plane only; with only the control
-link up they are dropped, never queued, and the text guidance is unchanged.
+real streets around it ([Street map](#street-map)) and a few street names,
+with the position live, stale with its age, or none. The map (at most once a
+second) and the heading (at most five a second) follow the activity over the
+data plane only; with only the control link up they are dropped, never
+queued, and the text guidance is unchanged.
 The page's End the journey action stops it after the hub's confirmation.
 Guidance read from another app has no geometry behind it, so its route page
 is text only, with no position and no street drawn. A Citymapper ride shows
@@ -156,7 +213,8 @@ one with its Stop. The app switches never affect a walking route.
   yet been checked on a real trip in Korea.
 - Notification Access for Navigation (Settings button in the plugin screen),
   to follow other apps. Walking routes need precise location instead, asked
-  for when one is started, and the internet for the one Transitous request.
+  for when one is started, and the internet for the one Transitous request
+  and the street map tiles.
 
 See [validation evidence and device checklist](VALIDATION.md) for observed
 formats, mode limits and the remaining phone/glasses checks.

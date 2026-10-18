@@ -85,9 +85,16 @@ sanctioned exceptions:
    and stops on arrival, on Stop, or as soon as location permission is lost. No
    boot start, background location, or journey the user did not start. Planning
    the route sends the first accurate position and the chosen destination to
-   Transitous (a third-party, OpenStreetMap-based planner) once per journey, with
-   `INTERNET` declared for that request only; the phone screen says so before
-   the journey starts, and nothing else leaves the phone.
+   Transitous (a third-party, OpenStreetMap-based planner) once per journey.
+   While that journey runs and one of its maps is on the glasses (the
+   activity's map while it can be drawn, or the route page), the phone may also
+   fetch the OpenStreetMap Foundation's vector tiles for the area those maps
+   show: only the tiles the visible views need, never ahead along the route or
+   for offline use, at most two at a time and thirty a minute, cached by their
+   HTTP freshness and credited on the map. The journey's end stops them, and
+   nothing is fetched for a journey that is not running. `INTERNET` is declared
+   for these two uses only; the phone screen says so before the journey starts,
+   and nothing else leaves the phone.
 
 9. **Skill invocations** (hubs announcing skills v1): the hub may bind a
    provider for one call to an operation the wearer approved, without

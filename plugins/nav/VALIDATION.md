@@ -73,6 +73,24 @@ rendering remain outside this emulator check.
    bigText, and visible expanded RemoteViews IDs/text at far/close/arrival steps.
    A generic service title or screenshot of an arrow alone is insufficient.
 
+## Street map check (walking route)
+
+Not yet observed on a device. With both hubs built from this change and a
+walking route to a public place:
+
+1. Before starting, the phone screen states the Transitous request and the
+   OpenStreetMap tile downloads, and links to the copyright page.
+2. Ambient Minimap and Panel, and the route page's Follow and Overview, show
+   dim streets around the bright route, a few street names, and
+   "© OpenStreetMap" bottom right. The route page's Street map fact credits
+   OpenStreetMap.
+3. With the route page closed and the activity in Text mode or the data plane
+   down, no tile request is made (phone proxy or `adb shell dumpsys netstats`,
+   without logging coordinates).
+4. Airplane mode mid-route: stored tiles still drawn, missing ones route only,
+   guidance unaffected, GPS status unchanged.
+5. Stop, End from the glasses, and revoking location each end tile requests.
+
 ## Adversarial review and resolution
 
 One Synara worktree review thread (`agent-fc4cd4fa487452b4ddfe191680401551`)
