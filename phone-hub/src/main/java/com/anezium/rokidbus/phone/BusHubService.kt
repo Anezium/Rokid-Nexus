@@ -542,7 +542,7 @@ class BusHubService : Service() {
      * since the hub started. Kept across link loss like activity support.
      */
     @Volatile private var remoteLauncherInteractiveVersion: Int? = null
-    @Volatile private var remoteRenderedMaps = false
+    private val renderedMapNegotiation = PhoneRenderedMapNegotiation()
     @Volatile private var remoteInkSurfaceVersion = 0
     @Volatile private var remoteEditableSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
@@ -4085,6 +4085,7 @@ class BusHubService : Service() {
                         if (socket !== candidate || !hubEnabled || sppLoopStop) {
                             throw IOException("SPP connection retired")
                         }
+                        renderedMapNegotiation.sessionStarted(session)
                         sppSession = session
                     }
                     sppBackoff.connected()
@@ -5328,6 +5329,7 @@ class BusHubService : Service() {
             pluginGuardianCoordinator.onLinkStateChanged(state and transportBits != 0)
         }
         if (previousTransportState and transportBits != 0 && state and transportBits == 0) {
+            renderedMapNegotiation.lost()
             inkRouter.clearForLinkLoss()
             composeExecutor.execute { composeRouter.onLinkLost() }
         }
@@ -5462,9 +5464,7 @@ class BusHubService : Service() {
         // hubs negotiated the bundle, so a plugin never sends its fields to glasses that drop them.
         if (remoteLauncherInteractiveVersion?.let(LauncherInteractiveContract::isActive) == true) {
             capabilities = capabilities or BusCapabilityBits.LAUNCHER_INTERACTIVE
-            if (remoteRenderedMaps && linkState() and LinkStateBits.SPP_DATA_UP != 0) {
-                capabilities = capabilities or BusCapabilityBits.RENDERED_MAP
-            }
+            capabilities = capabilities or renderedMapNegotiation.featureBits(remoteLauncherInteractiveVersion, linkState())
         }
         // Same reasoning as the notice gate above: a card opened to type into is a
         // live interactive moment, not state a plugin can just resend once the
@@ -5532,7 +5532,7 @@ class BusHubService : Service() {
             }
         // Set before the activity resend below: its stamps, capacity and trim follow this version.
         remoteLauncherInteractiveVersion = GlassesHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(advertised)
-        remoteRenderedMaps = RenderedMapContract.negotiated(BusCapabilityBits.RENDERED_MAP, advertised.features)
+        renderedMapNegotiation.announce(advertised)
         remoteInkSurfaceVersion = acceptedInkVersion
         remoteEditableSurfaceVersion = if (editableSupported) EditableSurfaceContract.VERSION else 0
         remoteMaxImageBytes = if (imageSupported) advertised.maxImageBytes else 0
@@ -5831,6 +5831,7 @@ class BusHubService : Service() {
             if (expected != null && socket !== expected) return
             val current = socket
             socket = null
+            renderedMapNegotiation.lost()
             sppSession = null
             current
         }
