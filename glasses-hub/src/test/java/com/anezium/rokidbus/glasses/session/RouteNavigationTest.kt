@@ -341,6 +341,42 @@ class RouteNavigationTest {
     }
 
     @Test
+    fun `another app's walking leg, with no map and no position, keeps its glyph and figure and says nothing about GPS`() {
+        // Google Maps' transit itinerary as the Navigation plugin pages it: the app's own words
+        // and numbers, no geometry, no position. Nothing here was ever a GPS fix.
+        val walkToStop = PageBody.Route(
+            position = RoutePositionQuality.NONE,
+            maneuver = RouteManeuver("walk", "3 min", street = "Ampère - Chartrel", eta = "22:33"),
+            facts = listOf(
+                PageFact("measure", "Also", "250 m"),
+                PageFact("detail", "Detail", "Départ à 22:08"),
+                PageFact("source", "Source", "Google Maps"),
+                PageFact("updated", "Received", "22:13"),
+            ),
+        )
+        openRoute(walkToStop)
+        val screen = screen()
+        val maneuver = screen.blocks.filterIsInstance<ScreenBlock.Maneuver>().single()
+        assertEquals("walk", maneuver.glyph)
+        assertEquals("3 min", maneuver.distance)
+        assertEquals("Ampère - Chartrel", maneuver.street)
+        assertFalse(maneuver.approximate)
+        assertTrue(screen.blocks.none { it is ScreenBlock.Map })
+        assertTrue(screen.blocks.filterIsInstance<ScreenBlock.Text>().none { it.key == "gps" })
+        assertEquals("Google Maps", screen.blocks.filterIsInstance<ScreenBlock.Fact>().single { it.key == "fact:source" }.value)
+
+        // A mapped journey that has no fix is still waiting for GPS: the lost glyph, the dashed
+        // north-up map and the GPS line stay, as the walking route's own page says.
+        openRoute(routeBody(distance = "Waiting GPS", position = RoutePositionQuality.NONE))
+        val waiting = screen()
+        val waitingManeuver = waiting.blocks.filterIsInstance<ScreenBlock.Maneuver>().single()
+        assertEquals(HudGlyphs.GPS_LOST, waitingManeuver.glyph)
+        assertTrue(waitingManeuver.approximate)
+        assertTrue(waiting.blocks.filterIsInstance<ScreenBlock.Map>().single().degraded)
+        assertEquals(RoutePresentation.GPS_LOST, waiting.blocks.filterIsInstance<ScreenBlock.Text>().single { it.key == "gps" }.text)
+    }
+
+    @Test
     fun `route presentation rules`() {
         val body = routeBody()
         val follow = geometry(x = 100)
@@ -358,6 +394,13 @@ class RouteNavigationTest {
         val staleFix = follow.copy(position = RoutePosition(RoutePositionQuality.STALE, RoutePoint(500, 500), fixAgeS = 4))
         assertTrue(RoutePresentation.degraded(body, staleFix))
         assertTrue(RoutePresentation.degraded(null, staleFix))
+        // No map and no position: text guidance, not a lost fix. A stale position is lost whatever the map.
+        val textOnly = body.copy(position = RoutePositionQuality.NONE, follow = null, overview = null)
+        assertFalse(RoutePresentation.degraded(textOnly, null))
+        assertNull(RoutePresentation.gpsLost(textOnly, null))
+        assertTrue(RoutePresentation.degraded(textOnly.copy(position = RoutePositionQuality.STALE), null))
+        assertTrue(RoutePresentation.degraded(textOnly.copy(follow = follow), null))
+        assertEquals(RoutePresentation.GPS_LOST, RoutePresentation.gpsLost(body.copy(position = RoutePositionQuality.NONE), follow))
         // A stale heading is no heading: north-up, but the fix itself is still good.
         assertNull(RoutePresentation.heading(MapView.FOLLOW, degraded = false, headingDeg = null))
         assertEquals(45f, RoutePresentation.heading(MapView.FOLLOW, degraded = false, headingDeg = 45f))
