@@ -6,6 +6,7 @@ import com.anezium.rokidbus.shared.RouteLabel
 import com.anezium.rokidbus.shared.RoutePath
 import com.anezium.rokidbus.shared.RoutePathRole
 import com.anezium.rokidbus.shared.RoutePoint
+import java.util.PriorityQueue
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -353,32 +354,45 @@ internal object NavBasemapLayer {
         if (room <= 0) return emptyList()
         val streets = SegmentIndex(drawn)
         val candidates = HashMap<String, Triple<Double, RoutePoint, String>>()
+        val taken = existing.map { it.text.lowercase() }.toMutableSet()
+        val placed = existing.map { RoutePoint(it.x, it.y) }.toMutableList()
+        val order = compareBy<NameAnchor>({ it.score }, { it.text }, { it.point.x }, { it.point.y }, { it.neighbour.x }, { it.neighbour.y })
+        val anchors = PriorityQueue(order.reversed())
         val low = LABEL_MARGIN.toDouble()
         val high = (EXTENT - LABEL_MARGIN).toDouble()
-        var visited = 0
+        // The aggregate input bound covers this scan. Spend the smaller street-search budget on
+        // visible, useful anchors, not the provider's arbitrary feature order or off-screen names.
         for (tile in tiles) {
             for (name in tile.names) {
-                if (visited + name.xs.size > MAX_NAME_VERTICES) continue
-                visited += name.xs.size
                 val text = NavText.fit(name.name ?: continue, RouteGeometryContract.MAX_LABEL_CHARS)
-                if (text.isBlank()) continue
-                val points = name.xs.indices.map { window.normalized(MapMeters(name.xs[it], name.ys[it])) }
-                for ((index, point) in points.withIndex()) {
+                if (text.isBlank() || text.lowercase() in taken) continue
+                for (index in name.xs.indices) {
+                    val point = window.normalized(MapMeters(name.xs[index], name.ys[index]))
                     if (point.x !in low..high || point.y !in low..high) continue
-                    if (!streets.near(point.x, point.y, LABEL_ON_STREET_UNITS)) continue
-                    // Along a drawn street, not merely across one: a name's line can pass under a street in a tunnel.
-                    val neighbour = points.getOrNull(index + 1) ?: points.getOrNull(index - 1) ?: continue
-                    if (!streets.near((point.x + neighbour.x) / 2, (point.y + neighbour.y) / 2, LABEL_ON_STREET_UNITS)) continue
+                    if (placed.any { hypot(it.x - point.x, it.y - point.y) < LABEL_SPACING }) continue
+                    val next = if (index < name.xs.lastIndex) index + 1 else index - 1
+                    if (next < 0) continue
+                    val neighbour = window.normalized(MapMeters(name.xs[next], name.ys[next]))
                     val score = (field.distance(point.x, point.y) + 15.0) * name.streetClass.weight
-                    val key = text.lowercase()
-                    if ((candidates[key]?.first ?: Double.MAX_VALUE) > score) {
-                        candidates[key] = Triple(score, RoutePoint(point.x.roundToInt(), point.y.roundToInt()), text)
+                    val anchor = NameAnchor(score, point, neighbour, text)
+                    if (anchors.size < MAX_NAME_VERTICES) {
+                        anchors += anchor
+                    } else if (order.compare(anchor, anchors.peek()) < 0) {
+                        anchors.poll()
+                        anchors += anchor
                     }
                 }
             }
         }
-        val taken = existing.map { it.text.lowercase() }.toMutableSet()
-        val placed = existing.map { RoutePoint(it.x, it.y) }.toMutableList()
+        for ((score, point, neighbour, text) in anchors.sortedWith(order)) {
+            if (!streets.near(point.x, point.y, LABEL_ON_STREET_UNITS)) continue
+            // Along a drawn street, not merely across one: a name's line can pass under a street in a tunnel.
+            if (!streets.near((point.x + neighbour.x) / 2, (point.y + neighbour.y) / 2, LABEL_ON_STREET_UNITS)) continue
+            val key = text.lowercase()
+            if ((candidates[key]?.first ?: Double.MAX_VALUE) > score) {
+                candidates[key] = Triple(score, RoutePoint(point.x.roundToInt(), point.y.roundToInt()), text)
+            }
+        }
         val result = ArrayList<RouteLabel>()
         for ((_, point, text) in candidates.values.sortedWith(compareBy<Triple<Double, RoutePoint, String>>({ it.first }, { it.third }))) {
             if (result.size >= room) break
@@ -390,6 +404,8 @@ internal object NavBasemapLayer {
         }
         return result
     }
+
+    private data class NameAnchor(val score: Double, val point: MapMeters, val neighbour: MapMeters, val text: String)
 
     private fun bytes(geometry: RouteGeometry): Int = RouteGeometryContract.encode(geometry).toString().toByteArray(Charsets.UTF_8).size
 

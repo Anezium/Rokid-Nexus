@@ -77,6 +77,23 @@ class NavBasemapLayerTest {
     }
 
     @Test
+    fun `public street name selection is independent of tile feature order`() {
+        val route = gateRoute()
+        val local = LocalTile.of(ShortbreadTiles.decode(sampleKey, MvtReaderTest.sample()), route.line)
+        val snapshot = tracking(route, 120.0)
+        for (view in NavMapView.entries) {
+            val alone = NavMapProjection.geometry(snapshot, view)
+            val labels = listOf(local.names, local.names.reversed()).map { names ->
+                val reordered = LocalTile(sampleKey, local.streets, names)
+                val loaded = snapshot.copy(basemap = NavBasemapTiles(OsmShortbreadSource.attribution, 14, mapOf(sampleKey to reordered)))
+                NavMapProjection.geometry(loaded, view).labels.drop(alone.labels.size)
+            }
+            assertTrue("$view", labels.first().isNotEmpty())
+            assertEquals("$view", labels.first(), labels.last())
+        }
+    }
+
+    @Test
     fun `every street stroke lies on a street of the tile`() {
         val route = gateRoute()
         val tile = ShortbreadTiles.decode(sampleKey, MvtReaderTest.sample())
