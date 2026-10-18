@@ -25,6 +25,7 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
 import org.robolectric.util.ReflectionHelpers;
+import org.robolectric.util.ReflectionHelpers.ClassParameter;
 import static org.junit.Assert.*;
 import static org.robolectric.Shadows.shadowOf;
 
@@ -86,7 +87,7 @@ public class RenderedMapReconnectTest {
             publisher[0].update(retained, false);
             publisher[0].activityStarted();
             assertNotNull(delivered.get(delivered.size() - 1).getAttribution());
-            ReflectionHelpers.callInstanceMethod(hub, "closeSocket");
+            ReflectionHelpers.callInstanceMethod(hub, "closeSocket", ClassParameter.from(BluetoothSocket.class, (BluetoothSocket) null));
             assertEquals(0, transport.capabilities() & BusCapabilityBits.RENDERED_MAP);
             assertNotEquals(0, transport.capabilities() & BusCapabilityBits.LAUNCHER_INTERACTIVE);
             connect(hub, negotiation);
@@ -105,7 +106,7 @@ public class RenderedMapReconnectTest {
             assertTrue(client.getSupportsRenderedMaps());
             assertNotNull(delivered.get(delivered.size() - 1).getAttribution());
             // A fresh CXR announcement may precede SPP authentication for the same new session.
-            ReflectionHelpers.callInstanceMethod(hub, "closeSocket");
+            ReflectionHelpers.callInstanceMethod(hub, "closeSocket", ClassParameter.from(BluetoothSocket.class, (BluetoothSocket) null));
             negotiation.announce(announcement(true));
             assertEquals(0, transport.capabilities() & BusCapabilityBits.RENDERED_MAP);
             connect(hub, negotiation);
@@ -113,7 +114,7 @@ public class RenderedMapReconnectTest {
             assertTrue(client.getSupportsRenderedMaps());
             assertNotNull(delivered.get(delivered.size() - 1).getAttribution());
         } finally {
-            ReflectionHelpers.callInstanceMethod(hub, "closeSocket");
+            ReflectionHelpers.callInstanceMethod(hub, "closeSocket", ClassParameter.from(BluetoothSocket.class, (BluetoothSocket) null));
             client.close();
         }
     }
