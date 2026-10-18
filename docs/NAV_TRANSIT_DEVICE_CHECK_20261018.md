@@ -198,3 +198,40 @@ reviews the immutable `82b0f377` snapshot with the full original context, R1
 finding and author response. Candidate installation, actual Android rebinding
 and corrected transit-page recapture remain pending. No device commands ran
 during this verification; the earlier cleanup state remains the last observation.
+
+## R2 approved and installed; listener live; Maps now has no GPS guidance
+
+Consumed the full new independent R2 report: APPROVE at `82b0f377`, sole R1
+fixture finding closed. Reverified the frozen APK hash and established signer,
+then installed Navigation in place with `-r`: Success. Opened NavSettingsActivity
+once with CLEAR_TOP. NMS now lists the actual own live INotificationListener
+proxy for user 0, and the settings access label is Allowed. This establishes
+connection after replacement installation and foreground entry; it does not
+isolate whether package replacement or requestRebind caused the recovery.
+
+Selected the real Maps transit itinerary to Gare de Goussainville: initial
+four-minute/240-metre walk to Ampere - Chartrel, then bus 1611, scheduled 23:08,
+arrival 23:13. Started glanceable guidance and backgrounded Maps. Unlike the
+earlier successful initial-leg test, this attempt retained only an ongoing
+category=status notification with empty title/text. Returning to Maps showed
+its own explicit No GPS signal banner. One further foreground/background check
+still had no readable guidance. No Navigation activity appeared on the root;
+no detail-page activation or corrected-page claim followed. This is a source
+guidance limitation in this pass, not evidence of a disconnected listener or a
+new parser/rendering failure. No GPS or clock data was simulated.
+
+Actual latest screenshots: `transit-r13-maps-itinerary.png`,
+`transit-r13-maps-source-gps-lost.png`, and
+`transit-r13-root-after-background.png`. The gallery labels these current
+limitations and retains the earlier loaded OSM street-map proof separately.
+The corrected external detail appearance and physical boarding/riding/alighting
+remain unverified; no further retry loop is active.
+
+Ended Maps through Fin: zero Maps notification records. No internal Nav journey
+service exists. Nav FINE/COARSE/POST_NOTIFICATIONS grants remain false with their
+prior flags; no grant/source/preference was changed in this pass. Phone returned
+to hub Main, glasses to visually checked native home. No USB reset, uninstall,
+data clear, microphone, draft or Send action occurred. Devices are released.
+Local evidence: `nav-listener-r13-device-state.json` and the bounded own-source
+`transit-r13-maps-notification.txt`. The self-contained browser galleries now have
+55 entries and open on Dernier test.
