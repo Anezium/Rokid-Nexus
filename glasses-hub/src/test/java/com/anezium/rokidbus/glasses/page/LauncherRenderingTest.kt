@@ -91,7 +91,7 @@ class LauncherRenderingTest {
         position.edit().clear().commit()
         HudTopInset.restore(activity)
         val events = mutableListOf<Boolean>()
-        val nav = NavIslandView(activity, icons) { map ->
+        val nav = NavIslandView(activity, HubIconSource) { map ->
             RenderedMapLease(map, { true }, { events += it.getBoolean("visible"); true })
         }
         val island = ActivityOverlayRenderer.ActivityIsland(activity, nav)
@@ -107,6 +107,7 @@ class LauncherRenderingTest {
             for ((row, budget) in listOf(524 to 73, 544 to 54)) {
                 HudTopInset.onRomRowMeasured(activity, row, metrics.density)
                 island.place(corner, HudTopInset.current(activity))
+                var previousCue: Bitmap? = null
                 for (direction in listOf("left", "right", "left")) {
                     val instruction = "Turn $direction onto Test Street"
                     island.renderGuidance(GuidanceIsland(IslandForm.PANEL, IslandContent.Guidance(
@@ -122,6 +123,14 @@ class LauncherRenderingTest {
                     assertTrue(nav.height in 1..budget)
                     assertEquals(622, nav.bottom)
                     assertEquals(listOf("100 m", "Test Street", instruction), nav.texts())
+                    val cue = find<ImageView>(nav).single { it.isShown }
+                    assertEquals("turn-$direction", cue.contentDescription)
+                    val cueBounds = Rect(0, 0, cue.width, cue.height)
+                    nav.offsetDescendantRectToMyCoords(cue, cueBounds)
+                    assertTrue(cueBounds.top >= 0 && cueBounds.bottom <= nav.height)
+                    val cueBitmap = draw(cue)
+                    previousCue?.let { assertFalse(it.sameAs(cueBitmap)) }
+                    previousCue = cueBitmap
                     assertEquals(View.GONE, requireNotNull(nav.mapView).visibility)
                     for (text in find<TextView>(nav).filter { it.isShown }) {
                         val rect = Rect(0, 0, text.width, text.height)

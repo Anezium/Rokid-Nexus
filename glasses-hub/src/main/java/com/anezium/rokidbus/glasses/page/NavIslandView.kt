@@ -278,6 +278,12 @@ internal class NavIslandView(
         addView(LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            glyphDrawable(context, icons, content.glyph, if (content.approximate) PageStyle.muted else PageStyle.phosphor)?.let { drawable ->
+                addView(ImageView(context).apply {
+                    setImageDrawable(drawable)
+                    contentDescription = content.glyph
+                }, LayoutParams(22, 22).apply { rightMargin = 6 })
+            }
             addView(PageStyle.text(context, figure, 22f, if (content.approximate) PageStyle.muted else PageStyle.phosphor, PageStyle.monoBold, 1))
             content.street?.let {
                 addView(PageStyle.text(context, it, PageStyle.BODY_PX, PageStyle.ink, PageStyle.sans, 1).apply { setPadding(8, 0, 0, 0) },
