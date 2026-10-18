@@ -60,7 +60,7 @@ class GlassesDisplaySettingsActivity : Activity() {
             addView(
                 switchRow(
                     title = "Keep activities expanded",
-                    subtitle = "Keep the primary activity panel open on glasses",
+                    subtitle = "Off, an activity shrinks to a one-line chip 10 seconds after its last update",
                     checked = PhoneActivityPresentationSettings(this@GlassesDisplaySettingsActivity)
                         .isAlwaysExpanded(),
                 ) { enabled ->
@@ -183,8 +183,8 @@ class GlassesDisplaySettingsActivity : Activity() {
             addView(
                 NexusUi.rowSub(
                     this@GlassesDisplaySettingsActivity,
-                    "Default keeps what the glasses chose. Classic is always there to go back to.",
-                ),
+                    "Default follows the glasses' own setting. Classic is the previous launcher, there to go back to.",
+                ).apply { maxLines = 3 },
             )
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 6))
             val store = PhoneLauncherBackendStore(this@GlassesDisplaySettingsActivity)
@@ -245,8 +245,11 @@ class GlassesDisplaySettingsActivity : Activity() {
             addView(
                 NexusUi.rowSub(
                     this@GlassesDisplaySettingsActivity,
-                    "Choose the size of Navigation on the glasses. Other plugins choose their own presentation.",
-                ),
+                    "How large a route is drawn on the glasses. Text: arrow, distance, street. " +
+                        "Minimap adds a heading-up map. Panel: wide map with street names. " +
+                        "Automatic lets the glasses choose. The same choice is on the glasses' route page. " +
+                        "Other plugins keep the presentation their developer chose.",
+                ).apply { maxLines = 6 },
             )
             val owners = islandOwners()
             if (owners.isEmpty()) {
@@ -254,8 +257,8 @@ class GlassesDisplaySettingsActivity : Activity() {
                 addView(
                     NexusUi.rowSub(
                         this@GlassesDisplaySettingsActivity,
-                        "Approve Navigation to choose its display size.",
-                    ),
+                        "Allow Navigation to show on your glasses (Settings › Plugin access) to choose its size.",
+                    ).apply { maxLines = 3 },
                 )
                 return@apply
             }
@@ -268,7 +271,8 @@ class GlassesDisplaySettingsActivity : Activity() {
             )
             owners.forEach { (pluginId, name) ->
                 addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
-                addView(NexusUi.rowLabel(this@GlassesDisplaySettingsActivity, name))
+                // The card is named after its one owner today; the name only matters with several.
+                if (owners.size > 1) addView(NexusUi.rowLabel(this@GlassesDisplaySettingsActivity, name))
                 addView(
                     ambientChoiceRow(this@GlassesDisplaySettingsActivity, options, store.sizeFor(pluginId)) { size ->
                         if (store.setSize(pluginId, size)) BusHubService.onAmbientSizesChanged()
@@ -313,7 +317,7 @@ class GlassesDisplaySettingsActivity : Activity() {
                     orientation = LinearLayout.VERTICAL
                     addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, title))
                     addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
-                    addView(NexusUi.rowSub(this@GlassesDisplaySettingsActivity, subtitle))
+                    addView(NexusUi.rowSub(this@GlassesDisplaySettingsActivity, subtitle).apply { maxLines = 3 })
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
