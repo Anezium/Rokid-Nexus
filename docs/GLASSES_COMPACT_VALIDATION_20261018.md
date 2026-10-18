@@ -8,7 +8,7 @@ No current compact APK has been installed or validated on the devices.
 Fable completed source commits `d9b7ca40`, `382062a7` and the test-only correction
 `12085f45`, preserving all interrupted work. Canonical integration is
 `d010156d01214410c0bd783c24d716defe3538a3`. The fresh R6 independent review is
-still running; no current compact APK is accepted or installed.
+complete and requests changes; no current compact APK is accepted or installed.
 
 The full affected suites and debug/release assembly invocation compiled and ran
 both new suites after two initial test-compilation errors were corrected.
@@ -46,10 +46,23 @@ source-rendered artifact mismatch to investigate, not an established device defe
 The 728/360 HTML previews have no console errors or clipped frames. Neither those
 previews nor the still images establish working live scrolling.
 
-The same Fable author is correcting the executed continuity failures and checking
-the artifact mismatch. R6 is reviewing an immutable snapshot independently. No
-additional writer, API implementation, device action, GPS, microphone or Send was
-started. The encrypted API credential remains outside the repository as a fallback;
+The completed R6 review isolated two P2 corrections: inherited TextView pre-draw
+alignment overwrites the restored offset before the next timer tick, and an island
+rebuilt while hidden loses the local flag that should force a fresh hold on show.
+The latter has a reachable flare/rebind/fold lifecycle and needs its own bounded
+regression. The original constructor/detach memory erasers are corrected; full
+runtime starvation is not established by post-render sampling failures. External
+name preservation is accepted at source level with the passing new cases; Google
+transit and Citymapper lack new long-name cases, a stated coverage limitation.
+
+The same Fable author has received the full R6 report while correcting these
+failures. The three exported PNGs are frozen with hashes in `rendered-r8-frozen/`.
+Image-tool observations disagree about which card interiors are blank, despite
+stable file hashes and opaque bright pixels in those regions. No production
+blank-card defect is established; capture/traversal fidelity remains unaccepted
+and must be distinguished from the two demonstrated continuity defects.
+No additional writer, API implementation, device action, GPS, microphone or Send
+was started. The encrypted API credential remains outside the repository as a fallback;
 current implementation uses the restored subscription.
 
 ## Earlier integrated source and observed verification
