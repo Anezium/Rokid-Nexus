@@ -62,6 +62,10 @@ class NexusPluginClient internal constructor(
     val renderedMapViews: Set<NexusRenderedMapView>
         get() = if (supportsRenderedMaps) renderedMaps.views() else emptySet()
 
+    /** Next active slot's expiry, for one lifecycle cancellation timer; null without demand. */
+    val renderedMapLeaseRemainingMs: Long?
+        get() = if (supportsRenderedMaps) renderedMaps.nextExpiryDelayMs() else null
+
     /** Discard this plugin's feedback, for example when its journey is replaced. */
     fun clearRenderedMapDemand() = renderedMaps.clear()
     // A page answer is current or it is nothing: it never waits in the reconnect queue.
@@ -558,6 +562,7 @@ class NexusPluginClient internal constructor(
      */
     fun publishActivityGeometry(revision: Long, geometry: RouteGeometry): NexusSdkResult {
         activityPreflight()?.let { return it }
+        if (geometry.attribution != null && !supportsRenderedMaps) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
         if (!supportsLauncherInteractive()) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
         if (currentLinkState and LinkStateBits.SPP_DATA_UP == 0) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
         if (revision < 0) return NexusSdkResult.INVALID_PAYLOAD

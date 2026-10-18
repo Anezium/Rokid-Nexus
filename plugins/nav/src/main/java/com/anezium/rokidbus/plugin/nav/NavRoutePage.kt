@@ -58,7 +58,9 @@ internal object NavRoutePage {
     }
 
     private fun journey(state: NavPageState, text: NavPageText): PageBody.Route {
-        val snapshot = state.journey
+        val snapshot = state.journey?.let {
+            if (state.renderedMaps || it.basemap.tiles.isEmpty()) it else it.copy(basemap = NavBasemapTiles.NONE)
+        }
         val destination = (snapshot?.route?.destination?.name ?: state.journeyDestination)?.takeIf(String::isNotBlank)
         if (snapshot == null) {
             // Planned from the first accurate fix: until then there is nothing to draw.

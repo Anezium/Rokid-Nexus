@@ -51,6 +51,9 @@ class NavJourneyService : Service(), LocationListener {
     private var tracker: NavRouteTracker? = null
     private var planner: TransitousPlanner? = null
     private var basemap: NavBasemap? = null
+    private val expireMapDemand = Runnable {
+        if (!stopping && tracker != null) publish(SystemClock.elapsedRealtime())
+    }
     private val mapDemand: () -> Unit = { main.post { if (!stopping && tracker != null) publish(SystemClock.elapsedRealtime()) } }
     private var lastFix: NavFix? = null
     private var startedAtMs = 0L
@@ -245,6 +248,10 @@ class NavJourneyService : Service(), LocationListener {
         streets.demand(keys) { key ->
             NavControl.serviceClient?.renderedMapViews.orEmpty().any { key in keysByView[it].orEmpty() }
         }
+        main.removeCallbacks(expireMapDemand)
+        val remaining = NavControl.serviceClient?.renderedMapLeaseRemainingMs
+        if (remaining != null) main.postDelayed(expireMapDemand, remaining)
+        else if (rendered.isNotEmpty()) main.post(expireMapDemand)
         // A shown view too wide for street tiles has none to wait for.
         NavState.basemapState = if (rendered.isNotEmpty() && keys.isEmpty()) BasemapState.UNAVAILABLE else streets.state
         return snapshot.copy(basemap = if (rendered.isEmpty()) NavBasemapTiles.NONE else streets.tiles)
@@ -270,6 +277,7 @@ class NavJourneyService : Service(), LocationListener {
         if (NavControl.mapDemandListener === mapDemand) NavControl.mapDemandListener = null
         worker.shutdownNow()
         main.removeCallbacks(tick)
+        main.removeCallbacks(expireMapDemand)
         runCatching { getSystemService(LocationManager::class.java).removeUpdates(this) }
         if (NavControl.owns(runtime)) {
             // The service stays bound through the hand-back: a route another app is still guiding

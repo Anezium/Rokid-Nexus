@@ -42,6 +42,13 @@ internal class NexusRenderedMaps(private val clock: () -> Long) {
     }
 
     @Synchronized
+    fun nextExpiryDelayMs(): Long? {
+        val now = clock()
+        leases.entries.removeAll { now >= it.value.until }
+        return leases.values.minOfOrNull { it.until - now }
+    }
+
+    @Synchronized
     fun clear(kind: String? = null) {
         if (kind == null) leases.clear() else leases.remove(kind)
     }

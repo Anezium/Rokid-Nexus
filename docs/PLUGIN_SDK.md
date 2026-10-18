@@ -866,8 +866,10 @@ either older hub, even if `supportsLauncherInteractive()` is true.
 `OVERVIEW` under unexpired hub feedback, and is empty otherwise. The SDK keeps
 at most ambient Follow plus one selected page view. `onRenderedMapsChanged()`
 (`onNexusRenderedMapsChanged()` on the service) reports feedback changes; expiry
-is checked on read, so re-read immediately before each request and use existing
-journey lifecycle checks to cancel pending work on expiry. Page visibility or
+is checked on read. Re-read immediately before each request and schedule one
+cancellation deadline from `renderedMapLeaseRemainingMs` (null without demand)
+so pending work ends when the earliest slot expires, even between journey ticks.
+This timer belongs only to an existing journey and grants no new lifetime. Page visibility or
 successful geometry publication alone never authorize view-driven networking.
 `clearRenderedMapDemand()` discards this plugin's feedback when replacing its
 journey. The SDK also clears applicable slots on registration reset, SPP loss,

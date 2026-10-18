@@ -26,6 +26,7 @@ internal data class NavPageState(
     val extended: Boolean = false,
     /** Whether the journey's street map is loading or unavailable when its maps draw no street. */
     val basemap: BasemapState = BasemapState.NONE,
+    val renderedMaps: Boolean = false,
 )
 
 /** The plugin's own words for the states without a route. */

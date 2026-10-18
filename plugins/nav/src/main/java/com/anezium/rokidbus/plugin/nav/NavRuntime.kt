@@ -46,6 +46,7 @@ internal class NavRuntime(context: Context) {
         sendGeometry = { revision, geometry -> client?.publishActivityGeometry(revision, geometry) ?: NexusSdkResult.NOT_REGISTERED },
         sendHeading = { deg, accuracy -> client?.publishActivityHeading(deg, accuracy) ?: NexusSdkResult.NOT_REGISTERED },
         now = SystemClock::elapsedRealtime,
+        streetsSupported = { client?.supportsRenderedMaps == true },
     )
 
     private val client get() = NavControl.serviceClient

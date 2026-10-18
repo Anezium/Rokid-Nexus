@@ -52,6 +52,7 @@ class NavPluginService : NexusPluginService() {
                 journeyMessage = NavState.journeyMessage,
                 extended = nexusClient?.supportsLauncherInteractive() == true,
                 basemap = NavState.basemapState,
+                renderedMaps = nexusClient?.supportsRenderedMaps == true,
             )
         },
         text = {

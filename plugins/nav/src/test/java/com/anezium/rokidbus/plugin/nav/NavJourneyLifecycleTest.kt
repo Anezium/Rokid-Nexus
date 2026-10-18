@@ -260,11 +260,13 @@ class NavJourneyLifecycleTest {
     fun `expired or unsupported map feedback cancels demand without extending the journey lifetime`() {
         val streets = StreetRecorder()
         planParisJourney(streets)
+        // Put expiry between the existing five-second journey ticks.
+        idle(1_234)
         val client = feedbackClient()
         renderFeedback(client, "follow")
         idle(0)
         assertTrue(streets.urls.isNotEmpty())
-        idle(RenderedMapContract.LEASE_MS + NavJourneyService.TICK_MS)
+        idle(RenderedMapContract.LEASE_MS)
         assertEquals(BasemapState.NONE, NavState.basemapState)
         assertTrue(NavState.journey!!.basemap.tiles.isEmpty())
         assertTrue(NavControl.journeyActive)

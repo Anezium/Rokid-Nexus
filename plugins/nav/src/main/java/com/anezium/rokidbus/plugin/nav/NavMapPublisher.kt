@@ -22,6 +22,7 @@ internal class NavMapPublisher(
     private val sendHeading: (deg: Double, accuracyDeg: Double?) -> NexusSdkResult,
     private val now: () -> Long,
     private val geometryOf: (NavRouteSnapshot) -> RouteGeometry = { NavMapProjection.geometry(it, NavMapView.FOLLOW) },
+    private val streetsSupported: () -> Boolean = { false },
 ) {
     private var snapshot: NavRouteSnapshot? = null
     private var activityLive = false
@@ -74,7 +75,8 @@ internal class NavMapPublisher(
         val at = now()
         val last = sentGeometryAtMs
         if (last == null || at - last >= MIN_GEOMETRY_INTERVAL_MS) {
-            val geometry = geometryOf(current)
+            val drawable = if (streetsSupported() || current.basemap.tiles.isEmpty()) current else current.copy(basemap = NavBasemapTiles.NONE)
+            val geometry = geometryOf(drawable)
             if (geometry != sentGeometry) {
                 val result = sendGeometry(nextRevision(), geometry)
                 if (result == NexusSdkResult.SENT) {

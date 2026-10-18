@@ -31,6 +31,26 @@ class NavMapPublisherTest {
     private val route = straight()
 
     @Test
+    fun `a peer downgrade cannot publish streets retained in the last journey snapshot`() {
+        var streetsSupported = true
+        val sent = mutableListOf<RouteGeometry>()
+        val key = TileKey(14, 1, 1)
+        val streets = NavBasemapTiles("© OpenStreetMap", 14, mapOf(key to LocalTile(key, emptyList(), emptyList())))
+        val guarded = NavMapPublisher(
+            supported = { true }, sendGeometry = { _, geometry -> sent += geometry; NexusSdkResult.SENT },
+            sendHeading = { _, _ -> NexusSdkResult.SENT }, now = { now },
+            geometryOf = { snapshot -> RouteGeometry(400.0, emptyList(), attribution = snapshot.basemap.attribution.takeIf { snapshot.basemap.tiles.isNotEmpty() }) },
+            streetsSupported = { streetsSupported },
+        )
+        guarded.update(live(100.0).copy(basemap = streets), send = false)
+        guarded.activityStarted()
+        assertEquals("© OpenStreetMap", sent.last().attribution)
+        streetsSupported = false
+        guarded.linkChanged()
+        assertNull(sent.last().attribution)
+    }
+
+    @Test
     fun `nothing goes out before the activity is live or without the launcher bundle`() {
         publisher.update(live(100.0, bearing = 10))
         assertTrue(geometries.isEmpty())

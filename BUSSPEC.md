@@ -2416,7 +2416,9 @@ A new token/view replaces its slot; an old token's hide cannot clear its
 replacement. Unknown, absent, malformed or expired feedback fails closed.
 SPP loss, registration reset, end/close and page hide clear applicable slots;
 expiry is checked on read. Consumers must re-check before every network request
-and cancel work when demand disappears, including expiry. Feedback never opens
+and cancel work when demand disappears, including expiry; Navigation schedules
+one deadline for the earliest SDK slot, independently of its guidance tick.
+Feedback never opens
 a plugin, binds a provider, starts a journey or extends any existing lease.
 
 ### Composer capture (`/core/compose/*`)

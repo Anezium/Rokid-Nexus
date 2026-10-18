@@ -87,7 +87,7 @@ class NavRoutePageTest {
         val loaded = tracking(100.0).copy(
             basemap = NavBasemapTiles(OsmShortbreadSource.attribution, OsmShortbreadSource.maxZoom, mapOf(key to LocalTile.of(ShortbreadTiles.decode(key, body), route.line))),
         )
-        val page = content(journey(loaded).copy(basemap = BasemapState.READY))
+        val page = content(journey(loaded).copy(basemap = BasemapState.READY, renderedMaps = true))
         val drawn = page.body as PageBody.Route
         assertEquals("© OpenStreetMap contributors", drawn.facts.single { it.id == "streets" }.value)
         assertEquals("© OpenStreetMap", drawn.follow!!.attribution)
@@ -95,6 +95,12 @@ class NavRoutePageTest {
         assertEquals(PageTemplateContract.MAX_ROUTE_FACTS, drawn.facts.size)
         // The credit and the streets survive the page's own wire form.
         assertValid(page)
+        // A queued page or retained snapshot must also fall back immediately on peer downgrade.
+        val unsupported = content(journey(loaded).copy(basemap = BasemapState.READY, renderedMaps = false)).body as PageBody.Route
+        for (geometry in listOfNotNull(unsupported.follow, unsupported.overview)) {
+            assertNull(geometry.attribution)
+            assertTrue(geometry.paths.none { it.role == RoutePathRole.STREET || it.role == RoutePathRole.MAJOR })
+        }
     }
 
     @Test
