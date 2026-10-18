@@ -252,16 +252,24 @@ internal class SessionScreenView(
     }
 
     /**
-     * A root card keeps its lines whatever the values: each one line, ellipsized. Its mark leads
-     * the label; a quieter third line follows; an offline entry is drawn muted with its last-known
-     * line; an ended or resolved one is dashed, bright only while it holds the selection; in command
-     * focus its commands follow, the focused one outlined.
+     * A root card keeps its lines whatever the values: each one line. A line wider than the card
+     * is ellipsized at rest and scrolls to its end while the card holds the selection, so a long
+     * place or title is read whole on the card that is open. Its mark leads the label; a quieter
+     * third line follows; an offline entry is drawn muted with its last-known line; an ended or
+     * resolved one is dashed, bright only while it holds the selection; in command focus its
+     * commands follow, the focused one outlined.
      */
     private fun card(block: ScreenBlock.Card): View = LinearLayout(context).apply {
         orientation = VERTICAL
         val dashed = block.ended || block.dashed
         background = if (dashed) PageStyle.dashedPhosphor(block.selected) else PageStyle.outlined(block.selected)
-        setPadding(PageStyle.CARD_PADDING_PX, 10, PageStyle.CARD_PADDING_PX, 12)
+        setPadding(PageStyle.CARD_PADDING_PX, PageStyle.CARD_TOP_PX, PageStyle.CARD_PADDING_PX, PageStyle.CARD_BOTTOM_PX)
+        fun line(value: CharSequence, sizePx: Float, color: Int, typeface: android.graphics.Typeface) =
+            OverflowLineView(context).apply {
+                text = value
+                style(sizePx, color, typeface)
+                active = block.selected
+            }
         val quiet = dashed || block.offline
         val bright = if (quiet) PageStyle.muted else PageStyle.phosphor
         val body = if (quiet) PageStyle.muted else PageStyle.ink
@@ -281,14 +289,14 @@ internal class SessionScreenView(
                 block.time?.let { addView(PageStyle.text(context, it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, 1).apply { setPadding(10, 0, 0, 0) }) }
             },
         )
-        val primarySize = if (block.figure) PageStyle.FIGURE_PX else PageStyle.BODY_PX
+        val primarySize = if (block.figure) PageStyle.CARD_FIGURE_PX else PageStyle.CARD_BODY_PX
         addView(
             LinearLayout(context).apply {
                 orientation = HORIZONTAL
                 gravity = Gravity.BOTTOM
-                setPadding(0, 6, 0, 0)
+                setPadding(0, 4, 0, 0)
                 addView(
-                    PageStyle.text(context, block.primary, primarySize, if (block.figure) bright else body, if (block.figure) PageStyle.monoBold else PageStyle.sans, 1),
+                    line(block.primary, primarySize, if (block.figure) bright else body, if (block.figure) PageStyle.monoBold else PageStyle.sans),
                     LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f),
                 )
                 block.measure?.let { addView(PageStyle.text(context, it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, 1).apply { setPadding(10, 0, 0, 0) }) }
@@ -296,17 +304,17 @@ internal class SessionScreenView(
         )
         if (block.figure) {
             // The street line is always reserved, so the card never changes height under a new value.
-            addView(PageStyle.text(context, block.secondary ?: " ", PageStyle.BODY_PX, body, PageStyle.sans, 1).apply { setPadding(0, 3, 0, 0) })
+            addView(line(block.secondary ?: " ", PageStyle.CARD_BODY_PX, body, PageStyle.sans).apply { setPadding(0, 2, 0, 0) })
         } else {
-            block.secondary?.takeIf(String::isNotBlank)?.let { addView(PageStyle.text(context, it, PageStyle.BODY_PX, body, PageStyle.sans, 1).apply { setPadding(0, 3, 0, 0) }) }
+            block.secondary?.takeIf(String::isNotBlank)?.let { addView(line(it, PageStyle.CARD_BODY_PX, body, PageStyle.sans).apply { setPadding(0, 2, 0, 0) }) }
         }
         block.tertiary?.takeIf(String::isNotBlank)?.let {
-            addView(PageStyle.text(context, it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.sans, 1).apply { setPadding(0, 2, 0, 0) })
+            addView(line(it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.sans).apply { setPadding(0, 2, 0, 0) })
         }
         block.commands?.takeIf { it.items.isNotEmpty() }?.let { strip ->
             addView(
                 CommandStripView(context, icons).apply { bind(strip) },
-                LayoutParams(LayoutParams.MATCH_PARENT, CommandStripView.HEIGHT_PX).apply { topMargin = 10 },
+                LayoutParams(LayoutParams.MATCH_PARENT, CommandStripView.HEIGHT_PX).apply { topMargin = 8 },
             )
         }
     }

@@ -113,7 +113,7 @@ class SessionScreenViewTest {
     }
 
     @Test
-    fun `the root draws every stop, figures at thirty pixels, and keeps the selection whole`() {
+    fun `the root draws every stop at the card sizes and keeps the selection whole`() {
         val stops = RootStops.build(
             listOf(
                 ActivityStop("nav:local", "nav:main", "120 m", pinned = true, ownerLabel = "Navigation", detail = "Rue de Rivoli", measure = "1.2 km", updatedAtWallMs = 1),
@@ -126,9 +126,9 @@ class SessionScreenViewTest {
         render(screens.screen(SessionState.Root(stops, selected = 0), null))
         assertEquals(6, view.blockViews.size)
         val figure = texts(view.blockViews.getValue("nav:local")).first { it.text == "120 m" }
-        assertTrue(figure.textSize >= PageStyle.FIGURE_PX)
+        assertEquals(PageStyle.CARD_FIGURE_PX, figure.textSize, 0f)
         val street = texts(view.blockViews.getValue("nav:local")).first { it.text == "Rue de Rivoli" }
-        assertTrue(street.textSize >= PageStyle.BODY_PX)
+        assertEquals(PageStyle.CARD_BODY_PX, street.textSize, 0f)
         assertMinima()
         assertEquals(PageStyle.HEADER_HEIGHT_PX, view.getChildAt(0).height)
         assertTrue(visibleInViewport("nav:local"))

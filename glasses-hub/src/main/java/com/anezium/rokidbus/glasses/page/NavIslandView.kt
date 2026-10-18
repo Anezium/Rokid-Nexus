@@ -71,7 +71,9 @@ internal sealed interface IslandContent {
 /**
  * One guidance island at a fixed ambient size, passive: text (232 px), minimap (262 px, a 259x190
  * heading-up map with the next turn circled and a scale, no street names) or panel (374 px, a
- * 371x300 map with up to two street names and the step after). It owns no policy: which form,
+ * 371x300 map with up to two street names and the step after). The figure and the street are
+ * drawn at the card sizes of [PageStyle], small enough to leave the world visible, and the
+ * street scrolls to its end rather than losing it. It owns no policy: which form,
  * which map view and whether the position is trusted all come in through [bind]. With [outlined]
  * false it draws no border of its own, for a host that draws the island's one outline.
  */
@@ -198,14 +200,14 @@ internal class NavIslandView(
 
     private fun guidance(form: IslandForm, content: IslandContent.Guidance) {
         val panel = form == IslandForm.PANEL
-        val glyphPx = if (panel) 44 else 40
-        val figurePx = if (panel) 34f else 30f
-        val streetPx = if (panel) 19f else 17f
+        val glyphPx = if (panel) 34 else 30
+        val figurePx = if (panel) 26f else PageStyle.CARD_FIGURE_PX
+        val streetPx = 16f
         val head = LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             glyphDrawable(context, icons, content.glyph, if (content.approximate) PageStyle.muted else PageStyle.phosphor)?.let { drawable ->
-                addView(ImageView(context).apply { setImageDrawable(drawable) }, LayoutParams(glyphPx, glyphPx).apply { rightMargin = 12 })
+                addView(ImageView(context).apply { setImageDrawable(drawable) }, LayoutParams(glyphPx, glyphPx).apply { rightMargin = 10 })
             }
             addView(
                 LinearLayout(context).apply {
@@ -216,10 +218,22 @@ internal class NavIslandView(
                             orientation = HORIZONTAL
                             gravity = Gravity.BOTTOM
                             addView(PageStyle.text(context, figure, figurePx, if (content.approximate) PageStyle.muted else PageStyle.phosphor, PageStyle.monoBold, 1))
-                            content.measure?.let { addView(PageStyle.text(context, it, PageStyle.BODY_PX, PageStyle.ink, PageStyle.sans, 1).apply { setPadding(8, 0, 0, 3) }) }
+                            content.measure?.let { addView(PageStyle.text(context, it, PageStyle.CARD_BODY_PX, PageStyle.ink, PageStyle.sans, 1).apply { setPadding(8, 0, 0, 2) }) }
                         },
                     )
-                    content.street?.let { addView(PageStyle.text(context, it, streetPx, PageStyle.ink, PageStyle.sans, 1).apply { setPadding(0, 3, 0, 0) }) }
+                    // The street or stop is kept whole: wider than the island, it scrolls to its end
+                    // while the island is shown instead of ending in an ellipsis.
+                    content.street?.let {
+                        addView(
+                            OverflowLineView(context).apply {
+                                text = it
+                                style(streetPx, PageStyle.ink, PageStyle.sans)
+                                setPadding(0, 2, 0, 0)
+                                active = true
+                            },
+                            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
+                        )
+                    }
                 },
                 LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f),
             )
@@ -232,13 +246,13 @@ internal class NavIslandView(
                 }
             }
         }
-        val sidePad = if (panel) 16 else 14
-        val topPad = if (panel) 14 else 12
+        val sidePad = if (panel) 14 else 12
+        val topPad = if (panel) 10 else 8
         addView(head, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
             leftMargin = sidePad
             rightMargin = sidePad
             topMargin = topPad
-            bottomMargin = if (form == IslandForm.TEXT) 12 else 0
+            bottomMargin = if (form == IslandForm.TEXT) 8 else 0
         })
         if (panel) {
             content.then?.let { then ->
@@ -267,7 +281,7 @@ internal class NavIslandView(
         content.foot?.takeIf { form != IslandForm.TEXT }?.let { addView(foot(it), LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)) }
         if (form != IslandForm.TEXT && map == null && content.foot == null) {
             // A minimap or panel without a map still ends on the island's own bottom padding.
-            addView(View(context), LayoutParams(LayoutParams.MATCH_PARENT, 12))
+            addView(View(context), LayoutParams(LayoutParams.MATCH_PARENT, 8))
         }
     }
 
@@ -301,7 +315,7 @@ internal class NavIslandView(
     }
 
     private fun departure(content: IslandContent.Departure) {
-        val side = 16
+        val side = 14
         addView(
             LinearLayout(context).apply {
                 orientation = HORIZONTAL
@@ -314,20 +328,20 @@ internal class NavIslandView(
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                 leftMargin = side
                 rightMargin = side
-                topMargin = 14
+                topMargin = 10
             },
         )
         addView(
             LinearLayout(context).apply {
                 orientation = HORIZONTAL
                 gravity = Gravity.BOTTOM
-                addView(PageStyle.text(context, content.figure, 44f, PageStyle.phosphor, PageStyle.monoBold, 1))
-                content.later?.let { addView(PageStyle.text(context, it, PageStyle.BODY_PX, PageStyle.muted, PageStyle.sans, 1).apply { setPadding(18, 0, 0, 6) }) }
+                addView(PageStyle.text(context, content.figure, 32f, PageStyle.phosphor, PageStyle.monoBold, 1))
+                content.later?.let { addView(PageStyle.text(context, it, PageStyle.CARD_BODY_PX, PageStyle.muted, PageStyle.sans, 1).apply { setPadding(14, 0, 0, 4) }) }
             },
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                 leftMargin = side
                 rightMargin = side
-                topMargin = 12
+                topMargin = 8
             },
         )
         content.then?.let { then ->
@@ -345,13 +359,13 @@ internal class NavIslandView(
                 },
             )
         }
-        addView(View(context), LayoutParams(LayoutParams.MATCH_PARENT, 12))
+        addView(View(context), LayoutParams(LayoutParams.MATCH_PARENT, 8))
     }
 
     private fun foot(foot: IslandFoot): View = LinearLayout(context).apply {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(14, 6, 14, 10)
+        setPadding(12, 4, 12, 8)
         foot.badge?.let { addView(LauncherBlocks.badge(context, it, PageStyle.CAPTION_PX), LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { rightMargin = 6 }) }
         addView(PageStyle.text(context, strong(foot.left, foot.strong), PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.sans, 1), LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         foot.right?.let { addView(PageStyle.text(context, it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.sans, 1).apply { setPadding(10, 0, 0, 0) }) }
