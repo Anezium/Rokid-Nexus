@@ -3,10 +3,13 @@ package com.anezium.rokidbus.glasses.page
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Rect
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.GlyphDrawable
 import com.anezium.rokidbus.glasses.session.ActivityStop
@@ -48,8 +51,9 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.LooperMode
+import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.time.Duration
 
 /**
@@ -98,23 +102,44 @@ class RootCompactRenderingTest {
     private fun root(activities: List<ActivityStop>, selected: Int, preview: NoticePreview? = this.preview): SessionScreen =
         screens.screen(SessionState.Root(RootStops.build(activities, preview, 2), selected = selected), null)
 
-    private fun layout() {
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(PageStyle.WIDTH_PX, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(PageStyle.HEIGHT_PX, View.MeasureSpec.EXACTLY),
-        )
-        view.layout(0, 0, PageStyle.WIDTH_PX, PageStyle.HEIGHT_PX)
-        shadowOf(Looper.getMainLooper()).idle()
+    private var attached = false
+
+    /**
+     * Draws [screen] in a real 480x640 window (the test's qualifiers) through a completed
+     * traversal, checks that every block painted more than its outline, and, with the
+     * `nexus.renderFixtures` property set, writes the frame as a PNG with its SHA-256 beside it.
+     */
+    private fun render(screen: SessionScreen, name: String) {
+        if (!attached) attach()
+        showAttached(screen)
+        assertEquals(PageStyle.WIDTH_PX, view.width)
+        assertEquals(PageStyle.HEIGHT_PX, view.height)
+        val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+        view.draw(Canvas(bitmap))
+        view.blockViews.forEach { (key, block) ->
+            assertTrue("$key painted ${litPixels(bitmap, block)} pixels inside its outline", litPixels(bitmap, block) > 150)
+        }
+        fixtureDir()?.let { dir ->
+            val bytes = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+            File(dir, "$name.png").writeBytes(bytes)
+            val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            File(dir, "$name.sha256").writeText("$digest  $name.png\n")
+        }
     }
 
-    private fun render(screen: SessionScreen, name: String) {
-        view.show(screen)
-        layout()
-        fixtureDir()?.let { dir ->
-            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
-            view.draw(Canvas(bitmap))
-            FileOutputStream(File(dir, "$name.png")).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    /** Opaque pixels brighter than the outline inside [block], its 2 px stroke and a margin left out. */
+    private fun litPixels(bitmap: Bitmap, block: View): Int {
+        val rect = Rect(0, 0, block.width, block.height)
+        view.offsetDescendantRectToMyCoords(block, rect)
+        rect.inset(6, 6)
+        var lit = 0
+        for (y in rect.top.coerceAtLeast(0) until rect.bottom.coerceAtMost(bitmap.height)) {
+            for (x in rect.left.coerceAtLeast(0) until rect.right.coerceAtMost(bitmap.width)) {
+                val p = bitmap.getPixel(x, y)
+                if (Color.alpha(p) == 255 && (Color.red(p) > 60 || Color.green(p) > 60 || Color.blue(p) > 60)) lit++
+            }
         }
+        return lit
     }
 
     private fun fixtureDir(): File? = System.getProperty("nexus.renderFixtures")?.takeIf { it.isNotBlank() }?.let { File(it).apply { mkdirs() } }
@@ -145,6 +170,7 @@ class RootCompactRenderingTest {
     }
 
     @Test
+    @Config(qualifiers = "w480dp-h640dp-mdpi")
     fun `Navigation and Relay share the root with the preview and the hub rows, marks and sizes as the hub draws them`() {
         render(root(listOf(nav, relay), selected = 0), "root-nav-relay")
         val keys = view.blockViews.keys.toList()
@@ -165,6 +191,7 @@ class RootCompactRenderingTest {
     }
 
     @Test
+    @Config(qualifiers = "w480dp-h640dp-mdpi")
     fun `a third activity joins the root as its Activities row, which carries no mark, and the whole root fits`() {
         render(root(listOf(nav, relay, todo), selected = 2), "root-nav-relay-todo")
         val keys = view.blockViews.keys.toList()
@@ -179,6 +206,7 @@ class RootCompactRenderingTest {
     }
 
     @Test
+    @Config(qualifiers = "w480dp-h640dp-mdpi")
     fun `the Activities page as the hub answers it draws the three cards whole, equal, without invented lines`() {
         val activities = listOf(nav, relay, todo)
         val local = LocalPages({ NotificationHistory() }, { activities }, { emptyList() }, { false }, { "12:24" })
@@ -202,11 +230,20 @@ class RootCompactRenderingTest {
         assertEquals(PageStyle.CARD_FIGURE_PX, texts(view).first { it.text == "4 to do" }.textSize, 0f)
     }
 
+    /**
+     * Puts the HUD view in a real window at its exact 480x640, whatever decor the test activity
+     * adds: a scroll host measures its child at the height it asks for, so the view is laid out,
+     * pre-drawn and drawn whole by the framework's traversal, as on the glasses.
+     */
     private fun attach(): Activity {
         val controller = Robolectric.buildActivity(Activity::class.java).create().start().resume()
-        controller.get().setContentView(view)
+        val host = ScrollView(context).apply {
+            addView(view, ViewGroup.LayoutParams(PageStyle.WIDTH_PX, PageStyle.HEIGHT_PX))
+        }
+        controller.get().setContentView(host)
         controller.visible()
         shadowOf(Looper.getMainLooper()).idle()
+        attached = true
         return controller.get()
     }
 
