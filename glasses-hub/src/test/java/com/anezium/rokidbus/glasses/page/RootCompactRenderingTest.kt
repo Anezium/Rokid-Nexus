@@ -9,7 +9,7 @@ import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
-import android.widget.ScrollView
+import android.widget.FrameLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.GlyphDrawable
 import com.anezium.rokidbus.glasses.session.ActivityStop
@@ -232,13 +232,15 @@ class RootCompactRenderingTest {
 
     /**
      * Puts the HUD view in a real window at its exact 480x640, whatever decor the test activity
-     * adds: a scroll host measures its child at the height it asks for, so the view is laid out,
-     * pre-drawn and drawn whole by the framework's traversal, as on the glasses.
+     * adds: a frame host turns the child's fixed size into an exact measure even when the
+     * window's content area is shorter (a scroll host would measure it unspecified and let it
+     * wrap), so the view is laid out, pre-drawn and drawn whole by the framework's traversal, as
+     * the glasses' window manager lays out the HUD.
      */
     private fun attach(): Activity {
         val controller = Robolectric.buildActivity(Activity::class.java).create().start().resume()
-        val host = ScrollView(context).apply {
-            addView(view, ViewGroup.LayoutParams(PageStyle.WIDTH_PX, PageStyle.HEIGHT_PX))
+        val host = FrameLayout(context).apply {
+            addView(view, FrameLayout.LayoutParams(PageStyle.WIDTH_PX, PageStyle.HEIGHT_PX))
         }
         controller.get().setContentView(host)
         controller.visible()
