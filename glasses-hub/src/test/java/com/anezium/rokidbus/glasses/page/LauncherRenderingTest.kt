@@ -108,10 +108,10 @@ class LauncherRenderingTest {
                 HudTopInset.onRomRowMeasured(activity, row, metrics.density)
                 island.place(corner, HudTopInset.current(activity))
                 var previousCue: Bitmap? = null
-                for (direction in listOf("left", "right", "left")) {
+                for ((direction, hasInstruction) in listOf("left" to true, "right" to true, "left" to false)) {
                     val instruction = "Turn $direction onto Test Street"
                     island.renderGuidance(GuidanceIsland(IslandForm.PANEL, IslandContent.Guidance(
-                        "turn-$direction", "100 m", measure = "2.1 km", street = "Test Street", then = instruction,
+                        "turn-$direction", "100 m", measure = "2.1 km", street = "Test Street", then = instruction.takeIf { hasInstruction },
                         map = MapInput(geometry, MapForm.PANEL,
                             renderContext = RenderedMapContext("ambient", "nav:activity", 7, seq = 10)),
                     )))
@@ -122,7 +122,7 @@ class LauncherRenderingTest {
                     assertEquals(budget, nav.maxHeightPx)
                     assertTrue(nav.height in 1..budget)
                     assertEquals(622, nav.bottom)
-                    assertEquals(listOf("100 m", "Test Street", instruction), nav.texts())
+                    assertEquals(listOf("100 m", "Test Street", if (hasInstruction) instruction else "2.1 km"), nav.texts())
                     val cue = find<ImageView>(nav).single { it.isShown }
                     assertEquals("turn-$direction", cue.contentDescription)
                     val cueBounds = Rect(0, 0, cue.width, cue.height)
