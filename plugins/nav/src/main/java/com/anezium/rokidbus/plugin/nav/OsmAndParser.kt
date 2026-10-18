@@ -35,6 +35,7 @@ internal object OsmAndParser {
             primary = NavText.fit(distance, ActivitySurfaceContract.MAX_PRIMARY_CHARS),
             secondary = (street ?: maneuver.takeIf(String::isNotEmpty))
                 ?.let { NavText.fit(it, ActivitySurfaceContract.MAX_SECONDARY_CHARS) },
+            street = street ?: maneuver.takeIf(String::isNotEmpty),
             eta = eta,
             detail = if (street != null && maneuver.isNotEmpty()) {
                 listOf(NavText.fit(maneuver, ActivitySurfaceContract.MAX_DETAIL_CHARS))

@@ -76,6 +76,11 @@ internal data class NavGuidance(
     val detail: List<String> = emptyList(),
     val badge: String? = null,
     val track: NavTrack? = null,
+    /**
+     * The place [secondary] names, as the app wrote it and before the activity line's bound:
+     * for the route page's wider street field, never for the activity.
+     */
+    val street: String? = null,
     /** A second quantity for [primary]: the distance of a walk timed in minutes. */
     val measure: String? = null,
     val progressPercent: Int? = null,

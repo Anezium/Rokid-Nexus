@@ -118,7 +118,9 @@ internal object NavRoutePage {
         val maneuver = RouteManeuver(
             glyph = if (guidance.arrived) "arrive" else glyphName(guidance.glyph),
             distance = fit(if (guidance.arrived) text.arrived else guidance.primary, MAX_DISTANCE),
-            street = guidance.secondary?.let { fit(it, PageTemplateContract.MAX_STREET_CHARS) },
+            // The app's whole name for the place: the page's street field is wider than the
+            // activity line that was bounded before the wire.
+            street = (guidance.street ?: guidance.secondary)?.let { fit(it, PageTemplateContract.MAX_STREET_CHARS) },
             eta = guidance.eta?.let { fit(it, PageTemplateContract.MAX_ETA_CHARS) },
         )
         val facts = listOfNotNull(
