@@ -12,6 +12,9 @@ import java.util.concurrent.RejectedExecutionException
 /** A tile response: [headers] by lower-case name, [body] only for a 200 and never beyond the bound asked for. */
 internal class TileResponse(val code: Int, val headers: Map<String, String>, val body: ByteArray? = null)
 
+/** Received policy still applies when reading the body fails, including cancellation. */
+internal class TileResponseFailure(val headers: Map<String, String>, cause: IOException) : IOException(cause)
+
 /** One request in flight; [cancel] may come from any thread and makes [execute] fail rather than succeed. */
 internal interface TileCall {
     /** @throws IOException on any failure to obtain a whole response, cancellation included. */
@@ -39,6 +42,7 @@ internal class HttpTileTransport(private val userAgent: String = USER_AGENT) : T
             if (cancelled) throw IOException("cancelled")
             val request = URI(url).toURL().openConnection() as HttpURLConnection
             connection = request
+            var receivedHeaders: Map<String, String>? = null
             try {
                 request.connectTimeout = CONNECT_TIMEOUT_MS
                 request.readTimeout = READ_TIMEOUT_MS
@@ -53,6 +57,7 @@ internal class HttpTileTransport(private val userAgent: String = USER_AGENT) : T
                 val responseHeaders = request.headerFields.entries
                     .filter { it.key != null && it.value.isNotEmpty() }
                     .associate { it.key.lowercase(Locale.ROOT) to it.value.joinToString(",") }
+                receivedHeaders = responseHeaders
                 if (code != HttpURLConnection.HTTP_OK) return TileResponse(code, responseHeaders)
                 val declared = request.contentLengthLong
                 if (declared > maxBodyBytes) throw IOException("tile response too large")
@@ -70,6 +75,8 @@ internal class HttpTileTransport(private val userAgent: String = USER_AGENT) : T
                 }
                 if (cancelled) throw IOException("cancelled")
                 return TileResponse(code, responseHeaders, body)
+            } catch (failure: IOException) {
+                throw receivedHeaders?.let { TileResponseFailure(it, failure) } ?: failure
             } finally {
                 request.disconnect()
                 connection = null
@@ -180,7 +187,8 @@ internal class NavBasemap(
             post(Runnable { requested() })
             val response = try {
                 request.execute()
-            } catch (_: IOException) {
+            } catch (error: IOException) {
+                if (error is TileResponseFailure && TileFreshness.of(wallClock(), error.headers) == null) invalidateStorage()
                 return if (cancelled) Outcome.Cancelled else failure()
             }
             val received = wallClock()

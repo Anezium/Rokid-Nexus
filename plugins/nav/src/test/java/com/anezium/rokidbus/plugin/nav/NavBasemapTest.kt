@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.plugin.nav
 
 import com.anezium.rokidbus.plugin.nav.MvtFixtures.line
+import com.sun.net.httpserver.HttpServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -9,9 +10,11 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.IOException
+import java.net.InetSocketAddress
 import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The journey's tile loader: nothing without a view asking, bounded and cancellable work, results
@@ -381,12 +384,88 @@ class NavBasemapTest {
         }
     }
 
+    @Test
+    fun `production HTTP no-store headers evict prior cache when declared or streamed bodies are rejected`() {
+        for (declared in listOf(false, true)) for (hideBeforeCatch in listOf(false, true)) {
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            val source = object : BasemapSource by OsmShortbreadSource {
+                override fun url(key: TileKey) = "http://127.0.0.1:${server.address.port}/tile"
+            }
+            val rejectBody = AtomicBoolean()
+            server.createContext("/tile") { exchange ->
+                val rejected = rejectBody.get()
+                exchange.responseHeaders.add("Cache-Control", if (rejected) "no-store" else "max-age=300")
+                exchange.responseHeaders.add("ETag", "v1")
+                val body = if (rejected) ByteArray(2048) else tile
+                exchange.sendResponseHeaders(200, if (rejected && !declared) 0 else body.size.toLong())
+                // The client may close as soon as it rejects Content-Length.
+                try { exchange.responseBody.use { it.write(body) } } catch (_: IOException) { exchange.close() }
+            }
+            server.start()
+            val cache = BasemapCache(folder.newFolder()) { wall }
+            val sentHeaders = mutableListOf<Map<String, String>>()
+            var offline = false
+            lateinit var loader: NavBasemap
+            val http = HttpTileTransport()
+            val transport = TileTransport { url, headers, limit ->
+                sentHeaders += headers
+                val call = http.call(url, headers, minOf(limit, 1024))
+                object : TileCall {
+                    override fun execute(): TileResponse {
+                        if (offline) throw IOException("offline")
+                        return try { call.execute() } catch (failure: IOException) {
+                            assertTrue(failure is TileResponseFailure)
+                            assertEquals("no-store", (failure as TileResponseFailure).headers["cache-control"])
+                            if (hideBeforeCatch) loader.demand(emptyList())
+                            throw failure
+                        }
+                    }
+                    override fun cancel() = call.cancel()
+                }
+            }
+            loader = basemap(cache, source, transport)
+            try {
+                loader.demand(listOf(keys[0]))
+                settle()
+                assertTrue(loader.tiles.tiles.isNotEmpty())
+                assertTrue(cache.read(source, keys[0]) != null)
+                elapsed += 600_000
+                wall += 600_000
+                rejectBody.set(true)
+                loader.demand(listOf(keys[0]))
+                settle()
+                assertEquals("v1", sentHeaders.last()["If-None-Match"])
+                assertNull(cache.read(source, keys[0]))
+                assertTrue("declared=$declared hideBeforeCatch=$hideBeforeCatch", loader.tiles.tiles.isEmpty())
+                loader.demand(emptyList())
+                offline = true
+                elapsed += NavBasemap.MIN_REFRESH_MS
+                loader.demand(listOf(keys[0]))
+                settle()
+                assertTrue(loader.tiles.tiles.isEmpty())
+                assertTrue(sentHeaders.last().isEmpty())
+                loader.close()
+                val reopened = basemap(cache, source, transport)
+                reopened.demand(listOf(keys[0]))
+                settle()
+                assertTrue(reopened.tiles.tiles.isEmpty())
+                assertTrue(sentHeaders.last().isEmpty())
+                reopened.close()
+            } finally {
+                loader.close()
+                server.stop(0)
+            }
+        }
+    }
+
     private fun basemap(cache: BasemapCache? = null,
+        source: BasemapSource = OsmShortbreadSource,
+        transport: TileTransport = this.transport,
         prepare: (TileKey, ByteArray, RouteLine) -> LocalTile = { key, body, line -> LocalTile.of(ShortbreadTiles.decode(key, body), line) },
     ) = NavBasemap(
         // Each journey has its own workers; closing one shuts only those.
         executor = ManualExecutor().also { executor = it },
-        source = OsmShortbreadSource,
+        source = source,
         line = route,
         cache = cache,
         transport = transport,
