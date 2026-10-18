@@ -174,15 +174,19 @@ internal class RouteLine(val points: List<GeoPoint>) {
         for (index in 1 until meters.size) cumulative[index] = cumulative[index - 1] + distance(meters[index - 1], meters[index])
     }
 
-    fun toMeters(point: GeoPoint): MapMeters = MapMeters(
-        (((point.lon - origin.lon + 540.0) % 360.0) - 180.0) * lonScale,
-        -(point.lat - origin.lat) * METERS_PER_DEGREE,
+    fun toMeters(point: GeoPoint): MapMeters = toMeters(point.lat, point.lon)
+
+    /** [toMeters] for coordinates that are not a validated [GeoPoint], such as a map tile's. */
+    fun toMeters(lat: Double, lon: Double): MapMeters = MapMeters(
+        (((lon - origin.lon + 540.0) % 360.0) - 180.0) * lonScale,
+        -(lat - origin.lat) * METERS_PER_DEGREE,
     )
 
-    private fun fromMeters(point: MapMeters) = GeoPoint(
-        origin.lat - point.y / METERS_PER_DEGREE,
-        ((origin.lon + point.x / lonScale + 540.0) % 360.0) - 180.0,
-    )
+    /** The latitude and longitude at [point], longitude wrapped to -180..180 and latitude unchecked. */
+    fun latLonAt(point: MapMeters): Pair<Double, Double> =
+        (origin.lat - point.y / METERS_PER_DEGREE) to ((origin.lon + point.x / lonScale + 540.0) % 360.0) - 180.0
+
+    private fun fromMeters(point: MapMeters): GeoPoint = latLonAt(point).let { (lat, lon) -> GeoPoint(lat, lon) }
 
     fun distance(a: GeoPoint, b: GeoPoint): Double = distance(toMeters(a), toMeters(b))
 

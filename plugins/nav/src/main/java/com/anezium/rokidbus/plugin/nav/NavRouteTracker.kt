@@ -41,6 +41,8 @@ internal data class NavRouteSnapshot(
     val bearingAccuracyDeg: Double? = null,
     val quality: RouteQuality = RouteQuality.WAITING,
     val atMs: Long = 0L,
+    /** The street tiles loaded for this journey's views; none until the map asks for them. */
+    val basemap: NavBasemapTiles = NavBasemapTiles.NONE,
 ) {
     val remainingMeters: Double get() = (route.lengthMeters - progressMeters).coerceAtLeast(0.0)
 

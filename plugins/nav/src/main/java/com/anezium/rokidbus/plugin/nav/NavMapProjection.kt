@@ -40,8 +40,10 @@ internal data class NavMapBudget(
  * Projects a walking journey into the bounded route geometry the hub draws (north-up, 1000 units
  * across). Only measured data goes in: the planned route, split at the confirmed progress into
  * the walked `completed` part and the `route` ahead, the next turn, the destination, the street
- * names the planner returned, and the wearer's last trusted position with its age. There is no
- * street map behind it, so no `street` or `major` path is ever drawn from guesses.
+ * names the planner returned, and the wearer's last trusted position with its age. The route
+ * comes first and is fitted on its own; the OpenStreetMap streets loaded for the view, if any,
+ * then fill what is left of the budget ([NavBasemapLayer]). Without them the map is the route
+ * alone: no `street` or `major` path is ever drawn from guesses.
  *
  * Segments are clipped with Liang-Barsky to the frame, never by moving a vertex onto its border,
  * so a clipped stretch keeps its true direction. A follow frame is centred on the wearer: it holds
@@ -57,20 +59,43 @@ internal object NavMapProjection {
     private const val EXTENT = RouteGeometryContract.EXTENT.toDouble()
     private const val LABEL_CHARS = RouteGeometryContract.MAX_LABEL_CHARS
 
-    fun window(snapshot: NavRouteSnapshot, view: NavMapView): NavMapWindow = when (view) {
-        NavMapView.FOLLOW -> NavMapWindow(followCenter(snapshot), FOLLOW_SPAN_METERS)
-        NavMapView.OVERVIEW -> overviewWindow(snapshot)
-    }
+    /** The ground [view] shows: what [geometry] draws and the street tiles it asks for. */
+    fun window(snapshot: NavRouteSnapshot, view: NavMapView, budget: NavMapBudget = NavMapBudget()): NavMapWindow =
+        routeOnly(snapshot, view, budget).first
+
+    /** The street tiles [view] would draw from [source], or none when the view is too wide for them. */
+    fun tiles(snapshot: NavRouteSnapshot, view: NavMapView, source: BasemapSource): List<TileKey> =
+        NavBasemapLayer.cover(window(snapshot, view), snapshot.route.line, view, source.maxZoom)?.keys.orEmpty()
 
     fun geometry(snapshot: NavRouteSnapshot, view: NavMapView, budget: NavMapBudget = NavMapBudget()): RouteGeometry {
-        if (view == NavMapView.OVERVIEW) return build(snapshot, overviewWindow(snapshot), budget)
+        // The activity's map and the route page draw the same journey state: the second asks for it once.
+        synchronized(recent) {
+            recent.firstOrNull { it.snapshot === snapshot && it.view == view && it.budget == budget }?.let { return it.geometry }
+        }
+        val (window, route) = routeOnly(snapshot, view, budget)
+        val geometry = NavBasemapLayer.draw(route, window, snapshot.route.line, view, budget, snapshot.basemap)
+        synchronized(recent) {
+            recent.addFirst(Drawn(snapshot, view, budget, geometry))
+            while (recent.size > RECENT) recent.removeLast()
+        }
+        return geometry
+    }
+
+    private class Drawn(val snapshot: NavRouteSnapshot, val view: NavMapView, val budget: NavMapBudget, val geometry: RouteGeometry)
+
+    private const val RECENT = 4
+    private val recent = ArrayDeque<Drawn>()
+
+    private fun routeOnly(snapshot: NavRouteSnapshot, view: NavMapView, budget: NavMapBudget): Pair<NavMapWindow, RouteGeometry> {
+        if (view == NavMapView.OVERVIEW) return overviewWindow(snapshot).let { it to build(snapshot, it, budget) }
         // Off the route, the follow frame widens around the wearer until the route is back in it,
         // instead of drawing a connector nobody measured.
         val center = followCenter(snapshot)
         var span = FOLLOW_SPAN_METERS
         while (true) {
-            val geometry = build(snapshot, NavMapWindow(center, span), budget)
-            if (geometry.paths.isNotEmpty() || span * 2 > RouteGeometryContract.MAX_SPAN_METERS) return geometry
+            val window = NavMapWindow(center, span)
+            val geometry = build(snapshot, window, budget)
+            if (geometry.paths.isNotEmpty() || span * 2 > RouteGeometryContract.MAX_SPAN_METERS) return window to geometry
             span *= 2
         }
     }

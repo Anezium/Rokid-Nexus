@@ -25,7 +25,7 @@ class NavMapProjectionTest {
         assertEquals(NavMapProjection.FOLLOW_SPAN_METERS, follow.spanMeters, 0.0)
         assertEquals(RoutePosition(RoutePositionQuality.LIVE, RoutePoint(500, 500)), follow.position)
         assertTrue(follow.paths.flatMap { it.points }.all { it.x in 0..1000 && it.y in 0..1000 })
-        // No street map exists behind a planned walk: no street or major path is ever drawn.
+        // Without street tiles loaded for it, no street or major path is ever drawn.
         assertTrue(follow.paths.none { it.role == RoutePathRole.STREET || it.role == RoutePathRole.MAJOR })
     }
 
