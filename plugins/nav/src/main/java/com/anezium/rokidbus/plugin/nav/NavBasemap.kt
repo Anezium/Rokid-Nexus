@@ -356,7 +356,8 @@ internal class NavBasemap(
         post(Runnable { if (!closed) onChanged() })
     }
 
-    private fun retryAfterS(headers: Map<String, String>): Long? = headers["retry-after"]?.trim()?.toLongOrNull()?.takeIf { it >= 0 }
+    private fun retryAfterS(headers: Map<String, String>): Long? =
+        headers["retry-after"]?.trim()?.toLongOrNull()?.takeIf { it >= 0 }?.coerceAtMost(MAX_PAUSE_MS / 1000)
 
     companion object {
         const val MAX_CONCURRENT = 2
