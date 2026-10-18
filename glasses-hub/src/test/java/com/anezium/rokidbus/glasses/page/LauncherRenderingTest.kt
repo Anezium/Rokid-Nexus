@@ -91,12 +91,15 @@ class LauncherRenderingTest {
         position.edit().clear().commit()
         HudTopInset.restore(activity)
         val events = mutableListOf<Boolean>()
-        // Resolve the merged app assets rather than a library R table in the test classpath.
-        val turnIcons = SessionIconSource { ctx, ref ->
-            val name = (ref as IconRef.Glyph).name.replace('-', '_')
-            val resource = ctx.resources.getIdentifier("ic_glyph_$name", "drawable", ctx.packageName)
-            require(resource != 0) { "Missing merged glyph $name" }
-            ctx.getDrawable(resource)
+        // Use the checked-in glyph geometry without depending on merged app resources in this fixture.
+        val drawableDir = listOf(java.io.File("../bus-client/src/main/res/drawable"), java.io.File("bus-client/src/main/res/drawable"))
+            .first { it.isDirectory }
+        val paths = listOf("left", "right").associate { direction ->
+            val xml = java.io.File(drawableDir, "ic_glyph_turn_$direction.xml").readText()
+            "turn-$direction" to requireNotNull(Regex("""android:pathData="([^"]+)"""").find(xml)).groupValues[1]
+        }
+        val turnIcons = SessionIconSource { _, ref ->
+            paths[(ref as IconRef.Glyph).name]?.let(::GlyphDrawable)
         }
         val nav = NavIslandView(activity, turnIcons) { map ->
             RenderedMapLease(map, { true }, { events += it.getBoolean("visible"); true })
