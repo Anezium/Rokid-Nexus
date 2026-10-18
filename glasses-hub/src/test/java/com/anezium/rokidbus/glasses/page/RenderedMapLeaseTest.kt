@@ -21,6 +21,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 
@@ -37,8 +38,9 @@ class RenderedMapLeaseTest {
         RenderedMapLease(view, { supported }, { events += JSONObject(it.toString()); true }, { now })
     }
 
-    private fun attach(activity: Activity, view: View) {
-        activity.setContentView(view)
+    private fun attach(controller: ActivityController<Activity>, view: View) {
+        controller.get().setContentView(view)
+        controller.visible().windowFocusChanged(true)
         // Let the real window traversal lay out content inside its frame, including decor insets.
         shadowOf(Looper.getMainLooper()).idle()
         assertTrue(view.isAttachedToWindow)
@@ -57,12 +59,12 @@ class RenderedMapLeaseTest {
 
     @Test
     fun `binding alone is not demand and hide detach or unknown authority cancels a real map draw`() {
-        val controller = Robolectric.buildActivity(Activity::class.java).setup()
+        val controller = Robolectric.buildActivity(Activity::class.java).create().start().resume()
         val activity = controller.get()
         val view = RouteMapView(activity, factory)
         view.bind(MapInput(geometry, MapForm.MINIMAP, renderContext = context))
         assertTrue(events.isEmpty())
-        attach(activity, view)
+        attach(controller, view)
         draw(view)
         assertTrue(events.last().getBoolean("visible"))
         assertEquals("follow", events.last().getString("view"))
@@ -88,7 +90,7 @@ class RenderedMapLeaseTest {
 
     @Test
     fun `full map reports only its selected view and Commands clears it without a new visual design`() {
-        val controller = Robolectric.buildActivity(Activity::class.java).setup()
+        val controller = Robolectric.buildActivity(Activity::class.java).create().start().resume()
         val activity = controller.get()
         val view = SessionScreenView(activity, leaseFactory = factory)
         val authority = RenderedMapContext("page", "nav:main", 4, sessionGeneration = 1, frameIndex = 1, requestId = "r1")
@@ -96,7 +98,7 @@ class RenderedMapLeaseTest {
             listOf(ScreenBlock.Map("map", geometry, size = MapSize.FULL, view = mapView, renderContext = authority)),
             null, chromeless = true)
         view.show(screen(MapView.FOLLOW))
-        attach(activity, view)
+        attach(controller, view)
         draw(view)
         assertEquals("follow", events.last().getString("view"))
         view.show(screen(MapView.OVERVIEW))
