@@ -260,6 +260,7 @@ class NavJourneyService : Service(), LocationListener {
         planner?.cancel()
         basemap?.close()
         basemap = null
+        NavMapProjection.forgetRecent()
         NavState.basemapState = BasemapState.NONE
         if (NavControl.mapDemandListener === mapDemand) NavControl.mapDemandListener = null
         worker.shutdownNow()

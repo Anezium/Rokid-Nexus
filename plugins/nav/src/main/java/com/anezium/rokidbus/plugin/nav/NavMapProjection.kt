@@ -81,6 +81,9 @@ internal object NavMapProjection {
         return geometry
     }
 
+    /** A journey ended: its last states, and the street tiles they hold, are not kept for it. */
+    fun forgetRecent() = synchronized(recent) { recent.clear() }
+
     private class Drawn(val snapshot: NavRouteSnapshot, val view: NavMapView, val budget: NavMapBudget, val geometry: RouteGeometry)
 
     private const val RECENT = 4
