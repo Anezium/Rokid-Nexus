@@ -15,7 +15,7 @@
     <string name="nav_settings_walk">Plan a walking route</string>
     <string name="nav_settings_glasses">Follow other navigation apps</string>
     <string name="nav_settings_enabled">App guidance</string>
-    <string name="nav_settings_enabled_sub">Show guidance from the apps below. Off, their live route ends now; walking routes are controlled above.</string>
+    <string name="nav_settings_enabled_sub">Off, a live route from these apps ends now.</string>
     <string name="nav_settings_maps_sub">Turn-by-turn from Google Maps navigation</string>
     <string name="nav_settings_citymapper_sub">Steps, stops and departures from Citymapper GO</string>
     <string name="nav_settings_organic_sub">Distance and street from Organic Maps navigation</string>
