@@ -96,6 +96,24 @@ class NavPagesTest {
         assertEquals(NexusPage.Unavailable, NavPages.page("nav:other", 1, live(walking), text))
     }
 
+    @Test
+    fun `the main page tells when it comes on screen and when it leaves, once each`() {
+        val harness = Harness()
+        // Not requested yet: a visibility for it is not this page's.
+        harness.provider.onVisibility(NavPages.MAIN, true)
+        assertTrue(harness.visibility.isEmpty())
+        harness.provider.onRequest(Harness.Request(NavPages.MAIN))
+        harness.provider.onVisibility(NavPages.COMMANDS, true)
+        harness.provider.onVisibility(NavPages.MAIN, true)
+        harness.provider.onVisibility(NavPages.MAIN, true)
+        harness.provider.onVisibility(NavPages.MAIN, false)
+        harness.provider.onVisibility(NavPages.MAIN, true)
+        // Closed, or the link gone, while on screen: it has left.
+        harness.provider.onClosed(NavPages.MAIN)
+        harness.provider.forget()
+        assertEquals(listOf(true, false, true, false), harness.visibility)
+    }
+
     private class Harness {
         data class Request(val pageId: String, val floor: Long? = null)
 
@@ -105,6 +123,7 @@ class NavPagesTest {
         var scheduled: Pair<Long, () -> Unit>? = null
         var accept = NexusSdkResult.SENT
         var journey: Long? = null
+        val visibility = mutableListOf<Boolean>()
         val provider = NavPageProvider<Request>(
             pageIdOf = Request::pageId,
             floorOf = Request::floor,
@@ -118,6 +137,7 @@ class NavPagesTest {
             schedule = { delay, task -> scheduled = delay to task },
             cancelScheduled = { scheduled = null },
             journey = { journey },
+            visibilityChanged = { visibility += it },
         )
 
         fun runScheduled() {

@@ -6,6 +6,7 @@ import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageSurfaceValidationResult
 import com.anezium.rokidbus.shared.PageTemplateContract
 import com.anezium.rokidbus.shared.RouteManeuver
+import com.anezium.rokidbus.shared.RoutePathRole
 import com.anezium.rokidbus.shared.RoutePositionQuality
 import com.anezium.rokidbus.shared.RouteRibbonBetween
 import com.anezium.rokidbus.shared.RouteStopState
@@ -65,6 +66,34 @@ class NavRoutePageTest {
         assertEquals("Walking route", body.facts.single { it.id == "source" }.value)
         assertTrue(page.actions.any { it.id == NavRoutePage.END_JOURNEY && it.confirm })
         assertNull(body.ribbon)
+        assertValid(page)
+    }
+
+    @Test
+    fun `the page says whose streets its maps draw, or that they show the route alone`() {
+        fun streets(state: NavPageState) = (content(state).body as PageBody.Route).facts.single { it.id == "streets" }.value
+        assertEquals(NavRoutePage.STREETS_LOADING, streets(journey(tracking(100.0)).copy(basemap = BasemapState.LOADING)))
+        val unavailable = journey(tracking(100.0)).copy(basemap = BasemapState.UNAVAILABLE)
+        assertEquals(NavRoutePage.STREETS_UNAVAILABLE, streets(unavailable))
+        assertNull((content(unavailable).body as PageBody.Route).follow!!.attribution)
+
+        // Streets loaded for the view: both maps draw them and credit OpenStreetMap, and so does the fact.
+        val n = 1 shl 14
+        val key = TileKey(14, (WebMercator.worldX(2.0) * n).toInt(), (WebMercator.worldY(48.001) * n).toInt())
+        val body = MvtFixtures.shortbread(
+            (0 until 8).map { MvtFixtures.line(0 to it * 512, 4096 to it * 512, tags = mapOf("kind" to "residential")) } +
+                MvtFixtures.line(2048 to 0, 2048 to 4096, tags = mapOf("kind" to "primary")),
+        )
+        val loaded = tracking(100.0).copy(
+            basemap = NavBasemapTiles(OsmShortbreadSource.attribution, OsmShortbreadSource.maxZoom, mapOf(key to LocalTile.of(ShortbreadTiles.decode(key, body), route.line))),
+        )
+        val page = content(journey(loaded).copy(basemap = BasemapState.READY))
+        val drawn = page.body as PageBody.Route
+        assertEquals("© OpenStreetMap contributors", drawn.facts.single { it.id == "streets" }.value)
+        assertEquals("© OpenStreetMap", drawn.follow!!.attribution)
+        assertTrue(drawn.follow!!.paths.any { it.role == RoutePathRole.STREET })
+        assertEquals(PageTemplateContract.MAX_ROUTE_FACTS, drawn.facts.size)
+        // The credit and the streets survive the page's own wire form.
         assertValid(page)
     }
 
