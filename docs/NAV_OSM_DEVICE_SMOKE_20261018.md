@@ -98,6 +98,11 @@ metadata. Wi-Fi, mobile data and Bluetooth are on, airplane mode is off, the pho
 hub runs and the glasses are at native home without a route overlay. Accounts,
 pairing and all other plugin preferences were preserved. No microphone was used.
 
+For the subsequent accepted Navigation-only setting and HUD correction, signed
+in-place upgrade, partial device check and remaining GPS-dependent appearance
+check, see [the HUD device report](NAV_HUD_DEVICE_CHECK_20261018.md). The map
+screenshots in this basemap report predate that correction.
+
 The owner then rejected the universal per-plugin Text/Map/Panel settings card:
 only Navigation should currently expose these variants; other presentation is
 chosen by the plugin developer. This is a separate open UI/policy correction,

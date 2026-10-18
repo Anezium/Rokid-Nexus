@@ -108,6 +108,20 @@ no OSM tile traffic, and the original launcher fallback. Dense/hostile inputs
 over the aggregate preparation bound must remain route-only while Stop and
 permission teardown stay responsive. Timing has not been measured on a phone.
 
+## Later HUD correction and device boundary
+
+The Navigation-only display preference and HUD layout correction were independently
+accepted at production `7162e617`, with inspected test-only follow-ups through
+canonical `0aa3eb1b`. All three current signed APKs installed successfully. Actual
+phone UI confirms the Navigation-only choices and restored Automatic preference.
+The stationary current-build route test obtained no first acceptable GPS fix and
+ended without computing a map; the owner declined moving the phone. Current-build
+map/native-row appearance and End-from-glasses therefore remain unverified.
+Temporary permissions and preferences were restored and the journey service is
+absent. See [the HUD device report](../../docs/NAV_HUD_DEVICE_CHECK_20261018.md)
+for exact observed evidence and limits. Older OSM screenshots are not current HUD
+acceptance images.
+
 ## Adversarial review and resolution
 
 One Synara worktree review thread (`agent-fc4cd4fa487452b4ddfe191680401551`)
