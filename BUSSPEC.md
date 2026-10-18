@@ -2387,6 +2387,8 @@ glasses' bit and authenticated SPP up. Generic launcher support is insufficient.
 Rendered-map negotiation is cleared when that authenticated session is lost or
 replaced, independently of retained launcher support. Until a fresh peer
 announcement, the replacement connection exposes no rendered-map capability.
+Announcements retain their originating SPP session or current CXR generation;
+callbacks captured before retirement cannot seed support for its replacement.
 Old phone/new glasses and new phone/old glasses therefore remain route-only
 for Navigation's OSM data. The old launcher fallback is unchanged.
 

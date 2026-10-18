@@ -68,8 +68,8 @@ public class RenderedMapReconnectTest {
             });
         NexusPluginClient client = new NexusPluginClient("nav", callbacks, transport, SystemClock::elapsedRealtime);
         try {
-            connect(hub, negotiation);
-            negotiation.announce(announcement(true));
+            SppAuthProtocol.Session session = connect(hub, negotiation);
+            negotiation.announce(announcement(true), new PhoneRenderedMapNegotiation.Origin.Spp(session));
             client.onRegistrationState(PluginRegistrationResult.APPROVED);
             client.onLinkState(LinkStateBits.SPP_DATA_UP);
             assertTrue(client.getSupportsRenderedMaps());
@@ -91,24 +91,25 @@ public class RenderedMapReconnectTest {
             ReflectionHelpers.callInstanceMethod(hub, "closeSocket", ClassParameter.from(BluetoothSocket.class, (BluetoothSocket) null));
             assertEquals(0, transport.capabilities() & BusCapabilityBits.RENDERED_MAP);
             assertNotEquals(0, transport.capabilities() & BusCapabilityBits.LAUNCHER_INTERACTIVE);
-            connect(hub, negotiation);
+            session = connect(hub, negotiation);
             assertEquals(0, transport.capabilities() & BusCapabilityBits.RENDERED_MAP);
             main.post(() -> client.onLinkState(0));
             main.post(() -> client.onLinkState(LinkStateBits.SPP_DATA_UP));
             shadowOf(Looper.getMainLooper()).idle();
             assertFalse(client.getSupportsRenderedMaps());
             assertNull(delivered.get(delivered.size() - 1).getAttribution());
-            negotiation.announce(announcement(false));
+            negotiation.announce(announcement(false), new PhoneRenderedMapNegotiation.Origin.Spp(session));
             client.onLinkState(LinkStateBits.SPP_DATA_UP);
             assertFalse(client.getSupportsRenderedMaps());
             assertNull(delivered.get(delivered.size() - 1).getAttribution());
-            negotiation.announce(announcement(true));
+            negotiation.announce(announcement(true), new PhoneRenderedMapNegotiation.Origin.Spp(session));
             client.onLinkState(LinkStateBits.SPP_DATA_UP);
             assertTrue(client.getSupportsRenderedMaps());
             assertNotNull(delivered.get(delivered.size() - 1).getAttribution());
             // A fresh CXR announcement may precede SPP authentication for the same new session.
             ReflectionHelpers.callInstanceMethod(hub, "closeSocket", ClassParameter.from(BluetoothSocket.class, (BluetoothSocket) null));
-            negotiation.announce(announcement(true));
+            negotiation.cxrConnectionChanged(true);
+            negotiation.announce(announcement(true), negotiation.cxrOrigin());
             assertEquals(0, transport.capabilities() & BusCapabilityBits.RENDERED_MAP);
             connect(hub, negotiation);
             client.onLinkState(LinkStateBits.SPP_DATA_UP);
@@ -127,7 +128,7 @@ public class RenderedMapReconnectTest {
             .put(LauncherInteractiveContract.CAPABILITY_FIELD_VERSION, LauncherInteractiveContract.VERSION));
     }
 
-    private static void connect(BusHubService hub, PhoneRenderedMapNegotiation negotiation) throws Exception {
+    private static SppAuthProtocol.Session connect(BusHubService hub, PhoneRenderedMapNegotiation negotiation) throws Exception {
         BluetoothSocket socket = BluetoothAdapter.getDefaultAdapter().getRemoteDevice("02:00:00:00:00:01")
             .createInsecureRfcommSocketToServiceRecord(BusConstants.INSTANCE.getSPP_UUID());
         socket.connect(); // Robolectric's socket shadow; no device or radio.
@@ -138,5 +139,6 @@ public class RenderedMapReconnectTest {
         negotiation.sessionStarted(session);
         ReflectionHelpers.setField(hub, "socket", socket);
         ReflectionHelpers.setField(hub, "sppSession", session);
+        return session;
     }
 }

@@ -753,7 +753,10 @@ class BusHubService : Service() {
 
     private val linkCallback = object : ICXRLinkCbk {
         override fun onCXRLConnected(connected: Boolean) {
-            cxrConnected = connected
+            synchronized(sppLock) {
+                cxrConnected = connected
+                renderedMapNegotiation.cxrConnectionChanged(isCxrUp())
+            }
             sppCxrIdentity.onConnectionChanged(isCxrUp())
             if (!connected) glassesWorn = false
             log("CXR-L connected=$connected")
@@ -766,7 +769,10 @@ class BusHubService : Service() {
         }
 
         override fun onGlassBtConnected(connected: Boolean) {
-            glassBtConnected = connected
+            synchronized(sppLock) {
+                glassBtConnected = connected
+                renderedMapNegotiation.cxrConnectionChanged(isCxrUp())
+            }
             sppCxrIdentity.onConnectionChanged(isCxrUp())
             if (!connected) glassesWorn = false
             log("Hi Rokid glass BT connected=$connected")
@@ -886,6 +892,7 @@ class BusHubService : Service() {
 
     private val customCmdCallback = object : ICustomCmdCbk {
         override fun onCustomCmdResult(key: String, payload: ByteArray) {
+            val origin = renderedMapCxrOrigin()
             // Every way out of this callback says so. A frame that reaches the phone's Rokid app
             // and then vanishes here used to leave no trace at all, which made "the callback was
             // never invoked" and "the callback ran and dropped the frame" impossible to tell apart
@@ -901,7 +908,7 @@ class BusHubService : Service() {
             }
             if (SppKeyProvisioning.isReserved(envelope.path)) return
             log("CXR RX ${envelope.path} id=${envelope.id}")
-            routeRemote(envelope)
+            routeRemote(envelope, origin)
         }
     }
 
@@ -1298,8 +1305,11 @@ class BusHubService : Service() {
         if (::coreRemoteBridge.isInitialized) coreRemoteBridge.close()
         runCatching { cxrLink?.disconnect() }
         cxrLink = null
-        cxrConnected = false
-        glassBtConnected = false
+        synchronized(sppLock) {
+            cxrConnected = false
+            glassBtConnected = false
+            renderedMapNegotiation.cxrConnectionChanged(false)
+        }
         sppCxrIdentity.onConnectionChanged(false)
         glassesWorn = false
         closeSocket()
@@ -1672,7 +1682,14 @@ class BusHubService : Service() {
             )
         }.orElse(null)
 
-    private fun routeRemote(envelope: BusEnvelope) {
+    private fun routeRemote(envelope: BusEnvelope) = routeRemote(envelope, null)
+
+    private fun renderedMapCxrOrigin(): PhoneRenderedMapNegotiation.Origin? = synchronized(sppLock) {
+        renderedMapNegotiation.cxrConnectionChanged(isCxrUp())
+        renderedMapNegotiation.cxrOrigin()
+    }
+
+    private fun routeRemote(envelope: BusEnvelope, renderedMapOrigin: PhoneRenderedMapNegotiation.Origin?) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
         if (envelope.path == RenderedMapContract.PATH) {
             if (RenderedMapContract.supported(capabilities())) {
@@ -1696,7 +1713,7 @@ class BusHubService : Service() {
         }
         if (envelope.path == BusPaths.HUB_CAPABILITIES) {
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.OK)
-            updateRemoteCapabilities(envelope.payload)
+            updateRemoteCapabilities(envelope.payload, renderedMapOrigin)
             val advertised = GlassesHubCapabilitiesContract.parse(envelope.payload)
             pageBroker.onGlassesCapabilities(
                 advertised.pageSessionVersion,
@@ -4111,8 +4128,12 @@ class BusHubService : Service() {
         while (true) {
             val envelope = session.read(input) ?: return
             log("SPP RX ${envelope.path} id=${envelope.id}")
-            routeRemote(envelope)
+            routeSpp(envelope, session)
         }
+    }
+
+    private fun routeSpp(envelope: BusEnvelope, session: SppAuthProtocol.Session) {
+        routeRemote(envelope, PhoneRenderedMapNegotiation.Origin.Spp(session))
     }
 
     @SuppressLint("MissingPermission")
@@ -4156,8 +4177,11 @@ class BusHubService : Service() {
         val bound = runCatching { link.connect(token) }.getOrDefault(false)
         log("CXR-L connect requested bound=$bound")
         if (!bound) {
-            cxrConnected = false
-            glassBtConnected = false
+            synchronized(sppLock) {
+                cxrConnected = false
+                glassBtConnected = false
+                renderedMapNegotiation.cxrConnectionChanged(false)
+            }
             sppCxrIdentity.onConnectionChanged(false)
             glassesWorn = false
             notifyLinkState()
@@ -5303,6 +5327,7 @@ class BusHubService : Service() {
     }
 
     private fun notifyLinkState() {
+        synchronized(sppLock) { renderedMapNegotiation.cxrConnectionChanged(isCxrUp()) }
         val state = linkState()
         if (::youtubeSetup.isInitialized) {
             val cxrConnected = state and LinkStateBits.CXR_CONTROL_UP != 0
@@ -5503,7 +5528,7 @@ class BusHubService : Service() {
         return PhoneHubCameraCapabilityPolicy.applyLohsRequirement(baseCameraCapabilities(), wifiEnabled)
     }
 
-    private fun updateRemoteCapabilities(payload: JSONObject) {
+    private fun updateRemoteCapabilities(payload: JSONObject, renderedMapOrigin: PhoneRenderedMapNegotiation.Origin?) {
         val advertised = GlassesHubCapabilitiesContract.parse(payload)
         val imageSupported = advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION &&
             advertised.features and BusCapabilityBits.IMAGE_SURFACE != 0 &&
@@ -5532,7 +5557,7 @@ class BusHubService : Service() {
             }
         // Set before the activity resend below: its stamps, capacity and trim follow this version.
         remoteLauncherInteractiveVersion = GlassesHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(advertised)
-        renderedMapNegotiation.announce(advertised)
+        renderedMapNegotiation.announce(advertised, renderedMapOrigin)
         remoteInkSurfaceVersion = acceptedInkVersion
         remoteEditableSurfaceVersion = if (editableSupported) EditableSurfaceContract.VERSION else 0
         remoteMaxImageBytes = if (imageSupported) advertised.maxImageBytes else 0
