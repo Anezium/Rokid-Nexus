@@ -31,6 +31,9 @@ class PhonePageBrokerTest {
         /** Runs once, inside the broker's flush, when a delivery of [path] goes out. */
         var onDelivered: Pair<String, () -> Unit>? = null
 
+        /** Android can retain a registration until after the service binding has been released. */
+        var onUnbound: (() -> Unit)? = null
+
         /** Without SPP, what needs the data plane cannot reach the glasses, as on the real transport. */
         var sppUp = true
 
@@ -74,6 +77,7 @@ class PhonePageBrokerTest {
         }
         override fun unbind(principal: PhonePluginPrincipal) {
             calls += "unbind:${principal.descriptor.id}"
+            onUnbound?.invoke()
         }
         override fun scheduleTick(atMs: Long?) {
             tick = atMs
@@ -703,6 +707,104 @@ class PhonePageBrokerTest {
         host.calls.clear()
         broker.onGlasses(BusPaths.PAGE_CLOSED, JSONObject().put("pageId", "relay:deep").put("reason", "frame_limit"))
         assertTrue(host.calls.isEmpty())
+    }
+
+    @Test
+    fun `hiding the only visible page before requesting detail can invalidate the new request`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+
+        // Reproduce delayed Binder teardown: the old client still appears registered when the
+        // next request arrives, then its replacement retires that epoch during delivery.
+        host.onUnbound = {
+            host.onDelivered = BusPaths.PAGE_REQUEST to {
+                host.live["relay"] = mutableListOf()
+                broker.onRegistrationRemoved(relayA)
+                register(relay, "relay-b")
+            }
+        }
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(false))
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request("r2", "relay:thread", frameIndex = 2))
+
+        val failure = responses().last { it.optString("requestId") == "r2" }
+        assertEquals(PageSurfaceContract.ERROR_PAGE_UNAVAILABLE, failure.getString("error"))
+        assertEquals(2, failure.getInt("frameIndex"))
+        assertEquals("relay", failure.getString("pluginId"))
+        assertEquals(2, host.calls.count { it == "bind:relay" })
+        assertEquals(
+            PhonePageBroker.ERROR_PAGE_NOT_REQUESTED,
+            broker.onProvider(BusPaths.PAGE_RESPONSE, page("r2", "relay:thread", frameIndex = 2), relayA),
+        )
+    }
+
+    @Test
+    fun `page handoffs keep one binding and deliver the detail close before refreshing the list`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        host.onUnbound = {
+            host.live["relay"] = mutableListOf()
+            broker.onRegistrationRemoved(relayA)
+        }
+
+        // Destination demand exists before the source loses its lease. The answer is deferred
+        // until both messages arrive, as with a real asynchronous plugin service.
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request("r2", "relay:thread", frameIndex = 2))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(false))
+        assertTrue(broker.holdsProviderBinding("relay"))
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page("r2", "relay:thread", frameIndex = 2), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true, pageId = "relay:thread", frameIndex = 2))
+        assertEquals(
+            PhonePageBroker.ERROR_PAGE_NOT_REQUESTED,
+            broker.onProvider(BusPaths.PAGE_RESPONSE, page(revision = 2), relayA),
+        )
+
+        host.delivered.clear()
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        val closeDetail = JSONObject().put("pageId", "relay:thread").put("reason", "back")
+            .put("sessionGeneration", 1L).put("frameIndex", 2)
+        broker.onGlasses(BusPaths.PAGE_CLOSED, closeDetail)
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request("r3", reason = "refresh"))
+        assertEquals(
+            listOf(BusPaths.PAGE_VISIBILITY, BusPaths.PAGE_CLOSED, BusPaths.PAGE_REQUEST),
+            host.delivered.map { it.second },
+        )
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page("r3", revision = 2), relayA))
+        assertTrue(responses().none { it.has("error") })
+        assertEquals(1, host.calls.count { it == "bind:relay" })
+        assertEquals(0, host.calls.count { it == "unbind:relay" })
+
+        // Leaving the final page still releases immediately; no retention timer was added.
+        broker.onGlasses(
+            BusPaths.PAGE_CLOSED,
+            JSONObject().put("pageId", "relay:main").put("reason", "back")
+                .put("sessionGeneration", 1L).put("frameIndex", 1),
+        )
+        assertFalse(broker.holdsProviderBinding("relay"))
+        assertEquals(1, host.calls.count { it == "unbind:relay" })
+    }
+
+    @Test
+    fun `a handoff without an answer releases its binding at the original request deadline`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request("r2", "relay:thread", frameIndex = 2))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(false))
+        host.now += PageSurfaceContract.PAGE_TIMEOUT_MS - 1
+        broker.onTick()
+        assertTrue(broker.holdsProviderBinding("relay"))
+        host.now += 1
+        broker.onTick()
+        assertFalse(broker.holdsProviderBinding("relay"))
+        assertEquals(1, host.calls.count { it == "unbind:relay" })
     }
 
     @Test

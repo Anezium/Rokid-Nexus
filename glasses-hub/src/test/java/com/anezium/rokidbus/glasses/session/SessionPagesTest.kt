@@ -96,6 +96,58 @@ class SessionPagesTest {
         JSONObject().put("id", id).put("label", label).put("kind", kind).put("confirm", false)
 
     @Test
+    fun `opening a provider detail requests it before releasing the list lease`() {
+        openProviderPage(body = body(listOf(PageRow("mika", "Mika", target = PageTarget.Page("relay:thread")))))
+        send(SessionEvent.Enter(2_200))
+
+        val request = requested()
+        val cover = effects.filterIsInstance<SendVisibility>().single()
+        assertTrue(effects.indexOf(request) < effects.indexOf(cover))
+        assertEquals("relay:thread", request.request.correlation.pageId)
+        assertEquals(2, request.request.correlation.frameIndex)
+        assertEquals("relay:main", cover.pageId)
+        assertFalse(cover.visible)
+        assertEquals(FrameIdentity(model.generation, 1), cover.frame)
+        assertNull((page().frames.first().status as FrameStatus.Shown).leaseUntilMs)
+        assertTrue(top().status is FrameStatus.Loading)
+
+        respond(request.request, 2_300, epoch = "e1")
+        assertTrue(top().status is FrameStatus.Shown)
+        assertEquals(FrameIdentity(model.generation, 2), effects.filterIsInstance<SendVisibility>().single().frame)
+    }
+
+    @Test
+    fun `back leases the list before closing either a loading or shown detail and then refreshes`() {
+        for (answerDetail in listOf(false, true)) {
+            model = SessionModel()
+            openProviderPage(body = body(listOf(PageRow("mika", "Mika", target = PageTarget.Page("relay:thread")))))
+            val snapshot = (top().status as FrameStatus.Shown).snapshot
+            send(SessionEvent.Enter(2_200))
+            if (answerDetail) respond(requested().request, 2_300, epoch = "e1")
+            send(SessionEvent.Back(2_400))
+
+            val lease = effects.filterIsInstance<SendVisibility>().single()
+            val close = effects.filterIsInstance<SendClosed>().single()
+            val refresh = requested()
+            assertTrue(effects.indexOf(lease) < effects.indexOf(close))
+            // A refresh prunes deeper broker/SDK frames, so the close must precede it.
+            assertTrue(effects.indexOf(close) < effects.indexOf(refresh))
+            assertEquals(FrameIdentity(model.generation, 1), lease.frame)
+            assertTrue(lease.visible)
+            assertEquals("relay:thread", close.pageId)
+            assertEquals(FrameIdentity(model.generation, 2), close.frame)
+            assertEquals("refresh", refresh.request.reason)
+            assertEquals(1L, refresh.minimumRevision)
+            assertEquals(snapshot, (top().status as FrameStatus.Loading).previous)
+            assertNull(top().invocation)
+
+            respond(refresh.request, 2_500, revision = 2, epoch = "e1")
+            assertTrue(top().status is FrameStatus.Shown)
+            assertEquals(1, page().frames.size)
+        }
+    }
+
+    @Test
     fun `the selected row follows its key and a new row never steals focus`() {
         openProviderPage()
         send(SessionEvent.Step(1, 2_200))
