@@ -60,7 +60,8 @@ class GlassesDisplaySettingsActivity : Activity() {
             addView(
                 switchRow(
                     title = "Keep activities expanded",
-                    subtitle = "Off, an activity shrinks to a one-line chip 10 seconds after its last update",
+                    subtitle = "Off, the first activity folds to a one-line chip 10 seconds after its last " +
+                        "update; a Navigation size chosen below keeps it as is. The others are chips anyway.",
                     checked = PhoneActivityPresentationSettings(this@GlassesDisplaySettingsActivity)
                         .isAlwaysExpanded(),
                 ) { enabled ->
@@ -181,10 +182,7 @@ class GlassesDisplaySettingsActivity : Activity() {
             addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, "Glasses launcher"))
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
             addView(
-                NexusUi.rowSub(
-                    this@GlassesDisplaySettingsActivity,
-                    "Default follows the glasses' own setting. Classic is the previous launcher, there to go back to.",
-                ).apply { maxLines = 3 },
+                note("Default follows the glasses' own setting. Classic is the previous launcher, there to go back to."),
             )
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 6))
             val store = PhoneLauncherBackendStore(this@GlassesDisplaySettingsActivity)
@@ -243,23 +241,16 @@ class GlassesDisplaySettingsActivity : Activity() {
             addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, "Navigation display"))
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
             addView(
-                NexusUi.rowSub(
-                    this@GlassesDisplaySettingsActivity,
-                    "How large a route is drawn on the glasses. Text: arrow, distance, street. " +
-                        "Minimap adds a heading-up map. Panel: wide map with street names. " +
-                        "Automatic lets the glasses choose. The same choice is on the glasses' route page. " +
-                        "Other plugins keep the presentation their developer chose.",
-                ).apply { maxLines = 6 },
+                note(
+                    "Text shows arrow, distance and street. Minimap adds a heading-up map. Panel is a " +
+                        "wide map with street names. Automatic lets the glasses decide. Also on the " +
+                        "glasses' route page. Other plugins keep their developer's presentation.",
+                ),
             )
             val owners = islandOwners()
             if (owners.isEmpty()) {
                 addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 8))
-                addView(
-                    NexusUi.rowSub(
-                        this@GlassesDisplaySettingsActivity,
-                        "Allow Navigation to show on your glasses (Settings › Plugin access) to choose its size.",
-                    ).apply { maxLines = 3 },
-                )
+                addView(note("Allow Navigation to show on your glasses (Settings › Plugin access) to choose its size."))
                 return@apply
             }
             val store = PhoneAmbientPreferencesStore.shared(this@GlassesDisplaySettingsActivity)
@@ -317,11 +308,22 @@ class GlassesDisplaySettingsActivity : Activity() {
                     orientation = LinearLayout.VERTICAL
                     addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, title))
                     addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
-                    addView(NexusUi.rowSub(this@GlassesDisplaySettingsActivity, subtitle).apply { maxLines = 3 })
+                    addView(note(subtitle))
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
             addView(styledSwitch(checked, onChange))
+        }
+
+    /**
+     * An explanation under a title. The page scrolls, but scrolling cannot reveal what a capped
+     * TextView dropped behind its ellipsis, so these never cap: at a large font size the text
+     * takes the lines it needs.
+     */
+    private fun note(text: String): TextView =
+        NexusUi.rowSub(this, text).apply {
+            maxLines = Int.MAX_VALUE
+            ellipsize = null
         }
 
     private fun styledSwitch(checked: Boolean, onChange: (Boolean) -> Unit): Switch =
