@@ -1,8 +1,10 @@
 package com.anezium.rokidbus.phone
 
+import android.annotation.TargetApi
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputFilter
@@ -12,6 +14,8 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -30,6 +34,7 @@ internal class ComposeKeyboardActivity : Activity(), ComposeKeyboardScreen {
     private lateinit var counter: TextView
     private var request: ComposeTypeStart? = null
     private var binding = false
+    private var backCallback: Any? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,6 +43,7 @@ internal class ComposeKeyboardActivity : Activity(), ComposeKeyboardScreen {
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE,
         )
         buildUi()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerBackCallback()
     }
 
     override fun onStart() {
@@ -55,9 +61,39 @@ internal class ComposeKeyboardActivity : Activity(), ComposeKeyboardScreen {
         super.onStop()
     }
 
-    @Deprecated("Deprecated in Java")
+    override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) unregisterBackCallback()
+        // Finished by a route that skipped end(): the capture must not outlive its keyboard with
+        // the glasses still showing "typing". Nothing is committed on this path.
+        if (isFinishing && request != null) end(commit = false)
+        super.onDestroy()
+    }
+
+    /**
+     * Legacy fallback: below API 33 the platform dispatches Back here. From API 33 the window's
+     * OnBackInvokedCallback receives it instead, and with targetSdk 36 the opt-in is the default,
+     * so without [registerBackCallback] Back finished the screen and left the capture running.
+     * Exactly one of the two paths receives a given Back, so both share [end].
+     */
+    @Deprecated("Uses the platform back callback on API 33+")
     override fun onBackPressed() {
         end(commit = false)
+    }
+
+    @TargetApi(Build.VERSION_CODES.TIRAMISU)
+    private fun registerBackCallback() {
+        if (backCallback != null) return
+        // The IME registers its own callback over this one while it is up, so the first Back
+        // only hides the keyboard; the next one reaches here and cancels the capture.
+        val callback = OnBackInvokedCallback { end(commit = false) }
+        onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
+        backCallback = callback
+    }
+
+    @TargetApi(Build.VERSION_CODES.TIRAMISU)
+    private fun unregisterBackCallback() {
+        (backCallback as? OnBackInvokedCallback)?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
+        backCallback = null
     }
 
     override fun onCaptureChanged(request: ComposeTypeStart, text: String) {
