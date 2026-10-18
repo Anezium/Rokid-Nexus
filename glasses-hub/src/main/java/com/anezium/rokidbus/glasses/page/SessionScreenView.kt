@@ -76,6 +76,9 @@ internal class SessionScreenView(
     /** The views of the blocks last drawn, by block key; for tests and focus. */
     val blockViews = linkedMapOf<String, View>()
 
+    /** Where the cards' moving lines stand, so a render of the same screen does not restart them. */
+    private val overflowMemory = OverflowMemory()
+
     init {
         orientation = VERTICAL
         setBackgroundColor(PageStyle.black)
@@ -110,8 +113,17 @@ internal class SessionScreenView(
         headerTitle.text = title.orEmpty()
         headerTrail.text = screen.header?.trail.orEmpty()
         headerIcon.visibility = if (bindIcon(headerIcon, screen.header?.icon, IconTone.BRIGHT)) View.VISIBLE else View.GONE
-        if (title != shownTitle) viewport.resetOffset()
+        if (title != shownTitle) {
+            viewport.resetOffset()
+            overflowMemory.clear()
+        }
         shownTitle = title
+        // Only the selected card's lines may move: the places of every other line, deselected or
+        // gone, are dropped here, and the memory never holds more than one card's three lines.
+        overflowMemory.retainOnly(
+            screen.blocks.filterIsInstance<ScreenBlock.Card>().filter { it.selected }
+                .flatMap { card -> CARD_LINES.map { "${card.key}:$it" } },
+        )
 
         val status = screen.status
         hintAction.text = status ?: screen.hint?.action.orEmpty()
@@ -228,6 +240,11 @@ internal class SessionScreenView(
         return true
     }
 
+    private companion object {
+        /** The roles of a card's moving lines, in their memory keys. */
+        val CARD_LINES = listOf("primary", "secondary", "tertiary")
+    }
+
     private fun paramsFor(block: ScreenBlock): SessionViewport.Params = when (block) {
         is ScreenBlock.Document -> SessionViewport.Params(fill = true, side = PageStyle.TEXT_SIDE_PX)
         is ScreenBlock.Conversation -> SessionViewport.Params(fill = true)
@@ -264,10 +281,12 @@ internal class SessionScreenView(
         val dashed = block.ended || block.dashed
         background = if (dashed) PageStyle.dashedPhosphor(block.selected) else PageStyle.outlined(block.selected)
         setPadding(PageStyle.CARD_PADDING_PX, PageStyle.CARD_TOP_PX, PageStyle.CARD_PADDING_PX, PageStyle.CARD_BOTTOM_PX)
-        fun line(value: CharSequence, sizePx: Float, color: Int, typeface: android.graphics.Typeface) =
+        fun line(role: String, value: CharSequence, sizePx: Float, color: Int, typeface: android.graphics.Typeface) =
             OverflowLineView(context).apply {
                 text = value
                 style(sizePx, color, typeface)
+                memory = overflowMemory
+                memoryKey = "${block.key}:$role"
                 active = block.selected
             }
         val quiet = dashed || block.offline
@@ -296,7 +315,7 @@ internal class SessionScreenView(
                 gravity = Gravity.BOTTOM
                 setPadding(0, 4, 0, 0)
                 addView(
-                    line(block.primary, primarySize, if (block.figure) bright else body, if (block.figure) PageStyle.monoBold else PageStyle.sans),
+                    line("primary", block.primary, primarySize, if (block.figure) bright else body, if (block.figure) PageStyle.monoBold else PageStyle.sans),
                     LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f),
                 )
                 block.measure?.let { addView(PageStyle.text(context, it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, 1).apply { setPadding(10, 0, 0, 0) }) }
@@ -304,12 +323,12 @@ internal class SessionScreenView(
         )
         if (block.figure) {
             // The street line is always reserved, so the card never changes height under a new value.
-            addView(line(block.secondary ?: " ", PageStyle.CARD_BODY_PX, body, PageStyle.sans).apply { setPadding(0, 2, 0, 0) })
+            addView(line("secondary", block.secondary ?: " ", PageStyle.CARD_BODY_PX, body, PageStyle.sans).apply { setPadding(0, 2, 0, 0) })
         } else {
-            block.secondary?.takeIf(String::isNotBlank)?.let { addView(line(it, PageStyle.CARD_BODY_PX, body, PageStyle.sans).apply { setPadding(0, 2, 0, 0) }) }
+            block.secondary?.takeIf(String::isNotBlank)?.let { addView(line("secondary", it, PageStyle.CARD_BODY_PX, body, PageStyle.sans).apply { setPadding(0, 2, 0, 0) }) }
         }
         block.tertiary?.takeIf(String::isNotBlank)?.let {
-            addView(line(it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.sans).apply { setPadding(0, 2, 0, 0) })
+            addView(line("tertiary", it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.sans).apply { setPadding(0, 2, 0, 0) })
         }
         block.commands?.takeIf { it.items.isNotEmpty() }?.let { strip ->
             addView(

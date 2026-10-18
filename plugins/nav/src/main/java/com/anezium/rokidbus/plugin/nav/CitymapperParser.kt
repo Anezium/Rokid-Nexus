@@ -200,6 +200,7 @@ internal class CitymapperParser {
         glyph = glyph,
         primary = NavText.fit(primary, ActivitySurfaceContract.MAX_PRIMARY_CHARS),
         secondary = secondary?.let { NavText.fit(it, ActivitySurfaceContract.MAX_SECONDARY_CHARS) },
+        street = secondary,
         eta = eta,
         detail = detail.map { NavText.fit(it, ActivitySurfaceContract.MAX_DETAIL_CHARS) },
         badge = badge,

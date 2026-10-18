@@ -40,11 +40,58 @@ internal object OverflowScroll {
 }
 
 /**
+ * Where the moving lines of one owner stand, by key, so a line the owner rebuilds continues
+ * where its predecessor was. A screen is drawn afresh on every settled event and an island is
+ * rebound on every changed figure; without this a value ticking once a second would restart
+ * the selected line's hold each time and its hidden end would never arrive.
+ *
+ * The owner, not the line, decides what is forgotten: it keeps only the keys of the lines that
+ * may move now ([retainOnly]) and clears everything on a change of context ([clear]). A line
+ * continues only for the same text in the same room ([resume]); anything else starts afresh.
+ * An entry is a string, a width and a time, nothing that holds a view or a lease.
+ */
+internal class OverflowMemory {
+    private data class Entry(val text: String, val roomPx: Int, val startedAtMs: Long)
+
+    private val entries = HashMap<String, Entry>()
+
+    /** The start time to continue from for [key] with [text] in [roomPx], else [nowMs], now recorded. */
+    fun resume(key: String, text: String, roomPx: Int, nowMs: Long): Long {
+        val entry = entries[key]
+        if (entry != null && entry.text == text && entry.roomPx == roomPx) return entry.startedAtMs
+        entries[key] = Entry(text, roomPx, nowMs)
+        return nowMs
+    }
+
+    fun forget(key: String) {
+        entries.remove(key)
+    }
+
+    /** Keeps the lines that may move now and drops every other: deselected, removed, gone. */
+    fun retainOnly(keys: Collection<String>) {
+        entries.keys.retainAll(keys.toSet())
+    }
+
+    fun clear() {
+        entries.clear()
+    }
+
+    /** For tests: whether a line under [key] is remembered, and how many are. */
+    fun remembers(key: String): Boolean = key in entries
+    val size: Int get() = entries.size
+}
+
+/**
  * A single line that keeps its whole text: at rest it is ellipsized like any line, and while
  * [active] it scrolls to its hidden end as [OverflowScroll] times it. It only ever moves while
  * it is attached, shown and actually wider than its line, and it stops by itself the moment any
  * of that ends, so a card that lost the selection, a hidden island form or a screen that went
  * away costs nothing. The text itself is never changed: a test or a reader sees the full value.
+ *
+ * With a [memory] and a [memoryKey], a line rebuilt by its owner continues from where the one it
+ * replaces was, as long as the text and the room are the same. The line itself only ever forgets
+ * on its own deselection; a line hidden and shown again, or whose text or room changed, starts
+ * afresh; the owner prunes the keys of lines that are gone.
  */
 internal class OverflowLineView(context: Context) : TextView(context) {
     /** Whether this line may move: the selected card's lines, a visible island's street. */
@@ -52,14 +99,23 @@ internal class OverflowLineView(context: Context) : TextView(context) {
         set(value) {
             if (field == value) return
             field = value
+            // Deselected while on screen: this line's place is over. A line built at rest is
+            // not a deselection; its owner decides what it replaces.
+            if (!value && isAttachedToWindow) memoryKey?.let { memory?.forget(it) }
             sync()
         }
+
+    var memory: OverflowMemory? = null
+    var memoryKey: String? = null
 
     /** Whether the line is moving right now; for tests. */
     var scrolling: Boolean = false
         private set
 
     private var startedAtMs = 0L
+    private var startedText = ""
+    private var startedRoom = 0
+    private var hiddenSinceStart = false
     private val step = object : Runnable {
         override fun run() {
             if (!shouldScroll()) {
@@ -84,9 +140,12 @@ internal class OverflowLineView(context: Context) : TextView(context) {
         this.typeface = typeface
     }
 
+    /** The width the text may use. */
+    fun roomPx(): Int = (width - paddingLeft - paddingRight).coerceAtLeast(0)
+
     /** How many pixels of the text lie past the line's width; 0 when it fits. */
     fun overflowPx(): Int {
-        val room = width - paddingLeft - paddingRight
+        val room = roomPx()
         if (room <= 0) return 0
         return (ceil(paint.measureText(text.toString())).toInt() - room).coerceAtLeast(0)
     }
@@ -102,28 +161,51 @@ internal class OverflowLineView(context: Context) : TextView(context) {
     }
 
     override fun onDetachedFromWindow() {
+        // Only the callbacks end here: the owner's memory keeps the place for a successor.
         stop()
         super.onDetachedFromWindow()
     }
 
     override fun onVisibilityAggregated(isVisible: Boolean) {
         super.onVisibilityAggregated(isVisible)
-        if (isVisible) sync() else stop()
+        if (isVisible) {
+            sync()
+        } else {
+            // Hidden: the same line shown again starts over. A detach also passes here, and the
+            // flag then dies with this view while the memory keeps the successor's place.
+            if (scrolling) hiddenSinceStart = true
+            stop()
+        }
     }
 
     private fun shouldScroll(): Boolean = active && isAttachedToWindow && isShown && overflowPx() > 0
 
     private fun sync() {
+        // A moving line whose text or room changed under it reads its new value from the hold.
+        if (scrolling && (text.toString() != startedText || roomPx() != startedRoom)) {
+            memoryKey?.let { memory?.forget(it) }
+            stop()
+        }
         if (shouldScroll()) start() else stop()
     }
 
     private fun start() {
         if (scrolling) return
         scrolling = true
-        startedAtMs = SystemClock.uptimeMillis()
+        val now = SystemClock.uptimeMillis()
+        val value = text.toString()
+        val room = roomPx()
+        if (hiddenSinceStart) {
+            memoryKey?.let { memory?.forget(it) }
+            hiddenSinceStart = false
+        }
+        startedAtMs = memoryKey?.let { memory?.resume(it, value, room, now) } ?: now
+        startedText = value
+        startedRoom = room
         // Laid out at its full width so the text past the line exists to scroll to.
         setHorizontallyScrolling(true)
         ellipsize = null
+        scrollTo(OverflowScroll.offsetAt(now - startedAtMs, overflowPx()), 0)
         postDelayed(step, OverflowScroll.FRAME_MS)
     }
 

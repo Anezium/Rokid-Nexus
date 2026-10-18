@@ -20,7 +20,9 @@ import java.time.Duration
 
 /**
  * A line wider than its room keeps its whole text and, while active and shown, scrolls to the
- * hidden end; it never moves at rest, unattached, hidden, or when the text fits.
+ * hidden end; it never moves at rest, unattached, hidden, or when the text fits. A line its
+ * owner rebuilds continues where the one it replaces was; a line hidden and shown again, resized,
+ * or given a new text starts over. The island case drives the real [NavIslandView.bind].
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [32])
@@ -44,14 +46,17 @@ class OverflowLineTest {
         assertEquals(0, OverflowScroll.offsetAt(5_000, 0))
     }
 
-    private fun line(width: Int, text: String, active: Boolean): Pair<OverflowLineView, FrameLayout> {
-        val view = OverflowLineView(context).apply {
+    private fun line(text: String, active: Boolean, memory: OverflowMemory? = null, key: String? = null): OverflowLineView =
+        OverflowLineView(context).apply {
             this.text = text
             style(PageStyle.CARD_BODY_PX, PageStyle.ink, PageStyle.sans)
+            this.memory = memory
+            this.memoryKey = key
             this.active = active
         }
-        val host = FrameLayout(context).apply { addView(view, FrameLayout.LayoutParams(width, FrameLayout.LayoutParams.WRAP_CONTENT)) }
-        return view to host
+
+    private fun host(width: Int, vararg children: View): FrameLayout = FrameLayout(context).apply {
+        children.forEach { addView(it, FrameLayout.LayoutParams(width, FrameLayout.LayoutParams.WRAP_CONTENT)) }
     }
 
     private fun attach(host: View) {
@@ -65,8 +70,8 @@ class OverflowLineTest {
 
     @Test
     fun `at rest a wide line is ellipsized and still holds its whole text`() {
-        val (view, host) = line(200, long, active = false)
-        attach(host)
+        val view = line(long, active = false)
+        attach(host(200, view))
         assertTrue(view.overflowPx() > 0)
         assertFalse(view.scrolling)
         assertEquals(long, view.text.toString())
@@ -75,8 +80,8 @@ class OverflowLineTest {
 
     @Test
     fun `an active wide line scrolls to its end and back, and shows every character on the way`() {
-        val (view, host) = line(200, long, active = true)
-        attach(host)
+        val view = line(long, active = true)
+        attach(host(200, view))
         assertTrue(view.scrolling)
         assertEquals(0, view.scrollX)
         assertEquals(0, requireNotNull(view.layout).getEllipsisCount(0))
@@ -91,8 +96,8 @@ class OverflowLineTest {
 
     @Test
     fun `a line that fits never scrolls, active or not`() {
-        val (view, host) = line(400, "Rue de Rivoli", active = true)
-        attach(host)
+        val view = line("Rue de Rivoli", active = true)
+        attach(host(400, view))
         assertEquals(0, view.overflowPx())
         assertFalse(view.scrolling)
         idle(OverflowScroll.HOLD_MS + 2_000)
@@ -101,7 +106,8 @@ class OverflowLineTest {
 
     @Test
     fun `losing the selection, being hidden or detached stops the line where it stands`() {
-        val (view, host) = line(200, long, active = true)
+        val view = line(long, active = true)
+        val host = host(200, view)
         attach(host)
         idle(OverflowScroll.HOLD_MS + 1_000)
         assertTrue(view.scrollX > 0)
@@ -125,5 +131,115 @@ class OverflowLineTest {
         assertFalse(view.scrolling)
         idle(3_000)
         assertEquals(0, view.scrollX)
+    }
+
+    @Test
+    fun `a rebuilt line with the same text and room continues where its predecessor was`() {
+        val memory = OverflowMemory()
+        val first = line(long, active = true, memory = memory, key = "card:secondary")
+        val host = host(200, first)
+        attach(host)
+        idle(OverflowScroll.HOLD_MS + 1_000)
+        val moved = first.scrollX
+        assertTrue(moved > 0)
+
+        // The owner rebuilds the line: the new one is built at rest, the old one goes, the new one attaches.
+        host.removeView(first)
+        assertFalse(first.scrolling)
+        val second = line(long, active = true, memory = memory, key = "card:secondary")
+        host.addView(second, FrameLayout.LayoutParams(200, FrameLayout.LayoutParams.WRAP_CONTENT))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(second.scrolling)
+        assertTrue("continued at ${second.scrollX}, not restarted", second.scrollX >= moved)
+        assertEquals(1, memory.size)
+
+        // A different text under the same key starts over.
+        host.removeView(second)
+        val third = line("$long et Oise", active = true, memory = memory, key = "card:secondary")
+        host.addView(third, FrameLayout.LayoutParams(200, FrameLayout.LayoutParams.WRAP_CONTENT))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(0, third.scrollX)
+        idle(OverflowScroll.HOLD_MS - 200)
+        assertEquals(0, third.scrollX)
+
+        // Deselected on screen: the place is dropped, and the next selection starts over.
+        idle(1_000)
+        assertTrue(third.scrollX > 0)
+        third.active = false
+        assertFalse(memory.remembers("card:secondary"))
+        third.active = true
+        assertEquals(0, third.scrollX)
+    }
+
+    @Test
+    fun `a line hidden and shown again, or resized, starts over`() {
+        val memory = OverflowMemory()
+        val view = line(long, active = true, memory = memory, key = "street")
+        val host = host(200, view)
+        attach(host)
+        idle(OverflowScroll.HOLD_MS + 1_000)
+        assertTrue(view.scrollX > 0)
+
+        host.visibility = View.GONE
+        shadowOf(Looper.getMainLooper()).idle()
+        host.visibility = View.VISIBLE
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(view.scrolling)
+        assertEquals(0, view.scrollX)
+        idle(OverflowScroll.HOLD_MS - 200)
+        assertEquals("the hold runs again after a hide", 0, view.scrollX)
+        idle(1_000)
+        assertTrue(view.scrollX > 0)
+
+        view.layoutParams = FrameLayout.LayoutParams(260, FrameLayout.LayoutParams.WRAP_CONTENT)
+        view.requestLayout()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(view.overflowPx() > 0)
+        assertEquals("a new room reads from the hold", 0, view.scrollX)
+        idle(OverflowScroll.HOLD_MS - 200)
+        assertEquals(0, view.scrollX)
+    }
+
+    @Test
+    fun `an island rebound every second with a new distance keeps its street moving to the end`() {
+        val street = "W".repeat(28)
+        val nav = NavIslandView(context)
+        val content = IslandContent.Guidance("turn-left", "120 m", street = street)
+        nav.bind(IslandForm.TEXT, content)
+        attach(host(FrameLayout.LayoutParams.WRAP_CONTENT, nav))
+        fun streetLine(): OverflowLineView = (0 until nav.childCount).map(nav::getChildAt)
+            .flatMap { child -> if (child is android.view.ViewGroup) (0 until child.childCount).map(child::getChildAt) else listOf(child) }
+            .flatMap { child -> if (child is android.view.ViewGroup) (0 until child.childCount).map(child::getChildAt) else listOf(child) }
+            .filterIsInstance<OverflowLineView>().single()
+        val overflow = streetLine().overflowPx()
+        assertTrue("the 28-character street is wider than the text island", overflow > 0)
+        assertTrue(streetLine().scrolling)
+
+        var last = 0
+        var reachedEnd = false
+        repeat((OverflowScroll.cycleMs(overflow) / 1_000L).toInt() + 1) { i ->
+            idle(1_000)
+            nav.bind(IslandForm.TEXT, content.copy(figure = "${120 - 10 * i} m"))
+            shadowOf(Looper.getMainLooper()).idle()
+            val line = streetLine()
+            assertTrue("tick $i rebound the street", line.scrolling)
+            assertTrue("tick $i: ${line.scrollX} after $last", line.scrollX >= last || last == overflow)
+            if (line.scrollX == overflow) reachedEnd = true
+            last = line.scrollX
+        }
+        assertTrue(reachedEnd)
+
+        // A new street starts over; guidance without one forgets it.
+        nav.bind(IslandForm.TEXT, content.copy(street = "V".repeat(28)))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(0, streetLine().scrollX)
+        idle(OverflowScroll.HOLD_MS - 200)
+        assertEquals(0, streetLine().scrollX)
+        idle(1_000)
+        assertTrue(streetLine().scrollX > 0)
+        nav.bind(IslandForm.TEXT, content.copy(street = null))
+        nav.bind(IslandForm.TEXT, content.copy(street = "V".repeat(28)))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(0, streetLine().scrollX)
     }
 }
