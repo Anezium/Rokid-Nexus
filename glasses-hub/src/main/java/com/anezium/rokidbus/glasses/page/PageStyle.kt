@@ -22,6 +22,16 @@ internal object PageStyle {
     const val ASIDE_PX = 13f
     const val CAPTION_PX = 12f
 
+    /**
+     * A root or Activities card and a guidance island: the figure and the line under it are
+     * smaller than a page's, so three cards and the two hub rows share the HUD without
+     * crowding it, and a card never grows taller than its fixed lines.
+     */
+    const val CARD_FIGURE_PX = 24f
+    const val CARD_BODY_PX = 15f
+    const val CARD_TOP_PX = 8
+    const val CARD_BOTTOM_PX = 9
+
     const val HEADER_HEIGHT_PX = 54
     const val HINT_HEIGHT_PX = 40
     const val SIDE_PX = 18

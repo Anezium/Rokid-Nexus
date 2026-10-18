@@ -181,7 +181,7 @@ internal class LocalPages(
                     activity.updatedAtWallMs?.let { PageFact("updated", "Updated", formatTime(it)) },
                 ),
                 items = listOfNotNull(
-                    PageRow(OPEN_APP_ROW, OPEN_FULL_APP, sub = EXCLUSIVE_SURFACE, target = PageTarget.Action(actionId))
+                    PageRow(OPEN_APP_ROW, OPEN_APP, target = PageTarget.Action(actionId))
                         .takeIf { launchable },
                 ),
             ),
@@ -219,7 +219,8 @@ internal class LocalPages(
                     val actionId = TypedPageItems.LAUNCH_PREFIX + pluginId
                     actionId.takeIf(PageSurfaceContract::isValidId)?.let {
                         actions += it to entry.label
-                        PageRow(id, clip(entry.label, PageTemplateContract.MAX_LABEL_CHARS), sub = "$OPEN_FULL_APP · $EXCLUSIVE_SURFACE", target = PageTarget.Action(it))
+                        // The app's name alone: what opening it replaces is said on the Open panel.
+                        PageRow(id, clip(entry.label, PageTemplateContract.MAX_LABEL_CHARS), target = PageTarget.Action(it))
                     }
                 }
                 AppKind.NATIVE, AppKind.CAMERA -> {
@@ -275,8 +276,7 @@ internal class LocalPages(
         const val TITLE_NOTIFICATION = "Notification"
         const val TITLE_ACTIVITIES = "Activities"
         const val TITLE_APPLICATIONS = "Applications"
-        const val OPEN_FULL_APP = "Open the full app"
-        const val EXCLUSIVE_SURFACE = "exclusive surface"
+        const val OPEN_APP = "Open app"
         const val READ_CONVERSATION = "Read this conversation"
         private const val CONVERSATION_ROW = "conversation"
         private const val DESTINATION_ROW = "destination"

@@ -820,14 +820,13 @@ internal class SessionScreens(
                 // Hub commands first, unlabelled; then the plugin's actions; the full app last.
                 val next = when (row.item) {
                     is PageItem.RouteView, PageItem.RouteFullScreen, is PageItem.RouteDisplay -> null
-                    is PageItem.LaunchPrompt -> RoutePresentation.IMMERSION
+                    is PageItem.LaunchPrompt -> RoutePresentation.APP
                     else -> RoutePresentation.PLUGIN_ACTIONS
                 }
                 if (next != null && next != section) blocks += ScreenBlock.Text("section:$next", next, TextRole.SECTION)
                 section = next
                 val sub = row.sub ?: when (row.item) {
                     is PageItem.Confirm -> RoutePresentation.CONFIRM_SUB
-                    is PageItem.LaunchPrompt -> RoutePresentation.IMMERSION_SUB
                     else -> null
                 }
                 blocks += rowBlock(index, row, sub)
@@ -1175,8 +1174,7 @@ internal class SessionScreens(
 
         /** BACK from the rows of read text returns to the text before it leaves the page. */
         const val BACK_TO_TEXT = "back text"
-        const val LAUNCH_EXPLANATION =
-            "Opens the full app as an exclusive surface. It replaces what the glasses show now; BACK leaves it."
+        const val LAUNCH_EXPLANATION = "Opens the app over the glasses screen. BACK leaves it."
 
         /** Command focus on a card (plan 028a §9). */
         const val FOCUS_HINT = "swipe choose · tap run"

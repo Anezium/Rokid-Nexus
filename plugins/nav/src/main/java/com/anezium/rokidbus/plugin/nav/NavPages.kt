@@ -64,9 +64,9 @@ internal object NavPages {
             revision,
             "Commands",
             PageBody.Commands(
-                listOf(PageRow(OPEN_APP, "Open the full app", sub = "exclusive surface", target = PageTarget.Action(OPEN_APP))),
+                listOf(PageRow(OPEN_APP, "Open app", target = PageTarget.Action(OPEN_APP))),
             ),
-            actions = listOf(NexusPageActionSpec(OPEN_APP, "Open full app", NexusPageActionKind.IMMERSION, confirm = false)),
+            actions = listOf(NexusPageActionSpec(OPEN_APP, "Open app", NexusPageActionKind.IMMERSION, confirm = false)),
         )
         else -> NexusPage.Unavailable
     }

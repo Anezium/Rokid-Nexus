@@ -1850,9 +1850,9 @@ entry. The armed band is unchanged.
 
 Applications lists Nexus plugins and native apps as the shipped launcher catalog
 merges them. A plugin that provides pages and is reachable over a negotiated
-pair opens its `<pluginId>:main` page. Every other plugin row reads "Open the
-full app · exclusive surface"; selecting it shows a local panel naming the
-plugin and the replacement, with Open preselected and Cancel, and only SELECT on
+pair opens its `<pluginId>:main` page. Every other plugin row carries the app's
+name alone; selecting it shows a local panel naming the plugin and saying the
+app opens over the glasses screen, with Open preselected and Cancel, and only SELECT on
 Open launches the immersion. BACK cancels; a late surface of a cancelled launch
 is closed unseen. Native apps and the hub camera launch locally and close the
 session on success. A page failure never turns into a launch. Entering

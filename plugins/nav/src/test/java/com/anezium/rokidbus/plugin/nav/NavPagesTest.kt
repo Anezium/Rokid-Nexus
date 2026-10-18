@@ -90,7 +90,7 @@ class NavPagesTest {
     fun `commands holds only the labelled full app, no map or route controls`() {
         val page = NavPages.page(NavPages.COMMANDS, 3, live(walking), text) as NexusPage.Content
         val body = page.body as PageBody.Commands
-        assertEquals(listOf("Open the full app"), body.items.map { it.label })
+        assertEquals(listOf("Open app"), body.items.map { it.label })
         assertEquals(NexusPageActionKind.IMMERSION, page.actions.single().kind)
         assertFalse(page.live)
         assertEquals(NexusPage.Unavailable, NavPages.page("nav:other", 1, live(walking), text))
