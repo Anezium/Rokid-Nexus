@@ -3,7 +3,56 @@
 Status: incomplete. Source corrections and the multi-activity HTML have not been accepted.
 No current compact APK has been installed or validated on the devices.
 
-## Integrated source and observed verification
+## Latest integrated check after subscription resumed
+
+Fable completed source commits `d9b7ca40`, `382062a7` and the test-only correction
+`12085f45`, preserving all interrupted work. Canonical integration is
+`d010156d01214410c0bd783c24d716defe3538a3`. The fresh R6 independent review is
+still running; no current compact APK is accepted or installed.
+
+The full affected suites and debug/release assembly invocation compiled and ran
+both new suites after two initial test-compilation errors were corrected.
+Observed results at this pin:
+
+| Module | Cases | Failures | Errors / skipped |
+|---|---:|---:|---:|
+| phone-hub | 952 | 0 | 0 / 0 |
+| glasses-hub | 1,176 | 3 | 0 / 0 |
+| plugin-nav | 211 | 0 | 0 / 0 |
+
+All six new Navigation long-name cases pass. Three glasses continuity cases fail:
+the rebuilt line remains at offset zero, and the island/root live-update cases do
+not observe the end of the line. The old cue-description assertion now passes.
+The current command used an ignored, per-invocation Gradle init script only to
+forward the fixture-export property to the test JVM; no persistent build or machine
+configuration was changed.
+
+Actual tail from `build/glasses-ux-compact/canonical-r8-tests-build.log`:
+
+```text
+1176 tests completed, 3 failed
+> Task :glasses-hub:testDebugUnitTest FAILED
+...
+BUILD FAILED in 1m 12s
+469 actionable tasks: 8 executed, 461 up-to-date
+```
+
+Machine-readable totals and exact failures: `r8-test-results.json`. Optional PNGs
+were actually produced in `rendered-r7/`. The root with Navigation, Relay, a
+conversation preview and the Activities row fits its viewport. The Activities
+page PNG instead shows the first two cards as empty outlines while the selected
+Todo card is drawn; the HTML shows all three populated. This is an observed
+source-rendered artifact mismatch to investigate, not an established device defect.
+The 728/360 HTML previews have no console errors or clipped frames. Neither those
+previews nor the still images establish working live scrolling.
+
+The same Fable author is correcting the executed continuity failures and checking
+the artifact mismatch. R6 is reviewing an immutable snapshot independently. No
+additional writer, API implementation, device action, GPS, microphone or Send was
+started. The encrypted API credential remains outside the repository as a fallback;
+current implementation uses the restored subscription.
+
+## Earlier integrated source and observed verification
 
 The configured integration checkout is `dev/launcher-rework` at
 `02a7d722d560666c725c1c4c921f1a0d446da00b`. It includes Fable's compact cards,
