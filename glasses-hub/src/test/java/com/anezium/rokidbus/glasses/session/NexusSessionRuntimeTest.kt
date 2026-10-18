@@ -116,7 +116,7 @@ class NexusSessionRuntimeTest {
         val rows = (body(top()) as PageBody.SelectableList).items
         // Without a negotiated pair even a page provider is offered as its full app.
         assertEquals(listOf("Lens", "Relay"), rows.map { it.label })
-        assertTrue(rows.all { it.sub == "Open the full app · exclusive surface" })
+        assertTrue(rows.all { it.sub == null })
 
         send(SessionEvent.Enter(now()))
         val panel = top().panel as FramePanel.Launch

@@ -111,7 +111,7 @@ class RouteNavigationTest {
         assertEquals(
             listOf(
                 "View · Follow", "View · Whole route", "Full screen", "Display",
-                RoutePresentation.PLUGIN_ACTIONS, "Reroute", RoutePresentation.IMMERSION, ActivityCommands.OPEN_APP,
+                RoutePresentation.PLUGIN_ACTIONS, "Reroute", RoutePresentation.APP, ActivityCommands.OPEN_APP,
             ),
             list.blocks.map { (it as? ScreenBlock.Row)?.label ?: (it as ScreenBlock.Text).text },
         )
@@ -119,7 +119,7 @@ class RouteNavigationTest {
         assertEquals("centred on you, heading up", subs["View · Follow"])
         assertEquals("island size during the trip", subs["Display"])
         assertEquals("asks for confirmation", subs["Reroute"])
-        assertEquals("exclusive surface", subs[ActivityCommands.OPEN_APP])
+        assertNull(subs[ActivityCommands.OPEN_APP])
 
         // The list never steps back onto Commands or the map.
         send(SessionEvent.Step(-1, 3_200))

@@ -575,7 +575,7 @@ class SessionPagesTest {
         assertEquals(9, second.items.size)
         assertEquals(PageTarget.Page("nav:main"), second.items.first { it.label == "Navigation" }.target)
         val lens = second.items.first { it.label == "Lens" }
-        assertEquals("Open the full app · exclusive surface", lens.sub)
+        assertNull(lens.sub)
         assertEquals(PageTarget.Action("launch:lens"), lens.target)
     }
 
