@@ -115,17 +115,28 @@ internal class NavBasemap(
     private val executor: ExecutorService = Executors.newFixedThreadPool(MAX_CONCURRENT),
     private val elapsed: () -> Long,
     private val wallClock: () -> Long = System::currentTimeMillis,
+    private val prepare: (TileKey, ByteArray, RouteLine) -> LocalTile = { key, body, route ->
+        LocalTile.of(ShortbreadTiles.decode(key, body), route)
+    },
 ) {
     private class Loaded(val tile: LocalTile, val freshUntilMs: Long, val reusable: Boolean = true)
 
     private inner class Job(val key: TileKey, val revalidate: Boolean, val network: Boolean) : Runnable {
         @Volatile var cancelled = false
 
+        @Volatile var invalidatedStorage = false
+            private set
+
         @Volatile private var call: TileCall? = null
 
         fun cancel() {
             cancelled = true
             call?.cancel()
+        }
+
+        private fun invalidateStorage() {
+            invalidatedStorage = true
+            cache?.remove(source, key)
         }
 
         override fun run() {
@@ -142,7 +153,7 @@ internal class NavBasemap(
             if (cancelled || !displayed(key)) return Outcome.Cancelled
             val stored = cache?.read(source, key)?.let { entry ->
                 try {
-                    entry.freshness to LocalTile.of(ShortbreadTiles.decode(key, entry.body), line)
+                    entry.freshness to prepare(key, entry.body, line)
                 } catch (_: MvtFormatException) {
                     cache.remove(source, key)
                     null
@@ -172,15 +183,18 @@ internal class NavBasemap(
             } catch (_: IOException) {
                 return if (cancelled) Outcome.Cancelled else failure()
             }
-            if (cancelled || !displayed(key)) return Outcome.Cancelled
             val received = wallClock()
+            val responseFreshness = TileFreshness.of(received, response.headers)
+            // Once received, no-store is a storage instruction even if the map disappeared
+            // during execute/decode. Keep it separate from the geometry publication outcome.
+            if (responseFreshness == null) invalidateStorage()
+            if (cancelled || !displayed(key)) return Outcome.Cancelled
             return when (response.code) {
                 HttpURLConnection.HTTP_OK -> {
-                    val freshness = TileFreshness.of(received, response.headers)
-                    if (freshness == null) cache?.remove(source, key)
+                    val freshness = responseFreshness
                     val body = response.body ?: return if (freshness == null) Outcome.Evicted else failure()
                     val tile = try {
-                        LocalTile.of(ShortbreadTiles.decode(key, body), line)
+                        prepare(key, body, line)
                     } catch (_: MvtFormatException) {
                         return if (freshness == null) Outcome.Evicted else failure()
                     }
@@ -192,7 +206,7 @@ internal class NavBasemap(
                     val (previous, tile) = stored ?: return Outcome.Failed(stale = null)
                     val freshness = previous.revalidated(received, response.headers)
                     if (freshness == null) {
-                        cache.remove(source, key)
+                        invalidateStorage()
                         return Outcome.Evicted
                     }
                     cache.refresh(source, key, freshness)
@@ -202,7 +216,8 @@ internal class NavBasemap(
                     cache?.remove(source, key)
                     // An empty tile is a real answer: nothing to draw there.
                     val empty = LocalTile(key, emptyList(), emptyList())
-                    Outcome.Loaded(empty, TileFreshness.of(received, response.headers)?.freshUntilMs() ?: received)
+                    Outcome.Loaded(empty, responseFreshness?.freshUntilMs() ?: received,
+                        reusable = responseFreshness != null && !responseFreshness.requiresValidation)
                 }
                 429, HttpURLConnection.HTTP_UNAVAILABLE -> Outcome.Throttled(retryAfterS(response.headers), stale = storedTile, discardPrevious = mustValidate)
                 else -> failure()
@@ -319,7 +334,7 @@ internal class NavBasemap(
     }
 
     private fun shown(job: Job, tile: LocalTile) {
-        if (closed || job.cancelled || jobs[job.key] !== job || job.key !in demanded || !displayed(job.key)) return
+        if (closed || job.cancelled || job.invalidatedStorage || jobs[job.key] !== job || job.key !in demanded || !displayed(job.key)) return
         if (loaded[job.key]?.tile === tile) return
         put(job.key, Loaded(tile, 0L))
     }
@@ -328,7 +343,7 @@ internal class NavBasemap(
         if (closed || jobs[job.key] !== job) return
         jobs.remove(job.key)
         // Storage invalidation survives a view change between the response and its callback.
-        if (outcome is Outcome.Evicted || (outcome is Outcome.Loaded && !outcome.reusable) ||
+        if (job.invalidatedStorage || outcome is Outcome.Evicted || (outcome is Outcome.Loaded && !outcome.reusable) ||
             (outcome is Outcome.Failed && outcome.discardPrevious) || (outcome is Outcome.Throttled && outcome.discardPrevious)) discard(job.key)
         if (job.cancelled || job.key !in demanded || !displayed(job.key)) {
             pump()
@@ -347,7 +362,7 @@ internal class NavBasemap(
                 backOff(job.key, now)
                 if (outcome.discardPrevious) discard(job.key)
                 // Offline or refused: the stored copy is still real street data, shown until a new one comes.
-                outcome.stale?.let { stale -> if (loaded[job.key]?.tile == null) put(job.key, Loaded(stale, 0L)) }
+                if (!job.invalidatedStorage) outcome.stale?.let { stale -> if (loaded[job.key]?.tile == null) put(job.key, Loaded(stale, 0L)) }
             }
             is Outcome.Throttled -> {
                 if (outcome.discardPrevious) discard(job.key)
@@ -356,7 +371,7 @@ internal class NavBasemap(
                     .coerceIn(MIN_PAUSE_MS, MAX_PAUSE_MS)
                 pausedUntil = now + wait
                 retryAt[job.key] = pausedUntil
-                outcome.stale?.let { stale -> if (loaded[job.key]?.tile == null) put(job.key, Loaded(stale, 0L)) }
+                if (!job.invalidatedStorage) outcome.stale?.let { stale -> if (loaded[job.key]?.tile == null) put(job.key, Loaded(stale, 0L)) }
             }
             Outcome.Deferred -> retryAt[job.key] = maxOf(pausedUntil, now + MIN_RETRY_MS)
             Outcome.Cancelled -> Unit

@@ -346,7 +346,44 @@ class NavBasemapTest {
         assertTrue(loader.tiles.tiles.isEmpty())
     }
 
-    private fun basemap(cache: BasemapCache? = null) = NavBasemap(
+    @Test
+    fun `received no-store evicts disk and RAM when demand ends after execute or during decode`() {
+        for (duringDecode in listOf(false, true)) {
+            val cache = BasemapCache(folder.newFolder()) { wall }
+            lateinit var loader: NavBasemap
+            var hideDuringPreparation = false
+            loader = basemap(cache) { key, body, line ->
+                val prepared = LocalTile.of(ShortbreadTiles.decode(key, body), line)
+                if (hideDuringPreparation) loader.demand(emptyList())
+                prepared
+            }
+            transport.respond = { _, _ -> TileResponse(200, mapOf("cache-control" to "max-age=300"), tile) }
+            loader.demand(listOf(keys[0]))
+            settle()
+            assertTrue(loader.tiles.tiles.isNotEmpty())
+            elapsed += 600_000
+            wall += 600_000
+            transport.respond = { _, _ ->
+                if (duringDecode) hideDuringPreparation = true else loader.demand(emptyList())
+                TileResponse(200, mapOf("cache-control" to "no-store"), tile)
+            }
+            loader.demand(listOf(keys[0]))
+            settle()
+            assertNull(cache.read(OsmShortbreadSource, keys[0]))
+            assertTrue("duringDecode=$duringDecode", loader.tiles.tiles.isEmpty())
+            hideDuringPreparation = false
+            transport.respond = { _, _ -> throw IOException("offline") }
+            loader.demand(listOf(keys[0]))
+            settle()
+            assertTrue(loader.tiles.tiles.isEmpty())
+            assertTrue(transport.headers.last().isEmpty())
+            loader.close()
+        }
+    }
+
+    private fun basemap(cache: BasemapCache? = null,
+        prepare: (TileKey, ByteArray, RouteLine) -> LocalTile = { key, body, line -> LocalTile.of(ShortbreadTiles.decode(key, body), line) },
+    ) = NavBasemap(
         // Each journey has its own workers; closing one shuts only those.
         executor = ManualExecutor().also { executor = it },
         source = OsmShortbreadSource,
@@ -357,6 +394,7 @@ class NavBasemapTest {
         onChanged = { changes++ },
         elapsed = { elapsed },
         wallClock = { wall },
+        prepare = prepare,
     )
 
     private fun drainPosted() {
