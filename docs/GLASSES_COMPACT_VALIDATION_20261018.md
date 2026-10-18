@@ -1,7 +1,6 @@
 # Compact glasses UI validation ? 2026-10-18
 
-Status: tests and builds pass. Final independent review and hardware/owner visual acceptance remain pending.
-No current compact APK has been installed or validated on the devices.
+Status: source/test integration approved by independent R8 review; 2,340 checks pass. Signed compact glasses and Navigation releases installed in place. Bounded on-device render/scroll checks pass; final owner visual approval and fresh GPS map appearance remain pending.
 
 ## Latest check: R10 fixture correction
 
@@ -31,12 +30,53 @@ Fresh source-rendered PNGs and SHA sidecars are in `rendered-r10/`. Each is
 not hardware captures. The unchanged Fable HTML previews without console errors
 at widths 728 and 360 (content heights 2,586 and 2,265).
 
-New independent Sol High R8 review of immutable `9e26f358` is running, with full
-original scope, prior findings, author responses and R7 objections supplied.
-No current compact APK is accepted or installed yet. Physical compact appearance,
-scroll readability and final owner visual approval remain pending. No new journey,
-GPS, microphone or Send action was performed; the owner's declined GPS test is
-respected. Previously passed actual phone Back evidence remains unchanged.
+## Final review and bounded device check
+
+Independent R8 approved immutable `9e26f358` for source/test integration, with no
+outstanding blocker in scope. It independently checked the completed R10 log/XML,
+fresh exports and full prior finding dispositions. Report:
+`build/glasses-ux-compact/REVIEW-R8-SOL.md`. Source/test approval is not owner
+visual acceptance.
+
+Installed the accepted glasses and Navigation signed-release APKs using only
+`adb install -r`; both returned `Success`. Existing signer SHA-256 was verified:
+`f5e938e2e79b0526b31e40d36c8c19098450c1636b7e14a306681b4effddf81c`.
+Frozen local artifacts and exact hashes are in
+`build/glasses-ux-compact/apks/installed-artifacts.json`:
+
+- Glasses SHA-256: `c2afe83367ea7942faabd489bbdc89670f202d756f0059d8edf395b7c7a9b71c`.
+- Navigation SHA-256: `555122c8dc4619b94cc8bd75f6ea7769129c42cc98cd1e48b2a052dd28464e22`.
+
+On the actual glasses, captured the compact root with the Sample Todo activity
+(last-known/offline state) and the local synthetic Relay notification preview.
+Both Notifications and Applications show their canonical marks. The Applications
+page shows compact rows with app icons; the old exclusive-surface subtitle is
+absent. Selecting the Relay preview makes the long message move; screenshots
+three seconds apart differ only inside its text line, bounds `(32,235)-(448,251)`.
+After selecting Notifications, screenshots two seconds apart are pixel-identical.
+These are renderer/input observations; physical wearer readability was not rated.
+
+The root test enabled Sample's Show in activities temporarily. Its switch was
+restored OFF, with Milk/Eggs/Bread/Coffee still to do and Apples still done.
+Media's switch was temporarily enabled, reported nothing playing, and was restored
+OFF without any playback command. Consequently no actual two-promoted-activity
+root was captured in this pass. Navigation/Relay/multiple-activity composition is
+shown separately as a clearly labelled Android source-fixture simulation, not
+hardware evidence or a real route. No new GPS test, journey, microphone, draft or
+Send action occurred. A local test notification/history entry may remain.
+
+Final state: phone Main with hub running, glasses native home, font scale 1.0,
+Bluetooth on, no Navigation journey service. No device/USB reset, uninstall,
+data clear, account, grant, signer or build-environment change. Previously passed
+phone Back and font-scale evidence remains valid; the phone APK was not replaced.
+
+Local evidence: `build/glasses-ux-compact/device-check-r10.json`,
+`build/smoke/shots/compact-*.png`, and the self-contained browser gallery
+`build/smoke/nexus-captures-20261018.html` (43 entries: historical/current real
+captures and three separately labelled source simulations). Gallery preview passed
+at widths 728 and 360 with no console errors. Owner visual approval and current
+Navigation/map/native-row appearance with a real GPS fix remain open; the owner's
+refusal of another GPS test is respected.
 
 ## Historical integrated checks
 
