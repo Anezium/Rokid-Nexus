@@ -142,7 +142,7 @@ internal class RouteMapPainter {
         }
         val labels = RouteMapMath.placeLabels(
             candidates, input.form.maxLabels, MapBox(0f, input.insets.top, width, bottom), reserved,
-            verticalOffsets = listOf(0f, -36f, 36f),
+            verticalOffsets = listOf(0f, -40f, 40f),
         )
         return MapPlan(transform, style, scaleBar, labels, compassX, compassY, attribution)
     }
