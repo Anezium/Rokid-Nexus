@@ -54,11 +54,9 @@ internal class NavRuntime(context: Context) {
 
     fun onGuidance(guidance: NavGuidance) = onMain {
         if (!NavControl.owns(this)) return@onMain
-        if (NavState.guidance != guidance) {
-            NavState.guidance = guidance
-            NavState.updatedAtMs = System.currentTimeMillis()
-            NavControl.guidanceChanged()
-        }
+        NavState.guidance = guidance
+        NavState.updatedAtMs = System.currentTimeMillis()
+        NavControl.guidanceChanged()
         main.removeCallbacks(releaseIdle)
         pending = guidance
         NavControl.holdBus(appContext)
@@ -71,7 +69,6 @@ internal class NavRuntime(context: Context) {
         if (!NavControl.owns(this)) return@onMain
         map.update(snapshot, send = false)
         onGuidance(snapshot.guidance())
-        NavControl.guidanceChanged()
         map.flush()
     }
 
