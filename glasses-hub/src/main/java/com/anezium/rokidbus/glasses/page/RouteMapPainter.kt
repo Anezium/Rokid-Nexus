@@ -35,7 +35,12 @@ internal data class MapPlan(
     /** The compass centre, or null without a compass. */
     val compassX: Float?,
     val compassY: Float?,
+    /** The credit for the map's street data, bottom right, or null when the geometry carries none. */
+    val attribution: MapAttribution? = null,
 )
+
+/** The street data's credit: right-aligned at [right], on [baseline], keeping labels out of [box]. */
+internal data class MapAttribution(val text: String, val right: Float, val baseline: Float, val box: MapBox)
 
 /**
  * The hub's one vector map, at every size: streets dim (major 2.2, others 1.4), the walked part
@@ -43,7 +48,8 @@ internal data class MapPlan(
  * ringed, transit stops boxed with their letter, the wearer an arrow or a dot. A position that
  * cannot be trusted turns the map north-up, dashes the route and drops the arrow. Compass and
  * scale bar sit in the corners; street names, with a black halo, only where they can be read.
- * Everything is outline or small mark on black: no area of the map is ever lit.
+ * The provider's credit for its street data, when it gives one, stays in the bottom-right corner
+ * at every size. Everything is outline or small mark on black: no area of the map is ever lit.
  */
 internal class RouteMapPainter {
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -70,6 +76,14 @@ internal class RouteMapPainter {
         textSize = PageStyle.CAPTION_PX
         color = PageStyle.muted
     }
+    private val smallHalo = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = PageStyle.mono
+        textSize = PageStyle.CAPTION_PX
+        style = Paint.Style.STROKE
+        strokeWidth = HALO_PX
+        strokeJoin = Paint.Join.ROUND
+        color = PageStyle.black
+    }
     private val stopText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = PageStyle.monoBold
         textSize = STOP_TEXT_PX
@@ -90,7 +104,14 @@ internal class RouteMapPainter {
         val compassX = if (input.compass) width - COMPASS_INSET_PX else null
         val compassY = if (input.compass) input.insets.top + COMPASS_INSET_PX else null
         val bottom = height - input.insets.bottom
+        val attribution = geometry.attribution?.let { text ->
+            val right = width - ATTRIBUTION_INSET_PX
+            val baseline = bottom - ATTRIBUTION_INSET_PX
+            val textWidth = small.measureText(text)
+            MapAttribution(text, right, baseline, MapBox(right - textWidth - 4f, baseline - PageStyle.CAPTION_PX - 2f, width, bottom))
+        }
         val reserved = buildList {
+            attribution?.let { add(it.box) }
             if (compassX != null && compassY != null) {
                 add(MapBox(compassX - COMPASS_RADIUS_PX - 2f, compassY - COMPASS_RADIUS_PX - 2f, compassX + COMPASS_RADIUS_PX + 2f, compassY + COMPASS_LETTER_DROP_PX + 4f))
             }
@@ -109,7 +130,7 @@ internal class RouteMapPainter {
             )
         }
         val labels = RouteMapMath.placeLabels(candidates, input.form.maxLabels, MapBox(0f, input.insets.top, width, bottom), reserved)
-        return MapPlan(transform, style, scaleBar, labels, compassX, compassY)
+        return MapPlan(transform, style, scaleBar, labels, compassX, compassY, attribution)
     }
 
     fun draw(canvas: Canvas, input: MapInput, plan: MapPlan, width: Float, height: Float) {
@@ -178,6 +199,7 @@ internal class RouteMapPainter {
 
         if (plan.compassX != null && plan.compassY != null) compass(canvas, plan.compassX, plan.compassY, transform.rotationDeg)
         plan.scaleBar?.let { scaleBar(canvas, it, height - input.insets.bottom) }
+        plan.attribution?.let { attribution(canvas, it) }
         canvas.restoreToCount(saved)
     }
 
@@ -280,6 +302,14 @@ internal class RouteMapPainter {
         canvas.drawText(NORTH, x, y + COMPASS_LETTER_DROP_PX, small)
     }
 
+    private fun attribution(canvas: Canvas, credit: MapAttribution) {
+        // The same black halo as the street names keeps it readable over a street drawn beneath.
+        smallHalo.textAlign = Paint.Align.RIGHT
+        canvas.drawText(credit.text, credit.right, credit.baseline, smallHalo)
+        small.textAlign = Paint.Align.RIGHT
+        canvas.drawText(credit.text, credit.right, credit.baseline, small)
+    }
+
     private fun scaleBar(canvas: Canvas, bar: ScaleBar, bottom: Float) {
         val x = SCALE_BAR_INSET_PX
         val y = bottom - SCALE_BAR_INSET_PX
@@ -312,6 +342,7 @@ internal class RouteMapPainter {
         const val COMPASS_INSET_PX = 22f
         const val COMPASS_LETTER_DROP_PX = 26f
         const val SCALE_BAR_INSET_PX = 12f
+        const val ATTRIBUTION_INSET_PX = 8f
         const val CLIP_MARGIN_PX = 8f
         const val NORTH = "N"
     }

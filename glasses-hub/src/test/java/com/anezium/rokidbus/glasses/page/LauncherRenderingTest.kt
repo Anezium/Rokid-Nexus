@@ -30,6 +30,7 @@ import com.anezium.rokidbus.glasses.session.SessionScreen
 import com.anezium.rokidbus.glasses.session.StatusLineStyle
 import com.anezium.rokidbus.shared.MediaPlaybackState
 import com.anezium.rokidbus.shared.RouteGeometry
+import com.anezium.rokidbus.shared.RouteLabel
 import com.anezium.rokidbus.shared.RoutePath
 import com.anezium.rokidbus.shared.RoutePathRole
 import com.anezium.rokidbus.shared.RoutePoint
@@ -439,6 +440,41 @@ class LauncherRenderingTest {
         render(screen.copy(chromeless = false, blocks = screen.blocks.take(1)))
         assertNull(view.fullMap)
         assertEquals(View.VISIBLE, view.getChildAt(1).visibility)
+    }
+
+    @Test
+    fun `the street data's credit stays in the bottom-right corner of every map size`() {
+        val credited = RouteGeometry(
+            spanMeters = 400.0,
+            paths = listOf(
+                RoutePath(RoutePathRole.STREET, listOf(RoutePoint(0, 900), RoutePoint(1000, 900))),
+                RoutePath(RoutePathRole.ROUTE, listOf(RoutePoint(500, 500), RoutePoint(500, 100))),
+            ),
+            labels = listOf(RouteLabel("Unter den Linden", 900, 990, 3)),
+            position = RoutePosition(RoutePositionQuality.LIVE, RoutePoint(500, 500)),
+            attribution = "© OpenStreetMap",
+        )
+        MapForm.entries.forEach { form ->
+            val map = RouteMapView(context).apply {
+                bind(MapInput(credited, form, view = MapView.OVERVIEW))
+                measure(View.MeasureSpec.makeMeasureSpec(262, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+                layout(0, 0, measuredWidth, measuredHeight)
+            }
+            val plan = requireNotNull(map.planNow())
+            val credit = requireNotNull(plan.attribution) { "$form" }
+            assertEquals("© OpenStreetMap", credit.text)
+            assertTrue("$form", credit.box.left > 0f && credit.right <= map.width && credit.baseline <= map.height)
+            // Below the street names and clear of the scale bar.
+            assertTrue("$form", plan.labels.none { it.box(0f).intersects(credit.box) })
+            plan.scaleBar?.let { assertTrue("$form", RouteMapPainter.SCALE_BAR_INSET_PX + it.lengthPx < credit.box.left) }
+            draw(map)
+        }
+        val routeOnly = RouteMapView(context).apply {
+            bind(MapInput(credited.copy(attribution = null), MapForm.FULL))
+            measure(View.MeasureSpec.makeMeasureSpec(PageStyle.WIDTH_PX, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            layout(0, 0, measuredWidth, measuredHeight)
+        }
+        assertNull(requireNotNull(routeOnly.planNow()).attribution)
     }
 
     @Test

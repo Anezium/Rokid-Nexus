@@ -53,6 +53,9 @@ data class RouteStopMark(val x: Int, val y: Int, val label: String)
  * [RouteGeometryContract.EXTENT] units span [spanMeters]; the hub rotates it for heading-up views.
  * Providers clip with Liang-Barsky to a window covering the rotated viewport, never by clamping
  * vertices, so a clipped segment keeps its true direction.
+ *
+ * [attribution] credits the source of the `street` and `major` paths (for OpenStreetMap data,
+ * "© OpenStreetMap"); the hub draws it in a corner of the map. Hubs that predate it ignore it.
  */
 data class RouteGeometry(
     val spanMeters: Double,
@@ -62,6 +65,7 @@ data class RouteGeometry(
     val turn: RoutePoint? = null,
     val destination: RoutePoint? = null,
     val stops: List<RouteStopMark> = emptyList(),
+    val attribution: String? = null,
 )
 
 sealed interface RouteGeometryResult {
@@ -82,6 +86,7 @@ object RouteGeometryContract {
     const val MAX_LABEL_PRIORITY = 3
     const val MAX_STOPS = 4
     const val MAX_STOP_LABEL_CHARS = 4
+    const val MAX_ATTRIBUTION_CHARS = 40
 
     /** Rejects anything outside the schema, including a serialized size above [MAX_BYTES]. */
     fun validate(value: Any?): RouteGeometryResult = try {
@@ -150,6 +155,7 @@ object RouteGeometryContract {
                     },
                 )
             }
+            geometry.attribution?.let { put("attribution", it) }
         }
 
     private fun read(geometry: JSONObject): RouteGeometry {
@@ -206,6 +212,17 @@ object RouteGeometryContract {
             }
         }.orEmpty()
 
+        val attribution = if (!geometry.has("attribution") || geometry.opt("attribution") == JSONObject.NULL) {
+            null
+        } else {
+            val text = geometry.opt("attribution") as? String ?: fail("attribution must be a string")
+            check(
+                text.isNotBlank() && text.length <= MAX_ATTRIBUTION_CHARS && text.none(Char::isISOControl),
+                "attribution must be 1..$MAX_ATTRIBUTION_CHARS printable characters",
+            )
+            text
+        }
+
         return RouteGeometry(
             spanMeters = span,
             paths = paths,
@@ -214,6 +231,7 @@ object RouteGeometryContract {
             turn = optionalObject(geometry, "turn")?.let(::point),
             destination = optionalObject(geometry, "destination")?.let(::point),
             stops = stops,
+            attribution = attribution,
         )
     }
 

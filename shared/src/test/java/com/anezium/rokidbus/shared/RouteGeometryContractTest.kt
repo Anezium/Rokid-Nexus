@@ -75,6 +75,19 @@ class RouteGeometryContractTest {
     }
 
     @Test
+    fun `a basemap attribution round trips and an absent one stays absent`() {
+        val credited = walk.copy(attribution = "© OpenStreetMap")
+        val encoded = JSONObject(RouteGeometryContract.encode(credited).toString())
+        assertEquals("© OpenStreetMap", encoded.getString("attribution"))
+        assertEquals(RouteGeometryResult.Valid(credited), RouteGeometryContract.validate(encoded))
+        // Without one nothing is written, so a route-only geometry is byte for byte what it was.
+        assertTrue(!RouteGeometryContract.encode(walk).has("attribution"))
+        assertNull(RouteGeometryContract.parseOrNull(RouteGeometryContract.encode(walk).put("attribution", JSONObject.NULL))!!.attribution)
+        val limit = "x".repeat(RouteGeometryContract.MAX_ATTRIBUTION_CHARS)
+        assertValid(RouteGeometryContract.encode(walk.copy(attribution = limit)))
+    }
+
+    @Test
     fun `out of schema values are refused`() {
         val base = { JSONObject(RouteGeometryContract.encode(walk).toString()) }
         listOf(
@@ -94,6 +107,11 @@ class RouteGeometryContractTest {
             base().put("turn", JSONObject().put("x", 1)),
             base().put("position", JSONObject().put("quality", "great").put("x", 1).put("y", 1)),
             base().put("position", JSONObject().put("quality", "live").put("x", 1).put("y", 1).put("fixAgeS", -1)),
+            base().put("attribution", ""),
+            base().put("attribution", "  "),
+            base().put("attribution", "x".repeat(RouteGeometryContract.MAX_ATTRIBUTION_CHARS + 1)),
+            base().put("attribution", "OSM\ncontributors"),
+            base().put("attribution", 7),
         ).forEach { assertInvalid(it) }
         assertTrue(RouteGeometryContract.validate("not an object") is RouteGeometryResult.Invalid)
         assertNull(RouteGeometryContract.parseOrNull(null))
