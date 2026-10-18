@@ -153,8 +153,11 @@ class RootCompactRenderingTest {
         val navTexts = texts(block("nav:local"))
         assertEquals(PageStyle.CARD_FIGURE_PX, navTexts.first { it.text == "Waiting GPS" }.textSize, 0f)
         assertEquals(PageStyle.CARD_BODY_PX, navTexts.first { it.text == nav.detail }.textSize, 0f)
-        // No command line is invented: a live activity without a pending or answered command has none.
-        texts(view).forEach { assertFalse(it.text.toString(), it.text.contains("tap open")) }
+        // No command line is invented on a card: a live activity without a pending or answered
+        // command has none. The screen's own "tap open" hint under the viewport is not a card line.
+        listOf("nav:local", "relay:local").forEach { key ->
+            texts(block(key)).forEach { assertFalse("$key: ${it.text}", it.text.contains("tap open")) }
+        }
         listOf("nav:local", "relay:local", RootStops.PREVIEW_STOP_ID, RootStops.NOTIFICATIONS_PAGE_ID, RootStops.APPLICATIONS_PAGE_ID)
             .forEach { assertEquals("$it has its mark", 1, find<ImageView>(block(it)).count { v -> v.drawable != null }) }
         texts(view).filter { it.visibility == View.VISIBLE && it.text.isNotBlank() }
@@ -260,7 +263,7 @@ class RootCompactRenderingTest {
 
     @Test
     @Config(qualifiers = "w480dp-h640dp-mdpi")
-    fun `losing the selection, removal and reselection start the line over; the memory stays bounded`() {
+    fun `losing the selection, removal, reselection and another screen each start the line over`() {
         attach()
         showAttached(root(listOf(nav, relay, todo), selected = 2))
         idle(OverflowScroll.HOLD_MS + 1_000)

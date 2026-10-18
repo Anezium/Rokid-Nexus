@@ -1,7 +1,7 @@
 package com.anezium.rokidbus.plugin.nav
 
+import com.anezium.rokidbus.client.plugin.NexusPage
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
-import com.anezium.rokidbus.shared.NexusPage
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageTemplateContract
 import org.junit.Assert.assertEquals
