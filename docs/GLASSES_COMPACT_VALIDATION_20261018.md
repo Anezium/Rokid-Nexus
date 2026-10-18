@@ -2,6 +2,16 @@
 
 Status: source/test integration approved by independent R8 review; 2,340 checks pass. Signed compact glasses and Navigation releases installed in place. Bounded on-device render/scroll checks pass; current GPS map captures are available; final owner visual approval remains pending.
 
+## Later transit test: new detail-page defect remains open
+
+A subsequent owner-requested real Google Maps transit test passed root/ambient
+walking-to-stop rendering but exposed a false GPS-loss warning on the text-only
+external detail page. Fable High is correcting it; prior R8 acceptance and the
+2,340 passing cases do not cover that new correction. See
+`docs/NAV_TRANSIT_DEVICE_CHECK_20261018.md` for full evidence and cleanup.
+The street map on the internal route page was independently recaptured after
+loading and is present; its former early screenshot was replaced in the gallery.
+
 ## Latest check: R10 fixture correction
 
 Current integration `d5e44d1f6cb31dabf2d4de32113236557b9212a0` includes Fable's
