@@ -27,6 +27,11 @@ For local development against a checkout, publish a snapshot instead:
 `.\gradlew.bat :shared:publishToMavenLocal :bus-client:publishToMavenLocal
 '-PversionName=0.1.0-SNAPSHOT'` and consume it from `mavenLocal()`.
 
+The launcher-bundle APIs documented below are available in this source checkout;
+`sdk-v0.23.0` does not include them. External plugins using interactive activity
+destinations, typed quick actions, or the conversation/media/route templates must
+consume a snapshot until an SDK release includes those APIs.
+
 Use `compileSdk = 36`. The bus-client AAR supports `minSdk >= 26`; the
 repository's canonical Sample and Transit plugin templates use `minSdk = 30`
 (Android 11), matching the phone hub — don't require a newer API level without

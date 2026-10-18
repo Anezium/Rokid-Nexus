@@ -2,7 +2,9 @@
 
 Date: 2026-10-12, amended 2026-10-17 after GPT-6 Astra's independent review (section 2). Branch `dev/launcher-complete` (local; integration checkout `dev/launcher-rework`
 fast-forwarded to the same commit). Base `2d08f0a3` (approved plan 028, r17 mockup). Not pushed,
-released, tagged, installed or device-approved.
+released or tagged. The later [2026-10-18 device smoke](LAUNCHER_DEVICE_SMOKE_20261018.md)
+records signed in-place installs, three hardware-discovered fixes, targeted independent
+reviews, and the precise subset of hardware acceptance now observed.
 
 **Status.** The whole approved scope of plans 028/028a is implemented in source, integrated, covered
 by unit and Robolectric tests, and was accepted by the Sol review rounds (last: ACCEPT WITH ONE
@@ -10,7 +12,8 @@ NONBLOCKING FIXTURE NIT, since fixed). A later independent review by GPT-6 Astra
 and one should-fix (two of them LEGACY regressions); all five are fixed below and await a fresh
 independent review. The acceptance flip is applied: the new launcher is the default
 when the phone's last capabilities announcement negotiated the launcher bundle. **Hardware acceptance
-is the remaining shipping gate**; nothing here was run on a phone or on glasses.
+is a remaining shipping gate**. The historical evidence below predates device work;
+use the linked smoke report for current device results and remaining matrix gaps.
 
 Authorities: `plans/028-launcher-completion.md` (scope), `docs/LAUNCHER_INTERACTIVE_ACTIVITIES.md`
 (product decisions), `plans/028a-launcher-contract.md` (frozen implementation contract),
@@ -164,7 +167,11 @@ Known limits after the Astra fixes:
   production calls (`purgeOwnersWithoutAccess` without a changed owner, startup reconcile, announce);
   `BusHubService.onCreate` itself is not instantiated in a test.
 
-## 4. Pending hardware acceptance (not done)
+## 4. Hardware acceptance matrix (historical pending list)
+
+This is the pre-smoke matrix. The [2026-10-18 report](LAUNCHER_DEVICE_SMOKE_20261018.md)
+records completed subsets and explicitly preserves untested combinations; the whole
+list must not be treated as either fully pending or fully accepted.
 
 1. A 60 s phone outage and return with an open conversation + draft, and with an open route page; both
    transport orders; a transport back before the phone announces.
@@ -250,4 +257,6 @@ photosync 13, wireless-adb 7, patcher 138 with 11 pre-existing skips, feeds 61) 
 `160 actionable tasks: 160 executed`. That evidence is historical for those modules, not a re-run.
 A pre-existing `bus-client` `NexusPageTest` timing flake failed once in a parallel run and passed alone.
 
-No device, ADB, install, push, tag, release or API use was part of this work.
+No device, ADB, install, push, tag, release or API use was part of the historical
+verification in this section. Subsequent authorized device work is recorded in the
+[2026-10-18 smoke report](LAUNCHER_DEVICE_SMOKE_20261018.md).
