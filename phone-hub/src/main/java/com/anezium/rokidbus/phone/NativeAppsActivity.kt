@@ -184,12 +184,18 @@ class NativeAppsActivity : Activity() {
             NexusUi.block(),
         )
         addView(BusTheme.gap(this@NativeAppsActivity, 10))
+        // Over a native app an activity is never more than its text line, whatever size the
+        // display page gives it at home; the explanation must not promise the map here. The page
+        // scrolls, so the note takes the lines it needs rather than an ellipsis.
         addView(
             NexusUi.rowSub(
                 this@NativeAppsActivity,
-                "While this app is in front, Nexus activities show as: everything, as on the home " +
-                    "screen; a brief flare on an important update only; or nothing at all.",
-            ).apply { maxLines = 4 },
+                "While this app is in front: Activities keeps each as a line of text, never a map. " +
+                    "Alerts only shows a brief flare on an important update. Nothing hides them.",
+            ).apply {
+                maxLines = Int.MAX_VALUE
+                ellipsize = null
+            },
         )
         addView(BusTheme.gap(this@NativeAppsActivity, 4))
         addView(ambientModeRow(app))
