@@ -95,6 +95,9 @@ internal class NavIslandView(
     private var regularViews = emptyList<View>()
     private var measuredBudget: Int? = null
 
+    /** Where the street line stands, so a rebind for a new figure does not restart it. */
+    private val overflowMemory = OverflowMemory()
+
     var maxHeightPx: Int = Int.MAX_VALUE
         set(value) {
             if (field == value) return
@@ -125,6 +128,8 @@ internal class NavIslandView(
     fun bind(form: IslandForm, content: IslandContent) {
         val resized = form != this.form
         this.form = form
+        // No street to continue: a departure, or guidance without one, starts the next afresh.
+        if ((content as? IslandContent.Guidance)?.street == null) overflowMemory.clear()
         removeAllViews()
         mapView = null
         mapRule = null
@@ -207,7 +212,14 @@ internal class NavIslandView(
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             glyphDrawable(context, icons, content.glyph, if (content.approximate) PageStyle.muted else PageStyle.phosphor)?.let { drawable ->
-                addView(ImageView(context).apply { setImageDrawable(drawable) }, LayoutParams(glyphPx, glyphPx).apply { rightMargin = 10 })
+                // The cue says which manoeuvre it is in every form, as the fallback's does.
+                addView(
+                    ImageView(context).apply {
+                        setImageDrawable(drawable)
+                        contentDescription = content.glyph
+                    },
+                    LayoutParams(glyphPx, glyphPx).apply { rightMargin = 10 },
+                )
             }
             addView(
                 LinearLayout(context).apply {
@@ -229,6 +241,8 @@ internal class NavIslandView(
                                 text = it
                                 style(streetPx, PageStyle.ink, PageStyle.sans)
                                 setPadding(0, 2, 0, 0)
+                                memory = overflowMemory
+                                memoryKey = STREET_LINE
                                 active = true
                             },
                             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
@@ -398,6 +412,7 @@ internal class NavIslandView(
 
     companion object {
         const val RADIUS_PX = 14f
+        private const val STREET_LINE = "street"
 
         /** Room for the 1.5 px outline, so the map inside meets it without covering it. */
         const val BORDER_INSET_PX = 2

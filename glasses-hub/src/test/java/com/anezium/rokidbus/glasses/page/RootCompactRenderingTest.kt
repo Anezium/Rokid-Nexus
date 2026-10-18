@@ -6,21 +6,35 @@ import android.graphics.Canvas
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.GlyphDrawable
 import com.anezium.rokidbus.glasses.session.ActivityStop
+import com.anezium.rokidbus.glasses.session.CommandFacts
+import com.anezium.rokidbus.glasses.session.Frame
+import com.anezium.rokidbus.glasses.session.FrameMode
+import com.anezium.rokidbus.glasses.session.FrameStatus
+import com.anezium.rokidbus.glasses.session.HistoryState
+import com.anezium.rokidbus.glasses.session.IconPlace
 import com.anezium.rokidbus.glasses.session.IconRef
 import com.anezium.rokidbus.glasses.session.LocalPages
+import com.anezium.rokidbus.glasses.session.NoticeCard
+import com.anezium.rokidbus.glasses.session.NoticeCardKind
 import com.anezium.rokidbus.glasses.session.NoticePreview
+import com.anezium.rokidbus.glasses.session.NotificationHistory
 import com.anezium.rokidbus.glasses.session.RootStops
-import com.anezium.rokidbus.glasses.session.ScreenBlock
-import com.anezium.rokidbus.glasses.session.ScreenHeader
-import com.anezium.rokidbus.glasses.session.ScreenHint
+import com.anezium.rokidbus.glasses.session.SessionReducer
 import com.anezium.rokidbus.glasses.session.SessionScreen
 import com.anezium.rokidbus.glasses.session.SessionScreens
 import com.anezium.rokidbus.glasses.session.SessionState
+import com.anezium.rokidbus.glasses.session.Snapshot
 import com.anezium.rokidbus.glasses.session.TypedPageItems
+import com.anezium.rokidbus.shared.ActivitySurfaceContract
+import com.anezium.rokidbus.shared.PageCorrelation
 import com.anezium.rokidbus.shared.PageSurfaceContract
+import com.anezium.rokidbus.shared.PageSurfaceRequest
+import com.anezium.rokidbus.shared.PageSurfaceResponse
+import com.anezium.rokidbus.shared.PageSurfaceValidationResult
 import com.anezium.rokidbus.shared.PageTemplateContract
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,13 +53,15 @@ import java.io.FileOutputStream
 import java.time.Duration
 
 /**
- * The root with several activities at once, drawn by the real renderer at 480x640: Navigation
- * and Relay together, then with a todo as a third, with Notifications and Applications under
- * them. Every card keeps its fixed lines at the card sizes, the whole root fits the viewport
- * without a scroll, and a card line wider than the card is read whole on the selected card only.
+ * The root with several activities at once, drawn by the real renderer at 480x640 from entries
+ * within the activity contract: Navigation and Relay together, a todo as the Activities row,
+ * the Activities page as `LocalPages` answers it, and the conversation preview whose message is
+ * the one reachable line wide enough to scroll. Marks are the canonical ones the hub would draw,
+ * read from the checked-in glyph sources. The moving line keeps its place through the renders
+ * a live value causes every second, and starts over only when it should.
  *
- * Set `nexus.renderFixtures` (a directory) to also write each scene as a PNG, for a review
- * that wants to see the layout the glasses would draw; the assertions never depend on it.
+ * Set the JVM property `nexus.renderFixtures` to a directory to also write the still scenes as
+ * PNGs; the assertions never depend on it.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [32])
@@ -56,35 +72,44 @@ class RootCompactRenderingTest {
     private val items = TypedPageItems(PageTemplateContract::isLocalPageId, providerPageAllowed = { true })
     private val labels = mapOf("nav" to "Navigation", "relay" to "Relay", "sample" to "Hello Nexus")
     private val screens = SessionScreens(items, { labels[it] }, { "12:24" }, { it })
-    private val icons = SessionIconSource { _, _ -> GlyphDrawable("M4,12 h16 M12,4 v16") }
-    private val view = SessionScreenView(context, icons)
+    private val view = SessionScreenView(context, CanonicalMarks.source())
 
     private val nav = ActivityStop(
-        "nav:local", "nav:main", "120 m", pinned = true, ownerPluginId = "nav", ownerLabel = "Navigation",
-        detail = "Gare de Goussainville, Val-d'Oise", measure = "1.8 km", updatedAtWallMs = 1, icon = IconRef.Plugin("nav"),
+        "nav:local", "nav:main", "Waiting GPS", pinned = true, ownerPluginId = "nav", ownerLabel = "Navigation",
+        detail = "Gare de Goussainville…", measure = "1.8 km", updatedAtWallMs = 1, icon = IconRef.Plugin("nav", "map"),
     )
     private val relay = ActivityStop(
         "relay:local", "nexus:activity:relay", "Mika", ownerPluginId = "relay", ownerLabel = "Relay",
-        detail = "Reply from the glasses when you are ready, I added a second message", updatedAtWallMs = 2, icon = IconRef.Plugin("relay"),
+        detail = "Reply when you are ready", updatedAtWallMs = 2, icon = IconRef.Plugin("relay", "relay"),
     )
     private val todo = ActivityStop(
         "sample:todo", "nexus:activity:sample", "4 to do", ownerPluginId = "sample", ownerLabel = "Hello Nexus",
-        detail = "Milk · Eggs · Bread · Coffee", updatedAtWallMs = 3, icon = IconRef.Plugin("sample"),
+        detail = "Milk · Eggs · Bread · Coffee", updatedAtWallMs = 3, icon = IconRef.Plugin("sample", "star"),
     )
 
-    private fun root(activities: List<ActivityStop>, selected: Int): SessionScreen {
-        val stops = RootStops.build(activities, NoticePreview(RootStops.NOTICE_PAGE_ID, "Standup · 14:00", "Calendar", 1), 2)
-        return screens.screen(SessionState.Root(stops, selected = selected), null)
-    }
+    /** A Relay conversation's newest message, as the notice carries it: the root's long line. */
+    private val message = "Can you check the build when you have a minute? I added a second message to exercise thread extraction."
+    private val preview = NoticePreview(
+        pageId = "relay:thread", text = "Mika", sourceLabel = "Relay", atWallMs = 4,
+        card = NoticeCard(NoticeCardKind.CONVERSATION, "e1", "relay", HistoryState.NEW, secondary = message),
+        icon = IconRef.Plugin("relay", "relay"),
+    )
 
-    private fun render(screen: SessionScreen, name: String) {
-        view.show(screen)
+    private fun root(activities: List<ActivityStop>, selected: Int, preview: NoticePreview? = this.preview): SessionScreen =
+        screens.screen(SessionState.Root(RootStops.build(activities, preview, 2), selected = selected), null)
+
+    private fun layout() {
         view.measure(
             View.MeasureSpec.makeMeasureSpec(PageStyle.WIDTH_PX, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(PageStyle.HEIGHT_PX, View.MeasureSpec.EXACTLY),
         )
         view.layout(0, 0, PageStyle.WIDTH_PX, PageStyle.HEIGHT_PX)
         shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    private fun render(screen: SessionScreen, name: String) {
+        view.show(screen)
+        layout()
         fixtureDir()?.let { dir ->
             val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
             view.draw(Canvas(bitmap))
@@ -96,13 +121,15 @@ class RootCompactRenderingTest {
 
     private fun block(key: String): View = view.blockViews.getValue(key)
 
-    private fun texts(root: View): List<TextView> = when (root) {
-        is TextView -> listOf(root)
-        is ViewGroup -> (0 until root.childCount).flatMap { texts(root.getChildAt(it)) }
+    private fun <T : View> find(root: View, type: Class<T>): List<T> = when {
+        type.isInstance(root) -> listOf(type.cast(root)!!)
+        root is ViewGroup -> (0 until root.childCount).flatMap { find(root.getChildAt(it), type) }
         else -> emptyList()
     }
 
-    private fun lines(root: View): List<OverflowLineView> = texts(root).filterIsInstance<OverflowLineView>()
+    private inline fun <reified T : View> find(root: View): List<T> = find(root, T::class.java)
+
+    private fun texts(root: View): List<TextView> = find(root)
 
     private fun wholeInViewport(key: String): Boolean {
         val b = block(key)
@@ -110,83 +137,191 @@ class RootCompactRenderingTest {
     }
 
     @Test
-    fun `Navigation and Relay share the root with the hub rows, every card at the card sizes`() {
+    fun `the fixture stays within the activity contract`() {
+        listOf(nav, relay, todo).forEach {
+            assertTrue(it.text, it.text.length <= ActivitySurfaceContract.MAX_PRIMARY_CHARS)
+            assertTrue(it.detail!!, it.detail!!.length <= ActivitySurfaceContract.MAX_SECONDARY_CHARS)
+        }
+    }
+
+    @Test
+    fun `Navigation and Relay share the root with the preview and the hub rows, marks and sizes as the hub draws them`() {
         render(root(listOf(nav, relay), selected = 0), "root-nav-relay")
         val keys = view.blockViews.keys.toList()
-        assertEquals(listOf("nav:local", "relay:local"), keys.take(2))
-        assertTrue(keys.containsAll(listOf(RootStops.NOTIFICATIONS_PAGE_ID, RootStops.APPLICATIONS_PAGE_ID)))
+        assertEquals(listOf("nav:local", "relay:local", RootStops.PREVIEW_STOP_ID, RootStops.NOTIFICATIONS_PAGE_ID, RootStops.APPLICATIONS_PAGE_ID), keys)
         keys.forEach { assertTrue(it, wholeInViewport(it)) }
         val navTexts = texts(block("nav:local"))
-        assertEquals(PageStyle.CARD_FIGURE_PX, navTexts.first { it.text == "120 m" }.textSize, 0f)
+        assertEquals(PageStyle.CARD_FIGURE_PX, navTexts.first { it.text == "Waiting GPS" }.textSize, 0f)
         assertEquals(PageStyle.CARD_BODY_PX, navTexts.first { it.text == nav.detail }.textSize, 0f)
-        assertEquals(PageStyle.CARD_BODY_PX, texts(block("relay:local")).first { it.text == relay.detail }.textSize, 0f)
+        // No command line is invented: a live activity without a pending or answered command has none.
+        texts(view).forEach { assertFalse(it.text.toString(), it.text.contains("tap open")) }
+        listOf("nav:local", "relay:local", RootStops.PREVIEW_STOP_ID, RootStops.NOTIFICATIONS_PAGE_ID, RootStops.APPLICATIONS_PAGE_ID)
+            .forEach { assertEquals("$it has its mark", 1, find<ImageView>(block(it)).count { v -> v.drawable != null }) }
         texts(view).filter { it.visibility == View.VISIBLE && it.text.isNotBlank() }
             .forEach { assertTrue("${it.text} at ${it.textSize}", it.textSize >= PageStyle.CAPTION_PX) }
     }
 
     @Test
-    fun `a third activity joins the root as its Activities row, and the whole root fits without a scroll`() {
+    fun `a third activity joins the root as its Activities row, which carries no mark, and the whole root fits`() {
         render(root(listOf(nav, relay, todo), selected = 2), "root-nav-relay-todo")
         val keys = view.blockViews.keys.toList()
-        assertEquals(listOf("nav:local", "relay:local"), keys.take(2))
-        assertTrue(keys.contains(RootStops.ACTIVITIES_PAGE_ID))
-        assertTrue(texts(block(RootStops.ACTIVITIES_PAGE_ID)).any { it.text == "3" })
+        assertEquals(listOf("nav:local", "relay:local", RootStops.PREVIEW_STOP_ID, RootStops.ACTIVITIES_PAGE_ID), keys.take(4))
         assertEquals(PageSurfaceContract.MAX_ROOT_STOPS, keys.size)
+        assertTrue(texts(block(RootStops.ACTIVITIES_PAGE_ID)).any { it.text == "3" })
+        assertTrue(find<ImageView>(block(RootStops.ACTIVITIES_PAGE_ID)).none { it.drawable != null })
         keys.forEach { assertTrue(it, wholeInViewport(it)) }
         assertEquals(0, view.viewport.offset)
         val last = block(keys.last())
-        assertTrue("the root leaves room under its last row: ${last.bottom} of ${view.viewport.height}", last.bottom < view.viewport.height)
+        assertTrue("room under the last row: ${last.bottom} of ${view.viewport.height}", last.bottom < view.viewport.height)
     }
 
     @Test
-    fun `the Activities page draws the three cards whole at the card sizes`() {
-        // Every live activity carries its command line as its third line, as the page builds it.
-        val cards = listOf(nav, relay, todo).mapIndexed { index, stop ->
-            ScreenBlock.Card(
-                key = stop.id, label = stop.ownerLabel!!.uppercase(), time = "12:24", primary = stop.text, secondary = stop.detail,
-                measure = stop.measure, figure = true, ended = false, selected = index == 2, icon = stop.icon,
-                tertiary = listOf("tap open · 3 commands", "tap open · reply", "tap open · 4 commands")[index],
-            )
-        }
-        render(SessionScreen(ScreenHeader(LocalPages.TITLE_ACTIVITIES.uppercase(), "3/3"), cards, ScreenHint("swipe next · tap open", "back root"), focusKey = "sample:todo"), "activities-three")
-        assertEquals(3, view.blockViews.size)
-        view.blockViews.keys.forEach { assertTrue(it, wholeInViewport(it)) }
-        val todoTexts = texts(block("sample:todo"))
-        assertEquals(PageStyle.CARD_FIGURE_PX, todoTexts.first { it.text == "4 to do" }.textSize, 0f)
-        assertEquals(PageStyle.CAPTION_PX, todoTexts.first { it.text == "tap open · 4 commands" }.textSize, 0f)
-        val heights = view.blockViews.values.map { it.height }
-        assertEquals("cards with the same lines and no command strip share one height", 1, heights.distinct().size)
+    fun `the Activities page as the hub answers it draws the three cards whole, equal, without invented lines`() {
+        val activities = listOf(nav, relay, todo)
+        val local = LocalPages({ NotificationHistory() }, { activities }, { emptyList() }, { false }, { "12:24" })
+        val request = PageSurfaceRequest(PageCorrelation("r1", 1, 1, RootStops.ACTIVITIES_PAGE_ID), SessionReducer.REASON_OPEN)
+        val page = (PageSurfaceContract.validateResponse(local.answer(request)) as PageSurfaceValidationResult.Valid).value as PageSurfaceResponse.Page
+        val frame = Frame(
+            RootStops.ACTIVITIES_PAGE_ID, FrameStatus.Shown(Snapshot(page), page.revision, 1_000, "r1"),
+            selected = 2, mode = FrameMode.ROWS, selectedKey = items.entries(page).getOrNull(2)?.key,
+        )
+        val state = SessionState.InPage(listOf(frame), SessionState.Root(RootStops.build(activities, null, 0)))
+        render(screens.screen(state, null, facts = CommandFacts(activities = activities)), "activities-three")
+
+        val cards = view.blockViews.filterKeys { it.startsWith("row:") }
+        assertEquals(3, cards.size)
+        cards.keys.forEach { assertTrue(it, wholeInViewport(it)) }
+        val shown = cards.values.map { card -> texts(card).map { it.text.toString() } }
+        assertTrue(shown.any { "4 to do" in it && todo.detail in it })
+        assertTrue(shown.any { "Waiting GPS" in it && "1.8 km" in it })
+        shown.flatten().forEach { assertFalse(it, it.contains("tap open")) }
+        assertEquals("cards of the same lines share one height", 1, cards.values.map { it.height }.distinct().size)
+        assertEquals(PageStyle.CARD_FIGURE_PX, texts(view).first { it.text == "4 to do" }.textSize, 0f)
     }
 
-    @Test
-    fun `a long line is kept whole and scrolls on the selected card only`() {
-        render(root(listOf(nav, relay, todo), selected = 1), "root-long-line-selected")
+    private fun attach(): Activity {
         val controller = Robolectric.buildActivity(Activity::class.java).create().start().resume()
         controller.get().setContentView(view)
         controller.visible()
         shadowOf(Looper.getMainLooper()).idle()
-
-        val relayLine = lines(block("relay:local")).single { it.text == relay.detail }
-        assertTrue(relayLine.overflowPx() > 0)
-        assertTrue("the selected card's long line scrolls", relayLine.scrolling)
-        assertEquals(relay.detail, relayLine.text.toString())
-        val navLine = lines(block("nav:local")).single { it.text == nav.detail }
-        assertFalse("an unselected card stays still", navLine.scrolling)
-        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(OverflowScroll.HOLD_MS + 1_500))
-        assertTrue(relayLine.scrollX > 0)
-        assertEquals(0, navLine.scrollX)
-
-        // The selection moves: the card that lost it stops and the new one may move.
-        view.show(root(listOf(nav, relay, todo), selected = 0))
-        view.measure(
-            View.MeasureSpec.makeMeasureSpec(PageStyle.WIDTH_PX, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(PageStyle.HEIGHT_PX, View.MeasureSpec.EXACTLY),
-        )
-        view.layout(0, 0, PageStyle.WIDTH_PX, PageStyle.HEIGHT_PX)
-        shadowOf(Looper.getMainLooper()).idle()
-        assertFalse(relayLine.scrolling)
-        assertFalse(relayLine.isAttachedToWindow)
-        val navNow = lines(block("nav:local")).single { it.text == nav.detail }
-        assertEquals(navNow.overflowPx() > 0, navNow.scrolling)
+        return controller.get()
     }
+
+    private fun showAttached(screen: SessionScreen) {
+        view.show(screen)
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    private fun previewLine(): OverflowLineView =
+        find<OverflowLineView>(block(RootStops.PREVIEW_STOP_ID)).single { it.text == message }
+
+    private fun idle(ms: Long) = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ms))
+
+    @Test
+    @Config(qualifiers = "w480dp-h640dp-mdpi")
+    fun `the selected preview's long message scrolls, the other cards' lines do not`() {
+        attach()
+        showAttached(root(listOf(nav, relay, todo), selected = 2))
+        val line = previewLine()
+        assertTrue(line.overflowPx() > 0)
+        assertTrue(line.scrolling)
+        assertEquals(message, line.text.toString())
+        val navLine = find<OverflowLineView>(block("nav:local")).single { it.text == nav.detail }
+        assertEquals(0, navLine.overflowPx())
+        assertFalse(navLine.scrolling)
+        idle(OverflowScroll.HOLD_MS + 1_000)
+        assertTrue(line.scrollX > 0)
+    }
+
+    @Test
+    @Config(qualifiers = "w480dp-h640dp-mdpi")
+    fun `a value ticking every second on another card does not restart the selected line`() {
+        attach()
+        var screen = root(listOf(nav, relay, todo), selected = 2)
+        showAttached(screen)
+        val overflow = previewLine().overflowPx()
+        assertTrue(overflow > 0)
+        var last = 0
+        var reachedEnd = false
+        val ticks = (OverflowScroll.cycleMs(overflow) / 1_000L).toInt() + 1
+        repeat(ticks) { i ->
+            idle(1_000)
+            // Navigation's figure changes; the whole screen is drawn again with new card views.
+            screen = root(listOf(nav.copy(text = "${120 - 10 * i} m"), relay, todo), selected = 2)
+            showAttached(screen)
+            val line = previewLine()
+            assertTrue("tick $i rebuilt the line", line.scrolling)
+            assertTrue("tick $i: ${line.scrollX} after $last", line.scrollX >= last || last == overflow)
+            if (line.scrollX == overflow) reachedEnd = true
+            last = line.scrollX
+        }
+        assertTrue("the hidden end was reached while the other card kept changing", reachedEnd)
+    }
+
+    @Test
+    @Config(qualifiers = "w480dp-h640dp-mdpi")
+    fun `losing the selection, removal and reselection start the line over; the memory stays bounded`() {
+        attach()
+        showAttached(root(listOf(nav, relay, todo), selected = 2))
+        idle(OverflowScroll.HOLD_MS + 1_000)
+        val moved = previewLine().scrollX
+        assertTrue(moved > 0)
+
+        // Deselected: the rebuilt line is at rest and its place is dropped.
+        showAttached(root(listOf(nav, relay, todo), selected = 0))
+        assertFalse(previewLine().scrolling)
+        assertEquals(0, previewLine().scrollX)
+        showAttached(root(listOf(nav, relay, todo), selected = 2))
+        assertTrue(previewLine().scrolling)
+        assertEquals("reselected: a fresh hold", 0, previewLine().scrollX)
+        idle(OverflowScroll.HOLD_MS - 200)
+        assertEquals(0, previewLine().scrollX)
+        idle(1_000)
+        assertTrue(previewLine().scrollX > 0)
+
+        // Removed from the root, then back: a fresh hold again.
+        showAttached(root(listOf(nav, relay, todo), selected = 2, preview = null))
+        assertFalse(view.blockViews.containsKey(RootStops.PREVIEW_STOP_ID))
+        showAttached(root(listOf(nav, relay, todo), selected = 2))
+        assertEquals(0, previewLine().scrollX)
+        idle(OverflowScroll.HOLD_MS - 200)
+        assertEquals(0, previewLine().scrollX)
+
+        // Another screen: nothing carries over.
+        idle(2_000)
+        assertTrue(previewLine().scrollX > 0)
+        showAttached(SessionScreen(com.anezium.rokidbus.glasses.session.ScreenHeader("ACTIVITIES", "3/3"), emptyList(), null))
+        showAttached(root(listOf(nav, relay, todo), selected = 2))
+        assertEquals(0, previewLine().scrollX)
+    }
+}
+
+/**
+ * The marks the hub draws for the fixture's entries, from their checked-in sources: built-in
+ * keys from `bus-client`'s `ic_plugin_*` drawables (`map`, `star`, `bell`, `grid`), Relay's own
+ * registered glyph from its `nexus_glyphs` array. The unit tests have no merged resources, so
+ * the paths are read from the files `GlassesHub.launcherDrawable` would resolve them from.
+ */
+internal object CanonicalMarks {
+    private val root: File = listOf(File(".."), File(".")).first { File(it, "bus-client/src/main/res/drawable").isDirectory }
+
+    private fun builtIn(key: String): String? {
+        val file = File(root, "bus-client/src/main/res/drawable/ic_plugin_$key.xml")
+        if (!file.isFile) return null
+        return Regex("""android:pathData="([^"]+)"""").find(file.readText())?.groupValues?.get(1)
+    }
+
+    private fun registered(pluginId: String, name: String): String? {
+        val file = File(root, "plugins/$pluginId/src/main/res/values/nexus_glyphs.xml")
+        if (!file.isFile) return null
+        return Regex("""<item>$name\|([^<]+)</item>""").find(file.readText())?.groupValues?.get(1)
+    }
+
+    fun path(ref: IconRef): String? = when (ref) {
+        is IconRef.Plugin -> ref.iconKey?.let { key -> builtIn(key) ?: registered(ref.pluginId, key) }
+        is IconRef.Place -> builtIn(if (ref.place == IconPlace.BELL) "bell" else "grid")
+        else -> null
+    }
+
+    fun source(): SessionIconSource = SessionIconSource { _, ref -> path(ref)?.let(::GlyphDrawable) }
 }
