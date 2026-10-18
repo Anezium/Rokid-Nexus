@@ -73,8 +73,19 @@ match its actual icon policy.
 A byte-for-byte partial snapshot, source hashes and patch are saved in
 `build/glasses-ux-compact/r6-partial-snapshot/`. The patch SHA-256 is
 `4f3f41e0271b15f48e617236183a16e88f3b1daa2125061b978eca03da844e98`.
-A fresh independent read-only review has been dispatched to identify a precise
-continuation checklist; it is not a final acceptance review.
+The fresh R5 independent read-only review is complete and requests changes. It
+found two remaining scroll-memory reset paths: constructing an unattached replacement
+forgets its predecessor's progress, and the framework's detach visibility callback
+forgets it before detach retention can run. The name-preservation path addresses the
+Navigation finding at source level, with regression/build evidence still missing.
+The inaccurate fixtures and HTML are unchanged. The eleven source hashes were
+rechecked after review and remain identical to the saved manifest.
+
+The complete report is `build/glasses-ux-compact/REVIEW-R5-PARTIAL-SOL.md`.
+The original scope, R4/R5 findings and frozen manifest are consolidated in
+`FABLE-R6-QUOTA-RESUME-BRIEF.md` for the same author's later recovery. This is a
+prepared continuation brief; no restart, timer or implementation substitution has
+been dispatched. The partial review is not final acceptance.
 
 ## Remaining acceptance
 
