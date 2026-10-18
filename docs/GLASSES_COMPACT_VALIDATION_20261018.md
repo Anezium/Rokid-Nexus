@@ -1,7 +1,44 @@
 # Compact glasses UI validation ? 2026-10-18
 
-Status: incomplete. Source corrections and the multi-activity HTML have not been accepted.
+Status: tests and builds pass. Final independent review and hardware/owner visual acceptance remain pending.
 No current compact APK has been installed or validated on the devices.
+
+## Latest check: R10 fixture correction
+
+Current integration `d5e44d1f6cb31dabf2d4de32113236557b9212a0` includes Fable's
+production `661d2fd4`, attached capture `d28f8bde`, and test-only `9e26f358`.
+R7 independently accepted both R6 production fixes and requested one correction:
+the ScrollView capture host measured the weighted HUD at 112 px. Fable replaced
+only that test host with FrameLayout and retained exact 480 x 640 dimensions,
+real framework pre-draw, paint and viewport checks, and first-frame sampling.
+
+The parent's configured-checkout command completed with exit 0:
+
+```text
+BUILD SUCCESSFUL in 52s
+469 actionable tasks: 5 executed, 464 up-to-date
+```
+
+Phone: 952; glasses: 1,177; Navigation: 211. Total: **2,340 cases, zero failures,
+errors or skips**. Glasses tests newly executed; phone and Navigation reused their
+up-to-date outputs. OverflowLine is 9/9 and RootCompactRendering is 7/7. All three
+modules' debug and signed-release assembly tasks completed or were up to date.
+Full command/log: `build/glasses-ux-compact/canonical-r10-tests-build.log`;
+XML summary: `r10-test-results.json` in the same ignored directory.
+
+Fresh source-rendered PNGs and SHA sidecars are in `rendered-r10/`. Each is
+480 x 640 and its interior paint guard passes. These are simulated fixture scenes,
+not hardware captures. The unchanged Fable HTML previews without console errors
+at widths 728 and 360 (content heights 2,586 and 2,265).
+
+New independent Sol High R8 review of immutable `9e26f358` is running, with full
+original scope, prior findings, author responses and R7 objections supplied.
+No current compact APK is accepted or installed yet. Physical compact appearance,
+scroll readability and final owner visual approval remain pending. No new journey,
+GPS, microphone or Send action was performed; the owner's declined GPS test is
+respected. Previously passed actual phone Back evidence remains unchanged.
+
+## Historical integrated checks
 
 ## Latest integrated check after subscription resumed
 
