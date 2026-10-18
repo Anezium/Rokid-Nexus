@@ -165,3 +165,36 @@ to native home. No internal journey or microphone/draft/Send action ran in this
 pass. Navigation's runtime location/notification permissions remain at their
 false baseline; Maps' original grants were unchanged. Devices are released while
 the author works. New source acceptance does not erase this device-QA limitation.
+
+## Bounded listener recovery: tests green, final source review pending
+
+Fable implemented the foreground-entry recovery at `582208dd`: request the own
+listener component once per settings-screen visit, only with existing access,
+app guidance enabled and a disconnected listener. Foreground refreshes update
+the connection label but never retry. A returning API call does not claim a
+connection; real listener callbacks retain that authority.
+
+Independent R1 found no production/security blocker, but requested changes for
+the Android-dependent policy test running under plain JUnit. The actual R12
+command failed: 218 cases, two Android-stub failures; all four Activity cases
+passed. Fable's `82b0f377` changes only that test's Robolectric runner/API fixture,
+retaining every assertion and the production code.
+
+Parent observed the full Nav suite plus debug and signed release assemblies at
+canonical `7ae8384d`. All 218 cases passed, including policy 3/3 and Activity 4/4,
+with zero errors or skips. Actual command tail:
+
+```text
+BUILD SUCCESSFUL in 53s
+204 actionable tasks: 10 executed, 194 up-to-date
+```
+
+Evidence is `build/glasses-ux-compact/nav-listener-r13-tests-build.log` and
+`nav-r13-test-results.json`. The frozen Nav candidate is
+`apks/nav-listener-82b0f377.apk`, SHA-256
+`c6079dfc195ff0185ade3cd8ac044c4eb64dd39ec3bc9246b800e49082c60fc9`.
+Its certificate matches the established release signer. A new independent R2
+reviews the immutable `82b0f377` snapshot with the full original context, R1
+finding and author response. Candidate installation, actual Android rebinding
+and corrected transit-page recapture remain pending. No device commands ran
+during this verification; the earlier cleanup state remains the last observation.
