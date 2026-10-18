@@ -134,9 +134,7 @@ public class RenderedMapJourneyFeedbackTest {
         try {
             accepted[0] = (NexusPage.Content) pages.onRequest(NavPages.MAIN);
             pages.onVisibility(NavPages.MAIN, true);
-            controller.get().setContentView(map);
-            controller.visible().windowFocusChanged(true);
-            shadowOf(Looper.getMainLooper()).idle();
+            VisibleMapTestWindow.attach(controller, map);
             assertEquals(View.VISIBLE, map.getWindowVisibility());
             render.run();
             shadowOf(Looper.getMainLooper()).idle();

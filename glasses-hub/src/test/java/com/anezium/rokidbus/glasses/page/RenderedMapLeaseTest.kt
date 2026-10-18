@@ -3,7 +3,6 @@ package com.anezium.rokidbus.glasses.page
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Rect
 import android.os.Looper
 import android.view.View
 import com.anezium.rokidbus.glasses.session.MapSize
@@ -40,17 +39,7 @@ class RenderedMapLeaseTest {
     }
 
     private fun attach(controller: ActivityController<Activity>, view: View) {
-        controller.get().setContentView(view)
-        controller.visible().windowFocusChanged(true)
-        // Let the real window traversal lay out content inside its frame, including decor insets.
-        shadowOf(Looper.getMainLooper()).idle()
-        assertTrue(view.isAttachedToWindow)
-        assertTrue(view.isShown)
-        assertEquals(View.VISIBLE, view.windowVisibility)
-        assertTrue(view.width > 0 && view.height > 0)
-        val visible = Rect()
-        assertTrue(view.getLocalVisibleRect(visible))
-        assertEquals(Rect(0, 0, view.width, view.height), visible)
+        VisibleMapTestWindow.attach(controller, view)
     }
 
     private fun draw(view: View) {
@@ -70,6 +59,12 @@ class RenderedMapLeaseTest {
         assertTrue(events.last().getBoolean("visible"))
         assertEquals("follow", events.last().getString("view"))
         val firstToken = events.last().getString("token")
+        VisibleMapTestWindow.setAppVisible(view, false)
+        assertEquals(View.GONE, view.windowVisibility)
+        assertFalse(events.last().getBoolean("visible"))
+        VisibleMapTestWindow.setAppVisible(view, true)
+        draw(view)
+        assertTrue(events.last().getBoolean("visible"))
         view.visibility = View.GONE
         shadowOf(Looper.getMainLooper()).idle()
         assertFalse(events.last().getBoolean("visible"))

@@ -36,6 +36,7 @@ public class RenderedMapReconnectTest {
     @Test
     public void serviceNegotiationGatesRetainedStreetsBeforeQueuedSdkReconnectCallbacksFlushThem() throws Exception {
         shadowOf(RuntimeEnvironment.getApplication()).grantPermissions(Manifest.permission.BLUETOOTH_CONNECT);
+        shadowOf(BluetoothAdapter.getDefaultAdapter()).setState(BluetoothAdapter.STATE_ON);
         BusHubService hub = Robolectric.buildService(BusHubService.class).get();
         PhoneRenderedMapNegotiation negotiation = ReflectionHelpers.getField(hub, "renderedMapNegotiation");
         ReflectionHelpers.setField(hub, "remoteLauncherInteractiveVersion", LauncherInteractiveContract.VERSION);
