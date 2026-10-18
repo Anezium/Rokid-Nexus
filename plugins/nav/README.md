@@ -125,7 +125,11 @@ Nothing heavier runs on the glasses.
   expires after five seconds and is checked again before each request; Text,
   automatic collapse, hidden/covered maps and Commands authorize no tiles.
   Only the selected Follow or Overview view counts, unless both are drawn
-  independently. Unknown feedback and either older hub keep route-only
+  independently. Each acknowledgment names the accepted publication revision:
+  only its recorded tile cover is requested, never a new area under an older
+  Follow lease. A new footprint waits for its own delivered/drawn frame, including
+  when publication is throttled or refused. Stable draw renewals do not revise
+  pages or cancel pending tiles. Unknown feedback and either older hub keep route-only
   guidance, even with launcher support. That is at most
   four zoom-14 tiles for the follow view and nine tiles, from zoom 14 down to
   12, for the whole route. Nothing is fetched along the route ahead, for
@@ -140,7 +144,8 @@ Nothing heavier runs on the glasses.
   days) by their HTTP freshness: the service currently allows five minutes,
   then a tile is shown while it is checked again with `If-Modified-Since`.
   A 304 preserves omitted cache metadata; `no-cache` remains revalidated and
-  `no-store` evicts the previous disk copy. Offline, stored tiles remain useful
+  `no-store` evicts disk and RAM even if demand ends immediately after the response
+  or during decoding; cancelled results cannot restore streets. Offline, stored tiles remain useful
   unless their policy requires successful revalidation (`no-cache`).
   The cache holds map tiles only,
   never a journey, and Android may clear it at any time.

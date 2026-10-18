@@ -47,15 +47,18 @@ internal class NavRuntime(context: Context) {
         sendHeading = { deg, accuracy -> client?.publishActivityHeading(deg, accuracy) ?: NexusSdkResult.NOT_REGISTERED },
         now = SystemClock::elapsedRealtime,
         streetsSupported = { client?.supportsRenderedMaps == true },
+        onGeometrySent = { revision, snapshot -> NavControl.renderedFrames.remember(revision, snapshot) },
     )
 
     private val client get() = NavControl.serviceClient
 
     fun onGuidance(guidance: NavGuidance) = onMain {
         if (!NavControl.owns(this)) return@onMain
-        NavState.guidance = guidance
-        NavState.updatedAtMs = System.currentTimeMillis()
-        NavControl.guidanceChanged()
+        if (NavState.guidance != guidance) {
+            NavState.guidance = guidance
+            NavState.updatedAtMs = System.currentTimeMillis()
+            NavControl.guidanceChanged()
+        }
         main.removeCallbacks(releaseIdle)
         pending = guidance
         NavControl.holdBus(appContext)
@@ -68,6 +71,7 @@ internal class NavRuntime(context: Context) {
         if (!NavControl.owns(this)) return@onMain
         map.update(snapshot, send = false)
         onGuidance(snapshot.guidance())
+        NavControl.guidanceChanged()
         map.flush()
     }
 

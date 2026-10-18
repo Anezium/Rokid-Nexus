@@ -99,7 +99,7 @@ class NexusLauncherInteractiveTest {
     fun `launcher support alone never authorizes streets and other owners cannot create demand`() {
         val (client, wire) = client(LegacyCallbacks())
         val event = JSONObject().put("kind", "ambient").put("view", "follow").put("visible", true)
-            .put("token", "a").put("leaseMs", 5000)
+            .put("token", "a").put("leaseMs", 5000).put("revision", 7)
         wire.deliver(com.anezium.rokidbus.shared.RenderedMapContract.PATH, event)
         assertFalse(client.supportsRenderedMaps)
         assertTrue(client.renderedMapViews.isEmpty())
@@ -112,6 +112,7 @@ class NexusLauncherInteractiveTest {
         assertTrue(client.renderedMapViews.isEmpty())
         wire.deliver(com.anezium.rokidbus.shared.RenderedMapContract.PATH, event)
         assertEquals(setOf(NexusRenderedMapView.FOLLOW), client.renderedMapViews)
+        assertEquals(setOf(NexusRenderedMap(NexusRenderedMapView.FOLLOW, 7)), client.renderedMapFrames)
         assertEquals(NexusSdkResult.SENT, client.publishActivityGeometry(2, credited))
         wire.deliver(com.anezium.rokidbus.shared.RenderedMapContract.PATH, JSONObject(event.toString()).put("view", "unknown"))
         assertTrue(client.renderedMapViews.isEmpty())
@@ -129,12 +130,14 @@ class NexusLauncherInteractiveTest {
         val maps = NexusRenderedMaps { now }
         fun event(kind: String, token: String, view: String, visible: Boolean = true, lease: Long = 5000) = JSONObject()
             .put("kind", kind).put("token", token).put("view", view).put("visible", visible).put("leaseMs", lease)
+            .put("revision", 3).apply { if (kind == "page") put("pageId", "media:main") }
         assertTrue(maps.views().isEmpty())
         maps.receive(event("page", "p1", "follow"))
         maps.receive(event("page", "p2", "overview"))
         assertEquals(5000L, maps.nextExpiryDelayMs())
         maps.receive(event("page", "p1", "follow", false))
         assertEquals(setOf(NexusRenderedMapView.OVERVIEW), maps.views())
+        assertEquals(setOf(NexusRenderedMap(NexusRenderedMapView.OVERVIEW, 3, "media:main")), maps.frames())
         maps.receive(event("ambient", "a", "follow"))
         assertEquals(setOf(NexusRenderedMapView.FOLLOW, NexusRenderedMapView.OVERVIEW), maps.views())
         now = 5000
@@ -145,6 +148,8 @@ class NexusLauncherInteractiveTest {
         maps.receive(event("ambient", "a", "follow"))
         maps.clear()
         assertTrue(maps.views().isEmpty())
+        assertFalse(maps.receive(event("ambient", "a", "follow").apply { remove("revision") }))
+        assertFalse(maps.receive(event("page", "p", "follow").apply { remove("pageId") }))
     }
 
     private fun FakeTransport.deliver(path: String, payload: JSONObject) {

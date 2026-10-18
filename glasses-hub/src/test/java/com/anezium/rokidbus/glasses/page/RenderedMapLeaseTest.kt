@@ -15,6 +15,7 @@ import com.anezium.rokidbus.shared.RouteGeometry
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -115,5 +116,37 @@ class RenderedMapLeaseTest {
         draw(view)
         assertEquals(count, events.size)
         controller.pause().stop().destroy()
+    }
+
+    @Test
+    fun `content revisions retain the attached map and replace its acknowledgment without a hide`() {
+        for (size in listOf(MapSize.COMPACT, MapSize.FULL)) {
+            events.clear()
+            val controller = Robolectric.buildActivity(Activity::class.java).create().start().resume()
+            val view = SessionScreenView(controller.get(), leaseFactory = factory)
+            val authority = RenderedMapContext("page", "nav:main", 4, sessionGeneration = 1, frameIndex = 1, requestId = "r1")
+            fun screen(revision: Long) = SessionScreen(null, listOf(ScreenBlock.Map("map", geometry,
+                size = size, renderContext = authority.copy(revision = revision))), null, chromeless = size == MapSize.FULL)
+            view.show(screen(4))
+            attach(controller, view)
+            draw(view)
+            val child = view.blockViews.getValue("map")
+            val token = events.last().getString("token")
+            view.show(screen(5))
+            assertTrue(events.none { !it.getBoolean("visible") })
+            if (size == MapSize.COMPACT) assertSame(child, view.blockViews.getValue("map"))
+            draw(view)
+            assertEquals(5L, events.last().getLong("revision"))
+            assertEquals(token, events.last().getString("token"))
+            repeat(3) {
+                now += 2_000
+                draw(view)
+                assertEquals(5L, events.last().getLong("revision"))
+                assertTrue(events.last().getBoolean("visible"))
+            }
+            view.show(SessionScreen(null, emptyList(), null))
+            assertFalse(events.last().getBoolean("visible"))
+            controller.pause().stop().destroy()
+        }
     }
 }

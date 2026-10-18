@@ -171,11 +171,13 @@ class NavPagesTest {
         val first = harness.provider.onRequest(Harness.Request(NavPages.MAIN)) as NexusPage.Content
         assertEquals(1L, first.revision)
         // Not visible yet: nothing is published.
+        harness.guidance = walking
         harness.provider.guidanceChanged()
         assertTrue(harness.published.isEmpty())
         harness.provider.onVisibility(NavPages.MAIN, true)
         assertEquals(listOf(2L), harness.published)
         harness.clock += 100
+        harness.guidance = walking.copy(primary = "200 m")
         harness.provider.guidanceChanged()
         harness.provider.guidanceChanged()
         assertEquals(listOf(2L), harness.published)
@@ -184,6 +186,7 @@ class NavPagesTest {
         assertEquals(listOf(2L, 3L), harness.published)
         // Covered: nothing more, and the pending one is dropped.
         harness.clock += 100
+        harness.guidance = walking.copy(primary = "100 m")
         harness.provider.guidanceChanged()
         harness.provider.onVisibility(NavPages.MAIN, false)
         assertNull(harness.scheduled)
@@ -205,7 +208,27 @@ class NavPagesTest {
         assertEquals(42L, page.revision)
         harness.provider.onVisibility(NavPages.MAIN, true)
         harness.provider.guidanceChanged()
+        assertTrue(harness.published.isEmpty())
+        harness.guidance = walking
+        harness.provider.guidanceChanged()
         assertEquals(listOf(43L), harness.published)
+    }
+
+    @Test
+    fun `unchanged page content settles without another revision even across repeated guidance callbacks`() {
+        val harness = Harness()
+        harness.guidance = walking
+        harness.provider.onRequest(Harness.Request(NavPages.MAIN))
+        harness.provider.onVisibility(NavPages.MAIN, true)
+        repeat(10) {
+            harness.clock += 2_000
+            harness.provider.guidanceChanged()
+        }
+        assertTrue(harness.published.isEmpty())
+        assertNull(harness.scheduled)
+        harness.guidance = walking.copy(primary = "250 m")
+        harness.provider.guidanceChanged()
+        assertEquals(listOf(2L), harness.published)
     }
 
     @Test

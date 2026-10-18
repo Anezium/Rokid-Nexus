@@ -110,17 +110,21 @@ internal object LauncherBlocks {
     }
 
     /** A compact or panel map as an outlined card; a full map outside the chromeless mode, bare. */
-    fun map(context: Context, block: ScreenBlock.Map): View {
+    fun map(context: Context, block: ScreenBlock.Map, previous: View? = null,
+        leaseFactory: (View) -> RenderedMapLease = { RenderedMapLease(it) },
+    ): View {
         val form = when (block.size) {
             MapSize.COMPACT -> MapForm.COMPACT
             MapSize.PANEL -> MapForm.PANEL
             MapSize.FULL -> MapForm.FULL
         }
-        val map = RouteMapView(context).apply {
+        val card = (previous as? MapCardView)?.takeIf { block.size != MapSize.FULL }
+        val map = (card?.map ?: (previous as? RouteMapView)?.takeIf { block.size == MapSize.FULL }
+            ?: RouteMapView(context, leaseFactory)).apply {
             bind(MapInput(block.geometry, form, block.view, block.headingDeg, block.degraded, renderContext = block.renderContext))
         }
         if (block.size == MapSize.FULL) return map
-        return MapCardView(context, map).apply { bind(block) }
+        return (card ?: MapCardView(context, map)).apply { bind(block) }
     }
 
     /** A transit ride: the line's badge, the ribbon of stops, and the note under it. */

@@ -87,6 +87,7 @@ internal class NavSettings(context: Context) {
  * and notification guidance resumes from what is posted at that moment once the journey ends.
  */
 internal object NavControl {
+    val renderedFrames = NavRenderedFrames()
     @Volatile
     private var listener: NavNotificationListener? = null
 
@@ -118,6 +119,7 @@ internal object NavControl {
     /** The journey takes the route over: the notification route ends before the journey's starts. */
     fun attachJourney(candidate: NavRuntime, stop: (String) -> Unit) {
         serviceClient?.clearRenderedMapDemand()
+        renderedFrames.clear()
         // The service stays bound: the journey's activity goes through the same registration.
         activeRuntime?.takeIf { it !== candidate }?.shutdown(releaseBus = false)
         journeyRuntime = candidate
@@ -131,6 +133,7 @@ internal object NavControl {
         journeyRuntime = null
         journeyStop = null
         journeyEpoch = null
+        renderedFrames.clear()
         listener?.resumeNotifications()
         guidanceChanged()
     }

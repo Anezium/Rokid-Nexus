@@ -130,6 +130,7 @@ internal class NavPageProvider<R : Any>(
     private val journey: () -> Long? = { null },
     /** The main page came on screen or left it; its maps need street tiles only while it is there. */
     private val visibilityChanged: (Boolean) -> Unit = {},
+    private val publication: (NexusPage.Content, NavPageState) -> Unit = { _, _ -> },
 ) {
     private var revision = 0L
     private val shownJourneys = LinkedHashMap<Long, Long?>()
@@ -137,14 +138,19 @@ internal class NavPageProvider<R : Any>(
     private var visible = false
     private var lastPublishAt: Long? = null
     private var dirty = false
+    private var lastContent: NexusPage.Content? = null
+    private var lastFootprint = emptyList<TileKey>()
 
     fun onRequest(request: R): NexusPage {
         val pageId = pageIdOf(request)
-        val page = NavPages.page(pageId, nextRevision(floorOf(request)), state(), text())
+        val currentState = state()
+        val page = NavPages.page(pageId, nextRevision(floorOf(request)), currentState, text())
         if (pageId == NavPages.MAIN) {
             current = request
             dirty = false
-            (page as? NexusPage.Content)?.let { remember(it.revision) }
+            lastContent = page as? NexusPage.Content
+            lastFootprint = footprint(currentState)
+            lastContent?.let { remember(it.revision); publication(it, currentState) }
         }
         return page
     }
@@ -170,6 +176,14 @@ internal class NavPageProvider<R : Any>(
         current ?: return
         dirty = true
         if (!visible) return
+        val currentState = state()
+        val candidate = NavPages.page(NavPages.MAIN, 0, currentState, text())
+        val footprint = footprint(currentState)
+        if (candidate is NexusPage.Content && candidate.copy(revision = lastContent?.revision ?: 0) == lastContent && footprint == lastFootprint) {
+            dirty = false
+            cancelScheduled()
+            return
+        }
         val last = lastPublishAt
         val wait = if (last == null) 0L else (last + MIN_INTERVAL_MS - now()).coerceAtLeast(0)
         if (wait > 0) {
@@ -178,12 +192,14 @@ internal class NavPageProvider<R : Any>(
             return
         }
         val request = current ?: return
-        val page = NavPages.page(NavPages.MAIN, nextRevision(null), state(), text())
+        val page = if (candidate is NexusPage.Content) candidate.copy(revision = nextRevision(null)) else candidate
         when (publish(request, page)) {
             NexusSdkResult.SENT -> {
                 dirty = false
                 lastPublishAt = now()
-                (page as? NexusPage.Content)?.let { remember(it.revision) }
+                lastContent = page as? NexusPage.Content
+                lastFootprint = footprint
+                lastContent?.let { remember(it.revision); publication(it, currentState) }
             }
             // Refused: the page is covered, closed or out of lease; the next request answers afresh.
             else -> Unit
@@ -197,7 +213,13 @@ internal class NavPageProvider<R : Any>(
         current = null
         visible = false
         dirty = false
+        lastContent = null
+        lastFootprint = emptyList()
     }
+
+    private fun footprint(state: NavPageState): List<TileKey> = state.journey?.takeIf { state.extended }?.let { snapshot ->
+        NavMapView.entries.flatMap { NavMapProjection.tiles(snapshot, it, NavJourneyService.BASEMAP_SOURCE) }
+    }.orEmpty()
 
     /**
      * Whether the main page the wearer confirmed on, at [revision], showed the journey that runs

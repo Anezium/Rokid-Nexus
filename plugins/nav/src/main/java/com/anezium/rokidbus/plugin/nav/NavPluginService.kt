@@ -63,6 +63,11 @@ class NavPluginService : NexusPluginService() {
             )
         },
         journey = { NavControl.journeyEpoch },
+        publication = { page, state ->
+            if (page.body is com.anezium.rokidbus.shared.PageBody.Route) {
+                state.journey?.let { NavControl.renderedFrames.remember(page.revision, it, NavPages.MAIN) }
+            }
+        },
         // Only the route page draws maps; the older summary page has none to fetch streets for.
         visibilityChanged = { visible ->
             NavState.routePageVisible = visible && nexusClient?.supportsLauncherInteractive() == true

@@ -10,6 +10,9 @@ import android.os.Looper
 import android.os.SystemClock
 import com.anezium.rokidbus.client.plugin.NexusPluginClient
 import com.anezium.rokidbus.client.plugin.NexusPluginCallbacks
+import com.anezium.rokidbus.client.plugin.NexusPage
+import com.anezium.rokidbus.client.plugin.NexusSdkResult
+import com.anezium.rokidbus.shared.RenderedMapContext
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.RenderedMapContract
@@ -288,6 +291,8 @@ class NavJourneyLifecycleTest {
             { android.os.Handler(Looper.getMainLooper()).post(it) }, {}, streets.executor, SystemClock::elapsedRealtime)
         ReflectionHelpers.setField(service, "tracker", NavRouteTracker(longRoute))
         ReflectionHelpers.setField(service, "basemap", loader)
+        idle(1)
+        service.onLocationChanged(fix(48.853, 2.349))
         val client = feedbackClient()
         renderFeedback(client, "follow")
         idle(0)
@@ -333,6 +338,107 @@ class NavJourneyLifecycleTest {
         }
     }
 
+    @Test
+    fun `accepted page feedback renews without revising stationary content or cancelling pending tiles`() {
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val streets = StreetRecorder(java.util.concurrent.Executors.newSingleThreadExecutor())
+        streets.beforeExecute = { entered.countDown(); release.await(10, java.util.concurrent.TimeUnit.SECONDS) }
+        val service = planParisJourney(streets)
+        val client = feedbackClient()
+        val published = mutableListOf<NexusPage.Content>()
+        lateinit var accepted: NexusPage.Content
+        val handler = android.os.Handler(Looper.getMainLooper())
+        val pages = NavPageProvider<String>(
+            pageIdOf = { it }, floorOf = { null },
+            state = { NavPageState(NavState.guidance, true, true, null, journeyActive = true,
+                journey = NavState.journey, extended = true, renderedMaps = true, basemap = NavState.basemapState) },
+            text = { NavPageText("access", "off", "idle") }, now = SystemClock::elapsedRealtime,
+            schedule = { delay, task -> handler.postDelayed({ task() }, delay) },
+            cancelScheduled = { handler.removeCallbacksAndMessages(null) },
+            publication = { page, state -> NavControl.renderedFrames.remember(page.revision, state.journey!!, NavPages.MAIN) },
+            publish = { _, page ->
+                accepted = page as NexusPage.Content
+                published += accepted
+                handler.post { deliveredFrame(client, accepted.revision, "follow") }
+                NexusSdkResult.SENT
+            },
+        )
+        NavControl.pageListener = { pages.guidanceChanged() }
+        try {
+            accepted = pages.onRequest(NavPages.MAIN) as NexusPage.Content
+            pages.onVisibility(NavPages.MAIN, true)
+            deliveredFrame(client, accepted.revision, "follow")
+            idle(0)
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            repeat(3) {
+                idle(RenderedMapContract.RENEW_MS)
+                deliveredFrame(client, accepted.revision, "follow")
+                idle(0)
+            }
+            assertTrue(published.isEmpty())
+            assertEquals(0, streets.cancelled.get())
+            // A real position/content change produces one revision, whose acknowledgment replaces A.
+            idle(1)
+            service.onLocationChanged(fix(48.8532, 2.349))
+            idle(NavPageProvider.MIN_INTERVAL_MS)
+            assertTrue(published.isNotEmpty())
+            val settled = published.size
+            deliveredFrame(client, accepted.revision, "follow")
+            idle(0)
+            assertEquals(settled, published.size)
+            // Commands can retain the page lease while removing its map.
+            deliveredFrame(client, accepted.revision, "follow", visible = false)
+            idle(0)
+            assertTrue(streets.cancelled.get() > 0)
+            assertEquals(BasemapState.NONE, NavState.basemapState)
+        } finally {
+            NavControl.pageListener = null
+            pages.forget()
+            release.countDown()
+        }
+    }
+
+    @Test
+    fun `acknowledged A page never fetches a new disjoint B footprint before B is drawn`() {
+        val service = startJourney()
+        val points = listOf(GeoPoint(48.0, 2.0), GeoPoint(48.1, 2.0))
+        val route = NavRoute(NavDestination("There", points.last()), points, 10_000,
+            listOf(RouteStep(RouteLine(points).lengthMeters, "ARRIVE", "There")))
+        val streets = StreetRecorder()
+        val loader = NavBasemap(OsmShortbreadSource, route.line, null, streets.transport,
+            { android.os.Handler(Looper.getMainLooper()).post(it) }, {}, streets.executor, SystemClock::elapsedRealtime)
+        ReflectionHelpers.setField(service, "tracker", NavRouteTracker(route))
+        ReflectionHelpers.setField(service, "basemap", loader)
+        service.onLocationChanged(fix(48.001, 2.0))
+        val client = feedbackClient()
+        val pages = NavPageProvider<String>(pageIdOf = { it }, floorOf = { null },
+            publish = { _, _ -> NexusSdkResult.SENT },
+            state = { NavPageState(NavState.guidance, true, true, null, journeyActive = true,
+                journey = NavState.journey, extended = true, renderedMaps = true) },
+            text = { NavPageText("a", "b", "c") }, now = SystemClock::elapsedRealtime,
+            schedule = { _, _ -> }, cancelScheduled = {},
+            publication = { page, state -> NavControl.renderedFrames.remember(page.revision, state.journey!!, NavPages.MAIN) })
+        val a = pages.onRequest(NavPages.MAIN) as NexusPage.Content
+        val keysA = NavMapProjection.tiles(NavState.journey!!, NavMapView.FOLLOW, OsmShortbreadSource)
+        deliveredFrame(client, a.revision, "follow")
+        idle(0)
+        assertEquals(keysA.map(OsmShortbreadSource::url).toSet(), streets.urls.toSet())
+        idle(1)
+        service.onLocationChanged(fix(48.09, 2.0))
+        val keysB = NavMapProjection.tiles(NavState.journey!!, NavMapView.FOLLOW, OsmShortbreadSource)
+        assertTrue(keysB.isNotEmpty() && keysA.toSet().intersect(keysB.toSet()).isEmpty())
+        val b = pages.onRequest(NavPages.MAIN) as NexusPage.Content
+        // Constructed/delivered B is not an acknowledgment that it was drawn.
+        deliveredFrame(client, a.revision, "follow")
+        idle(0)
+        assertEquals(keysA.map(OsmShortbreadSource::url).toSet(), streets.urls.toSet())
+        deliveredFrame(client, b.revision, "follow")
+        idle(0)
+        assertEquals(keysB.map(OsmShortbreadSource::url).toSet(), streets.urls.toSet() - keysA.map(OsmShortbreadSource::url).toSet())
+        pages.forget()
+    }
+
     private fun feedbackClient(): NexusPluginClient {
         val callbacks = object : NexusPluginCallbacks {
             override fun onOpen() = Unit
@@ -354,9 +460,15 @@ class NavJourneyLifecycleTest {
     }
 
     private fun renderFeedback(client: NexusPluginClient, view: String, visible: Boolean = true) {
-        client.onMessage(RenderedMapContract.PATH, "render-${feedbackId++}", JSONObject()
-            .put("pluginId", "nav").put("kind", "page").put("token", "rendered-page").put("view", view)
-            .put("visible", visible).put("leaseMs", RenderedMapContract.LEASE_MS))
+        val revision = 100L + feedbackId
+        NavState.journey?.let { NavControl.renderedFrames.remember(revision, it, NavPages.MAIN) }
+        deliveredFrame(client, revision, view, visible)
+    }
+
+    private fun deliveredFrame(client: NexusPluginClient, revision: Long, view: String, visible: Boolean = true) {
+        val event = RenderedMapContext("page", NavPages.MAIN, revision, sessionGeneration = 1, frameIndex = 1, requestId = "r1")
+            .toPayload().put("token", "rendered-page").put("view", view).put("visible", visible)
+        client.onMessage(RenderedMapContract.PATH, "render-${feedbackId++}", RenderedMapContract.delivery(event, "nav"))
     }
 
     /** Records every street tile request a journey makes, and answers each with a small real tile. */
@@ -373,6 +485,7 @@ class NavJourneyLifecycleTest {
         override fun awaitTermination(timeout: Long, unit: java.util.concurrent.TimeUnit) = true
     }) {
         var beforeExecute: () -> Unit = {}
+        val cancelled = AtomicInteger()
         val urls = java.util.concurrent.CopyOnWriteArrayList<String>()
         private val tile = MvtFixtures.gzip(
             MvtFixtures.shortbread(listOf(MvtFixtures.line(0 to 2048, 4096 to 2048, tags = mapOf("kind" to "residential")))),
@@ -385,7 +498,7 @@ class NavJourneyLifecycleTest {
                     return TileResponse(200, mapOf("cache-control" to "max-age=300"), tile)
                 }
 
-                override fun cancel() = Unit
+                override fun cancel() { cancelled.incrementAndGet() }
             }
         }
     }

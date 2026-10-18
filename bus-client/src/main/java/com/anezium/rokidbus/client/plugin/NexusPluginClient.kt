@@ -62,6 +62,10 @@ class NexusPluginClient internal constructor(
     val renderedMapViews: Set<NexusRenderedMapView>
         get() = if (supportsRenderedMaps) renderedMaps.views() else emptySet()
 
+    /** The actually drawn owner publications. Correlate these before requesting a map footprint. */
+    val renderedMapFrames: Set<NexusRenderedMap>
+        get() = if (supportsRenderedMaps) renderedMaps.frames() else emptySet()
+
     /** Next active slot's expiry, for one lifecycle cancellation timer; null without demand. */
     val renderedMapLeaseRemainingMs: Long?
         get() = if (supportsRenderedMaps) renderedMaps.nextExpiryDelayMs() else null

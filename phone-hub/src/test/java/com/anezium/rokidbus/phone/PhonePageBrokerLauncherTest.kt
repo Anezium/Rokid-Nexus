@@ -147,6 +147,8 @@ class PhonePageBrokerLauncherTest {
         assertEquals("relay-a", delivered.single().first)
         assertEquals("relay", delivered.single().third.getString("pluginId"))
         assertFalse(delivered.single().third.has("requestId"))
+        assertEquals(1L, delivered.single().third.getLong("revision"))
+        assertEquals("relay:main", delivered.single().third.getString("pageId"))
         broker.onRenderedMap(JSONObject(event.toString()).put("revision", 0))
         broker.onRenderedMap(JSONObject(event.toString()).put("requestId", "old"))
         broker.onRenderedMap(JSONObject(event.toString()).put("sessionGeneration", 0))

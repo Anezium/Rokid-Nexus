@@ -6,8 +6,11 @@ import org.json.JSONObject
 /** The map view actually rendered by the glasses, under a short hub-issued lease. */
 enum class NexusRenderedMapView { FOLLOW, OVERVIEW }
 
+/** An acknowledged owner publication. A null [pageId] identifies activity geometry. */
+data class NexusRenderedMap(val view: NexusRenderedMapView, val revision: Long, val pageId: String? = null)
+
 internal class NexusRenderedMaps(private val clock: () -> Long) {
-    private data class Lease(val token: String, val view: NexusRenderedMapView, val until: Long)
+    private data class Lease(val token: String, val frame: NexusRenderedMap, val until: Long)
     private val leases = mutableMapOf<String, Lease>()
 
     @Synchronized
@@ -26,20 +29,30 @@ internal class NexusRenderedMaps(private val clock: () -> Long) {
             else -> return false
         }
         if (kind == RenderedMapContract.AMBIENT && view != NexusRenderedMapView.FOLLOW) return false
+        val revision = when (val value = payload.opt("revision")) {
+            is Int -> value.toLong()
+            is Long -> value
+            else -> return false
+        }.takeIf { it >= 0 } ?: return false
+        val pageId = if (kind == RenderedMapContract.PAGE) {
+            (payload.opt("pageId") as? String)?.takeIf { it.length in 1..160 && it.none(Char::isISOControl) } ?: return false
+        } else null
         val duration = when (val value = payload.opt("leaseMs")) {
             is Int -> value.toLong()
             is Long -> value
             else -> return false
         }.takeIf { it in 1..RenderedMapContract.LEASE_MS } ?: return false
-        leases[kind] = Lease(token, view, clock() + duration)
+        leases[kind] = Lease(token, NexusRenderedMap(view, revision, pageId), clock() + duration)
         return true
     }
 
     @Synchronized
-    fun views(): Set<NexusRenderedMapView> {
+    fun frames(): Set<NexusRenderedMap> {
         leases.entries.removeAll { clock() >= it.value.until }
-        return leases.values.mapTo(linkedSetOf()) { it.view }
+        return leases.values.mapTo(linkedSetOf()) { it.frame }
     }
+
+    fun views(): Set<NexusRenderedMapView> = frames().mapTo(linkedSetOf()) { it.view }
 
     @Synchronized
     fun nextExpiryDelayMs(): Long? {

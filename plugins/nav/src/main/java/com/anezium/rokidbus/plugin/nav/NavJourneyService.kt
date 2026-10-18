@@ -18,7 +18,6 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import com.anezium.rokidbus.client.plugin.NexusRenderedMapView
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -52,9 +51,9 @@ class NavJourneyService : Service(), LocationListener {
     private var planner: TransitousPlanner? = null
     private var basemap: NavBasemap? = null
     private val expireMapDemand = Runnable {
-        if (!stopping && tracker != null) publish(SystemClock.elapsedRealtime())
+        reconcileMapDemand()
     }
-    private val mapDemand: () -> Unit = { main.post { if (!stopping && tracker != null) publish(SystemClock.elapsedRealtime()) } }
+    private val mapDemand: () -> Unit = { main.post { reconcileMapDemand() } }
     private var lastFix: NavFix? = null
     private var startedAtMs = 0L
     private var generation = 0
@@ -236,17 +235,10 @@ class NavJourneyService : Service(), LocationListener {
      */
     private fun withStreets(snapshot: NavRouteSnapshot): NavRouteSnapshot {
         val streets = basemap ?: return snapshot
-        val rendered = NavControl.serviceClient?.renderedMapViews.orEmpty()
-        val keysByView = rendered.associateWith {
-            val view = when (it) {
-                NexusRenderedMapView.FOLLOW -> NavMapView.FOLLOW
-                NexusRenderedMapView.OVERVIEW -> NavMapView.OVERVIEW
-            }
-            NavMapProjection.tiles(snapshot, view, BASEMAP_SOURCE)
-        }
-        val keys = keysByView.values.flatten()
+        val rendered = NavControl.serviceClient?.renderedMapFrames.orEmpty()
+        val keys = NavControl.renderedFrames.keys(rendered)
         streets.demand(keys) { key ->
-            NavControl.serviceClient?.renderedMapViews.orEmpty().any { key in keysByView[it].orEmpty() }
+            key in NavControl.renderedFrames.keys(NavControl.serviceClient?.renderedMapFrames.orEmpty())
         }
         main.removeCallbacks(expireMapDemand)
         val remaining = NavControl.serviceClient?.renderedMapLeaseRemainingMs
@@ -254,7 +246,17 @@ class NavJourneyService : Service(), LocationListener {
         else if (rendered.isNotEmpty()) main.post(expireMapDemand)
         // A shown view too wide for street tiles has none to wait for.
         NavState.basemapState = if (rendered.isNotEmpty() && keys.isEmpty()) BasemapState.UNAVAILABLE else streets.state
-        return snapshot.copy(basemap = if (rendered.isEmpty()) NavBasemapTiles.NONE else streets.tiles)
+        return snapshot.copy(basemap = if (keys.isEmpty()) NavBasemapTiles.NONE else streets.tiles)
+    }
+
+    /** A heartbeat changes authorization/deadlines, never guidance or the page it acknowledges. */
+    private fun reconcileMapDemand() {
+        if (stopping || tracker == null) return
+        if (!hasLocationPermission()) {
+            finishJourney(MESSAGE_PERMISSION_LOST)
+            return
+        }
+        NavState.journey = NavState.journey?.let(::withStreets)
     }
 
     private fun finishJourney(message: String) {

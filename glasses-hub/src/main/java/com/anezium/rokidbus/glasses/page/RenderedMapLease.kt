@@ -25,6 +25,7 @@ internal class RenderedMapLease(
     private var token = ""
     private var sentAt = Long.MIN_VALUE
     private var active = false
+    private var reportPending = false
     private var covered = false
     private var unobserveNotice: (() -> Unit)? = null
     private val rect = Rect()
@@ -34,6 +35,13 @@ internal class RenderedMapLease(
 
     fun bind(context: RenderedMapContext?, mapView: MapView) {
         if (this.context == context && this.mapView == mapView) return
+        if (context != null && this.context?.copy(revision = context.revision) == context && this.mapView == mapView) {
+            // A content refresh keeps the same attached presentation. Replace its acknowledgment
+            // on the next draw without manufacturing a hide between the two rendered revisions.
+            this.context = context
+            reportPending = true
+            return
+        }
         clear()
         this.context = context
         this.mapView = mapView
@@ -54,9 +62,10 @@ internal class RenderedMapLease(
             return
         }
         val now = clock()
-        if (!active || now - sentAt >= RenderedMapContract.RENEW_MS) {
+        if (reportPending || !active || now - sentAt >= RenderedMapContract.RENEW_MS) {
             if (send(true)) {
                 active = true
+                reportPending = false
                 sentAt = now
             }
         }

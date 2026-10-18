@@ -84,6 +84,8 @@ class PhoneActivityLauncherTest {
         assertEquals("nav", delivered.getString("pluginId"))
         assertFalse(delivered.has("id"))
         assertFalse(delivered.has("seq"))
+        assertEquals(7L, delivered.getLong("revision"))
+        assertFalse(delivered.has("pageId"))
         val count = sink.local.size
         router.handleRenderedMap(JSONObject(event.toString()).put("seq", seq - 1))
         router.handleRenderedMap(JSONObject(event.toString()).put("revision", 6))

@@ -23,10 +23,12 @@ internal class NavMapPublisher(
     private val now: () -> Long,
     private val geometryOf: (NavRouteSnapshot) -> RouteGeometry = { NavMapProjection.geometry(it, NavMapView.FOLLOW) },
     private val streetsSupported: () -> Boolean = { false },
+    private val onGeometrySent: (Long, NavRouteSnapshot) -> Unit = { _, _ -> },
 ) {
     private var snapshot: NavRouteSnapshot? = null
     private var activityLive = false
     private var sentGeometry: RouteGeometry? = null
+    private var sentCover: List<TileKey>? = null
     private var sentGeometryAtMs: Long? = null
     private var headingFixMs: Long? = null
     private var headingAtMs: Long? = null
@@ -77,10 +79,14 @@ internal class NavMapPublisher(
         if (last == null || at - last >= MIN_GEOMETRY_INTERVAL_MS) {
             val drawable = if (streetsSupported() || current.basemap.tiles.isEmpty()) current else current.copy(basemap = NavBasemapTiles.NONE)
             val geometry = geometryOf(drawable)
-            if (geometry != sentGeometry) {
-                val result = sendGeometry(nextRevision(), geometry)
+            val cover = NavMapProjection.tiles(drawable, NavMapView.FOLLOW, NavJourneyService.BASEMAP_SOURCE)
+            if (geometry != sentGeometry || cover != sentCover) {
+                val revision = nextRevision()
+                val result = sendGeometry(revision, geometry)
                 if (result == NexusSdkResult.SENT) {
+                    onGeometrySent(revision, drawable)
                     sentGeometry = geometry
+                    sentCover = cover
                     sentGeometryAtMs = at
                 }
             }

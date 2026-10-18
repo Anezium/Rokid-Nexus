@@ -53,9 +53,12 @@ object RenderedMapContract {
         payload.opt("visible") is Boolean && payload.opt("view") in setOf(FOLLOW, OVERVIEW) &&
         (payload.opt("token") as? String)?.let { it.length in 1..64 && it.none(Char::isISOControl) } == true
 
-    /** Only the owner's two presentation slots reach its SDK; no other owner's context is disclosed. */
+    /** Return only this owner's publication identity, never another owner's rendering context. */
     fun delivery(payload: JSONObject, owner: String): JSONObject = JSONObject()
         .put("pluginId", owner).put("kind", payload.getString("kind"))
         .put("token", payload.getString("token")).put("view", payload.getString("view"))
         .put("visible", payload.getBoolean("visible")).put("leaseMs", LEASE_MS)
+        .put("revision", payload.getLong("revision")).apply {
+            if (payload.getString("kind") == PAGE) put("pageId", payload.getString("id"))
+        }
 }

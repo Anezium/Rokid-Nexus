@@ -96,7 +96,10 @@ sanctioned exceptions:
    Text, collapse, hidden/covered maps and Commands have no map demand. Only
    the selected Follow or Overview view counts, unless both are independently
    drawn. Without both hubs' rendered-map/attribution support, keep route-only
-   guidance. Re-check demand before a request starts and cancel it on expiry.
+   guidance. Correlate feedback to the exact acknowledged publication's tile
+   cover, never the newest tracker position under an older view lease. Stable
+   renewals must not revise their page. Re-check demand before a request starts
+   and cancel it on expiry. Session replacement requires fresh negotiation.
    Nothing is fetched for a journey that is not running. `INTERNET` is declared
    for these two uses only; the phone screen says so before the journey starts,
    and nothing else leaves the phone.

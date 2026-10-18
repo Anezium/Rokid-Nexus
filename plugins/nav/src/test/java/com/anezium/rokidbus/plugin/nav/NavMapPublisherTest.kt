@@ -1,6 +1,8 @@
 package com.anezium.rokidbus.plugin.nav
 
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
+import com.anezium.rokidbus.client.plugin.NexusRenderedMap
+import com.anezium.rokidbus.client.plugin.NexusRenderedMapView
 import com.anezium.rokidbus.shared.RouteGeometry
 import com.anezium.rokidbus.shared.RoutePositionQuality
 import org.junit.Assert.assertEquals
@@ -112,6 +114,51 @@ class NavMapPublisherTest {
         publisher.linkChanged()
         assertEquals(3, geometries.size)
         assertEquals(geometries[1].second, geometries[2].second)
+    }
+
+    @Test
+    fun `a drawn A revision cannot authorize disjoint B while publishing is throttled refused or awaiting draw`() {
+        val points = listOf(GeoPoint(48.0, 2.0), GeoPoint(48.1, 2.0))
+        val walk = NavRoute(NavDestination("There", points.last()), points, 10_000,
+            listOf(RouteStep(RouteLine(points).lengthMeters, "ARRIVE", "There")))
+        fun snapshot(progress: Double) = NavRouteSnapshot(walk, progress, walk.line.pointAt(progress),
+            now, quality = RouteQuality.TRACKING, atMs = now)
+        val a = snapshot(1_000.0)
+        val b = snapshot(10_000.0)
+        // An identical clipped straight route can still describe a different geographic frame.
+        assertEquals(NavMapProjection.geometry(a, NavMapView.FOLLOW), NavMapProjection.geometry(b, NavMapView.FOLLOW))
+        val keysA = NavMapProjection.tiles(a, NavMapView.FOLLOW, OsmShortbreadSource)
+        val keysB = NavMapProjection.tiles(b, NavMapView.FOLLOW, OsmShortbreadSource)
+        assertTrue(keysA.isNotEmpty() && keysB.isNotEmpty())
+        assertTrue(keysA.toSet().intersect(keysB.toSet()).isEmpty())
+        val frames = NavRenderedFrames()
+        val sent = mutableListOf<Long>()
+        var result = NexusSdkResult.SENT
+        val guarded = NavMapPublisher(supported = { true }, now = { now },
+            sendGeometry = { revision, _ -> sent += revision; result }, sendHeading = { _, _ -> NexusSdkResult.SENT },
+            onGeometrySent = { revision, state -> frames.remember(revision, state) })
+        guarded.update(a, send = false)
+        guarded.activityStarted()
+        val acknowledgmentA = setOf(NexusRenderedMap(NexusRenderedMapView.FOLLOW, sent.last()))
+        assertEquals(keysA, frames.keys(acknowledgmentA))
+        now += 100
+        guarded.update(b)
+        assertEquals(1, sent.size)
+        assertEquals(keysA, frames.keys(acknowledgmentA))
+        now += 1_000
+        result = NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        guarded.flush()
+        val rejected = sent.last()
+        assertTrue(frames.keys(setOf(NexusRenderedMap(NexusRenderedMapView.FOLLOW, rejected))).isEmpty())
+        assertEquals(keysA, frames.keys(acknowledgmentA))
+        result = NexusSdkResult.SENT
+        guarded.flush()
+        assertEquals(keysA, frames.keys(acknowledgmentA))
+        val acknowledgmentB = setOf(NexusRenderedMap(NexusRenderedMapView.FOLLOW, sent.last()))
+        assertEquals(keysB, frames.keys(acknowledgmentB))
+        assertTrue(frames.keys(emptySet()).isEmpty())
+        frames.clear()
+        assertTrue(frames.keys(acknowledgmentB).isEmpty())
     }
 
     @Test

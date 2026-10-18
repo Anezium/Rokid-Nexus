@@ -39,6 +39,8 @@ class RenderedMapContractTest {
         assertEquals("nav", delivered.getString("pluginId"))
         assertFalse(delivered.has("id"))
         assertFalse(delivered.has("requestId"))
+        assertEquals(3L, delivered.getLong("revision"))
+        assertEquals("nav:main", delivered.getString("pageId"))
         assertFalse(RenderedMapContract.validEvent(JSONObject(event.toString()).put("frameIndex", PageSurfaceContract.MAX_FRAMES)))
         assertFalse(RenderedMapContract.validEvent(JSONObject(event.toString()).put("revision", 3.5)))
         assertFalse(RenderedMapContract.validEvent(JSONObject(event.toString()).put("token", "x".repeat(65))))

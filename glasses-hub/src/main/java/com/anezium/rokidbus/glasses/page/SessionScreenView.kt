@@ -25,7 +25,7 @@ import com.anezium.rokidbus.glasses.session.TextRole
 internal class SessionScreenView(
     context: Context,
     private val icons: SessionIconSource = HubIconSource,
-    leaseFactory: (View) -> RenderedMapLease = { RenderedMapLease(it) },
+    private val leaseFactory: (View) -> RenderedMapLease = { RenderedMapLease(it) },
 ) : LinearLayout(context) {
     /** The document's or conversation's measured pages, reported back to the session's pure state. */
     var onDocumentPaged: ((SessionEvent.DocumentPaged) -> Unit)? = null
@@ -131,14 +131,30 @@ internal class SessionScreenView(
             fullMap?.insets ?: MapInsets(), renderContext = it.renderContext) }
         renderedLease.bind(fullMap?.renderContext, fullMap?.view ?: MapView.FOLLOW)
         fullMapPlan = null
-        viewport.removeAllViews()
-        blockViews.clear()
-        screen.blocks.forEach { block ->
+        val nextViews = screen.blocks.associate { block ->
             // The full map is the backdrop; its place in the column is an empty mark that keeps its key.
-            val view = if (block === full) View(context) else viewFor(block, chromeless)
-            viewport.addView(view, if (block === full) SessionViewport.Params() else paramsFor(block))
-            blockViews[block.key] = view
+            val view = when {
+                block === full -> View(context)
+                block is ScreenBlock.Map -> LauncherBlocks.map(context, block, blockViews[block.key], leaseFactory)
+                else -> viewFor(block, chromeless)
+            }
+            block.key to view
         }
+        // Retain an attached map card across content revisions; a real removal still detaches it.
+        for (index in viewport.childCount - 1 downTo 0) {
+            if (viewport.getChildAt(index) !in nextViews.values) viewport.removeViewAt(index)
+        }
+        screen.blocks.forEachIndexed { index, block ->
+            val view = nextViews.getValue(block.key)
+            val params = if (block === full) SessionViewport.Params() else paramsFor(block)
+            if (view.parent !== viewport) viewport.addView(view, index, params)
+            else if (viewport.indexOfChild(view) != index) {
+                viewport.removeView(view)
+                viewport.addView(view, index, params)
+            } else view.layoutParams = params
+        }
+        blockViews.clear()
+        blockViews.putAll(nextViews)
         viewport.focus = screen.focusKey?.let(blockViews::get)
         val fit = screen.fit
         viewport.onOverflow = fit?.let {

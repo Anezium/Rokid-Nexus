@@ -862,6 +862,8 @@ looking live.
 `supportsRenderedMaps` requires the separate `RENDERED_MAP` v1 bit through both
 hubs, the launcher bundle, the `surfaces` grant and live SPP. It is false with
 either older hub, even if `supportsLauncherInteractive()` is true.
+After session loss/replacement it stays false until the current peer announces
+support again; retained launcher support does not carry this negotiation over.
 `renderedMapViews: Set<NexusRenderedMapView>` contains only `FOLLOW` and/or
 `OVERVIEW` under unexpired hub feedback, and is empty otherwise. The SDK keeps
 at most ambient Follow plus one selected page view. `onRenderedMapsChanged()`
@@ -871,6 +873,15 @@ cancellation deadline from `renderedMapLeaseRemainingMs` (null without demand)
 so pending work ends when the earliest slot expires, even between journey ticks.
 This timer belongs only to an existing journey and grants no new lifetime. Page visibility or
 successful geometry publication alone never authorize view-driven networking.
+Use `renderedMapFrames: Set<NexusRenderedMap>` for network authorization. Each
+frame has `view`, the acknowledged `revision`, and `pageId` (null for activity
+geometry). Keep a bounded owner-local correlation from your published revisions
+to their footprints and request only the acknowledged footprints, rechecking at
+the request boundary. Unknown revisions authorize nothing. Moving the current
+tracker while an older Follow frame is acknowledged does not authorize its new
+tiles, even when publishing the new geometry is throttled or refused. Feedback
+contains no caller-provided tile keys or another owner's authority. Renewals
+should reconcile demand and expiry without publishing another page revision.
 `clearRenderedMapDemand()` discards this plugin's feedback when replacing its
 journey. The SDK also clears applicable slots on registration reset, SPP loss,
 page hide/close and activity end/close. No receive prefix or new grant is needed.

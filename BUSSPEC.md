@@ -2384,6 +2384,9 @@ The `follow` and `overview` of a `route` page and the payload of
 rendered-view feedback v1. Each hub advertises its own bit in `features`;
 the phone exposes it to approved plugins only with the launcher bundle, the
 glasses' bit and authenticated SPP up. Generic launcher support is insufficient.
+Rendered-map negotiation is cleared when that authenticated session is lost or
+replaced, independently of retained launcher support. Until a fresh peer
+announcement, the replacement connection exposes no rendered-map capability.
 Old phone/new glasses and new phone/old glasses therefore remain route-only
 for Navigation's OSM data. The old launcher fallback is unchanged.
 
@@ -2409,8 +2412,14 @@ checks the live owner/sequence/geometry or accepted request/frame/revision,
 unexpired page lease, grant and single current registration. A negative event
 may revoke its exact token after an intervening revision of the same owner.
 
-Only `{pluginId, kind, token, view, visible, leaseMs: 5000}` reaches that owner's
-SDK; rendering authority and other owners' identities never reach a plugin.
+Only `{pluginId, kind, token, view, revision, visible, leaseMs: 5000}` reaches
+that owner's SDK, plus `pageId` for page feedback. Revision identifies the
+owner's accepted page or forwarded activity geometry. Session/frame/request
+authority and other owners' identities never reach a plugin. An absent or
+malformed publication identity fails closed. A consumer correlates this
+acknowledgment to the footprint of that exact publication; a view enum alone
+never authorizes a new area. A throttled, refused or undrawn replacement
+authorizes no new footprint. No tile keys are accepted from a feedback sender.
 There are at most two SDK slots, ambient Follow and one selected page view.
 A new token/view replaces its slot; an old token's hide cannot clear its
 replacement. Unknown, absent, malformed or expired feedback fails closed.
@@ -2420,6 +2429,9 @@ and cancel work when demand disappears, including expiry; Navigation schedules
 one deadline for the earliest SDK slot, independently of its guidance tick.
 Feedback never opens
 a plugin, binds a provider, starts a journey or extends any existing lease.
+Stable renewals reconcile demand and expiry without revising the page they
+acknowledge. A same-view content revision replaces its acknowledgment after
+drawing, without an artificial hide; actual Commands, hiding and removal revoke it.
 
 ### Composer capture (`/core/compose/*`)
 
