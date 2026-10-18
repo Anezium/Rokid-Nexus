@@ -49,18 +49,19 @@ internal class ForegroundResolver(
 
     fun onWindowsChanged(windows: List<ForegroundWindow>): Boolean {
         val front = windows.asSequence()
-            .filter { it.isApplication && !isIgnored(it.packageName.orEmpty()) }
+            .filter { it.isApplication && !isIgnored(it.packageName?.trim().orEmpty()) }
             .maxWithOrNull(compareBy(ForegroundWindow::isFocused, ForegroundWindow::isActive, ForegroundWindow::layer))
+        // An unreadable front application must not promote a readable window behind it.
         return onWindowState(front?.packageName)
     }
 
     private fun isIgnored(name: String): Boolean =
-        name.isBlank() || name == ownPackage || name in IGNORED || isInputMethod(name)
+        name.isNotBlank() && (name == ownPackage || name in IGNORED || isInputMethod(name))
 
     /** A window-state change from [packageName]; true when what is in front changed. */
     fun onWindowState(packageName: String?): Boolean {
         val name = packageName?.trim().orEmpty()
-        if (isIgnored(name)) return false
+        if (name.isBlank() || isIgnored(name)) return false
         val next = if (isHome(name)) Foreground.Home else Foreground.App(name)
         if (next == current) return false
         current = next
@@ -114,11 +115,11 @@ internal object AmbientForeground {
     fun onWindowsChanged(service: AccessibilityService) {
         val windows = service.windows.orEmpty().mapNotNull { window ->
             if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@mapNotNull null
-            val root = window.root ?: return@mapNotNull null
+            val root = window.root
             try {
-                ForegroundWindow(root.packageName?.toString(), true, window.isFocused, window.isActive, window.layer)
+                ForegroundWindow(root?.packageName?.toString(), true, window.isFocused, window.isActive, window.layer)
             } finally {
-                root.recycle()
+                root?.recycle()
             }
         }
         onWindowsChanged(windows)

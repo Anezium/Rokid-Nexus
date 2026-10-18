@@ -33,14 +33,15 @@ class AmbientForegroundPolicyTest {
     }
 
     @Test
-    fun `Nexus and keyboard windows cannot hide the foreground application and missing roots retain it`() {
+    fun `identified Nexus system and keyboard windows are ignored and empty snapshots retain foreground`() {
         val reader = ForegroundWindow("com.example.reader", true, layer = 2)
         val own = ForegroundWindow("com.anezium.rokidbus.glasses", true, true, true, 9)
         val keyboard = ForegroundWindow("com.example.keyboard", true, true, true, 10)
-        resolver.onWindowsChanged(listOf(reader, own, keyboard))
+        val system = ForegroundWindow("com.android.systemui", true, true, true, 11)
+        resolver.onWindowsChanged(listOf(reader, own, keyboard, system))
         assertEquals(Foreground.App("com.example.reader"), resolver.current)
         assertFalse(resolver.onWindowsChanged(emptyList()))
-        assertFalse(resolver.onWindowsChanged(listOf(own, keyboard)))
+        assertFalse(resolver.onWindowsChanged(listOf(own, keyboard, system)))
         assertEquals(Foreground.App("com.example.reader"), resolver.current)
     }
 
@@ -52,6 +53,37 @@ class AmbientForegroundPolicyTest {
         assertEquals(Foreground.App("com.android.settings"), resolver.current)
         resolver.onWindowsChanged(listOf(rear, focused.copy(isFocused = false, isActive = false)))
         assertEquals(Foreground.App("com.example.reader"), resolver.current)
+    }
+
+    @Test
+    fun `an unidentified winning application retains the native foreground until readable`() {
+        val rearHome = ForegroundWindow("com.rokid.os.launcher", true, layer = 3)
+        val priorities = listOf(
+            ForegroundWindow(null, true, isFocused = true, layer = 1),
+            ForegroundWindow(null, true, isActive = true, layer = 1),
+            ForegroundWindow(null, true, layer = 4),
+        )
+        for (priority in priorities) {
+            for (unreadablePackage in listOf(null, "", "  ")) {
+                resolver.onWindowState("com.example.reader")
+                val front = priority.copy(packageName = unreadablePackage)
+                assertFalse(resolver.onWindowsChanged(listOf(rearHome, front)))
+                assertEquals(Foreground.App("com.example.reader"), resolver.current)
+
+                assertTrue(resolver.onWindowsChanged(listOf(rearHome, front.copy(packageName = "com.android.settings"))))
+                assertEquals(Foreground.App("com.android.settings"), resolver.current)
+            }
+        }
+    }
+
+    @Test
+    fun `unreadable rear applications and nonapplication windows do not block a readable winner`() {
+        val focusedHome = ForegroundWindow("com.rokid.os.launcher", true, isFocused = true)
+        val unreadableRear = ForegroundWindow(null, true, isActive = true, layer = 9)
+        val unreadableOverlay = ForegroundWindow(null, false, true, true, 10)
+        resolver.onWindowState("com.example.reader")
+        assertTrue(resolver.onWindowsChanged(listOf(unreadableRear, unreadableOverlay, focusedHome)))
+        assertEquals(Foreground.Home, resolver.current)
     }
 
     @Test
