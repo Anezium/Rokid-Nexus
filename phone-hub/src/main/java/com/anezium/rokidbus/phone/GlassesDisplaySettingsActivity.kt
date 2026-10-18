@@ -16,6 +16,7 @@ import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
 import com.anezium.rokidbus.shared.AmbientSize
+import com.anezium.rokidbus.shared.AmbientPreferencesContract
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 
 /**
@@ -226,7 +227,7 @@ class GlassesDisplaySettingsActivity : Activity() {
         }
 
     /**
-     * How large each plugin's island is drawn on the glasses. Automatic leaves it to the glasses;
+     * How large Navigation is drawn on the glasses. Automatic leaves it to the glasses;
      * the same choice can be made on the glasses, and the phone keeps the last one either way.
      */
     private fun islandSizeCard(): LinearLayout =
@@ -239,12 +240,12 @@ class GlassesDisplaySettingsActivity : Activity() {
                 NexusUi.dp(this@GlassesDisplaySettingsActivity, 15),
                 NexusUi.dp(this@GlassesDisplaySettingsActivity, 10),
             )
-            addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, "Island size"))
+            addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, "Navigation display"))
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
             addView(
                 NexusUi.rowSub(
                     this@GlassesDisplaySettingsActivity,
-                    "How much room each plugin's island takes on the glasses. Automatic lets the glasses choose.",
+                    "Choose the size of Navigation on the glasses. Other plugins choose their own presentation.",
                 ),
             )
             val owners = islandOwners()
@@ -253,7 +254,7 @@ class GlassesDisplaySettingsActivity : Activity() {
                 addView(
                     NexusUi.rowSub(
                         this@GlassesDisplaySettingsActivity,
-                        "No approved plugin can show an island yet.",
+                        "Approve Navigation to choose its display size.",
                     ),
                 )
                 return@apply
@@ -262,7 +263,7 @@ class GlassesDisplaySettingsActivity : Activity() {
             val options = listOf(
                 null to "Automatic",
                 AmbientSize.TEXT to "Text",
-                AmbientSize.MINIMAP to "Map",
+                AmbientSize.MINIMAP to "Minimap",
                 AmbientSize.PANEL to "Panel",
             )
             owners.forEach { (pluginId, name) ->
@@ -276,11 +277,12 @@ class GlassesDisplaySettingsActivity : Activity() {
             }
         }
 
-    /** Approved plugins with the surfaces grant, the only ones that can show an island. */
+    /** Navigation's size control is available only while its surfaces grant is approved. */
     private fun islandOwners(): List<Pair<String, String>> {
         val grants = PluginGrantStore(applicationContext)
         return PhonePluginDiscovery(packageManager).discover()
             .mapNotNull { (it as? PhonePluginCandidate.Valid)?.principal }
+            .filter { AmbientPreferencesContract.hasSizeChoice(it.descriptor.id) }
             .filter { principal ->
                 (grants.stateFor(principal) as? PluginGrantState.Approved)
                     ?.capabilities?.contains(PluginCapability.SURFACES) == true

@@ -9,6 +9,12 @@ import org.junit.Test
 
 class NavRouteGuidanceTest {
     @Test
+    fun `degraded destination drops geocoder area before fitting the HUD name`() {
+        val guidance = NavRouteSnapshot(route(destination = "Gare de Goussainville, Sarcelles, Goussainville"), quality = RouteQuality.STALE).guidance()
+        assertEquals("Gare de Goussainville", guidance.secondary)
+    }
+
+    @Test
     fun `fallback guidance publishes distance and instruction only once`() {
         val route = route()
         val guidance = NavRouteSnapshot(route, quality = RouteQuality.TRACKING).guidance()

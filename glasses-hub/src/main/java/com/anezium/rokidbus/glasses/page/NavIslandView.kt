@@ -83,6 +83,14 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
     }
     private val rect = RectF()
     private val clip = Path()
+    private var naturalMapHeight = LayoutParams.WRAP_CONTENT
+
+    var maxHeightPx: Int = Int.MAX_VALUE
+        set(value) {
+            if (field == value) return
+            field = value.coerceAtLeast(0)
+            requestLayout()
+        }
 
     var form: IslandForm = IslandForm.TEXT
         private set
@@ -108,6 +116,7 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
         this.form = form
         removeAllViews()
         mapView = null
+        naturalMapHeight = (content as? IslandContent.Guidance)?.mapHeightPx ?: LayoutParams.WRAP_CONTENT
         val inset = BORDER_INSET_PX
         setPadding(inset, inset, inset, inset)
         when (content) {
@@ -119,7 +128,21 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        super.onMeasure(MeasureSpec.makeMeasureSpec(form.widthPx, MeasureSpec.EXACTLY), heightMeasureSpec)
+        val width = MeasureSpec.makeMeasureSpec(form.widthPx, MeasureSpec.EXACTLY)
+        mapView?.let { map ->
+            map.layoutParams.height = naturalMapHeight
+            map.visibility = VISIBLE
+        }
+        super.onMeasure(width, heightMeasureSpec)
+        val overflow = measuredHeight - maxHeightPx
+        if (overflow > 0) {
+            mapView?.let { map ->
+                val remaining = (map.measuredHeight - overflow).coerceAtLeast(0)
+                if (remaining < 60) map.visibility = GONE else map.layoutParams.height = remaining
+            }
+            super.onMeasure(width, heightMeasureSpec)
+            setMeasuredDimension(measuredWidth, minOf(measuredHeight, maxHeightPx))
+        }
     }
 
     override fun dispatchDraw(canvas: Canvas) {

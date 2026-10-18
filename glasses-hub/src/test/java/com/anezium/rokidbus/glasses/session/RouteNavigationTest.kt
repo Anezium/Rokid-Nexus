@@ -27,6 +27,16 @@ import org.junit.Test
 
 /** Route pages, the full map and the display page (plan 028a §5.5, §8.1). */
 class RouteNavigationTest {
+    @Test
+    fun `another provider route retains its map commands without a size editor`() {
+        openRoute(routeBody())
+        val page = (top().status as FrameStatus.Shown).snapshot.page
+        val other = page.copy(correlation = page.correlation.copy(pageId = "other:route"))
+        val rows = items.rows(other)
+        assertFalse(rows.any { it.item is PageItem.RouteDisplay })
+        assertTrue(rows.any { it.item is PageItem.RouteFullScreen })
+    }
+
     private var live: RouteGeometry? = null
     private var saved: AmbientSize? = null
     private val items = TypedPageItems(
@@ -468,7 +478,7 @@ class RouteNavigationTest {
     private fun top() = (model.state as SessionState.InPage).frames.last()
 
     private companion object {
-        const val OWNER = "maps"
-        const val PAGE_ID = "maps:route"
+        const val OWNER = "nav"
+        const val PAGE_ID = "nav:route"
     }
 }

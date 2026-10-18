@@ -21,10 +21,11 @@ internal data class GuidanceIsland(val form: IslandForm, val content: IslandCont
 /**
  * Which islands are drawn as guidance islands, and how (plan 028a §8.1). Pure.
  *
- * An owner is guidance when it chose an ambient size or sends live route geometry; every other
+ * Navigation may choose an ambient size; any provider may supply live route geometry. Every other
  * owner keeps the existing island. An explicit size is drawn as is (the activity tier already
  * capped it at text over an app); an automatic one is its minimap while expanded and its text
- * form while folded, so the ten-second collapse still applies to it. The map is heading-up
+ * form while folded, so the ten-second collapse still applies to it. Other providers' saved size
+ * overrides are inert: their developer owns their presentation. The map is heading-up
  * (Follow); a position that is not live draws the lost glyph, "~" figures and a degraded map.
  *
  * The foot under a minimap or panel (r17 1.2-1.4, 5.9, 5.10) says only what is known: the
@@ -50,7 +51,9 @@ internal object GuidanceIslands {
         geometryRevision: Long? = null,
     ): GuidanceIsland? {
         if (item.presentation == ActivityPresentation.HIDDEN) return null
-        val size = item.size
+        val size = item.size.takeIf {
+            com.anezium.rokidbus.shared.AmbientPreferencesContract.hasSizeChoice(item.activity.ownerPluginId)
+        }
         if (size == null && geometry == null) return null
         val form = when (size) {
             AmbientSize.TEXT -> IslandForm.TEXT
@@ -60,6 +63,7 @@ internal object GuidanceIslands {
         }
         val content = item.activity.content
         val degraded = RoutePresentation.degraded(null, geometry)
+        val statusInFoot = degraded && form != IslandForm.TEXT && content.primary == RoutePresentation.GPS_LOST
         val map = geometry?.takeIf { form != IslandForm.TEXT }?.let {
             MapInput(
                 geometry = it,
@@ -82,7 +86,7 @@ internal object GuidanceIslands {
             else -> null
         }
         // On a minimap the remaining measure sits in the foot, not beside the figure (r17 1.2).
-        val footMeasure = content.measure.takeIf { minimap && !noRoute }
+        val footMeasure = content.measure.takeIf { minimap && !noRoute && !statusInFoot }
         val right = if (noRoute) sourceLabel else footMeasure
         val foot = if (left == null && right == null) {
             null
@@ -93,13 +97,15 @@ internal object GuidanceIslands {
             form,
             IslandContent.Guidance(
                 glyph = RoutePresentation.glyph(content.glyph, degraded),
-                figure = content.primary,
-                measure = content.measure.takeUnless { foot != null && footMeasure != null },
+                figure = if (statusInFoot) content.measure ?: "Navigation" else content.primary,
+                measure = content.measure.takeUnless { statusInFoot || (foot != null && footMeasure != null) },
                 street = content.secondary,
                 // A figure the phone no longer confirms is drawn as approximate, muted.
                 approximate = degraded || item.stale,
                 time = content.eta,
-                then = content.detail.firstOrNull(),
+                then = content.detail.firstOrNull()?.takeUnless {
+                    statusInFoot && (it == "GPS signal lost" || it == RoutePresentation.GPS_LOST)
+                },
                 map = map,
                 foot = foot,
                 mapHeightPx = CROWDED_MAP_HEIGHT_PX.takeIf { crowded && minimap && map != null },

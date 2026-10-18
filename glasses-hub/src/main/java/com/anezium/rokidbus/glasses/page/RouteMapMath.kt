@@ -272,16 +272,16 @@ internal object RouteMapMath {
      * of the compass, the scale bar and every name already placed. A name that cannot be read
      * whole is left out rather than cut.
      */
-    fun placeLabels(candidates: List<MapLabel>, maxCount: Int, bounds: MapBox, reserved: List<MapBox>, pad: Float = 3f): List<MapLabel> {
+    fun placeLabels(candidates: List<MapLabel>, maxCount: Int, bounds: MapBox, reserved: List<MapBox>, pad: Float = 3f, verticalOffsets: List<Float> = listOf(0f)): List<MapLabel> {
         if (maxCount <= 0) return emptyList()
         val placed = mutableListOf<MapLabel>()
         candidates.withIndex().sortedWith(compareBy<IndexedValue<MapLabel>>({ it.value.priority }, { it.index })).forEach { (_, label) ->
             if (placed.size >= maxCount) return placed
-            val box = label.box(pad)
-            if (!bounds.contains(box)) return@forEach
-            if (reserved.any { it.intersects(box) }) return@forEach
-            if (placed.any { it.box(pad).intersects(box) }) return@forEach
-            placed += label
+            val readable = verticalOffsets.asSequence().map { offset -> label.copy(y = label.y + offset) }.firstOrNull { candidate ->
+                val box = candidate.box(pad)
+                bounds.contains(box) && reserved.none { it.intersects(box) } && placed.none { it.box(pad).intersects(box) }
+            }
+            if (readable != null) placed += readable
         }
         return placed
     }

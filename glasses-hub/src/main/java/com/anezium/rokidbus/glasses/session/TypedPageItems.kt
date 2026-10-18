@@ -117,8 +117,10 @@ internal class TypedPageItems(
             add(TypedRow(VIEW_OVERVIEW_KEY, RoutePresentation.VIEW_OVERVIEW, RoutePresentation.VIEW_OVERVIEW_SUB, true, PageItem.RouteView(MapView.OVERVIEW)))
             add(TypedRow(FULL_SCREEN_KEY, RoutePresentation.FULL_SCREEN, RoutePresentation.FULL_SCREEN_SUB, true, PageItem.RouteFullScreen))
         }
-        val size = ambientSize(owner)
-        add(TypedRow(DISPLAY_KEY, RoutePresentation.displayLabel(size), RoutePresentation.DISPLAY_SUB, true, PageItem.RouteDisplay(owner, size)))
+        if (com.anezium.rokidbus.shared.AmbientPreferencesContract.hasSizeChoice(owner)) {
+            val size = ambientSize(owner)
+            add(TypedRow(DISPLAY_KEY, RoutePresentation.displayLabel(size), RoutePresentation.DISPLAY_SUB, true, PageItem.RouteDisplay(owner, size)))
+        }
     }
 
     override fun items(page: PageSurfaceResponse.Page): List<PageItem> = rows(page).map(TypedRow::item)
