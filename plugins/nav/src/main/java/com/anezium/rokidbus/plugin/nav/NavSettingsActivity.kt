@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.service.notification.NotificationListenerService
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.Switch
@@ -28,11 +29,13 @@ class NavSettingsActivity : Activity() {
     private val sourceSwitches = mutableMapOf<NavSource, Switch>()
     private lateinit var journeyPanel: NavJourneyPanel
     private val main = Handler(Looper.getMainLooper())
+    private val rebind = NavListenerRebind(rebindRequest)
 
     // Only while the screen is in front: the journey reports through the shared state.
     private val refresh = object : Runnable {
         override fun run() {
             journeyPanel.refresh()
+            refreshAccess()
             refreshRoute()
             main.postDelayed(this, REFRESH_MS)
         }
@@ -95,12 +98,30 @@ class NavSettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        accessStatus.text = getString(
-            if (accessGranted()) R.string.nav_settings_access_on else R.string.nav_settings_access_off,
+        // Access granted and guidance on but the listener not connected is Android's to fix:
+        // one request per visit here, and the line below says what the listener really is.
+        rebind.onEnter()
+        rebind.consider(
+            ComponentName(this, NavNotificationListener::class.java),
+            accessGranted = accessGranted(),
+            guidanceEnabled = NavSettings(this).switches().enabled,
+            connected = NavState.listenerConnected,
         )
+        refreshAccess()
         refreshRoute()
         main.removeCallbacks(refresh)
         main.post(refresh)
+    }
+
+    /** What the listener really is: allowed and connected, allowed but not connected yet, or not allowed. */
+    private fun refreshAccess() {
+        accessStatus.text = getString(
+            when {
+                !accessGranted() -> R.string.nav_settings_access_off
+                NavState.listenerConnected -> R.string.nav_settings_access_on
+                else -> R.string.nav_settings_access_connecting
+            },
+        )
     }
 
     override fun onPause() {
@@ -202,7 +223,10 @@ class NavSettingsActivity : Activity() {
             .onFailure { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
     }
 
-    private companion object {
+    internal companion object {
         const val REFRESH_MS = 1_000L
+
+        /** The platform's rebind request; replaced by tests that record it instead. */
+        var rebindRequest: (ComponentName) -> Unit = NotificationListenerService::requestRebind
     }
 }
