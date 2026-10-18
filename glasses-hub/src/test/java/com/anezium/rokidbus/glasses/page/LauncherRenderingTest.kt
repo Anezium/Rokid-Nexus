@@ -1,14 +1,27 @@
 package com.anezium.rokidbus.glasses.page
 
+import android.app.Activity
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Rect
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.GlyphDrawable
+import com.anezium.rokidbus.glasses.ActivityOverlayRenderer
+import com.anezium.rokidbus.glasses.AmbientPreferencesSnapshot
+import com.anezium.rokidbus.glasses.Foreground
+import com.anezium.rokidbus.glasses.ForegroundResolver
+import com.anezium.rokidbus.glasses.ForegroundWindow
+import com.anezium.rokidbus.glasses.GuidanceIsland
+import com.anezium.rokidbus.glasses.HudMotion
+import com.anezium.rokidbus.glasses.HudTopInset
+import com.anezium.rokidbus.glasses.SharedPreferencesAmbientStorage
+import com.anezium.rokidbus.glasses.allocateActivityCorners
 import com.anezium.rokidbus.glasses.session.Bubble
 import com.anezium.rokidbus.glasses.session.BubbleSide
 import com.anezium.rokidbus.glasses.session.BubbleStyle
@@ -28,7 +41,10 @@ import com.anezium.rokidbus.glasses.session.ScreenHint
 import com.anezium.rokidbus.glasses.session.SessionEvent
 import com.anezium.rokidbus.glasses.session.SessionScreen
 import com.anezium.rokidbus.glasses.session.StatusLineStyle
+import com.anezium.rokidbus.shared.AmbientSize
 import com.anezium.rokidbus.shared.MediaPlaybackState
+import com.anezium.rokidbus.shared.PinSurfacePosition
+import com.anezium.rokidbus.shared.RenderedMapContext
 import com.anezium.rokidbus.shared.RouteGeometry
 import com.anezium.rokidbus.shared.RouteLabel
 import com.anezium.rokidbus.shared.RoutePath
@@ -43,9 +59,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -59,6 +77,152 @@ import org.robolectric.annotation.LooperMode
 @LooperMode(LooperMode.Mode.PAUSED)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class LauncherRenderingTest {
+    @Test
+    fun `compact lost guidance keeps its warning without promoting the old arrival time`() {
+        val nav = NavIslandView(context, icons).apply {
+            maxHeightPx = 54
+            bind(IslandForm.PANEL, IslandContent.Guidance(
+                HudGlyphs.GPS_LOST, "120 m", street = "Station", approximate = true,
+                time = "12:30", foot = IslandFoot("offline · last known 12:24", "12:30"),
+            ))
+            measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            layout(0, 0, measuredWidth, measuredHeight)
+        }
+        assertEquals(listOf("~120 m", "Station", "GPS lost · offline · last known 12:24"), nav.texts())
+        assertTrue(nav.height <= 54)
+        assertNull(nav.mapView)
+    }
+
+    @Test
+    @Config(qualifiers = "w320dp-h640dp-hdpi")
+    fun `a bottom resident reflows at 73 and 54 pixels and recovers on ROM measurements in manual mode`() {
+        val controller = Robolectric.buildActivity(Activity::class.java).create().start().resume()
+        val activity = controller.get()
+        val metrics = activity.resources.displayMetrics
+        val previousHeight = metrics.heightPixels
+        val previousMotion = HudMotion.enabled
+        // The attached test window has spare room; the HUD itself is the physical 480 x 640 viewport.
+        metrics.heightPixels = 640
+        assertEquals(1.5f, metrics.density, 0f)
+        assertEquals(480, metrics.widthPixels)
+        HudMotion.enabled = false
+        val position = activity.getSharedPreferences("hud_position", Context.MODE_PRIVATE)
+        position.edit().clear().commit()
+        HudTopInset.restore(activity)
+        HudTopInset.set(activity, manualDp = 40, auto = false)
+        val storage = SharedPreferencesAmbientStorage(activity)
+        val saved = AmbientPreferencesSnapshot(sizes = mapOf("nav" to AmbientSize.PANEL, "media" to AmbientSize.TEXT))
+        storage.save(saved)
+        val events = mutableListOf<Boolean>()
+        val nav = NavIslandView(activity, icons) { map ->
+            RenderedMapLease(map, { true }, { events += it.getBoolean("visible"); true })
+        }
+        val island = ActivityOverlayRenderer.ActivityIsland(activity, nav)
+        val allocation = allocateActivityCorners(listOf("media:activity", "nav:activity"), emptyMap(), PinSurfacePosition.TOP_RIGHT)
+        val corner = allocation.getValue("nav:activity")
+        assertEquals(PinSurfacePosition.BOTTOM_LEFT, corner)
+        val foreground = ForegroundResolver(activity.packageName, { it == "test.home" }, { false })
+        val windows = listOf(ForegroundWindow("test.home", isApplication = true, isFocused = true))
+        assertTrue(foreground.onWindowsChanged(windows))
+        assertEquals(Foreground.Home, foreground.current)
+        val insets = mutableListOf<Int>()
+        val unobserve = HudTopInset.observe(activity) { inset ->
+            insets += inset
+            island.place(corner, inset)
+        }
+        try {
+            val geometry = RouteGeometry(
+                500.0, listOf(RoutePath(RoutePathRole.ROUTE, listOf(RoutePoint(500, 500), RoutePoint(500, 100)))),
+                position = RoutePosition(RoutePositionQuality.STALE, RoutePoint(500, 500), fixAgeS = 77),
+                attribution = "© OpenStreetMap",
+            )
+            // Bind exactly once. Later layout changes have no new activity or geometry publication.
+            island.renderGuidance(GuidanceIsland(IslandForm.PANEL, IslandContent.Guidance(
+                HudGlyphs.GPS_LOST, "1.8 km", street = "Station", approximate = true,
+                map = MapInput(geometry, MapForm.PANEL, degraded = true,
+                    renderContext = RenderedMapContext("ambient", "nav:activity", 7, seq = 10)),
+                foot = IslandFoot("GPS lost · last fix 77 s"),
+            )))
+            island.show(nav)
+            VisibleMapTestWindow.attach(controller, island)
+            fun layoutHud(idleFirst: Boolean = true) {
+                if (idleFirst) shadowOf(Looper.getMainLooper()).idle()
+                island.measure(View.MeasureSpec.makeMeasureSpec(480, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(640, View.MeasureSpec.EXACTLY))
+                island.layout(0, 0, 480, 640)
+            }
+            layoutHud()
+            assertEquals(234, nav.maxHeightPx)
+            val map = requireNotNull(nav.mapView)
+            assertEquals(View.VISIBLE, map.visibility)
+            draw(island)
+            assertEquals(listOf(true), events)
+            assertNotNull(requireNotNull(map.planNow()).attribution)
+
+            listOf(524 to 73, 544 to 54).forEach { (row, budget) ->
+                assertFalse(foreground.onWindowsChanged(windows))
+                HudTopInset.onRomRowMeasured(activity, centerYpx = row, density = metrics.density)
+                assertTrue(island.isLayoutRequested)
+                layoutHud()
+                val trace = "row=$row budget=${nav.maxHeightPx} nav=${nav.top}..${nav.bottom} height=${nav.height}"
+                assertEquals(budget, nav.maxHeightPx)
+                assertTrue(trace, nav.height in 1..budget)
+                assertEquals(trace, 622, nav.bottom)
+                assertTrue(trace, nav.top >= row + 24)
+                assertEquals(corner, island.corner)
+                assertEquals(IslandForm.PANEL, nav.form)
+                assertEquals(saved, storage.load())
+                assertEquals(40, HudTopInset.current(activity))
+                assertEquals(40, position.getInt("top_inset_dp", -1))
+                assertFalse(position.getBoolean("auto", true))
+                assertEquals(View.GONE, map.visibility)
+                assertEquals(1, (0 until nav.childCount).count { nav.getChildAt(it).visibility == View.VISIBLE })
+                assertFalse(events.last())
+                val count = events.size
+                repeat(2) { layoutHud(); draw(island) }
+                assertEquals(count, events.size)
+                val visibleText = find<TextView>(nav).filter { it.isShown }
+                assertEquals(listOf("~1.8 km", "Station", "GPS lost · last fix 77 s"), visibleText.map { it.text.toString() })
+                visibleText.forEach { text ->
+                    val bounds = Rect(0, 0, text.width, text.height)
+                    nav.offsetDescendantRectToMyCoords(text, bounds)
+                    val textTrace = "$trace text=${text.text} bounds=$bounds"
+                    println(textTrace)
+                    assertTrue(textTrace, bounds.left >= 0 && bounds.top >= 0 && bounds.right <= nav.width && bounds.bottom <= nav.height)
+                    assertTrue(textTrace, text.textSize >= 17f)
+                    val textLayout = requireNotNull(text.layout)
+                    assertTrue(textTrace, textLayout.height <= text.height - text.totalPaddingTop - text.totalPaddingBottom)
+                    assertEquals(textTrace, 0, textLayout.getEllipsisCount(0))
+                    val visible = Rect()
+                    assertTrue(textTrace, text.getLocalVisibleRect(visible))
+                    assertEquals(textTrace, Rect(0, 0, text.width, text.height), visible)
+                }
+            }
+
+            HudTopInset.onRomRowMeasured(activity, centerYpx = 364, density = metrics.density)
+            layoutHud(idleFirst = false)
+            assertEquals(listOf(40, 40, 40, 40), insets)
+            assertEquals(234, nav.maxHeightPx)
+            assertSame(map, nav.mapView)
+            assertEquals(View.VISIBLE, map.visibility)
+            assertFalse(events.last()) // Visibility alone must wait for a real draw to renew demand.
+            draw(island)
+            assertTrue(events.last())
+            assertTrue(map.height >= 60)
+            assertNotNull(requireNotNull(map.planNow()).attribution)
+            assertEquals(saved, storage.load())
+            assertEquals(IslandForm.PANEL, nav.form)
+        } finally {
+            unobserve()
+            controller.pause().stop().destroy()
+            position.edit().clear().commit()
+            HudTopInset.restore(activity)
+            metrics.heightPixels = previousHeight
+            HudMotion.enabled = previousMotion
+        }
+    }
+
     @Test
     fun `an ambient panel fits before the ROM status row while preserving map credit`() {
         val geometry = RouteGeometry(

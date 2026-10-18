@@ -75,7 +75,11 @@ internal sealed interface IslandContent {
  * which map view and whether the position is trusted all come in through [bind]. With [outlined]
  * false it draws no border of its own, for a host that draws the island's one outline.
  */
-internal class NavIslandView(context: Context, private val icons: SessionIconSource = HubIconSource) : LinearLayout(context) {
+internal class NavIslandView(
+    context: Context,
+    private val icons: SessionIconSource = HubIconSource,
+    private val leaseFactory: (View) -> RenderedMapLease = { RenderedMapLease(it) },
+) : LinearLayout(context) {
     private val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = PageStyle.HAIR_STROKE_PX
@@ -84,11 +88,16 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
     private val rect = RectF()
     private val clip = Path()
     private var naturalMapHeight = LayoutParams.WRAP_CONTENT
+    private var mapRule: View? = null
+    private var compact: View? = null
+    private var regularViews = emptyList<View>()
+    private var measuredBudget: Int? = null
 
     var maxHeightPx: Int = Int.MAX_VALUE
         set(value) {
             if (field == value) return
             field = value.coerceAtLeast(0)
+            measuredBudget = null
             requestLayout()
         }
 
@@ -116,6 +125,9 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
         this.form = form
         removeAllViews()
         mapView = null
+        mapRule = null
+        compact = null
+        measuredBudget = null
         naturalMapHeight = (content as? IslandContent.Guidance)?.mapHeightPx ?: LayoutParams.WRAP_CONTENT
         val inset = BORDER_INSET_PX
         setPadding(inset, inset, inset, inset)
@@ -123,26 +135,50 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
             is IslandContent.Guidance -> guidance(form, content)
             is IslandContent.Departure -> departure(content)
         }
+        regularViews = (0 until childCount).map(::getChildAt)
+        if (content is IslandContent.Guidance) {
+            compact = compactGuidance(content).also {
+                it.visibility = GONE
+                addView(it, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            }
+        }
         if (resized) requestLayout()
         invalidate()
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.makeMeasureSpec(form.widthPx, MeasureSpec.EXACTLY)
+        if (measuredBudget == maxHeightPx) {
+            super.onMeasure(width, heightMeasureSpec)
+            return
+        }
+        val naturalHeight = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+        compact?.visibility = GONE
+        regularViews.forEach { it.visibility = VISIBLE }
         mapView?.let { map ->
             map.layoutParams.height = naturalMapHeight
-            map.visibility = VISIBLE
         }
-        super.onMeasure(width, heightMeasureSpec)
+        super.onMeasure(width, naturalHeight)
         val overflow = measuredHeight - maxHeightPx
         if (overflow > 0) {
             mapView?.let { map ->
                 val remaining = (map.measuredHeight - overflow).coerceAtLeast(0)
-                if (remaining < 60) map.visibility = GONE else map.layoutParams.height = remaining
+                if (remaining < 60) {
+                    map.visibility = GONE
+                    mapRule?.visibility = GONE
+                } else {
+                    map.layoutParams.height = remaining
+                }
             }
-            super.onMeasure(width, heightMeasureSpec)
-            setMeasuredDimension(measuredWidth, minOf(measuredHeight, maxHeightPx))
+            super.onMeasure(width, naturalHeight)
+            if (measuredHeight > maxHeightPx && compact != null) {
+                // A short resident region must reflow the guidance, not cut off its GPS status.
+                regularViews.forEach { it.visibility = GONE }
+                compact?.visibility = VISIBLE
+            }
         }
+        measuredBudget = maxHeightPx
+        super.onMeasure(width, heightMeasureSpec)
     }
 
     override fun dispatchDraw(canvas: Canvas) {
@@ -223,8 +259,8 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
         }
         val map = content.map?.takeIf { form != IslandForm.TEXT }
         if (map != null) {
-            addView(rule(), LayoutParams(LayoutParams.MATCH_PARENT, 1).apply { topMargin = if (panel) 10 else 8 })
-            val view = RouteMapView(context).apply { bind(map.copy(form = if (panel) MapForm.PANEL else MapForm.MINIMAP)) }
+            mapRule = rule().also { addView(it, LayoutParams(LayoutParams.MATCH_PARENT, 1).apply { topMargin = if (panel) 10 else 8 }) }
+            val view = RouteMapView(context, leaseFactory).apply { bind(map.copy(form = if (panel) MapForm.PANEL else MapForm.MINIMAP)) }
             mapView = view
             addView(view, LayoutParams(LayoutParams.MATCH_PARENT, content.mapHeightPx ?: LayoutParams.WRAP_CONTENT))
         }
@@ -232,6 +268,29 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
         if (form != IslandForm.TEXT && map == null && content.foot == null) {
             // A minimap or panel without a map still ends on the island's own bottom padding.
             addView(View(context), LayoutParams(LayoutParams.MATCH_PARENT, 12))
+        }
+    }
+
+    private fun compactGuidance(content: IslandContent.Guidance): View = LinearLayout(context).apply {
+        orientation = VERTICAL
+        setPadding(10, 0, 10, 0)
+        val figure = if (content.approximate && !content.figure.startsWith("~")) "~${content.figure}" else content.figure
+        addView(LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(PageStyle.text(context, figure, 22f, if (content.approximate) PageStyle.muted else PageStyle.phosphor, PageStyle.monoBold, 1))
+            content.street?.let {
+                addView(PageStyle.text(context, it, PageStyle.BODY_PX, PageStyle.ink, PageStyle.sans, 1).apply { setPadding(8, 0, 0, 0) },
+                    LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+            }
+        }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        val footStatus = content.foot?.left?.takeIf(String::isNotBlank)
+        val warning = "GPS lost".takeIf { content.glyph == HudGlyphs.GPS_LOST && footStatus?.startsWith(it) != true }
+        val status = listOfNotNull(warning, footStatus, content.foot?.right?.takeUnless { content.approximate })
+            .joinToString(" · ").ifBlank { content.measure ?: content.then.orEmpty() }
+        if (status.isNotBlank()) {
+            addView(PageStyle.text(context, status, PageStyle.BODY_PX, PageStyle.muted, PageStyle.sans, 1),
+                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = 2 })
         }
     }
 
@@ -303,10 +362,13 @@ internal class NavIslandView(context: Context, private val icons: SessionIconSou
 
     /** The texts drawn, in order; for tests. */
     fun texts(): List<String> {
-        fun walk(view: View): List<String> = when (view) {
-            is TextView -> listOf(view.text.toString())
-            is android.view.ViewGroup -> (0 until view.childCount).flatMap { walk(view.getChildAt(it)) }
-            else -> emptyList()
+        fun walk(view: View): List<String> {
+            if (view.visibility != VISIBLE) return emptyList()
+            return when (view) {
+                is TextView -> listOf(view.text.toString())
+                is android.view.ViewGroup -> (0 until view.childCount).flatMap { walk(view.getChildAt(it)) }
+                else -> emptyList()
+            }
         }
         return walk(this)
     }

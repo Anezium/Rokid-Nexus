@@ -66,13 +66,13 @@ internal object HudTopInset {
             if (abs(measuredDp - state.autoDp) < AUTO_HYSTERESIS_DP) {
                 return@synchronized null
             }
-            val previousEffectiveDp = state.effectiveDp
             state = state.copy(autoDp = measuredDp)
             appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putInt(KEY_AUTO_INSET_DP, measuredDp)
                 .apply()
-            state.effectiveDp.takeIf { it != previousEffectiveDp }
+            // Ambient height follows the ROM row even when the wearer keeps a manual inset.
+            state.effectiveDp
         }
         nextEffectiveDp?.let(::notifyListeners)
     }
@@ -82,9 +82,10 @@ internal object HudTopInset {
         val nextEffectiveDp = synchronized(lock) {
             val wasInitialized = initialized
             val previousEffectiveDp = state.effectiveDp
+            val previousAutoDp = state.autoDp
             state = next
             initialized = true
-            next.effectiveDp.takeIf { wasInitialized && it != previousEffectiveDp }
+            next.effectiveDp.takeIf { wasInitialized && (it != previousEffectiveDp || next.autoDp != previousAutoDp) }
         }
         nextEffectiveDp?.let(::notifyListeners)
         return next.effectiveDp
