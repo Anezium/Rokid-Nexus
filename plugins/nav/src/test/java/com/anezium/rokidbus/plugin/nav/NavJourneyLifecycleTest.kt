@@ -349,13 +349,14 @@ class NavJourneyLifecycleTest {
         val published = mutableListOf<NexusPage.Content>()
         lateinit var accepted: NexusPage.Content
         val handler = android.os.Handler(Looper.getMainLooper())
+        val pageTimer = android.os.Handler(Looper.getMainLooper())
         val pages = NavPageProvider<String>(
             pageIdOf = { it }, floorOf = { null },
             state = { NavPageState(NavState.guidance, true, true, null, journeyActive = true,
                 journey = NavState.journey, extended = true, renderedMaps = true, basemap = NavState.basemapState) },
             text = { NavPageText("access", "off", "idle") }, now = SystemClock::elapsedRealtime,
-            schedule = { delay, task -> handler.postDelayed({ task() }, delay) },
-            cancelScheduled = { handler.removeCallbacksAndMessages(null) },
+            schedule = { delay, task -> pageTimer.postDelayed({ task() }, delay) },
+            cancelScheduled = { pageTimer.removeCallbacksAndMessages(null) },
             publication = { page, state -> NavControl.renderedFrames.remember(page.revision, state.journey!!, NavPages.MAIN) },
             publish = { _, page ->
                 accepted = page as NexusPage.Content

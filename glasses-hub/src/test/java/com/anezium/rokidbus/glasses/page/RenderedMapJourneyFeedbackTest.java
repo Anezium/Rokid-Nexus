@@ -51,6 +51,7 @@ public class RenderedMapJourneyFeedbackTest {
         Application app = RuntimeEnvironment.getApplication();
         shadowOf(app).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION);
         Handler main = new Handler(Looper.getMainLooper());
+        Handler pageTimer = new Handler(Looper.getMainLooper());
         AtomicInteger cancelled = new AtomicInteger();
         AtomicInteger publications = new AtomicInteger();
         AtomicInteger hides = new AtomicInteger();
@@ -123,8 +124,8 @@ public class RenderedMapJourneyFeedbackTest {
             () -> new NavPageState(NavState.INSTANCE.getGuidance(), true, true, null, true,
                 NavState.INSTANCE.getJourney(), null, null, true, NavState.INSTANCE.getBasemapState(), true),
             () -> new NavPageText("access", "off", "idle", "Arrived"), SystemClock::elapsedRealtime,
-            (delay, task) -> { main.postDelayed(() -> task.invoke(), delay); return Unit.INSTANCE; },
-            () -> { main.removeCallbacksAndMessages(null); return Unit.INSTANCE; },
+            (delay, task) -> { pageTimer.postDelayed(() -> task.invoke(), delay); return Unit.INSTANCE; },
+            () -> { pageTimer.removeCallbacksAndMessages(null); return Unit.INSTANCE; },
             () -> NavControl.INSTANCE.getJourneyEpoch(), visible -> Unit.INSTANCE,
             (page, state) -> {
                 NavControl.INSTANCE.getRenderedFrames().remember(page.getRevision(), state.getJourney(), NavPages.MAIN);
@@ -153,6 +154,7 @@ public class RenderedMapJourneyFeedbackTest {
             runtime.onJourney(changed);
             shadowOf(Looper.getMainLooper()).idle();
             assertEquals(1, publications.get());
+            assertEquals(accepted[0].getRevision(), client.getRenderedMapFrames().iterator().next().getRevision());
             assertEquals(0, hides.get());
             assertEquals(0, cancelled.get());
             map.setVisibility(View.GONE);
