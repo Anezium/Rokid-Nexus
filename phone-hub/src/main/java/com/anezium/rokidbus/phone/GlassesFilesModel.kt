@@ -87,8 +87,12 @@ class GlassesTransferRate(private val windowMillis: Long = 5_000L, private val w
 
 /** Copy and formatting rules from the explorer spec, kept out of the activity so they are testable. */
 object GlassesFilesFormat {
-    /** Phone-side estimate before a copy starts; the measured link is about this fast. */
-    const val ESTIMATED_BYTES_PER_SECOND = 350_000L
+    /**
+     * Phone-side estimate before a copy starts. Measured on an S23 with Rokid glasses: 5 MiB in
+     * about 28 s in either direction, with Wi-Fi on or off and any ack window from 128 KiB up,
+     * so this is the Bluetooth link's own ceiling rather than a protocol setting.
+     */
+    const val ESTIMATED_BYTES_PER_SECOND = 180_000L
     const val MAX_FOLDER_NAME_CHARS = 80
     private const val FORBIDDEN = "/\\:*?\"<>|"
 

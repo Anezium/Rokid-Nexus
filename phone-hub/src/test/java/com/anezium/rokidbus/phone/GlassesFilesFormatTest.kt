@@ -60,9 +60,10 @@ class GlassesFilesFormatTest {
     @Test
     fun `copy estimates use the measured link speed`() {
         assertEquals("a few seconds", GlassesFilesFormat.estimate(1_000_000))
-        assertEquals("about 40 seconds", GlassesFilesFormat.estimate(14_000_000))
-        assertEquals("about a minute", GlassesFilesFormat.estimate(25_000_000))
-        assertEquals("about 3 minutes", GlassesFilesFormat.estimate(60_000_000))
+        assertEquals("about 40 seconds", GlassesFilesFormat.estimate(7_000_000))
+        assertEquals("about a minute", GlassesFilesFormat.estimate(14_000_000))
+        assertEquals("about 2 minutes", GlassesFilesFormat.estimate(21_000_000))
+        assertEquals("about 6 minutes", GlassesFilesFormat.estimate(60_000_000))
     }
 
     @Test

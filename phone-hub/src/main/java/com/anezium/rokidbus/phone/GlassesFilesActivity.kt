@@ -611,7 +611,8 @@ class GlassesFilesActivity : Activity() {
             column.addView(BusTheme.gap(this, 5))
         }
         column.addView(NexusUi.metaLabel(this, transferLine(item), if (item.state == GlassesTransferState.RUNNING || item.state == GlassesTransferState.QUEUED) NexusUi.INK3 else color).apply {
-            maxLines = 1
+            // A stop reason is the one line the user must read whole; it may wrap once.
+            maxLines = if (item.state == GlassesTransferState.STOPPED) 2 else 1
             ellipsize = TextUtils.TruncateAt.END
         })
         row.addView(column, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) })
