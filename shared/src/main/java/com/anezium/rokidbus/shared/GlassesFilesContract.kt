@@ -79,6 +79,8 @@ sealed interface GlassesFilesRequest {
 
     /** The phone could not open the offered lane and stays on the bus; the glasses stop waiting. */
     data class LaneDeclined(val transferId: String) : GlassesFilesRequest
+    data class LaneResync(val transferId: String) : GlassesFilesRequest
+    data class BusResume(val transferId: String, val stagedBytes: Long) : GlassesFilesRequest
 }
 
 /** Glasses to phone, on [GlassesFilesContract.RESULT_PATH]. */
@@ -118,6 +120,8 @@ sealed interface GlassesFilesResult {
     ) : GlassesFilesResult
     data class DownloadEnd(val transferId: String, val sha256: String) : GlassesFilesResult
     data class TransferFailed(val transferId: String, val error: GlassesFilesError) : GlassesFilesResult
+    data class LaneResync(val transferId: String) : GlassesFilesResult
+    data class BusResume(val transferId: String, val stagedBytes: Long) : GlassesFilesResult
 }
 
 data class GlassesFilesChunk(val transferId: String, val offset: Long)
@@ -177,6 +181,8 @@ object GlassesFilesContract {
     private const val TYPE_DOWNLOAD_PROGRESS = "download_progress"
     private const val TYPE_CANCEL = "cancel"
     private const val TYPE_LANE_DECLINED = "lane_declined"
+    private const val TYPE_LANE_RESYNC = "lane_resync"
+    private const val TYPE_BUS_RESUME = "bus_resume"
 
     private const val TYPE_LIST_RESULT = "list_result"
     private const val TYPE_OPERATION_RESULT = "operation_result"
@@ -249,6 +255,15 @@ object GlassesFilesContract {
             requireId(request.transferId)
             base(TYPE_LANE_DECLINED).put("transferId", request.transferId)
         }
+        is GlassesFilesRequest.LaneResync -> {
+            requireId(request.transferId)
+            base(TYPE_LANE_RESYNC).put("transferId", request.transferId)
+        }
+        is GlassesFilesRequest.BusResume -> {
+            requireId(request.transferId)
+            require(request.stagedBytes in 0..MAX_FILE_BYTES) { "Invalid offset" }
+            base(TYPE_BUS_RESUME).put("transferId", request.transferId).put("staged", request.stagedBytes)
+        }
     }
 
     fun parseRequest(payload: JSONObject): GlassesFilesRequest? {
@@ -292,6 +307,11 @@ object GlassesFilesContract {
             )
             TYPE_CANCEL -> GlassesFilesRequest.Cancel(payload.id("transferId") ?: return null)
             TYPE_LANE_DECLINED -> GlassesFilesRequest.LaneDeclined(payload.id("transferId") ?: return null)
+            TYPE_LANE_RESYNC -> GlassesFilesRequest.LaneResync(payload.id("transferId") ?: return null)
+            TYPE_BUS_RESUME -> GlassesFilesRequest.BusResume(
+                payload.id("transferId") ?: return null,
+                payload.strictLong("staged")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
+            )
             else -> null
         }
     }
@@ -370,6 +390,15 @@ object GlassesFilesContract {
             requireId(result.transferId)
             base(TYPE_TRANSFER_FAILED).put("transferId", result.transferId).put("errorCode", result.error.wireValue)
         }
+        is GlassesFilesResult.LaneResync -> {
+            requireId(result.transferId)
+            base(TYPE_LANE_RESYNC).put("transferId", result.transferId)
+        }
+        is GlassesFilesResult.BusResume -> {
+            requireId(result.transferId)
+            require(result.stagedBytes in 0..MAX_FILE_BYTES) { "Invalid offset" }
+            base(TYPE_BUS_RESUME).put("transferId", result.transferId).put("staged", result.stagedBytes)
+        }
     }
 
     fun parseResult(payload: JSONObject): GlassesFilesResult? {
@@ -418,6 +447,11 @@ object GlassesFilesContract {
             TYPE_TRANSFER_FAILED -> GlassesFilesResult.TransferFailed(
                 transferId = payload.id("transferId") ?: return null,
                 error = GlassesFilesError.fromWireValue(payload.strictString("errorCode")) ?: return null,
+            )
+            TYPE_LANE_RESYNC -> GlassesFilesResult.LaneResync(payload.id("transferId") ?: return null)
+            TYPE_BUS_RESUME -> GlassesFilesResult.BusResume(
+                payload.id("transferId") ?: return null,
+                payload.strictLong("staged")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
             )
             else -> null
         }
