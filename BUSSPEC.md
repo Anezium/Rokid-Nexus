@@ -2786,7 +2786,8 @@ the data plane the glasses send the largest prefix that fits a control message.
 `mkdir` creates one folder, `delete` removes one file or one empty folder, never
 recursively. `delete` carries `dir`, the type the user confirmed; the glasses
 answer `changed` and delete nothing when the entry at that path is no longer of
-that type. Only the hubs originate this subtree: both refuse every local Binder
+that type. They first move the entry to a private random name, check what they
+moved, and put it back unless it is still the confirmed type. Only the hubs originate this subtree: both refuse every local Binder
 send under `/core/files`, debug builds included, and never deliver it to local
 subscribers. `grant_access` makes the glasses grant themselves all-files access
 through their fixed ADB command (`appops set <glasses package>
@@ -2803,12 +2804,14 @@ expected byte fails the transfer.
 - Upload: `upload_begin` names the folder, file name and size. If a file with that
   name and size is already there the glasses answer `upload_done` with
   `alreadyPresent: true`. Otherwise they check free space (keeping 64 MiB spare),
-  choose the final name (`book (1).pdf` on a collision, never an overwrite: the
-  name is claimed with an exclusive create just before the final rename), open
+  choose the final name (`book (1).pdf` on a collision, never an overwrite), open
   a hidden `.nexus-<id>.nexuspart` staging file in the same folder and answer
   `upload_ready`. Chunks follow; `upload_progress` acks every two chunks and at
-  the end. `upload_end` carries the SHA-256; the glasses verify it, rename the
-  staging file to the final name and answer `upload_done`. Staging files
+  the end. `upload_end` carries the SHA-256; the glasses verify it, copy the verified
+  bytes into a file created exclusively (`O_EXCL`) under the final name, taking
+  the next numbered name if it was taken meanwhile, and answer `upload_done`.
+  Shared storage is FUSE, with no `link()` and no no-replace rename, so nothing
+  is ever renamed onto a destination. Staging files
   untouched for ten minutes are deleted when their folder is listed.
 - Download: `download_begin` names a file; the glasses answer `download_ready`
   with size and mtime, stream chunks, and send `download_end` with the SHA-256
