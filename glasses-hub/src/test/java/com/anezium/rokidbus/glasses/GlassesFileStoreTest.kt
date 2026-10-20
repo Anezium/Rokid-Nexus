@@ -19,9 +19,11 @@ class GlassesFileStoreTest {
 
     private val fs = JvmFsPrimitives()
 
+    private var freeBytes: Long? = Long.MAX_VALUE / 4
+
     private fun store(): Pair<GlassesFileStore, File> {
         val root = temp.newFolder("emulated0")
-        return GlassesFileStore(root, fs) to root
+        return GlassesFileStore(root, fs) { freeBytes } to root
     }
 
     @Test
@@ -217,6 +219,30 @@ class GlassesFileStoreTest {
     }
 
     @Test
+    fun `an upload needs room for both copies plus the reserve`() {
+        val (store, _) = store()
+        val size = 10L * 1024 * 1024
+        val margin = GlassesFileStore.FREE_SPACE_MARGIN_BYTES
+        freeBytes = 2 * size + margin - 1
+        assertEquals(GlassesFilesError.NO_SPACE, uploadError(store, "", size))
+        freeBytes = 2 * size + margin
+        assertTrue(store.beginUpload("", "a.pdf", size, transferId).isSuccess)
+        freeBytes = null
+        assertEquals(GlassesFilesError.NO_SPACE, uploadError(store, "", size))
+    }
+
+    @Test
+    fun `space that disappears during the transfer stops publication cleanly`() {
+        val (store, root) = store()
+        val upload = store.beginUpload("", "book.pdf", 3, transferId).getOrThrow()
+        upload.write(0, "new".toByteArray())
+        freeBytes = GlassesFileStore.FREE_SPACE_MARGIN_BYTES + 2
+
+        assertEquals(GlassesFilesError.NO_SPACE, upload.finish(sha256("new".toByteArray())))
+        assertEquals(emptyList<String>(), root.list()!!.toList())
+    }
+
+    @Test
     fun `an upload is staged, verified and renamed into place`() {
         val (store, root) = store()
         val bytes = ByteArray(70_000) { (it % 251).toByte() }
@@ -303,8 +329,8 @@ class GlassesFileStoreTest {
         assertEquals(GlassesFilesError.NOT_FOUND, store.openForDownload("b.pdf").second)
     }
 
-    private fun uploadError(store: GlassesFileStore, folder: String): GlassesFilesError =
-        (store.beginUpload(folder, "a.pdf", 1, transferId).exceptionOrNull() as GlassesFilesException).error
+    private fun uploadError(store: GlassesFileStore, folder: String, size: Long = 1): GlassesFilesError =
+        (store.beginUpload(folder, "a.pdf", size, transferId).exceptionOrNull() as GlassesFilesException).error
 
     private fun sha256(bytes: ByteArray): String =
         GlassesFilesContract.newDigest().apply { update(bytes) }.let(GlassesFilesContract::hex)

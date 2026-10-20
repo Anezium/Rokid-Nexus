@@ -25,9 +25,10 @@ class GlassesFilesTransferPartsTest {
         val released = mutableListOf<String>()
         val ledger = GlassesGrantLedger { released += it }
         ledger.adopt(listOf("content://a"))
-        ledger.hold("content://a")
-        ledger.hold("content://a")
-        ledger.settle(listOf("content://a", "content://a"))
+        // Intake holds the pick, queues both items, then lets go of the pick.
+        repeat(2) { ledger.hold("content://a") }
+        repeat(2) { ledger.hold("content://a") }
+        repeat(2) { ledger.drop("content://a") }
 
         ledger.drop("content://a")
         assertEquals(emptyList<String>(), released)
@@ -41,8 +42,10 @@ class GlassesFilesTransferPartsTest {
         val ledger = GlassesGrantLedger { released += it }
         ledger.adopt(listOf("content://a", "content://b"))
         // "a" was accepted; it was also picked again past the limit and "b" failed its lookup.
+        val pick = listOf("content://a", "content://a", "content://b")
+        pick.forEach(ledger::hold)
         ledger.hold("content://a")
-        ledger.settle(listOf("content://a", "content://a", "content://b"))
+        pick.forEach(ledger::drop)
 
         assertEquals(listOf("content://b"), released)
     }
@@ -142,6 +145,64 @@ class GlassesFilesTransferPartsTest {
 
         assertEquals(GlassesProviderReader.Read.Aborted, reader.read(ByteArray(8)) { cancelled.get() })
         assertTrue(hookRan.await(2, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun `a cancel hook registered after the reader closed still runs`() {
+        val resume = CountDownLatch(1)
+        val entered = CountDownLatch(1)
+        val hookRan = CountDownLatch(1)
+        val reader = GlassesProviderReader(
+            io,
+            stallMillis = 60_000,
+            pollMillis = 20,
+            open = { register ->
+                entered.countDown()
+                // Descheduled before registering, while the worker cancels and walks away. Provider
+                // IPC does not stop on interruption, so neither does this stand-in.
+                while (true) {
+                    try {
+                        if (resume.await(5, TimeUnit.SECONDS)) break
+                    } catch (_: InterruptedException) {
+                        continue
+                    }
+                }
+                register { hookRan.countDown() }
+                throw IOException("cancelled")
+            },
+        )
+        val cancelled = AtomicBoolean(false)
+        io.execute {
+            entered.await(2, TimeUnit.SECONDS)
+            cancelled.set(true)
+        }
+
+        assertEquals(GlassesProviderReader.Read.Aborted, reader.read(ByteArray(8)) { cancelled.get() })
+        resume.countDown()
+        assertTrue(hookRan.await(2, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun `metadata intake skips a provider that does not answer and cancels its query`() {
+        val cancelledQuery = CountDownLatch(1)
+        val started = System.nanoTime()
+        val described = GlassesPickIntake.describeAll(listOf("content://slow", "content://ok"), io, 200) { source, register ->
+            if (source == "content://slow") {
+                val hang = CountDownLatch(1)
+                register {
+                    cancelledQuery.countDown()
+                    hang.countDown()
+                }
+                hang.await(5, TimeUnit.SECONDS)
+                null
+            } else {
+                "book.pdf" to 3L
+            }
+        }
+
+        assertEquals(listOf("content://ok" to ("book.pdf" to 3L)), described)
+        assertTrue(cancelledQuery.await(2, TimeUnit.SECONDS))
+        assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 2_000)
     }
 
     /** Yields [firstChunk] bytes once, then blocks every read until closed. */

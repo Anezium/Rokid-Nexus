@@ -26,6 +26,8 @@ internal sealed interface GlassesFolderListing {
 internal class GlassesFileStore(
     private val root: File,
     private val fs: GlassesFsPrimitives = AndroidFsPrimitives,
+    /** Usable bytes in a folder, or null when that cannot be established. */
+    private val usableSpace: (File) -> Long? = { folder -> runCatching { folder.usableSpace }.getOrNull() },
 ) {
     private val canonicalRoot: File by lazy { root.canonicalFile }
 
@@ -139,9 +141,9 @@ internal class GlassesFileStore(
         val folder = resolve(folderPath) ?: return failure(GlassesFilesError.INVALID_REQUEST)
         if (!folder.exists()) return failure(GlassesFilesError.NOT_FOUND)
         if (!folder.isDirectory) return failure(GlassesFilesError.NOT_A_FOLDER)
-        if (runCatching { folder.usableSpace }.getOrDefault(Long.MAX_VALUE) < sizeBytes + FREE_SPACE_MARGIN_BYTES) {
-            return failure(GlassesFilesError.NO_SPACE)
-        }
+        // Publication copies the verified staging file into the final one, so for a moment both
+        // exist: the peak is twice the file, and the reserve must survive that peak too.
+        if (!hasRoom(folder, 2 * sizeBytes)) return failure(GlassesFilesError.NO_SPACE)
         val name = GlassesFilesContract.uniqueName(requestedName) { File(folder, it).exists() }
             ?: return failure(GlassesFilesError.EXISTS)
         val staging = File(folder, ".nexus-${transferId.take(32)}${GlassesFilesContract.PARTIAL_SUFFIX}")
@@ -153,6 +155,12 @@ internal class GlassesFileStore(
             return failure(GlassesFilesError.NOT_PERMITTED)
         }
         return Result.success(GlassesUpload(folder, requestedName, name, staging, sizeBytes, output, fs, this))
+    }
+
+    /** Fails closed: unknown free space counts as no room. */
+    internal fun hasRoom(folder: File, bytes: Long): Boolean {
+        val free = usableSpace(folder) ?: return false
+        return free >= bytes + FREE_SPACE_MARGIN_BYTES
     }
 
     /** Moves [target] to a fresh private name in the same folder; null when it could not. */
@@ -261,6 +269,11 @@ internal class GlassesUpload(
      * made, so a file another app writes at the same name at any moment is never touched.
      */
     private fun publish(): GlassesFilesError? {
+        // Space may have gone while the bytes were in flight; check again before the second copy.
+        if (!store.hasRoom(folder, sizeBytes)) {
+            staging.delete()
+            return GlassesFilesError.NO_SPACE
+        }
         var target: File? = null
         var handle: GlassesExclusiveFile? = null
         for (attempt in 0 until MAX_CLAIM_ATTEMPTS) {

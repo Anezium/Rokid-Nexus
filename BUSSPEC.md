@@ -2803,7 +2803,9 @@ expected byte fails the transfer.
 
 - Upload: `upload_begin` names the folder, file name and size. If a file with that
   name and size is already there the glasses answer `upload_done` with
-  `alreadyPresent: true`. Otherwise they check free space (keeping 64 MiB spare),
+  `alreadyPresent: true`. Otherwise they check free space for twice the file plus 64 MiB spare
+  (publication briefly holds the staging copy and the final file; unknown free
+  space counts as none, and room for one copy is checked again before publishing),
   choose the final name (`book (1).pdf` on a collision, never an overwrite), open
   a hidden `.nexus-<id>.nexuspart` staging file in the same folder and answer
   `upload_ready`. Chunks follow; `upload_progress` acks every two chunks and at

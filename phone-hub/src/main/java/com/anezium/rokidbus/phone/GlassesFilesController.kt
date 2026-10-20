@@ -166,6 +166,7 @@ internal class GlassesFilesController(
 ) : AutoCloseable {
     private val appContext = context.applicationContext
     private val inbox = Executors.newSingleThreadExecutor { Thread(it, "glasses-files-inbox").apply { isDaemon = true } }
+    private val intake = Executors.newSingleThreadExecutor { Thread(it, "glasses-files-intake").apply { isDaemon = true } }
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "glasses-files-transfer").apply { isDaemon = true } }
     private val timers = Executors.newSingleThreadScheduledExecutor { Thread(it, "glasses-files-timer").apply { isDaemon = true } }
     private val lock = Object()
@@ -284,27 +285,43 @@ internal class GlassesFilesController(
 
     /** [newlyTaken]: the grants the screen acquired for this pick, as opposed to ones already held. */
     fun enqueueSends(context: Context, folderPath: String, uris: List<Uri>, newlyTaken: Set<String>) {
-        val items = uris.take(MAX_FILES_PER_PICK).mapNotNull { uri ->
-            val (name, size) = describe(context, uri) ?: return@mapNotNull null
-            GlassesTransferItem(
-                id = newId(),
-                direction = GlassesTransferDirection.SEND,
-                name = name,
-                folderPath = folderPath,
-                source = uri.toString(),
-                totalBytes = size,
-            )
-        }
+        val sources = uris.map(Uri::toString)
         synchronized(lock) {
+            if (closed.get()) return
             grants.adopt(newlyTaken)
-            items.forEach { grants.hold(it.source) }
-            transfers += items
-            // Picks past the limit, failed lookups and duplicates give back what nothing kept.
-            grants.settle(uris.map(Uri::toString))
+            // The whole pick holds its grants while metadata is read, so neither a shutdown nor a
+            // parallel pick can release a grant this intake is about to queue.
+            sources.forEach(grants::hold)
         }
-        if (items.isEmpty()) return
-        publish(force = true)
-        kickWorker()
+        // A cloud provider can take its time answering a metadata query; never on the main thread.
+        intake.execute {
+            val described = GlassesPickIntake.describeAll(
+                sources.take(MAX_FILES_PER_PICK),
+                providerIo,
+                INTAKE_QUERY_TIMEOUT_MS,
+            ) { source, registerCancel -> describe(context, Uri.parse(source), registerCancel) }
+            val items = described.map { (source, metadata) ->
+                GlassesTransferItem(
+                    id = newId(),
+                    direction = GlassesTransferDirection.SEND,
+                    name = metadata.first,
+                    folderPath = folderPath,
+                    source = source,
+                    totalBytes = metadata.second,
+                )
+            }
+            synchronized(lock) {
+                // close() already released every grant this controller owned.
+                if (closed.get()) return@execute
+                items.forEach { grants.hold(it.source) }
+                transfers += items
+                // Picks past the limit, failed lookups and duplicates give back what nothing kept.
+                sources.forEach(grants::drop)
+            }
+            if (items.isEmpty()) return@execute
+            publish(force = true)
+            kickWorker()
+        }
     }
 
     fun enqueueCopy(entryPath: String, name: String, sizeBytes: Long) {
@@ -378,6 +395,7 @@ internal class GlassesFilesController(
         }
         running?.cancel()
         inbox.shutdownNow()
+        intake.shutdownNow()
         worker.shutdownNow()
         providerIo.shutdownNow()
         timers.shutdownNow()
@@ -558,9 +576,17 @@ internal class GlassesFilesController(
         return sendRemote(BusEnvelope(path = GlassesFilesContract.REQUEST_PATH, payload = payload))
     }
 
-    private fun describe(context: Context, uri: Uri): Pair<String, Long?>? = runCatching {
-        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)
-            ?.use { cursor ->
+    private fun describe(context: Context, uri: Uri, registerCancel: (() -> Unit) -> Unit): Pair<String, Long?>? = runCatching {
+        val cancellation = CancellationSignal()
+        registerCancel { cancellation.cancel() }
+        context.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+            null,
+            null,
+            null,
+            cancellation,
+        )?.use { cursor ->
                 if (!cursor.moveToFirst()) return@use null
                 val rawName = cursor.getString(0)?.trim().orEmpty()
                 val size = if (cursor.isNull(1)) null else cursor.getLong(1).takeIf { it >= 0 }
@@ -1020,6 +1046,7 @@ internal class GlassesFilesController(
         const val MAX_SEND_ATTEMPTS = 3
         const val SEND_RETRY_MS = 250L
         const val MAX_FILES_PER_PICK = 20
+        const val INTAKE_QUERY_TIMEOUT_MS = 10_000L
         const val MAX_SEND_BYTES = 2L * 1024 * 1024 * 1024
     }
 }

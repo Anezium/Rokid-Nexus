@@ -2,7 +2,7 @@ package com.anezium.rokidbus.phone
 
 import java.io.Closeable
 import java.io.InputStream
-import java.util.concurrent.CopyOnWriteArrayList
+import java.io.IOException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
@@ -37,11 +37,6 @@ internal class GlassesGrantLedger(private val release: (String) -> Unit) {
         }
     }
 
-    /** After an intake batch: give back what the batch picked but did not keep. */
-    fun settle(sources: Collection<String>) {
-        sources.forEach(::releaseIfFree)
-    }
-
     fun dropAll() {
         holders.clear()
         owned.toList().forEach(release)
@@ -50,6 +45,55 @@ internal class GlassesGrantLedger(private val release: (String) -> Unit) {
 
     private fun releaseIfFree(source: String) {
         if (holders[source] == null && owned.remove(source)) release(source)
+    }
+}
+
+/**
+ * Reads picker metadata off the main thread, each query bounded: a provider that does not answer
+ * within [timeoutMillis] has its query cancelled and its file skipped, so one stalled document
+ * cannot hold up the rest of the pick.
+ */
+internal object GlassesPickIntake {
+    fun <T> describeAll(
+        sources: List<String>,
+        io: ExecutorService,
+        timeoutMillis: Long,
+        describe: (source: String, registerCancel: (() -> Unit) -> Unit) -> T?,
+    ): List<Pair<String, T>> = sources.mapNotNull { source ->
+        val hooks = CancelHooks()
+        val task = runCatching { io.submit<T?> { describe(source, hooks::register) } }.getOrNull()
+            ?: return@mapNotNull null
+        val value = try {
+            task.get(timeoutMillis, TimeUnit.MILLISECONDS)
+        } catch (_: Exception) {
+            hooks.cancel()
+            task.cancel(true)
+            null
+        }
+        value?.let { source to it }
+    }
+}
+
+/** Cancel actions that run once: at [cancel], or on the spot if registered after it. */
+internal class CancelHooks {
+    private val lock = Any()
+    private val hooks = ArrayList<() -> Unit>()
+    private var cancelled = false
+
+    fun register(hook: () -> Unit) {
+        val runNow = synchronized(lock) { if (cancelled) true else false.also { hooks += hook } }
+        if (runNow) runCatching { hook() }
+    }
+
+    /** Returns false when it had already run. */
+    fun cancel(): Boolean {
+        val pending = synchronized(lock) {
+            if (cancelled) return false
+            cancelled = true
+            hooks.toList().also { hooks.clear() }
+        }
+        pending.forEach { runCatching { it() } }
+        return true
     }
 }
 
@@ -96,13 +140,16 @@ internal class GlassesProviderReader(
     @Volatile private var stream: InputStream? = null
     @Volatile private var pending: Future<Int>? = null
     @Volatile private var closed = false
-    private val cancels = CopyOnWriteArrayList<() -> Unit>()
+    // An open that resumes after the worker walked away must still see its signal cancelled and
+    // its descriptor closed, so late registrations run on the spot.
+    private val hooks = CancelHooks()
 
     fun read(buffer: ByteArray, shouldAbort: () -> Boolean): Read {
         if (closed) return Read.Aborted
         val task = runCatching {
             io.submit<Int> {
-                val source = stream ?: open { cancels += it }.also { opened ->
+                if (closed) throw IOException("closed")
+                val source = stream ?: open(hooks::register).also { opened ->
                     stream = opened
                     if (closed) runCatching { opened.close() }
                 }
@@ -136,9 +183,8 @@ internal class GlassesProviderReader(
     }
 
     override fun close() {
-        if (closed) return
         closed = true
-        cancels.forEach { runCatching { it() } }
+        if (!hooks.cancel()) return
         runCatching { stream?.close() }
         pending?.cancel(true)
     }
