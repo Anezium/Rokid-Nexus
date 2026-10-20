@@ -61,6 +61,8 @@ data class GlassesFilesSnapshot(
     /** Null until the glasses have announced their capabilities on this connection. */
     val supported: Boolean?,
     val transfers: List<GlassesTransferItem>,
+    /** Picked files whose metadata is still being read; Cancel all covers them too. */
+    val preparing: Int = 0,
 )
 
 /**
@@ -184,10 +186,18 @@ internal class GlassesFilesController(
     private var publishScheduled = false
     private val grants = GlassesGrantLedger(::releaseGrant)
 
+    /** Bumped by Cancel all; an intake that started under an older epoch is discarded. */
+    private var cancelEpoch = 0L
+    private val pendingIntakes = HashSet<PendingIntake>()
+
+    private class PendingIntake(val epoch: Long, val size: Int) {
+        val hooks = CancelHooks()
+    }
+
     private val closed = AtomicBoolean(false)
 
     fun snapshot(): GlassesFilesSnapshot = synchronized(lock) {
-        GlassesFilesSnapshot(connected && dataPlaneUp, supported, transfers.toList())
+        GlassesFilesSnapshot(connected && dataPlaneUp, supported, transfers.toList(), pendingIntakes.sumOf { it.size })
     }
 
     fun onLinkStateChanged(controlUp: Boolean, dataUp: Boolean) {
@@ -286,19 +296,22 @@ internal class GlassesFilesController(
     /** [newlyTaken]: the grants the screen acquired for this pick, as opposed to ones already held. */
     fun enqueueSends(context: Context, folderPath: String, uris: List<Uri>, newlyTaken: Set<String>) {
         val sources = uris.map(Uri::toString)
-        synchronized(lock) {
+        val pick = synchronized(lock) {
             if (closed.get()) return
             grants.adopt(newlyTaken)
             // The whole pick holds its grants while metadata is read, so neither a shutdown nor a
             // parallel pick can release a grant this intake is about to queue.
             sources.forEach(grants::hold)
+            PendingIntake(cancelEpoch, minOf(sources.size, MAX_FILES_PER_PICK)).also { pendingIntakes += it }
         }
+        publish(force = true)
         // A cloud provider can take its time answering a metadata query; never on the main thread.
         intake.execute {
             val described = GlassesPickIntake.describeAll(
                 sources.take(MAX_FILES_PER_PICK),
                 providerIo,
                 INTAKE_QUERY_TIMEOUT_MS,
+                pick.hooks,
             ) { source, registerCancel -> describe(context, Uri.parse(source), registerCancel) }
             val items = described.map { (source, metadata) ->
                 GlassesTransferItem(
@@ -310,15 +323,23 @@ internal class GlassesFilesController(
                     totalBytes = metadata.second,
                 )
             }
-            synchronized(lock) {
+            val kept = synchronized(lock) {
+                pendingIntakes -= pick
                 // close() already released every grant this controller owned.
                 if (closed.get()) return@execute
-                items.forEach { grants.hold(it.source) }
-                transfers += items
-                // Picks past the limit, failed lookups and duplicates give back what nothing kept.
+                // A Cancel all while this pick was being read covers it: nothing from it is queued.
+                val keep = pick.epoch == cancelEpoch
+                if (keep) {
+                    items.forEach { grants.hold(it.source) }
+                    transfers += items
+                }
+                // Picks past the limit, failed lookups, duplicates and cancelled picks give back
+                // what nothing kept.
                 sources.forEach(grants::drop)
+                keep && items.isNotEmpty()
             }
-            if (items.isEmpty()) return@execute
+            publish(force = true)
+            if (!kept) return@execute
             publish(force = true)
             kickWorker()
         }
@@ -350,13 +371,16 @@ internal class GlassesFilesController(
     }
 
     fun cancelAll() {
-        val running = synchronized(lock) {
+        val (running, intakes) = synchronized(lock) {
             val dropped = transfers.filter { it.state == GlassesTransferState.QUEUED || it.state == GlassesTransferState.RUNNING }
             transfers.removeAll(dropped.toSet())
             dropped.forEach(::releaseHold)
-            active?.takeIf { running -> dropped.any { it.id == running.item.id } }
+            cancelEpoch += 1
+            active?.takeIf { running -> dropped.any { it.id == running.item.id } } to pendingIntakes.toList()
         }
         running?.cancel()
+        // Stop their outstanding metadata queries too; their holds are dropped when they return.
+        intakes.forEach { it.hooks.cancel() }
         publish(force = true)
     }
 

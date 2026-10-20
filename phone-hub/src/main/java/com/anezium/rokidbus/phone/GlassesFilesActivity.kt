@@ -525,9 +525,11 @@ class GlassesFilesActivity : Activity() {
     private fun renderTransfers() {
         transfersHost.removeAllViews()
         val items = snapshot.transfers
-        if (items.isEmpty() || state == ViewState.Unsupported) return
+        val preparing = snapshot.preparing
+        if ((items.isEmpty() && preparing == 0) || state == ViewState.Unsupported) return
         val card = NexusUi.card(this).apply { setPadding(dp(15), dp(12), dp(15), dp(6)) }
         val heading = when {
+            items.isEmpty() -> "SENDING TO GLASSES"
             items.all { it.direction == GlassesTransferDirection.SEND } -> "SENDING TO GLASSES"
             items.all { it.direction == GlassesTransferDirection.COPY } -> "COPYING TO PHONE"
             else -> "TRANSFERS"
@@ -537,7 +539,7 @@ class GlassesFilesActivity : Activity() {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 addView(NexusUi.sectionLabel(this@GlassesFilesActivity, heading), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                if (items.any { it.state == GlassesTransferState.QUEUED || it.state == GlassesTransferState.RUNNING }) {
+                if (preparing > 0 || items.any { it.state == GlassesTransferState.QUEUED || it.state == GlassesTransferState.RUNNING }) {
                     addView(
                         NexusUi.textButton(this@GlassesFilesActivity, "Cancel all").apply {
                             setTextColor(NexusUi.INK2)
@@ -550,6 +552,18 @@ class GlassesFilesActivity : Activity() {
             },
             NexusUi.block(),
         )
+        if (preparing > 0) {
+            card.addView(BusTheme.gap(this, 6))
+            card.addView(
+                NexusUi.metaLabel(
+                    this,
+                    if (preparing == 1) "GETTING 1 FILE READY\u2026" else "GETTING $preparing FILES READY\u2026",
+                    NexusUi.INK3,
+                ),
+                NexusUi.block(),
+            )
+            card.addView(BusTheme.gap(this, 8))
+        }
         val stoppedCount = items.count { it.state == GlassesTransferState.STOPPED }
         items.forEachIndexed { index, item ->
             if (index > 0) {

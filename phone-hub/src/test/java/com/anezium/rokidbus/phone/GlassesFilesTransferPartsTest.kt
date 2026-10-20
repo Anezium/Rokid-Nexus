@@ -205,6 +205,40 @@ class GlassesFilesTransferPartsTest {
         assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 2_000)
     }
 
+    @Test
+    fun `cancelling a pick mid-intake stops its query and keeps nothing from it`() {
+        val batch = CancelHooks()
+        val queryCancelled = CountDownLatch(1)
+        val inQuery = CountDownLatch(1)
+        io.execute {
+            inQuery.await(2, TimeUnit.SECONDS)
+            batch.cancel()
+        }
+        val described = GlassesPickIntake.describeAll(
+            listOf("content://slow", "content://next"),
+            io,
+            timeoutMillis = 5_000,
+            batch = batch,
+        ) { source, register ->
+            if (source == "content://slow") {
+                val hang = CountDownLatch(1)
+                register {
+                    queryCancelled.countDown()
+                    hang.countDown()
+                }
+                inQuery.countDown()
+                hang.await(5, TimeUnit.SECONDS)
+                // A provider that still answers after the cancel must not sneak the file in.
+                "late.pdf" to 1L
+            } else {
+                "next.pdf" to 2L
+            }
+        }
+
+        assertEquals(emptyList<Pair<String, Pair<String, Long>>>(), described)
+        assertTrue(queryCancelled.await(2, TimeUnit.SECONDS))
+    }
+
     /** Yields [firstChunk] bytes once, then blocks every read until closed. */
     private class BlockingStream(private var firstChunk: Int) : InputStream() {
         val closed = CountDownLatch(1)

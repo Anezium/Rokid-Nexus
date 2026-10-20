@@ -54,13 +54,17 @@ internal class GlassesGrantLedger(private val release: (String) -> Unit) {
  * cannot hold up the rest of the pick.
  */
 internal object GlassesPickIntake {
+    /** [batch], once cancelled, stops the intake and cancels the query in flight. */
     fun <T> describeAll(
         sources: List<String>,
         io: ExecutorService,
         timeoutMillis: Long,
+        batch: CancelHooks = CancelHooks(),
         describe: (source: String, registerCancel: (() -> Unit) -> Unit) -> T?,
     ): List<Pair<String, T>> = sources.mapNotNull { source ->
+        if (batch.isCancelled) return@mapNotNull null
         val hooks = CancelHooks()
+        batch.register { hooks.cancel() }
         val task = runCatching { io.submit<T?> { describe(source, hooks::register) } }.getOrNull()
             ?: return@mapNotNull null
         val value = try {
@@ -70,7 +74,7 @@ internal object GlassesPickIntake {
             task.cancel(true)
             null
         }
-        value?.let { source to it }
+        value?.takeUnless { batch.isCancelled }?.let { source to it }
     }
 }
 
@@ -79,6 +83,9 @@ internal class CancelHooks {
     private val lock = Any()
     private val hooks = ArrayList<() -> Unit>()
     private var cancelled = false
+
+    val isCancelled: Boolean
+        get() = synchronized(lock) { cancelled }
 
     fun register(hook: () -> Unit) {
         val runNow = synchronized(lock) { if (cancelled) true else false.also { hooks += hook } }
