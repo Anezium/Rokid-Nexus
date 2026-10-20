@@ -105,6 +105,7 @@ class GlassesFilesFallbackTest {
         val results = LinkedBlockingQueue<GlassesFilesResult>()
         val receiver = ByteArrayOutputStream()
         val resumed = AtomicLong(-1)
+        val summaries = java.util.concurrent.CopyOnWriteArrayList<String>()
         lateinit var transfer: GlassesFilesDownload
         transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { offset, bytes ->
             assertEquals(receiver.size().toLong(), offset)
@@ -117,7 +118,7 @@ class GlassesFilesFallbackTest {
             receiver.write(bytes)
             transfer.onAck(id, receiver.size().toLong())
             true
-        }, {}, ::now)
+        }, {}, ::now, summaries::add)
         val worker = io.submit { transfer.stream() }
         assertTrue(results.poll(5, TimeUnit.SECONDS) is GlassesFilesResult.DownloadReady)
         connect(lane, key).use { phone ->
@@ -136,6 +137,9 @@ class GlassesFilesFallbackTest {
         assertEquals(sha(source), messages.filterIsInstance<GlassesFilesResult.DownloadEnd>().single().sha256)
         assertTrue(messages.any { it == GlassesFilesResult.BusResume(id, staged) })
         assertFalse(messages.any { it is GlassesFilesResult.TransferFailed })
+        assertTrue(summaries.contains("files lane connected"))
+        assertTrue(summaries.contains("files download bus resume staged=$staged"))
+        assertTrue(summaries.contains("files download done size=${source.size}"))
     }
 
     @Test

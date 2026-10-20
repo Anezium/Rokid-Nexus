@@ -21,6 +21,7 @@ internal class GlassesFilesDownload(
     private val sendBus: (Long, ByteArray) -> Boolean,
     private val finished: (GlassesFilesDownload) -> Unit,
     private val now: () -> Long,
+    private val summary: (String) -> Unit = {},
 ) {
     private val lock = Object()
     private val resync = GlassesFilesResync()
@@ -73,6 +74,7 @@ internal class GlassesFilesDownload(
             if (cancelled || !resync.switched) return
             if (!resync.offer(staged, minOf(attempted, size))) return@synchronized false
             if (!resync.confirmed) {
+                summary("files download bus resume staged=$staged")
                 acked = staged
                 resumePending = staged
                 resync.confirm(staged)
@@ -82,6 +84,7 @@ internal class GlassesFilesDownload(
         }
         if (!accepted) {
             cancelAll()
+            summary("files download failed error=${GlassesFilesError.INVALID_REQUEST.wireValue}")
             send(GlassesFilesResult.TransferFailed(transferId, GlassesFilesError.INVALID_REQUEST))
         } else {
             send(GlassesFilesResult.BusResume(transferId, staged))
@@ -97,12 +100,16 @@ internal class GlassesFilesDownload(
             }
             if (offeredLane != null) {
                 if (offeredLane.accept()) {
+                    summary("files lane connected")
                     synchronized(lock) {
                         if (!resync.laneOpened) resync.opened()
                         if (!resync.switched && !cancelled) lane = offeredLane
                     }
                     laneIo.execute { readLaneAcks(offeredLane) }
-                } else offeredLane.close()
+                } else {
+                    summary("files lane not taken")
+                    offeredLane.close()
+                }
             }
             val digest = GlassesFilesSendDigest()
             input = file.inputStream()
@@ -231,7 +238,12 @@ internal class GlassesFilesDownload(
 
     private fun finish(error: GlassesFilesError?) {
         offeredLane?.close()
-        if (error != null) send(GlassesFilesResult.TransferFailed(transferId, error))
+        if (error != null) {
+            summary("files download failed error=${error.wireValue}")
+            send(GlassesFilesResult.TransferFailed(transferId, error))
+        } else if (!synchronized(lock) { cancelled }) {
+            summary("files download done size=$size")
+        }
         finished(this)
     }
 }

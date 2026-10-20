@@ -347,6 +347,7 @@ internal object GlassesFilesService {
         upload = null
         val (file, error) = store.openForDownload(request.path)
         if (file == null) {
+            log("files download failed error=${(error ?: GlassesFilesError.INTERNAL).wireValue}")
             sendResult(GlassesFilesResult.TransferFailed(request.transferId, error ?: GlassesFilesError.INTERNAL))
             return
         }
@@ -360,6 +361,7 @@ internal object GlassesFilesService {
             },
             finished = { if (download === it) download = null },
             now = SystemClock::elapsedRealtime,
+            summary = ::log,
         )
         download = active
         streamer.execute { active.stream() }
