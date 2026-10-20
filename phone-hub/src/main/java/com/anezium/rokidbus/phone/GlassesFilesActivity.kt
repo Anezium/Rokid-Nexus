@@ -63,6 +63,8 @@ class GlassesFilesActivity : Activity() {
     private var access: GlassesFilesAccess? = null
     private var state: ViewState = ViewState.Loading
     private var generation = 0
+    /** Generation of the listing still awaiting its answer, or -1 once it has one. */
+    private var pendingGeneration = -1
     private var snapshot = GlassesFilesHub.snapshot()
     private var granting = false
     private var grantFailed = false
@@ -123,7 +125,12 @@ class GlassesFilesActivity : Activity() {
             runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         }
         if (uris.size > MAX_PICK) showNotice("SENDING THE FIRST $MAX_PICK FILES")
-        GlassesFilesHub.send(applicationContext, path, uris)
+        if (!GlassesFilesHub.send(applicationContext, path, uris)) {
+            uris.forEach { uri ->
+                runCatching { contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            }
+            showNotice("NEXUS IS STILL STARTING. TRY AGAIN IN A MOMENT.")
+        }
     }
 
     @TargetApi(Build.VERSION_CODES.TIRAMISU)
@@ -181,6 +188,7 @@ class GlassesFilesActivity : Activity() {
     private fun load(target: String, restoring: Boolean = false, offset: Int = 0) {
         val requested = generation + 1
         generation = requested
+        pendingGeneration = requested
         val navigating = target != path
         if (navigating) {
             path = target
@@ -192,15 +200,15 @@ class GlassesFilesActivity : Activity() {
         } else if (offset == 0) {
             // Keep the rows on screen while a refresh is in flight; only a slow answer shows loading.
             main.postDelayed({
-                if (generation == requested && state != ViewState.Loading) {
+                if (pendingGeneration == requested && state != ViewState.Loading) {
                     state = ViewState.Loading
-                    renderList()
-                    renderBottom()
+                    renderAll()
                 }
             }, LOADING_DELAY_MS)
         }
         GlassesFilesHub.list(target, offset) { outcome ->
             if (generation != requested || isDestroyed) return@list
+            pendingGeneration = -1
             onListing(target, offset, outcome, restoring)
         }
     }
@@ -775,7 +783,7 @@ class GlassesFilesActivity : Activity() {
                 NexusUi.pillButton(this@GlassesFilesActivity, "Delete from glasses", danger = true).apply {
                     setOnClickListener {
                         dialog.dismiss()
-                        GlassesFilesHub.delete(target) { error ->
+                        GlassesFilesHub.delete(target, folder) { error ->
                             if (isDestroyed) return@delete
                             if (error == null) {
                                 if (folder && target == path) load(GlassesFilesContract.parent(path)) else load(path)

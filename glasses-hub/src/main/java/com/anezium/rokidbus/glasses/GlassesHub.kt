@@ -72,8 +72,6 @@ internal fun SelfArmManualAction.connectPortWaitTimeoutMs(): Long =
         0L
     }
 
-private const val GLASSES_FILES_ROOT = "/core/files/"
-
 object GlassesHub {
     private const val LOCAL_BINARY_MAX_BYTES = 512 * 1024
     private const val WIRELESS_ADB_REQUEST_SLOTS = 2
@@ -270,10 +268,12 @@ object GlassesHub {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
         // File chunks arrive dozens per second; the SPP reader already logs each frame.
         if (envelope.path != GlassesFilesContract.DATA_PATH) log("remote RX ${envelope.path} id=${envelope.id}")
-        if (envelope.path.startsWith(GLASSES_FILES_ROOT)) {
+        if (GlassesFilesContract.isFilesPath(envelope.path)) {
             // A user-driven transfer is foreign traffic to photo sync, which backs off around it.
             MediaSyncEngine.trafficMonitor.note(envelope.path)
-            if (GlassesFilesService.handle(envelope)) return
+            // Anything else in the subtree is dropped here, never handed to local subscribers.
+            if (!GlassesFilesService.handle(envelope)) log("files route dropped path=${envelope.path}")
+            return
         }
         if (envelope.path == RemoteInputContract.COMMAND_PATH ||
             envelope.path == RemoteNavigationContract.REQUEST_PATH
@@ -752,6 +752,11 @@ object GlassesHub {
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
+        if (GlassesFilesContract.isFilesPath(envelope.path)) {
+            // Explorer traffic only ever comes from the phone hub over the transport.
+            log("blocked local file explorer send uid=$senderUid")
+            return
+        }
         val allowed = senderUid == Process.myUid() ||
             (isDebuggableBuild() && registrations.any { it.uid == senderUid })
         if (!allowed) {

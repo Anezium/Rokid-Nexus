@@ -114,13 +114,26 @@ class GlassesFileStoreTest {
         File(root, "full/inner.txt").apply { parentFile!!.mkdirs(); writeText("x") }
         File(root, "empty").mkdir()
 
-        assertNull(store.delete("a.pdf"))
+        assertNull(store.delete("a.pdf", expectDirectory = false))
         assertFalse(File(root, "a.pdf").exists())
-        assertEquals(GlassesFilesError.NOT_EMPTY, store.delete("full"))
+        assertEquals(GlassesFilesError.NOT_EMPTY, store.delete("full", expectDirectory = true))
         assertTrue(File(root, "full/inner.txt").exists())
-        assertNull(store.delete("empty"))
-        assertEquals(GlassesFilesError.NOT_FOUND, store.delete("empty"))
-        assertEquals(GlassesFilesError.INVALID_REQUEST, store.delete(""))
+        assertNull(store.delete("empty", expectDirectory = true))
+        assertEquals(GlassesFilesError.NOT_FOUND, store.delete("empty", expectDirectory = true))
+        assertEquals(GlassesFilesError.INVALID_REQUEST, store.delete("", expectDirectory = true))
+    }
+
+    @Test
+    fun `delete refuses an entry that changed type since it was confirmed`() {
+        val (store, root) = store()
+        // The user confirmed deleting an empty folder; a file now sits at that path.
+        File(root, "was-folder").writeText("someone's book")
+        File(root, "was-file").mkdir()
+
+        assertEquals(GlassesFilesError.CHANGED, store.delete("was-folder", expectDirectory = true))
+        assertEquals(GlassesFilesError.CHANGED, store.delete("was-file", expectDirectory = false))
+        assertEquals("someone's book", File(root, "was-folder").readText())
+        assertTrue(File(root, "was-file").isDirectory)
     }
 
     @Test

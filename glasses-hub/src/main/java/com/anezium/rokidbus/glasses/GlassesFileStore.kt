@@ -68,11 +68,16 @@ internal class GlassesFileStore(private val root: File) {
         return if (runCatching { folder.mkdir() }.getOrDefault(false)) null else GlassesFilesError.NOT_PERMITTED
     }
 
-    fun delete(path: String): GlassesFilesError? {
+    /**
+     * Deletes one file or one empty folder, and only if it is still the kind of entry the user
+     * confirmed: something swapped in at the same path since the listing is refused, not removed.
+     */
+    fun delete(path: String, expectDirectory: Boolean): GlassesFilesError? {
         if (path.isEmpty()) return GlassesFilesError.INVALID_REQUEST
         if (GlassesFilesContract.isProtected(path)) return GlassesFilesError.PROTECTED
         val target = resolve(path) ?: return GlassesFilesError.INVALID_REQUEST
         if (!target.exists()) return GlassesFilesError.NOT_FOUND
+        if (target.isDirectory != expectDirectory) return GlassesFilesError.CHANGED
         if (target.isDirectory) {
             val children = target.list() ?: return GlassesFilesError.NOT_PERMITTED
             // Recursive delete is deliberately absent: one mistaken tap must never empty a tree.
@@ -207,17 +212,31 @@ internal class GlassesUpload(
             staging.delete()
             return GlassesFilesError.INTEGRITY
         }
-        // Something may have taken the name while the bytes were in flight.
-        if (File(folder, name).exists()) {
-            name = GlassesFilesContract.uniqueName(requestedName) { File(folder, it).exists() } ?: run {
-                staging.delete()
-                return GlassesFilesError.EXISTS
-            }
+        // rename() replaces an existing destination, and another app may create the chosen name at
+        // any moment. Claiming the name with an exclusive create first means the only file the
+        // rename can ever replace is our own empty placeholder.
+        val target = claimName() ?: run {
+            staging.delete()
+            return GlassesFilesError.EXISTS
         }
-        val target = File(folder, name)
-        if (!staging.renameTo(target)) {
+        // Android's rename replaces the placeholder atomically. Hosts whose rename refuses an
+        // existing target (the JVM unit tests on Windows) get one retry after removing our own,
+        // still empty, placeholder.
+        val published = staging.renameTo(target) || (target.length() == 0L && target.delete() && staging.renameTo(target))
+        if (!published) {
+            target.delete()
             staging.delete()
             return GlassesFilesError.NOT_PERMITTED
+        }
+        return null
+    }
+
+    private fun claimName(): File? {
+        repeat(MAX_CLAIM_ATTEMPTS) {
+            val candidate = File(folder, name)
+            val claimed = runCatching { candidate.createNewFile() }.getOrDefault(false)
+            if (claimed) return candidate
+            name = GlassesFilesContract.uniqueName(requestedName) { File(folder, it).exists() } ?: return null
         }
         return null
     }
@@ -231,4 +250,8 @@ internal class GlassesUpload(
     }
 
     fun finalFile(): File = File(folder, name)
+
+    private companion object {
+        const val MAX_CLAIM_ATTEMPTS = 8
+    }
 }

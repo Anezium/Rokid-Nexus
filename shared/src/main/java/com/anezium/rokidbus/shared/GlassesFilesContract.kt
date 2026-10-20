@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.shared
 
+import com.anezium.rokidbus.shared.plugin.PathRules
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -60,7 +61,8 @@ data class GlassesFileEntry(
 sealed interface GlassesFilesRequest {
     data class ListFolder(val requestId: String, val path: String, val offset: Int) : GlassesFilesRequest
     data class MakeFolder(val requestId: String, val path: String, val name: String) : GlassesFilesRequest
-    data class Delete(val requestId: String, val path: String) : GlassesFilesRequest
+    /** [directory] is the type the user saw and confirmed; the glasses refuse a changed entry. */
+    data class Delete(val requestId: String, val path: String, val directory: Boolean) : GlassesFilesRequest
     data class GrantAccess(val requestId: String) : GlassesFilesRequest
     data class UploadBegin(
         val transferId: String,
@@ -124,6 +126,7 @@ object GlassesFilesContract {
     const val REQUEST_PATH = "/core/files/request"
     const val RESULT_PATH = "/core/files/result"
     const val DATA_PATH = "/core/files/data"
+    const val ROOT_PATH = "/core/files"
 
     const val CHUNK_BYTES = 32 * 1024
     const val MAX_CHUNK_BYTES = 64 * 1024
@@ -183,7 +186,7 @@ object GlassesFilesContract {
         is GlassesFilesRequest.Delete -> {
             requireId(request.requestId)
             require(request.path.isNotEmpty() && normalizePath(request.path) == request.path) { "Invalid path" }
-            base(TYPE_DELETE).put("requestId", request.requestId).put("path", request.path)
+            base(TYPE_DELETE).put("requestId", request.requestId).put("path", request.path).put("dir", request.directory)
         }
         is GlassesFilesRequest.GrantAccess -> {
             requireId(request.requestId)
@@ -237,6 +240,7 @@ object GlassesFilesContract {
             TYPE_DELETE -> GlassesFilesRequest.Delete(
                 requestId = payload.id("requestId") ?: return null,
                 path = payload.path("path")?.takeIf(String::isNotEmpty) ?: return null,
+                directory = payload.strictBoolean("dir") ?: return null,
             )
             TYPE_GRANT_ACCESS -> GlassesFilesRequest.GrantAccess(payload.id("requestId") ?: return null)
             TYPE_UPLOAD_BEGIN -> GlassesFilesRequest.UploadBegin(
@@ -422,6 +426,12 @@ object GlassesFilesContract {
             value.toByteArray(Charsets.UTF_8).size <= MAX_NAME_BYTES &&
             value.none { it == '/' || it == '\\' || it.isISOControl() } &&
             hasValidSurrogates(value)
+
+    /**
+     * Any bus path in the explorer's subtree. Only the hubs themselves may originate these, in
+     * every build: the debug-only legacy client bypass must not reach file deletion or the grant.
+     */
+    fun isFilesPath(path: String): Boolean = PathRules.matchesPrefix(path, ROOT_PATH)
 
     fun child(parent: String, name: String): String = if (parent.isEmpty()) name else "$parent/$name"
 

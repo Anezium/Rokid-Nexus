@@ -108,13 +108,13 @@ object GlassesFilesHub {
         target.makeFolder(path, name) { error -> main.post { callback(error) } }
     }
 
-    fun delete(path: String, callback: (GlassesFilesError?) -> Unit) {
+    fun delete(path: String, directory: Boolean, callback: (GlassesFilesError?) -> Unit) {
         val target = controller
         if (target == null) {
             main.post { callback(GlassesFilesError.LINK_LOST) }
             return
         }
-        target.delete(path) { error -> main.post { callback(error) } }
+        target.delete(path, directory) { error -> main.post { callback(error) } }
     }
 
     fun grantAccess(callback: (GlassesFilesResult.Operation?) -> Unit) {
@@ -126,7 +126,12 @@ object GlassesFilesHub {
         target.grantAccess { result -> main.post { callback(result) } }
     }
 
-    fun send(context: Context, folderPath: String, uris: List<Uri>) = controller?.enqueueSends(context, folderPath, uris)
+    /** False when the hub service is not up; the caller then still owns the grants it took. */
+    fun send(context: Context, folderPath: String, uris: List<Uri>): Boolean {
+        val target = controller ?: return false
+        target.enqueueSends(context, folderPath, uris)
+        return true
+    }
 
     fun copyToPhone(entryPath: String, name: String, sizeBytes: Long) =
         controller?.enqueueCopy(entryPath, name, sizeBytes)
@@ -258,9 +263,9 @@ internal class GlassesFilesController(
         }
     }
 
-    fun delete(path: String, callback: (GlassesFilesError?) -> Unit) {
+    fun delete(path: String, directory: Boolean, callback: (GlassesFilesError?) -> Unit) {
         val requestId = newId()
-        request(requestId, GlassesFilesRequest.Delete(requestId, path), OPERATION_TIMEOUT_MS, callback) {
+        request(requestId, GlassesFilesRequest.Delete(requestId, path, directory), OPERATION_TIMEOUT_MS, callback) {
             callback((it as? GlassesFilesResult.Operation)?.error)
         }
     }
@@ -274,8 +279,13 @@ internal class GlassesFilesController(
     }
 
     fun enqueueSends(context: Context, folderPath: String, uris: List<Uri>) {
+        // The screen took a persistable grant for every pick; whatever is not queued gives it back.
+        uris.drop(MAX_FILES_PER_PICK).forEach { releaseGrantIfUnused(it.toString()) }
         val items = uris.take(MAX_FILES_PER_PICK).mapNotNull { uri ->
-            val (name, size) = describe(context, uri) ?: return@mapNotNull null
+            val (name, size) = describe(context, uri) ?: run {
+                releaseGrantIfUnused(uri.toString())
+                return@mapNotNull null
+            }
             GlassesTransferItem(
                 id = newId(),
                 direction = GlassesTransferDirection.SEND,
@@ -310,7 +320,7 @@ internal class GlassesFilesController(
             val item = transfers.firstOrNull { it.id == id } ?: return
             transfers.removeAll { it.id == id }
             releaseSource(item)
-            active?.takeIf { item.state == GlassesTransferState.RUNNING && it.item.id == id }
+            active?.takeIf { it.item.id == id }
         }
         running?.cancel()
         publish(force = true)
@@ -321,7 +331,7 @@ internal class GlassesFilesController(
             val dropped = transfers.filter { it.state == GlassesTransferState.QUEUED || it.state == GlassesTransferState.RUNNING }
             transfers.removeAll(dropped.toSet())
             dropped.forEach(::releaseSource)
-            active
+            active?.takeIf { running -> dropped.any { it.id == running.item.id } }
         }
         running?.cancel()
         publish(force = true)
@@ -354,7 +364,14 @@ internal class GlassesFilesController(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        synchronized(lock) { active }?.cancel()
+        val running = synchronized(lock) {
+            // The queue lives in memory only, so nothing could ever retry these: drop their grants.
+            val items = transfers.toList()
+            transfers.clear()
+            items.forEach(::releaseSource)
+            active
+        }
+        running?.cancel()
         inbox.shutdownNow()
         worker.shutdownNow()
         timers.shutdownNow()
@@ -410,28 +427,42 @@ internal class GlassesFilesController(
 
     private fun drainQueue() {
         while (!closed.get()) {
-            val next = synchronized(lock) {
-                if (!(connected && dataPlaneUp)) null
-                else transfers.firstOrNull { it.state == GlassesTransferState.QUEUED }
+            // Picking, claiming and marking the item happen under one lock: a cancel can then only
+            // land before the claim (the item is gone) or after it (it finds [active] to stop).
+            // Clearing [workerRunning] in the same section closes the window where an enqueue sees
+            // a worker that is already on its way out.
+            val transfer = synchronized(lock) {
+                val candidate = if (connected && dataPlaneUp) {
+                    transfers.firstOrNull { it.state == GlassesTransferState.QUEUED }
+                } else {
+                    null
+                }
+                if (candidate == null) {
+                    workerRunning = false
+                    null
+                } else {
+                    val claimed = when (candidate.direction) {
+                        GlassesTransferDirection.SEND -> ActiveSend(candidate)
+                        GlassesTransferDirection.COPY -> ActiveCopy(candidate)
+                    }
+                    active = claimed
+                    update(candidate.id) { it.copy(state = GlassesTransferState.RUNNING, doneBytes = 0L) }
+                    claimed
+                }
             }
-            if (next == null) {
-                synchronized(lock) { workerRunning = false }
+            if (transfer == null) {
                 publish(force = true)
                 return
             }
-            val transfer = when (next.direction) {
-                GlassesTransferDirection.SEND -> ActiveSend(next)
-                GlassesTransferDirection.COPY -> ActiveCopy(next)
-            }
-            synchronized(lock) {
-                active = transfer
-                update(next.id) { it.copy(state = GlassesTransferState.RUNNING, doneBytes = 0L) }
-            }
+            val next = transfer.item
             publish(force = true)
             val outcome = runCatching { transfer.run() }.getOrElse {
                 Log.w(TAG, "glasses file transfer crashed", it)
                 Outcome.Stopped(GlassesTransferStop.REFUSED)
             }
+            // Every unsuccessful exit tells the glasses, so they drop their staging file or stop
+            // streaming now instead of after the idle timeout. Harmless if they already gave up.
+            if (outcome is Outcome.Stopped) send(GlassesFilesRequest.Cancel(transfer.wireId))
             synchronized(lock) {
                 active = null
                 val now = System.currentTimeMillis()
@@ -536,17 +567,37 @@ internal class GlassesFilesController(
         return name.ifEmpty { "file" }
     }
 
+    /** Called under [lock]; a URI picked twice keeps its grant until its last item is gone. */
     private fun releaseSource(item: GlassesTransferItem) {
         if (item.direction != GlassesTransferDirection.SEND) return
+        val stillUsed = transfers.any {
+            it.id != item.id && it.direction == GlassesTransferDirection.SEND && it.source == item.source
+        }
+        if (!stillUsed) releaseGrant(item.source)
+    }
+
+    private fun releaseGrantIfUnused(source: String) {
+        val stillUsed = synchronized(lock) {
+            transfers.any { it.direction == GlassesTransferDirection.SEND && it.source == source }
+        }
+        if (!stillUsed) releaseGrant(source)
+    }
+
+    private fun releaseGrant(source: String) {
         runCatching {
             appContext.contentResolver.releasePersistableUriPermission(
-                Uri.parse(item.source),
+                Uri.parse(source),
                 Intent.FLAG_GRANT_READ_URI_PERMISSION,
             )
         }
     }
 
     private fun newId(): String = "files_" + UUID.randomUUID().toString().replace("-", "")
+
+    private sealed interface StageResult {
+        data class Staged(val sizeBytes: Long) : StageResult
+        data class Ended(val outcome: Outcome) : StageResult
+    }
 
     private sealed interface Outcome {
         data class Done(val savedAs: String? = null, val alreadyPresent: Boolean = false) : Outcome
@@ -567,6 +618,11 @@ internal class GlassesFilesController(
 
     /** Signals from the inbox and link thread to a worker blocked inside [run]. */
     private abstract inner class ActiveTransfer(val item: GlassesTransferItem) {
+        /**
+         * Fresh for every attempt, unlike [GlassesTransferItem.id]: a retry must never accept a
+         * late chunk or terminal result still in flight from the attempt it replaced.
+         */
+        val wireId: String = newId()
         protected val signal = Object()
         protected var acked = 0L
         protected var terminal: GlassesFilesResult? = null
@@ -584,7 +640,7 @@ internal class GlassesFilesController(
                 cancelled = true
                 signal.notifyAll()
             }
-            send(GlassesFilesRequest.Cancel(item.id))
+            send(GlassesFilesRequest.Cancel(wireId))
         }
 
         fun fail(reason: GlassesTransferStop) {
@@ -613,6 +669,15 @@ internal class GlassesFilesController(
             }
         }
 
+        /** The cancel or link loss already recorded, without waiting for anything. */
+        protected fun abortOutcome(): Outcome? = synchronized(signal) {
+            when {
+                cancelled -> Outcome.Cancelled
+                stop != null -> Outcome.Stopped(stop!!)
+                else -> null
+            }
+        }
+
         protected fun failedReason(): Outcome.Stopped? =
             (terminal as? GlassesFilesResult.TransferFailed)?.let { Outcome.Stopped(GlassesTransferStop.from(it.error)) }
     }
@@ -623,12 +688,12 @@ internal class GlassesFilesController(
         override fun onResult(result: GlassesFilesResult) {
             synchronized(signal) {
                 when (result) {
-                    is GlassesFilesResult.UploadReady -> if (result.transferId == item.id) ready = result
-                    is GlassesFilesResult.UploadProgress -> if (result.transferId == item.id && result.stagedBytes > acked) {
+                    is GlassesFilesResult.UploadReady -> if (result.transferId == wireId) ready = result
+                    is GlassesFilesResult.UploadProgress -> if (result.transferId == wireId && result.stagedBytes > acked) {
                         acked = result.stagedBytes
                     }
-                    is GlassesFilesResult.UploadDone -> if (result.transferId == item.id) terminal = result
-                    is GlassesFilesResult.TransferFailed -> if (result.transferId == item.id) terminal = result
+                    is GlassesFilesResult.UploadDone -> if (result.transferId == wireId) terminal = result
+                    is GlassesFilesResult.TransferFailed -> if (result.transferId == wireId) terminal = result
                     else -> return
                 }
                 touch()
@@ -643,19 +708,18 @@ internal class GlassesFilesController(
                 val size = item.totalBytes ?: run {
                     // The provider would not say how big the file is, and the glasses need to know
                     // up front; a private copy answers the question.
-                    staged = File(appContext.cacheDir, "glasses-files-${item.id}")
-                    val copied = runCatching {
-                        appContext.contentResolver.openInputStream(uri)!!.use { input ->
-                            staged!!.outputStream().use { input.copyTo(it) }
-                        }
-                    }.isSuccess
-                    if (!copied) return Outcome.Stopped(GlassesTransferStop.UNREADABLE)
-                    staged!!.length()
+                    val copy = File(appContext.cacheDir, "glasses-files-$wireId")
+                    staged = copy
+                    when (val result = stageUnknownSize(uri, copy)) {
+                        is StageResult.Staged -> result.sizeBytes
+                        is StageResult.Ended -> return result.outcome
+                    }
                 }
                 if (size > MAX_SEND_BYTES) return Outcome.Stopped(GlassesTransferStop.REFUSED)
                 synchronized(lock) { update(item.id) { it.copy(totalBytes = size) } }
+                abortOutcome()?.let { return it }
                 touch()
-                if (send(GlassesFilesRequest.UploadBegin(item.id, item.folderPath, item.name, size)) != null) {
+                if (send(GlassesFilesRequest.UploadBegin(wireId, item.folderPath, item.name, size)) != null) {
                     return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
                 }
                 await { ready != null || terminal != null }?.let { return it }
@@ -673,12 +737,12 @@ internal class GlassesFilesController(
                     val buffer = ByteArray(GlassesFilesContract.CHUNK_BYTES)
                     while (true) {
                         val read = runCatching { stream.read(buffer) }.getOrElse {
-                            send(GlassesFilesRequest.Cancel(item.id))
+                            send(GlassesFilesRequest.Cancel(wireId))
                             return Outcome.Stopped(GlassesTransferStop.UNREADABLE)
                         }
                         if (read <= 0) break
                         if (position + read > size) {
-                            send(GlassesFilesRequest.Cancel(item.id))
+                            send(GlassesFilesRequest.Cancel(wireId))
                             return Outcome.Stopped(GlassesTransferStop.CHANGED)
                         }
                         await {
@@ -693,13 +757,13 @@ internal class GlassesFilesController(
                     }
                 }
                 if (position != size) {
-                    send(GlassesFilesRequest.Cancel(item.id))
+                    send(GlassesFilesRequest.Cancel(wireId))
                     return Outcome.Stopped(GlassesTransferStop.CHANGED)
                 }
                 await { failedReason() != null || MediaSyncWindowPolicy.mayFinish(acked, size) }?.let { return it }
                 failedReason()?.let { return it }
                 progress(item.id, size, size, rate)
-                if (send(GlassesFilesRequest.UploadEnd(item.id, GlassesFilesContract.hex(digest))) != null) {
+                if (send(GlassesFilesRequest.UploadEnd(wireId, GlassesFilesContract.hex(digest))) != null) {
                     return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
                 }
                 await { terminal != null }?.let { return it }
@@ -711,8 +775,37 @@ internal class GlassesFilesController(
             }
         }
 
+        /**
+         * Copies a provider stream of unknown length into [target], bounded by the send limit and
+         * stopping at the first chunk boundary after a cancel or a dropped link.
+         */
+        private fun stageUnknownSize(uri: Uri, target: File): StageResult {
+            val input = runCatching { appContext.contentResolver.openInputStream(uri) }.getOrNull()
+                ?: return StageResult.Ended(Outcome.Stopped(GlassesTransferStop.UNREADABLE))
+            return input.use { stream ->
+                runCatching {
+                    target.outputStream().use { output ->
+                        val buffer = ByteArray(GlassesFilesContract.CHUNK_BYTES)
+                        var copied = 0L
+                        while (true) {
+                            abortOutcome()?.let { return@runCatching StageResult.Ended(it) }
+                            val read = stream.read(buffer)
+                            if (read <= 0) break
+                            copied += read
+                            if (copied > MAX_SEND_BYTES) {
+                                return@runCatching StageResult.Ended(Outcome.Stopped(GlassesTransferStop.REFUSED))
+                            }
+                            output.write(buffer, 0, read)
+                            progress(item.id, copied, null, rate)
+                        }
+                        StageResult.Staged(copied)
+                    }
+                }.getOrElse { StageResult.Ended(Outcome.Stopped(GlassesTransferStop.UNREADABLE)) }
+            }.also { rate.reset() }
+        }
+
         private fun sendChunk(offset: Long, bytes: ByteArray): Boolean {
-            val meta = GlassesFilesContract.chunkMeta(GlassesFilesChunk(item.id, offset))
+            val meta = GlassesFilesContract.chunkMeta(GlassesFilesChunk(wireId, offset))
             repeat(MAX_SEND_ATTEMPTS) {
                 if (sendRemote(BusEnvelope(path = GlassesFilesContract.DATA_PATH, payload = meta, binary = bytes)) == null) {
                     return true
@@ -735,12 +828,12 @@ internal class GlassesFilesController(
         override fun onResult(result: GlassesFilesResult) {
             synchronized(signal) {
                 when (result) {
-                    is GlassesFilesResult.DownloadReady -> if (result.transferId == item.id) expectedSize = result.sizeBytes
-                    is GlassesFilesResult.DownloadEnd -> if (result.transferId == item.id) {
+                    is GlassesFilesResult.DownloadReady -> if (result.transferId == wireId) expectedSize = result.sizeBytes
+                    is GlassesFilesResult.DownloadEnd -> if (result.transferId == wireId) {
                         verified = staged == expectedSize && GlassesFilesContract.hex(digest) == result.sha256
                         terminal = result
                     }
-                    is GlassesFilesResult.TransferFailed -> if (result.transferId == item.id) terminal = result
+                    is GlassesFilesResult.TransferFailed -> if (result.transferId == wireId) terminal = result
                     else -> return
                 }
                 touch()
@@ -749,7 +842,7 @@ internal class GlassesFilesController(
         }
 
         fun onChunk(chunk: GlassesFilesChunk, bytes: ByteArray) {
-            if (chunk.transferId != item.id) return
+            if (chunk.transferId != wireId) return
             val target = output ?: return
             synchronized(signal) {
                 if (chunk.offset != staged || terminal != null) {
@@ -772,7 +865,7 @@ internal class GlassesFilesController(
                     )
                 ) {
                     chunksSinceAck = 0
-                    send(GlassesFilesRequest.DownloadProgress(item.id, staged))
+                    send(GlassesFilesRequest.DownloadProgress(wireId, staged))
                 }
             }
             progress(item.id, synchronized(signal) { staged }, expectedSize, rate)
@@ -792,7 +885,7 @@ internal class GlassesFilesController(
                 output = runCatching { resolver.openOutputStream(uri, "w") }.getOrNull()
                     ?: return Outcome.Stopped(GlassesTransferStop.PHONE_FULL)
                 touch()
-                if (send(GlassesFilesRequest.DownloadBegin(item.id, item.source)) != null) {
+                if (send(GlassesFilesRequest.DownloadBegin(wireId, item.source)) != null) {
                     return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
                 }
                 await { terminal != null }?.let { return it }

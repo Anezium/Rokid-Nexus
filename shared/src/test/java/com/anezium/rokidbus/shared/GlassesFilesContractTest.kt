@@ -27,12 +27,22 @@ class GlassesFilesContractTest {
     }
 
     @Test
+    fun `the whole explorer subtree is recognised for local-send refusal`() {
+        assertTrue(GlassesFilesContract.isFilesPath("/core/files"))
+        assertTrue(GlassesFilesContract.isFilesPath("/core/files/request"))
+        assertTrue(GlassesFilesContract.isFilesPath(" /core/files/data/x"))
+        assertFalse(GlassesFilesContract.isFilesPath("/core/filesystem"))
+        assertFalse(GlassesFilesContract.isFilesPath("/core/native-apps/request"))
+    }
+
+    @Test
     fun `every request round trips`() {
         val requests = listOf(
             GlassesFilesRequest.ListFolder(id, "", 0),
             GlassesFilesRequest.ListFolder(id, "Download/Books", 200),
             GlassesFilesRequest.MakeFolder(id, "Download", "Books"),
-            GlassesFilesRequest.Delete(id, "Download/old.pdf"),
+            GlassesFilesRequest.Delete(id, "Download/old.pdf", directory = false),
+            GlassesFilesRequest.Delete(id, "Download/Empty", directory = true),
             GlassesFilesRequest.GrantAccess(id),
             GlassesFilesRequest.UploadBegin(id, "Download", "Léger 👓.pdf", 1_234_567L),
             GlassesFilesRequest.UploadEnd(id, digest),
@@ -112,8 +122,9 @@ class GlassesFilesContractTest {
 
     @Test
     fun `delete and download never target the root`() {
-        val delete = GlassesFilesContract.encode(GlassesFilesRequest.Delete(id, "x"))
+        val delete = GlassesFilesContract.encode(GlassesFilesRequest.Delete(id, "x", directory = false))
         assertNull(GlassesFilesContract.parseRequest(JSONObject(delete.toString()).put("path", "")))
+        assertNull(GlassesFilesContract.parseRequest(JSONObject(delete.toString()).apply { remove("dir") }))
         assertThrows(IllegalArgumentException::class.java) {
             GlassesFilesContract.encode(GlassesFilesRequest.DownloadBegin(id, ""))
         }

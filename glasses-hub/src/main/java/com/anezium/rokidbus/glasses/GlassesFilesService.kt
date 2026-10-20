@@ -113,7 +113,11 @@ internal object GlassesFilesService {
                 ),
             )
             is GlassesFilesRequest.Delete -> sendResult(
-                GlassesFilesResult.Operation(request.requestId, GlassesFilesOperation.DELETE, store.delete(request.path)),
+                GlassesFilesResult.Operation(
+                    request.requestId,
+                    GlassesFilesOperation.DELETE,
+                    store.delete(request.path, request.directory),
+                ),
             )
             is GlassesFilesRequest.GrantAccess -> grantAccess(request.requestId)
             is GlassesFilesRequest.UploadBegin -> beginUpload(store, request)
@@ -173,9 +177,11 @@ internal object GlassesFilesService {
     }
 
     private fun beginUpload(store: GlassesFileStore, request: GlassesFilesRequest.UploadBegin) {
-        // The phone drives one transfer at a time; a new begin means it has given up on the old one.
+        // The phone drives one transfer at a time; a new begin means it has given up on the old one,
+        // whichever direction that was.
         upload?.upload?.abort()
         upload = null
+        download?.cancelAll()
         if (store.alreadyPresent(request.path, request.name, request.sizeBytes)) {
             log("files upload skipped reason=already_present")
             sendResult(GlassesFilesResult.UploadDone(request.transferId, request.name, alreadyPresent = true))
@@ -259,6 +265,8 @@ internal object GlassesFilesService {
 
     private fun beginDownload(store: GlassesFileStore, request: GlassesFilesRequest.DownloadBegin) {
         download?.cancelAll()
+        upload?.upload?.abort()
+        upload = null
         val (file, error) = store.openForDownload(request.path)
         if (file == null) {
             sendResult(GlassesFilesResult.TransferFailed(request.transferId, error ?: GlassesFilesError.INTERNAL))

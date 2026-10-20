@@ -1183,6 +1183,12 @@ class BusHubService : Service() {
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
         val sender = resolveSender(senderUid)
+        if (GlassesFilesContract.isFilesPath(envelope.path)) {
+            // The explorer talks to the glasses directly; no local caller, debug or not, may.
+            recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, "TRUSTED_LOCAL_ONLY")
+            deliverError(sender.replyBinder, envelope.id, "TRUSTED_LOCAL_ONLY")
+            return
+        }
         if (isGlassesControlRequest(envelope.path)) {
             val strictlyHubOwned = isStrictlyHubOwnedGlassesPath(envelope.path)
             if (senderUid != Process.myUid() && (strictlyHubOwned || !isDebuggableBuild())) {
