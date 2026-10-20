@@ -187,6 +187,6 @@ class SelfArmSessionCommandTest {
         const val PARITY_WATCHDOG = "#!/system/bin/sh\necho parity-watchdog\n"
         const val PARITY_BRIDGE = "#!/system/bin/sh\necho parity-bridge\n"
         const val EXPECTED_PARITY_DIGEST =
-            "16504bbf597b5c0a5926272f69412f70e73a0ab653b59fd743464fcc69cf5aa7"
+            "c0c98d408e5093b58d4c41de1d82927109c41b60c1e260176b0e315e29a42b45"
     }
 }
