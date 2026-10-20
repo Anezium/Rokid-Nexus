@@ -5217,9 +5217,10 @@ class BusHubService : Service() {
         remoteEditableSurfaceVersion = if (editableSupported) EditableSurfaceContract.VERSION else 0
         remoteMaxImageBytes = if (imageSupported) advertised.maxImageBytes else 0
         if (::glassesFiles.isInitialized) {
+            val current = advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION
             glassesFiles.onCapabilities(
-                advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION &&
-                    advertised.features and BusCapabilityBits.GLASSES_FILES != 0,
+                glassesFilesSupported = current && advertised.features and BusCapabilityBits.GLASSES_FILES != 0,
+                laneSupported = current && advertised.features and BusCapabilityBits.GLASSES_FILES_LANE != 0,
             )
         }
         updateRemoteGlassesAppState(

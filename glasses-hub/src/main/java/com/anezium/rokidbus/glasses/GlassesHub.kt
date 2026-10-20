@@ -706,6 +706,7 @@ object GlassesHub {
                 BusCapabilityBits.INK_SURFACE or
                 BusCapabilityBits.EDITABLE_SURFACE or
                 BusCapabilityBits.GLASSES_FILES or
+                BusCapabilityBits.GLASSES_FILES_LANE or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             pinSurfaceVersion = PinSurfaceContract.VERSION,

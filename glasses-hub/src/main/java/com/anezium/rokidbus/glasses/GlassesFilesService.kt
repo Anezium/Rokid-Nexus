@@ -14,6 +14,7 @@ import com.anezium.rokidbus.shared.GlassesFilesAccess
 import com.anezium.rokidbus.shared.GlassesFilesChunk
 import com.anezium.rokidbus.shared.GlassesFilesContract
 import com.anezium.rokidbus.shared.GlassesFilesError
+import com.anezium.rokidbus.shared.GlassesFilesLane
 import com.anezium.rokidbus.shared.GlassesFilesOperation
 import com.anezium.rokidbus.shared.GlassesFilesRequest
 import com.anezium.rokidbus.shared.GlassesFilesResult
@@ -34,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal object GlassesFilesService {
     private val control = Executors.newSingleThreadExecutor { Thread(it, "glasses-files").apply { isDaemon = true } }
     private val streamer = Executors.newSingleThreadExecutor { Thread(it, "glasses-files-send").apply { isDaemon = true } }
+    private val laneIo = Executors.newCachedThreadPool { Thread(it, "glasses-files-lane").apply { isDaemon = true } }
     private val timer = Executors.newSingleThreadScheduledExecutor {
         Thread(it, "glasses-files-timer").apply { isDaemon = true }
     }
@@ -95,7 +97,7 @@ internal object GlassesFilesService {
         control.execute {
             upload?.let {
                 log("files upload dropped reason=link_down name=${it.upload.name}")
-                it.upload.abort()
+                it.retire()
             }
             upload = null
         }
@@ -179,7 +181,7 @@ internal object GlassesFilesService {
     private fun beginUpload(store: GlassesFileStore, request: GlassesFilesRequest.UploadBegin) {
         // The phone drives one transfer at a time; a new begin means it has given up on the old one,
         // whichever direction that was.
-        upload?.upload?.abort()
+        upload?.retire()
         upload = null
         download?.cancelAll()
         if (store.alreadyPresent(request.path, request.name, request.sizeBytes)) {
@@ -189,9 +191,12 @@ internal object GlassesFilesService {
         }
         store.beginUpload(request.path, request.name, request.sizeBytes, request.transferId)
             .onSuccess { staged ->
-                upload = ActiveUpload(request.transferId, staged)
-                log("files upload begin size=${request.sizeBytes} name=${staged.name}")
-                sendResult(GlassesFilesResult.UploadReady(request.transferId, staged.name))
+                val lane = if (request.lane) appContext?.let { GlassesFilesLaneServer.open(it, request.transferId) } else null
+                val active = ActiveUpload(request.transferId, staged, lane)
+                upload = active
+                log("files upload begin size=${request.sizeBytes} name=${staged.name} lane=${lane != null}")
+                sendResult(GlassesFilesResult.UploadReady(request.transferId, staged.name, lane?.endpoint))
+                if (lane != null) laneIo.execute { serveUploadLane(active, lane) }
             }
             .onFailure { failure ->
                 val error = (failure as? GlassesFilesException)?.error ?: GlassesFilesError.INTERNAL
@@ -217,7 +222,40 @@ internal object GlassesFilesService {
             )
         ) {
             active.chunksSinceAck = 0
-            sendResult(GlassesFilesResult.UploadProgress(active.transferId, active.upload.stagedBytes))
+            val staged = active.upload.stagedBytes
+            // Acks go back the way the bytes came: over the lane they cost no bus round trip.
+            val lane = active.lane?.takeIf { it.isConnected() }
+            if (lane == null || !lane.write(GlassesFilesLane.Frame.Ack(staged))) {
+                sendResult(GlassesFilesResult.UploadProgress(active.transferId, staged))
+            }
+        }
+    }
+
+    /**
+     * Feeds the upload from its lane, frame by frame, into the same serial path the bus chunks
+     * take. A phone that never connects simply leaves the upload on the bus.
+     */
+    private fun serveUploadLane(active: ActiveUpload, lane: GlassesFilesLaneServer) {
+        if (!lane.accept()) {
+            log("files lane not taken")
+            lane.close()
+            return
+        }
+        log("files lane connected")
+        try {
+            while (true) {
+                val frame = lane.read()
+                if (frame is GlassesFilesLane.Frame.Data) {
+                    control.execute { onUploadChunk(GlassesFilesChunk(active.transferId, frame.offset), frame.bytes) }
+                }
+            }
+        } catch (_: Exception) {
+            // The phone closes its end once the transfer is over; only a break mid-transfer fails it.
+            control.execute {
+                if (upload === active) failUpload(active, GlassesFilesError.LINK_LOST)
+            }
+        } finally {
+            lane.close()
         }
     }
 
@@ -227,6 +265,7 @@ internal object GlassesFilesService {
             return
         }
         upload = null
+        active.lane?.close()
         val error = active.upload.finish(request.sha256)
         if (error != null) {
             log("files upload failed error=${error.wireValue}")
@@ -245,14 +284,14 @@ internal object GlassesFilesService {
 
     private fun cancelUpload(transferId: String) {
         val active = upload?.takeIf { it.transferId == transferId } ?: return
-        active.upload.abort()
         upload = null
+        active.retire()
         log("files upload cancelled")
     }
 
     private fun failUpload(active: ActiveUpload, error: GlassesFilesError) {
-        active.upload.abort()
         if (upload === active) upload = null
+        active.retire()
         log("files upload failed error=${error.wireValue}")
         sendResult(GlassesFilesResult.TransferFailed(active.transferId, error))
     }
@@ -265,14 +304,15 @@ internal object GlassesFilesService {
 
     private fun beginDownload(store: GlassesFileStore, request: GlassesFilesRequest.DownloadBegin) {
         download?.cancelAll()
-        upload?.upload?.abort()
+        upload?.retire()
         upload = null
         val (file, error) = store.openForDownload(request.path)
         if (file == null) {
             sendResult(GlassesFilesResult.TransferFailed(request.transferId, error ?: GlassesFilesError.INTERNAL))
             return
         }
-        val active = ActiveDownload(request.transferId, file)
+        val lane = if (request.lane) appContext?.let { GlassesFilesLaneServer.open(it, request.transferId) } else null
+        val active = ActiveDownload(request.transferId, file, lane)
         download = active
         streamer.execute { active.stream() }
     }
@@ -306,14 +346,21 @@ internal object GlassesFilesService {
         return result.copy(entries = emptyList<GlassesFileEntry>())
     }
 
-    private class ActiveUpload(val transferId: String, val upload: GlassesUpload) {
+    private class ActiveUpload(val transferId: String, val upload: GlassesUpload, val lane: GlassesFilesLaneServer?) {
         var chunksSinceAck = 0
         var lastActivity = SystemClock.elapsedRealtime()
+
+        /** Ends the upload without publishing anything: staging removed, lane closed. */
+        fun retire() {
+            upload.abort()
+            lane?.close()
+        }
     }
 
     /** Streams one file to the phone under the acknowledged window. */
-    private class ActiveDownload(val transferId: String, val file: File) {
+    private class ActiveDownload(val transferId: String, val file: File, private val offeredLane: GlassesFilesLaneServer?) {
         private val lock = Object()
+        @Volatile private var lane: GlassesFilesLaneServer? = null
         private var acked = 0L
         private val cancelled = AtomicBoolean(false)
 
@@ -331,17 +378,32 @@ internal object GlassesFilesService {
 
         fun cancelAll() {
             cancelled.set(true)
+            // Closing the lane also unblocks a pending accept or a write stuck on a full socket.
+            offeredLane?.close()
             synchronized(lock) { lock.notifyAll() }
         }
 
         fun stream() {
             val size = file.length()
-            if (!send(GlassesFilesResult.DownloadReady(transferId, size, file.lastModified().coerceAtLeast(0L)))) {
+            val ready = GlassesFilesResult.DownloadReady(transferId, size, file.lastModified().coerceAtLeast(0L), offeredLane?.endpoint)
+            if (!send(ready)) {
                 finish(GlassesFilesError.LINK_LOST)
                 return
             }
+            // The phone connects as soon as it reads the offer; if it cannot, the bus carries on.
+            if (offeredLane != null) {
+                if (offeredLane.accept()) {
+                    lane = offeredLane
+                    laneIo.execute { readLaneAcks(offeredLane) }
+                    log("files lane connected")
+                } else {
+                    offeredLane.close()
+                    log("files lane not taken")
+                }
+            }
+            val window = if (lane != null) GlassesFilesLane.WINDOW_BYTES else GlassesFilesContract.ACK_WINDOW_BYTES
             val digest = GlassesFilesContract.newDigest()
-            val buffer = ByteArray(GlassesFilesContract.CHUNK_BYTES)
+            val buffer = ByteArray(if (lane != null) GlassesFilesLane.CHUNK_BYTES else GlassesFilesContract.CHUNK_BYTES)
             var position = 0L
             val error = runCatching {
                 file.inputStream().use { input ->
@@ -349,7 +411,7 @@ internal object GlassesFilesService {
                         val read = input.read(buffer)
                         if (read <= 0) break
                         if (position + read > size) return@use GlassesFilesError.CHANGED
-                        if (!awaitAck { MediaSyncWindowPolicy.maySend(position + read, it, GlassesFilesContract.ACK_WINDOW_BYTES) }) {
+                        if (!awaitAck { MediaSyncWindowPolicy.maySend(position + read, it, window) }) {
                             return@use if (cancelled.get()) GlassesFilesError.CANCELLED else GlassesFilesError.TIMEOUT
                         }
                         digest.update(buffer, 0, read)
@@ -375,7 +437,27 @@ internal object GlassesFilesService {
             }
         }
 
+        /** Acks from the phone over the lane; a broken lane cancels the copy like a dropped link. */
+        private fun readLaneAcks(connected: GlassesFilesLaneServer) {
+            try {
+                while (true) {
+                    val frame = connected.read()
+                    if (frame is GlassesFilesLane.Frame.Ack) onAck(transferId, frame.stagedBytes)
+                }
+            } catch (_: Exception) {
+                if (download === this) {
+                    laneBroken = true
+                    synchronized(lock) { lock.notifyAll() }
+                }
+            }
+        }
+
+        @Volatile private var laneBroken = false
+
         private fun sendChunk(offset: Long, bytes: ByteArray): Boolean {
+            lane?.let { connected ->
+                return !laneBroken && connected.write(GlassesFilesLane.Frame.Data(offset, bytes))
+            }
             val meta = GlassesFilesContract.chunkMeta(GlassesFilesChunk(transferId, offset))
             repeat(MAX_SEND_ATTEMPTS) {
                 if (cancelled.get()) return false
@@ -388,7 +470,7 @@ internal object GlassesFilesService {
         private fun awaitAck(satisfied: (Long) -> Boolean): Boolean {
             val deadline = SystemClock.elapsedRealtime() + GlassesFilesContract.IDLE_TIMEOUT_MS
             synchronized(lock) {
-                while (!cancelled.get()) {
+                while (!cancelled.get() && !laneBroken) {
                     if (satisfied(acked)) return true
                     val remaining = deadline - SystemClock.elapsedRealtime()
                     if (remaining <= 0) return false
@@ -399,6 +481,7 @@ internal object GlassesFilesService {
         }
 
         private fun finish(error: GlassesFilesError?) {
+            offeredLane?.close()
             if (error != null) {
                 log("files download failed error=${error.wireValue}")
                 send(GlassesFilesResult.TransferFailed(transferId, error))

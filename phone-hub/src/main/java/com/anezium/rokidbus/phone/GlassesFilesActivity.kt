@@ -641,7 +641,8 @@ class GlassesFilesActivity : Activity() {
         GlassesTransferState.RUNNING -> {
             val done = GlassesFilesFormat.size(item.doneBytes)
             val bytes = item.totalBytes?.let { "$done OF ${GlassesFilesFormat.size(it)}" } ?: done
-            "$bytes · ${GlassesFilesFormat.remaining(item.remainingSeconds)}".uppercase()
+            val wifi = if (item.viaWifi) " · WI-FI" else ""
+            "$bytes · ${GlassesFilesFormat.remaining(item.remainingSeconds)}$wifi".uppercase()
         }
         GlassesTransferState.DONE -> when {
             item.alreadyPresent -> "ALREADY ON THE GLASSES"

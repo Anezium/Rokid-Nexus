@@ -52,6 +52,8 @@ data class GlassesTransferItem(
     val alreadyPresent: Boolean = false,
     val remainingSeconds: Long? = null,
     val finishedAtMillis: Long = 0L,
+    /** The bytes are moving over the Wi-Fi lane rather than Bluetooth. */
+    val viaWifi: Boolean = false,
 ) {
     val percent: Int?
         get() = totalBytes?.takeIf { it > 0 }?.let { ((doneBytes * 100) / it).toInt().coerceIn(0, 100) }
