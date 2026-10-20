@@ -23,7 +23,10 @@ internal sealed interface GlassesFolderListing {
  * shared storage. Android's scoped storage then decides what is visible and writable; this class
  * reports those refusals honestly instead of guessing ahead of them.
  */
-internal class GlassesFileStore(private val root: File) {
+internal class GlassesFileStore(
+    private val root: File,
+    private val fs: GlassesFsPrimitives = AndroidFsPrimitives,
+) {
     private val canonicalRoot: File by lazy { root.canonicalFile }
 
     fun list(
@@ -78,12 +81,24 @@ internal class GlassesFileStore(private val root: File) {
         val target = resolve(path) ?: return GlassesFilesError.INVALID_REQUEST
         if (!target.exists()) return GlassesFilesError.NOT_FOUND
         if (target.isDirectory != expectDirectory) return GlassesFilesError.CHANGED
-        if (target.isDirectory) {
+        if (expectDirectory) {
             val children = target.list() ?: return GlassesFilesError.NOT_PERMITTED
             // Recursive delete is deliberately absent: one mistaken tap must never empty a tree.
             if (children.isNotEmpty()) return GlassesFilesError.NOT_EMPTY
         }
-        return if (runCatching { target.delete() }.getOrDefault(false)) null else GlassesFilesError.NOT_PERMITTED
+        // The checks above give the precise answer in the common case. The guarantee comes from
+        // isolating the entry first: once it sits under a private random name nobody else knows,
+        // its type can no longer change, so what gets removed is exactly what was verified.
+        val held = isolate(target) ?: return GlassesFilesError.NOT_PERMITTED
+        val sameType = held.isDirectory == expectDirectory
+        val empty = !expectDirectory || held.list()?.isEmpty() == true
+        if (sameType && empty && runCatching { held.delete() }.getOrDefault(false)) return null
+        restore(held, target)
+        return when {
+            !sameType -> GlassesFilesError.CHANGED
+            !empty -> GlassesFilesError.NOT_EMPTY
+            else -> GlassesFilesError.NOT_PERMITTED
+        }
     }
 
     /** Is a file with this exact name and size already in [folderPath]? Then sending it again is waste. */
@@ -137,7 +152,26 @@ internal class GlassesFileStore(private val root: File) {
         } catch (_: SecurityException) {
             return failure(GlassesFilesError.NOT_PERMITTED)
         }
-        return Result.success(GlassesUpload(folder, requestedName, name, staging, sizeBytes, output))
+        return Result.success(GlassesUpload(folder, requestedName, name, staging, sizeBytes, output, fs, this))
+    }
+
+    /** Moves [target] to a fresh private name in the same folder; null when it could not. */
+    internal fun isolate(target: File): File? {
+        val parent = target.parentFile ?: return null
+        val held = File(parent, "$HOLD_PREFIX${java.util.UUID.randomUUID().toString().replace("-", "")}")
+        return held.takeIf { runCatching { fs.rename(target, it) }.getOrDefault(false) }
+    }
+
+    /**
+     * Puts an isolated entry back. If something took its name meanwhile, it comes back under a
+     * numbered name instead: nothing is ever lost, though rename has no no-replace form here, so
+     * a writer racing for that same fresh name in the same instant is the one remaining window.
+     */
+    internal fun restore(held: File, target: File) {
+        val parent = target.parentFile ?: return
+        if (!target.exists() && runCatching { fs.rename(held, target) }.getOrDefault(false)) return
+        val fallback = GlassesFilesContract.uniqueName(target.name) { File(parent, it).exists() } ?: return
+        runCatching { fs.rename(held, File(parent, fallback)) }
     }
 
     internal fun resolve(path: String): File? {
@@ -155,6 +189,9 @@ internal class GlassesFileStore(private val root: File) {
         const val FREE_SPACE_MARGIN_BYTES = 64L * 1024 * 1024
         const val STALE_PARTIAL_MS = 10L * 60 * 1000
 
+        /** Isolated entries are never partials: if restoring one ever failed, it must stay visible. */
+        private const val HOLD_PREFIX = ".nexus-hold-"
+
         fun isPartial(name: String): Boolean =
             name.startsWith(".nexus-") && name.endsWith(GlassesFilesContract.PARTIAL_SUFFIX)
     }
@@ -170,6 +207,8 @@ internal class GlassesUpload(
     private val staging: File,
     val sizeBytes: Long,
     private val output: FileOutputStream,
+    private val fs: GlassesFsPrimitives,
+    private val store: GlassesFileStore,
 ) {
     var name: String = name
         private set
@@ -212,33 +251,49 @@ internal class GlassesUpload(
             staging.delete()
             return GlassesFilesError.INTEGRITY
         }
-        // rename() replaces an existing destination, and another app may create the chosen name at
-        // any moment. Claiming the name with an exclusive create first means the only file the
-        // rename can ever replace is our own empty placeholder.
-        val target = claimName() ?: run {
+        return publish()
+    }
+
+    /**
+     * Copies the verified bytes into a file created exclusively under the final name. No rename
+     * is involved, because rename replaces whatever holds the destination and FUSE offers no
+     * variant that refuses; with an exclusive create, every byte lands in an inode this upload
+     * made, so a file another app writes at the same name at any moment is never touched.
+     */
+    private fun publish(): GlassesFilesError? {
+        var target: File? = null
+        var handle: GlassesExclusiveFile? = null
+        for (attempt in 0 until MAX_CLAIM_ATTEMPTS) {
+            val candidate = File(folder, name)
+            handle = runCatching { fs.createExclusive(candidate) }.getOrElse {
+                staging.delete()
+                return GlassesFilesError.NOT_PERMITTED
+            }
+            if (handle != null) {
+                target = candidate
+                break
+            }
+            name = GlassesFilesContract.uniqueName(requestedName) { File(folder, it).exists() } ?: break
+        }
+        if (handle == null || target == null) {
             staging.delete()
             return GlassesFilesError.EXISTS
         }
-        // Android's rename replaces the placeholder atomically. Hosts whose rename refuses an
-        // existing target (the JVM unit tests on Windows) get one retry after removing our own,
-        // still empty, placeholder.
-        val published = staging.renameTo(target) || (target.length() == 0L && target.delete() && staging.renameTo(target))
-        if (!published) {
-            target.delete()
-            staging.delete()
-            return GlassesFilesError.NOT_PERMITTED
+        val copied = handle.use { exclusive ->
+            runCatching {
+                staging.inputStream().use { it.copyTo(exclusive.output, GlassesFilesContract.CHUNK_BYTES) }
+                exclusive.output.flush()
+                exclusive.sync()
+            }.isSuccess
         }
-        return null
-    }
-
-    private fun claimName(): File? {
-        repeat(MAX_CLAIM_ATTEMPTS) {
-            val candidate = File(folder, name)
-            val claimed = runCatching { candidate.createNewFile() }.getOrDefault(false)
-            if (claimed) return candidate
-            name = GlassesFilesContract.uniqueName(requestedName) { File(folder, it).exists() } ?: return null
+        staging.delete()
+        if (copied) return null
+        // Remove the half-copied file only if what sits at the name is still our own inode;
+        // isolating it first means the check and the removal concern the same entry.
+        store.isolate(target)?.let { held ->
+            if (handle.isSameFileAs(held)) runCatching { held.delete() } else store.restore(held, target)
         }
-        return null
+        return GlassesFilesError.IO_ERROR
     }
 
     fun abort() {

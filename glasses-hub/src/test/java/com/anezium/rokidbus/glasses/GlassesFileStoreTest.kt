@@ -17,9 +17,11 @@ class GlassesFileStoreTest {
 
     private val transferId = "transfer_0123456789"
 
+    private val fs = JvmFsPrimitives()
+
     private fun store(): Pair<GlassesFileStore, File> {
         val root = temp.newFolder("emulated0")
-        return GlassesFileStore(root) to root
+        return GlassesFileStore(root, fs) to root
     }
 
     @Test
@@ -134,6 +136,84 @@ class GlassesFileStoreTest {
         assertEquals(GlassesFilesError.CHANGED, store.delete("was-file", expectDirectory = false))
         assertEquals("someone's book", File(root, "was-folder").readText())
         assertTrue(File(root, "was-file").isDirectory)
+    }
+
+    @Test
+    fun `a folder swapped for a file at the final boundary is not removed`() {
+        val (store, root) = store()
+        val target = File(root, "empty").apply { mkdir() }
+        fs.beforeRename = { from, _ ->
+            if (from == target) {
+                target.delete()
+                target.writeText("someone's book")
+            }
+        }
+
+        assertEquals(GlassesFilesError.CHANGED, store.delete("empty", expectDirectory = true))
+        assertEquals("someone's book", target.readText())
+        assertEquals(listOf("empty"), root.list()!!.toList())
+    }
+
+    @Test
+    fun `a file swapped for a folder at the final boundary is not removed`() {
+        val (store, root) = store()
+        val target = File(root, "a.pdf").apply { writeText("a") }
+        fs.beforeRename = { from, _ ->
+            if (from == target && target.isFile) {
+                target.delete()
+                target.mkdir()
+            }
+        }
+
+        assertEquals(GlassesFilesError.CHANGED, store.delete("a.pdf", expectDirectory = false))
+        assertTrue(target.isDirectory)
+        assertEquals(listOf("a.pdf"), root.list()!!.toList())
+    }
+
+    @Test
+    fun `a file created at the final name just before publication survives`() {
+        val (store, root) = store()
+        val upload = store.beginUpload("", "book.pdf", 3, transferId).getOrThrow()
+        upload.write(0, "new".toByteArray())
+        var raced = false
+        fs.beforeCreate = { file ->
+            if (!raced && file.name == "book.pdf") {
+                raced = true
+                file.writeText("racer")
+            }
+        }
+
+        assertNull(upload.finish(sha256("new".toByteArray())))
+
+        assertEquals("book (1).pdf", upload.name)
+        assertEquals("racer", File(root, "book.pdf").readText())
+        assertEquals("new", File(root, "book (1).pdf").readText())
+    }
+
+    @Test
+    fun `a failed publication never deletes a file that is no longer ours`() {
+        val (store, root) = store()
+        val upload = store.beginUpload("", "book.pdf", 3, transferId).getOrThrow()
+        upload.write(0, "new".toByteArray())
+        fs.failWritesAfterBytes = 1
+        fs.reportSameFile = false
+
+        assertEquals(GlassesFilesError.IO_ERROR, upload.finish(sha256("new".toByteArray())))
+
+        assertTrue(File(root, "book.pdf").exists())
+        assertEquals(listOf("book.pdf"), root.list()!!.toList())
+    }
+
+    @Test
+    fun `a failed publication removes its own half-written file`() {
+        val (store, root) = store()
+        val upload = store.beginUpload("", "book.pdf", 3, transferId).getOrThrow()
+        upload.write(0, "new".toByteArray())
+        fs.failWritesAfterBytes = 1
+
+        assertEquals(GlassesFilesError.IO_ERROR, upload.finish(sha256("new".toByteArray())))
+
+        assertEquals(emptyList<String>(), root.list()!!.toList())
     }
 
     @Test

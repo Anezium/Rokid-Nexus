@@ -121,13 +121,19 @@ class GlassesFilesActivity : Activity() {
         }
         if (uris.isEmpty()) return
         // The transfer outlives this screen, so the read grant must too; the hub releases it after.
-        uris.forEach { uri ->
-            runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-        }
+        // Grants Nexus already held before this pick belong to someone else and are left alone.
+        val alreadyHeld = runCatching {
+            contentResolver.persistedUriPermissions.filter { it.isReadPermission }.map { it.uri.toString() }.toSet()
+        }.getOrDefault(emptySet())
+        val newlyTaken = uris.filter { uri ->
+            uri.toString() !in alreadyHeld && runCatching {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }.isSuccess
+        }.map(Uri::toString).toSet()
         if (uris.size > MAX_PICK) showNotice("SENDING THE FIRST $MAX_PICK FILES")
-        if (!GlassesFilesHub.send(applicationContext, path, uris)) {
-            uris.forEach { uri ->
-                runCatching { contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        if (!GlassesFilesHub.send(applicationContext, path, uris, newlyTaken)) {
+            newlyTaken.forEach { uri ->
+                runCatching { contentResolver.releasePersistableUriPermission(Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             }
             showNotice("NEXUS IS STILL STARTING. TRY AGAIN IN A MOMENT.")
         }

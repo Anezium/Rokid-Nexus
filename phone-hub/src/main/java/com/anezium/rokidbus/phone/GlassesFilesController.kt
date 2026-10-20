@@ -12,7 +12,9 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
+import android.os.CancellationSignal
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.OpenableColumns
@@ -28,7 +30,7 @@ import com.anezium.rokidbus.shared.GlassesFilesRequest
 import com.anezium.rokidbus.shared.GlassesFilesResult
 import com.anezium.rokidbus.shared.MediaSyncWindowPolicy
 import java.io.File
-import java.io.InputStream
+import java.io.IOException
 import java.io.OutputStream
 import java.security.MessageDigest
 import java.util.UUID
@@ -127,9 +129,9 @@ object GlassesFilesHub {
     }
 
     /** False when the hub service is not up; the caller then still owns the grants it took. */
-    fun send(context: Context, folderPath: String, uris: List<Uri>): Boolean {
+    fun send(context: Context, folderPath: String, uris: List<Uri>, newlyTaken: Set<String>): Boolean {
         val target = controller ?: return false
-        target.enqueueSends(context, folderPath, uris)
+        target.enqueueSends(context, folderPath, uris, newlyTaken)
         return true
     }
 
@@ -167,6 +169,7 @@ internal class GlassesFilesController(
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "glasses-files-transfer").apply { isDaemon = true } }
     private val timers = Executors.newSingleThreadScheduledExecutor { Thread(it, "glasses-files-timer").apply { isDaemon = true } }
     private val lock = Object()
+    private val providerIo = Executors.newCachedThreadPool { Thread(it, "glasses-files-provider").apply { isDaemon = true } }
 
     // Guarded by [lock].
     private val transfers = ArrayList<GlassesTransferItem>()
@@ -178,6 +181,7 @@ internal class GlassesFilesController(
     private var workerRunning = false
     private var lastPublishAt = 0L
     private var publishScheduled = false
+    private val grants = GlassesGrantLedger(::releaseGrant)
 
     private val closed = AtomicBoolean(false)
 
@@ -278,14 +282,10 @@ internal class GlassesFilesController(
         }
     }
 
-    fun enqueueSends(context: Context, folderPath: String, uris: List<Uri>) {
-        // The screen took a persistable grant for every pick; whatever is not queued gives it back.
-        uris.drop(MAX_FILES_PER_PICK).forEach { releaseGrantIfUnused(it.toString()) }
+    /** [newlyTaken]: the grants the screen acquired for this pick, as opposed to ones already held. */
+    fun enqueueSends(context: Context, folderPath: String, uris: List<Uri>, newlyTaken: Set<String>) {
         val items = uris.take(MAX_FILES_PER_PICK).mapNotNull { uri ->
-            val (name, size) = describe(context, uri) ?: run {
-                releaseGrantIfUnused(uri.toString())
-                return@mapNotNull null
-            }
+            val (name, size) = describe(context, uri) ?: return@mapNotNull null
             GlassesTransferItem(
                 id = newId(),
                 direction = GlassesTransferDirection.SEND,
@@ -295,8 +295,14 @@ internal class GlassesFilesController(
                 totalBytes = size,
             )
         }
+        synchronized(lock) {
+            grants.adopt(newlyTaken)
+            items.forEach { grants.hold(it.source) }
+            transfers += items
+            // Picks past the limit, failed lookups and duplicates give back what nothing kept.
+            grants.settle(uris.map(Uri::toString))
+        }
         if (items.isEmpty()) return
-        synchronized(lock) { transfers += items }
         publish(force = true)
         kickWorker()
     }
@@ -319,7 +325,7 @@ internal class GlassesFilesController(
         val running = synchronized(lock) {
             val item = transfers.firstOrNull { it.id == id } ?: return
             transfers.removeAll { it.id == id }
-            releaseSource(item)
+            releaseHold(item)
             active?.takeIf { it.item.id == id }
         }
         running?.cancel()
@@ -330,7 +336,7 @@ internal class GlassesFilesController(
         val running = synchronized(lock) {
             val dropped = transfers.filter { it.state == GlassesTransferState.QUEUED || it.state == GlassesTransferState.RUNNING }
             transfers.removeAll(dropped.toSet())
-            dropped.forEach(::releaseSource)
+            dropped.forEach(::releaseHold)
             active?.takeIf { running -> dropped.any { it.id == running.item.id } }
         }
         running?.cancel()
@@ -357,7 +363,7 @@ internal class GlassesFilesController(
         synchronized(lock) {
             val item = transfers.firstOrNull { it.id == id && it.state != GlassesTransferState.RUNNING } ?: return
             transfers.remove(item)
-            releaseSource(item)
+            releaseHold(item)
         }
         publish(force = true)
     }
@@ -366,14 +372,14 @@ internal class GlassesFilesController(
         if (!closed.compareAndSet(false, true)) return
         val running = synchronized(lock) {
             // The queue lives in memory only, so nothing could ever retry these: drop their grants.
-            val items = transfers.toList()
             transfers.clear()
-            items.forEach(::releaseSource)
+            grants.dropAll()
             active
         }
         running?.cancel()
         inbox.shutdownNow()
         worker.shutdownNow()
+        providerIo.shutdownNow()
         timers.shutdownNow()
         cancelNotification()
     }
@@ -486,7 +492,10 @@ internal class GlassesFilesController(
                         Outcome.Cancelled -> item
                     }
                 }
-                transfers.firstOrNull { it.id == next.id && it.state == GlassesTransferState.DONE }?.let(::releaseSource)
+                // A finished row lingers on screen but no longer needs its source.
+                transfers.firstOrNull { it.id == next.id && it.state == GlassesTransferState.DONE }?.let {
+                    if (it.direction == GlassesTransferDirection.SEND) grants.drop(it.source)
+                }
             }
             publish(force = true)
             scheduleDoneCleanup()
@@ -567,20 +576,11 @@ internal class GlassesFilesController(
         return name.ifEmpty { "file" }
     }
 
-    /** Called under [lock]; a URI picked twice keeps its grant until its last item is gone. */
-    private fun releaseSource(item: GlassesTransferItem) {
-        if (item.direction != GlassesTransferDirection.SEND) return
-        val stillUsed = transfers.any {
-            it.id != item.id && it.direction == GlassesTransferDirection.SEND && it.source == item.source
+    /** Called under [lock] when an item leaves the queue; finished rows already gave theirs back. */
+    private fun releaseHold(item: GlassesTransferItem) {
+        if (item.direction == GlassesTransferDirection.SEND && item.state != GlassesTransferState.DONE) {
+            grants.drop(item.source)
         }
-        if (!stillUsed) releaseGrant(item.source)
-    }
-
-    private fun releaseGrantIfUnused(source: String) {
-        val stillUsed = synchronized(lock) {
-            transfers.any { it.direction == GlassesTransferDirection.SEND && it.source == source }
-        }
-        if (!stillUsed) releaseGrant(source)
     }
 
     private fun releaseGrant(source: String) {
@@ -728,38 +728,33 @@ internal class GlassesFilesController(
                     return Outcome.Done(alreadyPresent = it.alreadyPresent)
                 }
                 val finalName = ready!!.name
-                val input: InputStream = staged?.inputStream()
-                    ?: runCatching { appContext.contentResolver.openInputStream(uri) }.getOrNull()
-                    ?: return Outcome.Stopped(GlassesTransferStop.UNREADABLE)
                 val digest: MessageDigest = GlassesFilesContract.newDigest()
                 var position = 0L
-                input.use { stream ->
+                openReader(uri, staged).use { reader ->
                     val buffer = ByteArray(GlassesFilesContract.CHUNK_BYTES)
                     while (true) {
-                        val read = runCatching { stream.read(buffer) }.getOrElse {
-                            send(GlassesFilesRequest.Cancel(wireId))
-                            return Outcome.Stopped(GlassesTransferStop.UNREADABLE)
+                        val count = when (val read = reader.read(buffer, ::isAborting)) {
+                            is GlassesProviderReader.Read.Bytes -> read.count
+                            GlassesProviderReader.Read.End -> break
+                            GlassesProviderReader.Read.Aborted -> return abortOutcome() ?: Outcome.Cancelled
+                            GlassesProviderReader.Read.Stalled,
+                            GlassesProviderReader.Read.Failed,
+                            -> return Outcome.Stopped(GlassesTransferStop.UNREADABLE)
                         }
-                        if (read <= 0) break
-                        if (position + read > size) {
-                            send(GlassesFilesRequest.Cancel(wireId))
-                            return Outcome.Stopped(GlassesTransferStop.CHANGED)
-                        }
+                        if (count == 0) continue
+                        if (position + count > size) return Outcome.Stopped(GlassesTransferStop.CHANGED)
                         await {
                             failedReason() != null ||
-                                MediaSyncWindowPolicy.maySend(position + read, acked, GlassesFilesContract.ACK_WINDOW_BYTES)
+                                MediaSyncWindowPolicy.maySend(position + count, acked, GlassesFilesContract.ACK_WINDOW_BYTES)
                         }?.let { return it }
                         failedReason()?.let { return it }
-                        digest.update(buffer, 0, read)
-                        if (!sendChunk(position, buffer.copyOf(read))) return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
-                        position += read
+                        digest.update(buffer, 0, count)
+                        if (!sendChunk(position, buffer.copyOf(count))) return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
+                        position += count
                         progress(item.id, synchronized(signal) { acked }, size, rate)
                     }
                 }
-                if (position != size) {
-                    send(GlassesFilesRequest.Cancel(wireId))
-                    return Outcome.Stopped(GlassesTransferStop.CHANGED)
-                }
+                if (position != size) return Outcome.Stopped(GlassesTransferStop.CHANGED)
                 await { failedReason() != null || MediaSyncWindowPolicy.mayFinish(acked, size) }?.let { return it }
                 failedReason()?.let { return it }
                 progress(item.id, size, size, rate)
@@ -775,33 +770,56 @@ internal class GlassesFilesController(
             }
         }
 
+        private fun isAborting(): Boolean = synchronized(signal) { cancelled || stop != null }
+
+        /** Reads the private copy when there is one, the provider otherwise, abandonably either way. */
+        private fun openReader(uri: Uri, staged: File?): GlassesProviderReader =
+            GlassesProviderReader(providerIo, GlassesFilesContract.IDLE_TIMEOUT_MS, open = { registerCancel ->
+                if (staged != null) {
+                    staged.inputStream()
+                } else {
+                    val cancellation = CancellationSignal()
+                    registerCancel { cancellation.cancel() }
+                    val descriptor = appContext.contentResolver.openFileDescriptor(uri, "r", cancellation)
+                        ?: throw IOException("provider returned no descriptor")
+                    registerCancel { runCatching { descriptor.close() } }
+                    ParcelFileDescriptor.AutoCloseInputStream(descriptor)
+                }
+            })
+
         /**
          * Copies a provider stream of unknown length into [target], bounded by the send limit and
-         * stopping at the first chunk boundary after a cancel or a dropped link.
+         * abandoned on a cancel, a dropped link or a provider that stops answering.
          */
         private fun stageUnknownSize(uri: Uri, target: File): StageResult {
-            val input = runCatching { appContext.contentResolver.openInputStream(uri) }.getOrNull()
-                ?: return StageResult.Ended(Outcome.Stopped(GlassesTransferStop.UNREADABLE))
-            return input.use { stream ->
+            val result = openReader(uri, null).use { reader ->
                 runCatching {
                     target.outputStream().use { output ->
                         val buffer = ByteArray(GlassesFilesContract.CHUNK_BYTES)
                         var copied = 0L
                         while (true) {
-                            abortOutcome()?.let { return@runCatching StageResult.Ended(it) }
-                            val read = stream.read(buffer)
-                            if (read <= 0) break
-                            copied += read
+                            val count = when (val read = reader.read(buffer, ::isAborting)) {
+                                is GlassesProviderReader.Read.Bytes -> read.count
+                                GlassesProviderReader.Read.End -> break
+                                GlassesProviderReader.Read.Aborted ->
+                                    return@runCatching StageResult.Ended(abortOutcome() ?: Outcome.Cancelled)
+                                GlassesProviderReader.Read.Stalled,
+                                GlassesProviderReader.Read.Failed,
+                                -> return@runCatching StageResult.Ended(Outcome.Stopped(GlassesTransferStop.UNREADABLE))
+                            }
+                            copied += count
                             if (copied > MAX_SEND_BYTES) {
                                 return@runCatching StageResult.Ended(Outcome.Stopped(GlassesTransferStop.REFUSED))
                             }
-                            output.write(buffer, 0, read)
+                            output.write(buffer, 0, count)
                             progress(item.id, copied, null, rate)
                         }
                         StageResult.Staged(copied)
                     }
                 }.getOrElse { StageResult.Ended(Outcome.Stopped(GlassesTransferStop.UNREADABLE)) }
-            }.also { rate.reset() }
+            }
+            rate.reset()
+            return result
         }
 
         private fun sendChunk(offset: Long, bytes: ByteArray): Boolean {
@@ -828,7 +846,17 @@ internal class GlassesFilesController(
         override fun onResult(result: GlassesFilesResult) {
             synchronized(signal) {
                 when (result) {
-                    is GlassesFilesResult.DownloadReady -> if (result.transferId == wireId) expectedSize = result.sizeBytes
+                    is GlassesFilesResult.DownloadReady -> if (result.transferId == wireId) {
+                        expectedSize = result.sizeBytes
+                        when (GlassesDownloadAckPolicy.onReady(staged, result.sizeBytes)) {
+                            GlassesReadyAction.ACK_STAGED -> {
+                                chunksSinceAck = 0
+                                send(GlassesFilesRequest.DownloadProgress(wireId, staged))
+                            }
+                            GlassesReadyAction.CHANGED -> if (stop == null) stop = GlassesTransferStop.CHANGED
+                            GlassesReadyAction.NONE -> Unit
+                        }
+                    }
                     is GlassesFilesResult.DownloadEnd -> if (result.transferId == wireId) {
                         verified = staged == expectedSize && GlassesFilesContract.hex(digest) == result.sha256
                         terminal = result
