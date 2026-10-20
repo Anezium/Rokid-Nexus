@@ -79,7 +79,7 @@ internal object ReplyRepository {
         action: Notification.Action?,
     ): CaptureResult? {
         val repliable = action?.actionIntent != null && action.remoteInputs.orEmpty().any { it.allowFreeFormInput }
-        val remoteInputs = if (repliable) action?.remoteInputs.orEmpty() else emptyArray()
+        val remoteInputs = if (repliable) action?.remoteInputs.orEmpty().toList().toTypedArray() else emptyArray()
 
         val settings = RelaySettings(context)
         if (!settings.admits(

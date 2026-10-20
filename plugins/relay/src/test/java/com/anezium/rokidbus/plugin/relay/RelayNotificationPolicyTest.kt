@@ -229,6 +229,8 @@ class RelayNotificationPolicyTest {
     }
 
     @Test
+    // Robolectric 4.13 does not shadow API 33's service-query flags overload.
+    @Config(sdk = [32])
     fun `removing an unsent band starts the other deferred notification`() {
         val first = requireNotNull(ReplyRepository.capture(context, notification(id = 1), replyAction()))
         val next = requireNotNull(ReplyRepository.capture(context, notification(id = 2), replyAction()))
@@ -343,6 +345,6 @@ class RelayNotificationPolicyTest {
         val notification = Notification.Builder(context, "test").setContentTitle(title).setContentText(body)
             .setSmallIcon(android.R.drawable.ic_dialog_info).setWhen(whenMs).build()
         notification.flags = flags
-        return StatusBarNotification(source, source, id, null, 1000, 0, notification, Process.myUserHandle(), null, 100)
+        return StatusBarNotification(source, source, id, null, 1000, 0, 0, notification, Process.myUserHandle(), 100)
     }
 }
