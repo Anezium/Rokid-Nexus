@@ -201,6 +201,16 @@ class SettingsActivity : Activity() {
                 ),
                 NexusUi.block(),
             )
+            addView(BusTheme.gap(this@SettingsActivity, 10))
+            addView(
+                controlVisibilityRow(
+                    title = "Glasses files",
+                    subtitle = "Show the file browser on the home screen",
+                    checked = glassesControlsVisibility.isFilesVisible(),
+                    onChanged = glassesControlsVisibility::setFilesVisible,
+                ),
+                NexusUi.block(),
+            )
             addView(BusTheme.gap(this@SettingsActivity, 28))
             addView(NexusUi.sectionRow(this@SettingsActivity, "Plugins"), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 12))
