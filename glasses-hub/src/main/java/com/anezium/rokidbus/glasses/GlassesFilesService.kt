@@ -225,9 +225,9 @@ internal object GlassesFilesService {
             val staged = active.upload.stagedBytes
             // Acks go back the way the bytes came: over the lane they cost no bus round trip.
             val lane = active.lane?.takeIf { it.isConnected() }
-            if (lane == null || !lane.write(GlassesFilesLane.Frame.Ack(staged))) {
+            val acked = (lane != null && lane.write(GlassesFilesLane.Frame.Ack(staged))) ||
                 sendResult(GlassesFilesResult.UploadProgress(active.transferId, staged))
-            }
+            if (acked && staged == active.upload.sizeBytes) active.finalAckSent = true
         }
     }
 
@@ -250,9 +250,10 @@ internal object GlassesFilesService {
                 }
             }
         } catch (_: Exception) {
-            // The phone closes its end once the transfer is over; only a break mid-transfer fails it.
+            // The phone closes its end once the transfer is over; only a break before the last byte
+            // was acknowledged fails it. After that, the bus terminator or the idle timeout decides.
             control.execute {
-                if (upload === active) failUpload(active, GlassesFilesError.LINK_LOST)
+                if (upload === active && !active.finalAckSent) failUpload(active, GlassesFilesError.LINK_LOST)
             }
         } finally {
             lane.close()
@@ -350,6 +351,9 @@ internal object GlassesFilesService {
         var chunksSinceAck = 0
         var lastActivity = SystemClock.elapsedRealtime()
 
+        /** Every byte is acknowledged (trivially so for an empty file). Confined to the control thread. */
+        var finalAckSent = upload.sizeBytes == 0L
+
         /** Ends the upload without publishing anything: staging removed, lane closed. */
         fun retire() {
             upload.abort()
@@ -412,7 +416,7 @@ internal object GlassesFilesService {
                         if (read <= 0) break
                         if (position + read > size) return@use GlassesFilesError.CHANGED
                         if (!awaitAck { MediaSyncWindowPolicy.maySend(position + read, it, window) }) {
-                            return@use if (cancelled.get()) GlassesFilesError.CANCELLED else GlassesFilesError.TIMEOUT
+                            return@use waitFailure()
                         }
                         digest.update(buffer, 0, read)
                         if (!sendChunk(position, buffer.copyOf(read))) return@use GlassesFilesError.LINK_LOST
@@ -428,7 +432,7 @@ internal object GlassesFilesService {
                 // The terminator rides control JSON while chunks ride the data plane; waiting for
                 // the final ack keeps it from overtaking bytes still queued on the socket.
                 !awaitAck { MediaSyncWindowPolicy.mayFinish(it, size) } ->
-                    finish(if (cancelled.get()) null else GlassesFilesError.TIMEOUT)
+                    finish(if (cancelled.get()) null else waitFailure())
                 else -> {
                     send(GlassesFilesResult.DownloadEnd(transferId, GlassesFilesContract.hex(digest)))
                     log("files download done size=$size")
@@ -470,14 +474,23 @@ internal object GlassesFilesService {
         private fun awaitAck(satisfied: (Long) -> Boolean): Boolean {
             val deadline = SystemClock.elapsedRealtime() + GlassesFilesContract.IDLE_TIMEOUT_MS
             synchronized(lock) {
-                while (!cancelled.get() && !laneBroken) {
+                while (!cancelled.get()) {
+                    // A full ack that arrived before the lane closed still counts.
                     if (satisfied(acked)) return true
+                    if (laneBroken) return false
                     val remaining = deadline - SystemClock.elapsedRealtime()
                     if (remaining <= 0) return false
                     lock.wait(minOf(remaining, ACK_POLL_MS))
                 }
             }
             return false
+        }
+
+        /** Why a wait for acks ended without them. */
+        private fun waitFailure(): GlassesFilesError = when {
+            cancelled.get() -> GlassesFilesError.CANCELLED
+            laneBroken -> GlassesFilesError.LINK_LOST
+            else -> GlassesFilesError.TIMEOUT
         }
 
         private fun finish(error: GlassesFilesError?) {

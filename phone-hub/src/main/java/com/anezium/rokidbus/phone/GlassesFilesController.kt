@@ -707,6 +707,11 @@ internal class GlassesFilesController(
         protected fun openLane(endpoint: GlassesFilesLaneEndpoint, onFrame: (GlassesFilesLane.Frame) -> Unit) {
             val client = GlassesFilesLaneClient.connect(appContext, wireId, endpoint) ?: return
             lane = client
+            // A cancel or failure that landed while connecting found no lane to close; close it here.
+            if (synchronized(signal) { cancelled || stop != null }) {
+                client.close()
+                return
+            }
             synchronized(lock) { update(item.id) { it.copy(viaWifi = true) } }
             publish(force = true)
             laneIo.execute {
@@ -714,6 +719,7 @@ internal class GlassesFilesController(
                     while (true) onFrame(client.read())
                 } catch (_: Exception) {
                     if (!client.isClosed && !bytesComplete()) fail(GlassesTransferStop.LINK_LOST)
+                    client.close()
                 }
             }
         }
@@ -727,6 +733,9 @@ internal class GlassesFilesController(
                 cancelled = true
                 signal.notifyAll()
             }
+            // A worker blocked writing to a lane that went silent only wakes when its socket closes;
+            // closing outside the signal monitor keeps this from waiting on an ack writer.
+            lane?.close()
             send(GlassesFilesRequest.Cancel(wireId))
         }
 
@@ -735,6 +744,7 @@ internal class GlassesFilesController(
                 if (stop == null) stop = reason
                 signal.notifyAll()
             }
+            lane?.close()
         }
 
         protected fun touch() {

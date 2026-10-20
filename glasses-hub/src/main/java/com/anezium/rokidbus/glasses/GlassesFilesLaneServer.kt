@@ -16,6 +16,8 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -26,11 +28,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Holding a high-performance Wi-Fi lock for that time keeps the radio out of power save, which
  * otherwise stretches round trips to the better part of a second on these glasses.
  */
-internal class GlassesFilesLaneServer private constructor(
+internal class GlassesFilesLaneServer internal constructor(
     private val transferId: String,
     private val server: ServerSocket,
     private val key: ByteArray,
     private val wifiLock: WifiManager.WifiLock?,
+    private val acceptTimeoutMs: Int = GlassesFilesLane.ACCEPT_TIMEOUT_MS,
 ) : Closeable {
     val endpoint = GlassesFilesLaneEndpoint(
         host = server.inetAddress.hostAddress.orEmpty(),
@@ -39,17 +42,22 @@ internal class GlassesFilesLaneServer private constructor(
     )
 
     private val closed = AtomicBoolean(false)
+    @Volatile private var pending: Socket? = null
     @Volatile private var socket: Socket? = null
     @Volatile private var input: DataInputStream? = null
     @Volatile private var output: DataOutputStream? = null
     private val opener = GlassesFilesLane.Opener(key, transferId, GlassesFilesLane.Direction.PHONE_TO_GLASSES)
     private val sealer = GlassesFilesLane.Sealer(key, transferId, GlassesFilesLane.Direction.GLASSES_TO_PHONE)
 
-    /** Waits for the phone, for at most the accept timeout; false when it never came or lied. */
+    /**
+     * Waits for the phone and its hello, both within one accept budget; false when it never came,
+     * lied, or was too slow. A stranger trickling a hello byte by byte cannot stretch the budget.
+     */
     fun accept(): Boolean {
         if (closed.get()) return false
+        val deadline = nowMillis() + acceptTimeoutMs
         val client = try {
-            server.soTimeout = GlassesFilesLane.ACCEPT_TIMEOUT_MS
+            server.soTimeout = acceptTimeoutMs
             server.accept()
         } catch (_: SocketTimeoutException) {
             null
@@ -59,8 +67,19 @@ internal class GlassesFilesLaneServer private constructor(
             // One phone, once: nothing else gets to try the port.
             runCatching { server.close() }
         } ?: return false
+        pending = client
+        if (closed.get()) {
+            runCatching { client.close() }
+            return false
+        }
+        val remaining = deadline - nowMillis()
+        if (remaining <= 0) {
+            runCatching { client.close() }
+            return false
+        }
+        val watchdog = deadlines.schedule({ if (socket == null) runCatching { client.close() } }, remaining, TimeUnit.MILLISECONDS)
         return try {
-            client.soTimeout = GlassesFilesLane.ACCEPT_TIMEOUT_MS
+            client.soTimeout = remaining.toInt().coerceAtLeast(1)
             client.tcpNoDelay = true
             val stream = DataInputStream(BufferedInputStream(client.getInputStream(), BUFFER_BYTES))
             if (!GlassesFilesLane.readHello(stream, transferId, key)) {
@@ -80,6 +99,9 @@ internal class GlassesFilesLaneServer private constructor(
         } catch (_: Exception) {
             runCatching { client.close() }
             false
+        } finally {
+            watchdog.cancel(false)
+            pending = null
         }
     }
 
@@ -100,11 +122,17 @@ internal class GlassesFilesLaneServer private constructor(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         runCatching { server.close() }
+        runCatching { pending?.close() }
         runCatching { socket?.close() }
         runCatching { if (wifiLock?.isHeld == true) wifiLock.release() }
     }
 
+    private fun nowMillis(): Long = System.nanoTime() / 1_000_000L
+
     companion object {
+        private val deadlines = Executors.newSingleThreadScheduledExecutor { runnable ->
+            Thread(runnable, "glasses-files-lane-deadline").apply { isDaemon = true }
+        }
         private const val BUFFER_BYTES = 64 * 1024
         private const val READ_TIMEOUT_MS = 30_000
 
