@@ -2823,7 +2823,8 @@ expected byte fails the transfer.
 
 One transfer runs at a time; a new begin supersedes a stale one. A transfer idle
 for 30 s, a `cancel`, or loss of the data plane ends it on both sides and removes
-partial files. Resume is not supported.
+partial files. A new attempt starts from zero; an active Wi-Fi lane can fall back
+to the bus as described below.
 
 #### Wi-Fi lane
 
@@ -2858,10 +2859,37 @@ the lane; control (`*_begin`, `*_ready`, `upload_end`, `download_end`, `cancel`,
 failures) stays on the bus, and the SHA-256 terminator still follows a full
 ack. A lane that cannot be opened leaves the transfer on Bluetooth; the phone then
 sends `lane_declined` `{transferId}`, which ends the glasses' wait at once (a
-download would otherwise hold its first byte until the 8 s budget runs out). One
-that breaks before
-every byte is acknowledged ends the transfer as `link_lost` on both sides, and a
-retry starts over, on whichever path is available then. Measured on an S23 with
+download would otherwise hold its first byte until the 8 s budget runs out).
+
+If an opened lane breaks before every byte is acknowledged while the bus is
+still up, either hub sends `lane_resync` `{transferId}` over its existing
+request/result route. Both hubs close the lane and ignore any later lane frame,
+including frames already queued for writing. This switch happens at most once
+per transfer; it never opens another lane. The receiver freezes its next offset
+after the last completed staging write and sends `bus_resume`
+`{transferId, staged}` over the bus: a result for uploads, a request for downloads.
+The sender echoes that exact `bus_resume` offset on the opposite route to confirm
+it, rewinds its source to that offset, and continues using the normal bus chunk
+and window sizes. The receiver may accept bus chunks after sending its offset,
+since binary chunks can overtake the JSON confirmation. Repeated resync messages
+reuse the frozen offset and never restart the timeout or rewind a second time.
+Offsets are strict integers from zero through the transfer size; the sender also
+rejects an offset beyond the bytes it attempted to send. Ordinary progress acks
+cannot substitute for the receiver's explicit resume offset. The sender rebuilds
+its SHA-256 from the source prefix before sending the remaining bytes, so the
+final digest still covers every file byte exactly once. A digest mismatch fails
+as before. A lane EOF after the final ack remains harmless; a sender missing
+that ack can still request the receiver's fully staged offset.
+
+Both the offset exchange and its confirmation have the existing 30 s idle
+budget, measured from the first resync signal without extension by duplicates
+or late lane traffic. An unanswered resync, bus failure, cancel, or a superseding
+begin removes staging as before. Transfers that never opened a lane retain the
+v1 bus behavior. These messages use the unreleased bit 14 lane contract and add
+no capability or plugin route. The phone drops its Wi-Fi tag and resets its time
+estimate as soon as resync starts.
+
+Measured on an S23 with
 Rokid glasses on the same home network: 20 MiB in 1.1-1.7 s, 300 MiB in 10.7 s,
 against about 28 s for 5 MiB over Bluetooth.
 
