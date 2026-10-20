@@ -453,6 +453,9 @@ internal object GlassesFilesService {
                     laneBroken = true
                     synchronized(lock) { lock.notifyAll() }
                 }
+            } finally {
+                // A streamer blocked writing to a lane that went silent only wakes when it closes.
+                connected.close()
             }
         }
 
