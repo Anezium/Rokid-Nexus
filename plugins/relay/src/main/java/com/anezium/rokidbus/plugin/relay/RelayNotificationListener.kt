@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.relay
 
+import android.app.Notification
 import android.app.NotificationManager
 import android.content.ComponentName
 import android.service.notification.NotificationListenerService
@@ -31,6 +32,7 @@ class RelayNotificationListener : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         sbn ?: return
         ReplyRepository.forget(sbn)
+        runtime.onNotificationInvalidated(ReplyRepository.stableId(sbn.key))
         // Answering on the phone empties the row here too, while the wearer is
         // looking straight at it.
         NotificationControl.notifyCaptured(ReplyRepository.stableId(sbn.key))
@@ -86,11 +88,12 @@ class RelayNotificationListener : NotificationListenerService() {
             return
         }
         rebuildFromActiveNotifications()
+        runtime.onSettingsChanged()
     }
 
     private fun rebuildFromActiveNotifications() {
-        ReplyRepository.markAllReadOnly()
         if (!RelaySettings(this).enabled() || NotificationForwardingPolicy.isPaused(this)) return
+        ReplyRepository.markAllReadOnly()
         val count = runCatching {
             activeNotifications.orEmpty().count { sbn -> ingest(sbn, mayShow = false) }
         }.onFailure { failure ->
@@ -100,6 +103,7 @@ class RelayNotificationListener : NotificationListenerService() {
     }
 
     private fun ingest(sbn: StatusBarNotification, mayShow: Boolean): Boolean {
+        RelaySourceApps.observe(sbn.packageName)
         val settings = RelaySettings(this)
         val source = if (mayShow) "posted" else "rebuild"
         val keyHash = ReplyRepository.stableId(sbn.key).take(8)
@@ -114,16 +118,30 @@ class RelayNotificationListener : NotificationListenerService() {
             return accepted
         }
 
+        val action = sbn.notification.findRepliableAction()
+        val notificationId = ReplyRepository.stableId(sbn.key)
+        if (action == null && ReplyRepository.contains(notificationId)) {
+            ReplyRepository.dropAuthority(notificationId)
+            runtime.onNotificationInvalidated(notificationId)
+            NotificationControl.notifyCaptured(notificationId)
+        }
         if (!settings.enabled()) return finish("disabled", accepted = false)
         if (settings.pauseWhilePhoneScreenOn() && interactive) {
             return finish("paused", accepted = false)
         }
 
-        // Carrying a free-form reply action is the whole admission test: it passes
-        // only notifications a human is waiting on an answer to.
-        val action = sbn.notification.findRepliableAction()
-            ?: return finish("no_action", accepted = false)
-        if (!settings.admits()) return finish("no_action", accepted = true)
+        if (!settings.admits(
+                sbn.packageName,
+                repliable = action != null,
+                ongoing = sbn.isOngoing || sbn.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0,
+                groupSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0,
+            )) {
+            val id = ReplyRepository.stableId(sbn.key)
+            ReplyRepository.dropAuthority(id)
+            runtime.onNotificationInvalidated(id)
+            NotificationControl.notifyCaptured(id)
+            return finish("filtered", accepted = false)
+        }
 
         val capture = ReplyRepository.capture(this, sbn, action)
             ?: return finish("capture_failed", accepted = false)

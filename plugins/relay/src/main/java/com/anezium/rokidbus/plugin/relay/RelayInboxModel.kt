@@ -12,6 +12,7 @@ internal data class RelayInboxSnapshot(
     val appLabel: String,
     val renderedText: String,
     val capturedAtMs: Long,
+    val sourcePackage: String = "",
 )
 
 internal data class RelayInboxEntry(

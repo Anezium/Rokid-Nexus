@@ -51,7 +51,7 @@ class RelaySettingsActivity : Activity() {
                     this@RelaySettingsActivity,
                     R.drawable.nexus_glyph_relay,
                     "Relay",
-                    "Voice replies to phone notifications",
+                    "Phone notifications on your glasses",
                 ),
                 NexusUi.block(),
             )
@@ -127,10 +127,21 @@ class RelaySettingsActivity : Activity() {
                 checked = settings.enabled(),
             ) { enabled ->
                 settings.setEnabled(enabled)
-                NotificationControl.refreshFromSettings()
+                NotificationControl.refreshFromSettings(this)
             },
             NexusUi.block(),
         )
+
+        content.addView(BusTheme.gap(this, 12))
+        val sourcePolicies = settings.configuredPackages().map(settings::appPolicy)
+        val sourceSummary = if (sourcePolicies.isEmpty()) "Messages from every app" else buildList {
+            add("Messages by default")
+            sourcePolicies.count { it == RelayAppPolicy.OFF }.takeIf { it > 0 }?.let { add("$it off") }
+            sourcePolicies.count { it == RelayAppPolicy.ALL }.takeIf { it > 0 }?.let { add("$it all notifications") }
+        }.joinToString(" · ")
+        content.addView(NexusUi.navCard(this, "Source apps", sourceSummary) {
+            startActivity(Intent(this, RelayAppsActivity::class.java))
+        }, NexusUi.block())
 
         content.addView(BusTheme.gap(this, 24))
         content.addView(NexusUi.sectionRow(this, "Notification handling"), NexusUi.block())
@@ -160,7 +171,7 @@ class RelaySettingsActivity : Activity() {
                 settings.imagePreviewsEnabled(),
             ) { enabled ->
                 settings.setImagePreviewsEnabled(enabled)
-                NotificationControl.refreshFromSettings()
+                NotificationControl.refreshFromSettings(this)
             },
             NexusUi.block(),
         )
@@ -264,7 +275,7 @@ class RelaySettingsActivity : Activity() {
         addView(
             NexusUi.cardBody(
                 this@RelaySettingsActivity,
-                if (granted) "Granted. Relay can inspect repliable notifications."
+                if (granted) "Granted. Relay forwards notifications allowed by your app choices."
                 else "Required to discover notifications and retain their live reply actions.",
             ),
         )
@@ -529,7 +540,7 @@ class RelaySettingsActivity : Activity() {
 
     private fun changeMessageLimit(delta: Int) {
         settings.setMessagesPerThread(settings.messagesPerThread() + delta)
-        NotificationControl.refreshFromSettings()
+        NotificationControl.refreshFromSettings(this)
         render()
     }
 
@@ -597,6 +608,12 @@ class RelaySettingsActivity : Activity() {
                     "captures it exactly as it captures any other app's. No second phone needed.",
             ),
         )
+        addView(BusTheme.gap(this@RelaySettingsActivity, 10))
+        addView(harnessButton("Read-only alert" to {
+            ensureCanPost() && FakeNotificationHarness.postReadOnly(this@RelaySettingsActivity)
+        }), NexusUi.block())
+        addView(NexusUi.rowSub(this@RelaySettingsActivity,
+            "To relay this alert, choose Source apps → Relay → All first."))
         addView(BusTheme.gap(this@RelaySettingsActivity, 10))
         addView(buttonRow(
             "Post thread" to {

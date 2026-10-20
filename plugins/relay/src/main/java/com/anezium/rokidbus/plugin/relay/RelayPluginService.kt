@@ -100,11 +100,38 @@ class RelayPluginService : NexusPluginService() {
 
     /** A capture redraws the list or the thread being read without interrupting a reply in progress. */
     internal fun onCaptureChanged(notificationId: String) {
+        if (threadMode == ThreadMode.SENT) return
+        if (selection.openedThreadId == notificationId && !ReplyRepository.contains(notificationId)) {
+            loseReplyAuthority()
+            renderThread(show = false)
+            return
+        }
         when (selection.liveRefreshTarget(notificationId, threadMode == ThreadMode.READING)) {
             RelayInboxRefreshTarget.LIST -> renderList(show = false)
             RelayInboxRefreshTarget.THREAD -> renderThread(show = false)
             RelayInboxRefreshTarget.NONE -> Unit
         }
+    }
+
+    internal fun onSettingsChanged() {
+        if (threadMode == ThreadMode.SENT && currentEntry()?.snapshot?.sourcePackage?.let {
+                settings.admits(it, repliable = true)
+            } == true) return
+        val opened = selection.openedThreadId
+        if (opened != null && !ReplyRepository.contains(opened)) {
+            loseReplyAuthority()
+        }
+        if (selection.view == RelayInboxView.LIST) renderList(show = false)
+        else if (threadMode == ThreadMode.READING) renderThread(show = false)
+    }
+
+    private fun loseReplyAuthority() {
+        if (threadMode == ThreadMode.READING) return
+        val unsent = transcript?.takeIf(String::isNotBlank) ?: speechPreview.takeIf(String::isNotBlank)
+        invalidateSpeech()
+        resetThreadMode()
+        threadStatus = if (unsent == null) "Reply is no longer available."
+        else "Reply is no longer available. Unsent reply: $unsent"
     }
 
     private fun move(delta: Int) {
@@ -244,9 +271,15 @@ class RelayPluginService : NexusPluginService() {
         }
         sendCard(
             NexusCard(
-                title = "Messages",
+                title = if (settings.configuredPackages().any { settings.appPolicy(it) == RelayAppPolicy.ALL }) "Notifications" else "Messages",
                 lines = if (entries.isEmpty()) listOf("Nothing yet.") else emptyList(),
-                subtitle = if (entries.isEmpty()) null else "${entries.size} waiting",
+                subtitle = if (entries.isEmpty()) null else {
+                    val waiting = entries.count { it.availability == RelayReplyAvailability.REPLIABLE }
+                    listOfNotNull(
+                        "$waiting waiting".takeIf { waiting > 0 },
+                        "${entries.size - waiting} read only".takeIf { waiting < entries.size },
+                    ).joinToString(" · ")
+                },
                 footer = footer,
                 contentKey = LIST_CONTENT_KEY,
                 richLines = rows.takeIf { it.isNotEmpty() },
@@ -412,9 +445,6 @@ class RelayPluginService : NexusPluginService() {
     private fun startListening() {
         val entry = currentEntry() ?: return
         if (!ReplyRepository.contains(entry.id)) {
-            threadStatus = "Reply is no longer available."
-            threadMode = ThreadMode.READING
-            renderThread(show = false)
             return
         }
 

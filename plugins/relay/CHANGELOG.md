@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Choose Off, Messages only, or All notifications per source application from a
+  searchable app list. Messages only remains the default for existing and new apps.
+- Explicitly enabled read-only alerts use the current notice band and Notifications
+  inbox without Reply. Ongoing alerts and group summaries are excluded from this
+  additional traffic; timestamp-only read-only reposts do not raise another band.
+- Filter changes remove disallowed retained content and stop active reply flows;
+  sending checks the current app policy again. Notification content stays in memory.
+
 ## 1.2.4
 
 - **Switch to typing mid-dictation.** About a second after dictation starts, a

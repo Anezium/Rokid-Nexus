@@ -31,6 +31,10 @@
 
     <queries>
         <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
             <action android:name="com.anezium.rokidbus.action.HUB" />
         </intent>
     </queries>
@@ -46,6 +50,11 @@
         <activity
             android:name=".RelaySettingsActivity"
             android:exported="true"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".RelayAppsActivity"
+            android:exported="false"
             android:windowSoftInputMode="adjustResize" />
 
         <receiver

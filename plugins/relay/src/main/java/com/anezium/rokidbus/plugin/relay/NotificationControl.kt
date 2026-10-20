@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.relay
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 
@@ -89,8 +90,12 @@ internal object NotificationControl {
         main.post { inbox?.onCaptureChanged(notificationId) }
     }
 
-    fun refreshFromSettings() {
-        main.post { listener?.refreshFromSettings() }
+    fun refreshFromSettings(context: Context) {
+        ReplyRepository.prune(RelaySettings(context))
+        main.post {
+            listener?.refreshFromSettings()
+            inbox?.onSettingsChanged()
+        }
     }
 
     fun cancelAfterReply(notificationKey: String) {
