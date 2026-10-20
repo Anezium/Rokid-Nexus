@@ -2825,6 +2825,38 @@ One transfer runs at a time; a new begin supersedes a stale one. A transfer idle
 for 30 s, a `cancel`, or loss of the data plane ends it on both sides and removes
 partial files. Resume is not supported.
 
+#### Wi-Fi lane
+
+When the phone is on a Wi-Fi network and the glasses advertise capability bit
+`GLASSES_FILES_LANE` (`1 << 14`), `upload_begin` and `download_begin` carry
+`lane: true`. If the glasses also have a Wi-Fi IPv4 address, `upload_ready` /
+`download_ready` carry `lane: {host, port, key}`: a literal IPv4 address, a
+port, and a fresh 256-bit key (base64). Absent fields mean no lane; a malformed
+`lane` invalidates the message. Older hubs ignore both sides.
+
+The glasses listen on that address only, accept exactly one connection within
+8 s, and hold a high-performance Wi-Fi lock for the transfer. The phone connects
+from its Wi-Fi network (never mobile data), within 3 s, and its first frame is a
+hello: magic `NXFL`, version 1, the transfer id, and
+`HMAC-SHA256(key, "nexus-files-lane-hello:" + transferId)`. A wrong hello closes
+the socket. Every later frame in either direction is
+`[type u8][length u32][AES-256-GCM ciphertext]`, type 1 = data
+(`offset u64` + bytes) and type 2 = ack (`staged u64`); the nonce is a direction
+byte (`P` phone to glasses, `G` glasses to phone), three zero bytes and a
+per-direction 64-bit frame counter, and the AAD is
+`"nexus-files-lane:" + transferId + ":" + type`, so frames cannot be replayed,
+reordered or reflected.
+
+Over a lane, chunks are 256 KiB, the window is 4 MiB, and acks travel back over
+the lane; control (`*_begin`, `*_ready`, `upload_end`, `download_end`, `cancel`,
+failures) stays on the bus, and the SHA-256 terminator still follows a full
+ack. A lane that cannot be opened leaves the transfer on Bluetooth (a download
+waits up to the 8 s accept before streaming over the bus); one that breaks before
+every byte is acknowledged ends the transfer as `link_lost` on both sides, and a
+retry starts over, on whichever path is available then. Measured on an S23 with
+Rokid glasses on the same home network: 20 MiB in 1.1-1.7 s, 300 MiB in 10.7 s,
+against about 28 s for 5 MiB over Bluetooth.
+
 ## Audio lease v1
 
 Glasses mic PCM arrives ON THE PHONE via CXR-L (`setCXRAudioCbk` +

@@ -146,6 +146,9 @@ object GlassesFilesHub {
 
     fun cancelAll() = controller?.cancelAll()
 
+    /** Whether a transfer started now would most likely take the Wi-Fi lane. */
+    fun laneLikely(): Boolean = controller?.laneLikely() == true
+
     fun retry(id: String) = controller?.retry(id)
 
     fun dismiss(id: String) = controller?.dismiss(id)
@@ -221,6 +224,8 @@ internal class GlassesFilesController(
         publish(force = true)
         if (resume) kickWorker()
     }
+
+    fun laneLikely(): Boolean = laneSupported && GlassesFilesLaneClient.isOnWifi(appContext)
 
     fun onCapabilities(glassesFilesSupported: Boolean, laneSupported: Boolean = false) {
         this.laneSupported = laneSupported
@@ -1104,6 +1109,7 @@ internal class GlassesFilesController(
             val detail = listOfNotNull(
                 running.name,
                 percent?.let { "$it%" },
+                "Wi-Fi".takeIf { running.viaWifi },
                 running.remainingSeconds?.let { GlassesFilesFormat.remaining(it).lowercase() },
             ).joinToString(" · ")
             builder.setContentTitle(title)

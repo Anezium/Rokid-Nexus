@@ -95,6 +95,12 @@ object GlassesFilesFormat {
      * so this is the Bluetooth link's own ceiling rather than a protocol setting.
      */
     const val ESTIMATED_BYTES_PER_SECOND = 180_000L
+
+    /**
+     * Over the Wi-Fi lane the same pair moved 20 MiB in 1.1-1.7 s and 300 MiB in 10.7 s; this is
+     * a deliberately cautious floor for weaker home networks.
+     */
+    const val ESTIMATED_WIFI_BYTES_PER_SECOND = 8_000_000L
     const val MAX_FOLDER_NAME_CHARS = 80
     private const val FORBIDDEN = "/\\:*?\"<>|"
 
@@ -146,10 +152,10 @@ object GlassesFilesFormat {
         else -> "ABOUT ${(seconds + 30) / 60} MIN LEFT"
     }
 
-    fun estimate(bytes: Long): String {
-        val seconds = bytes / ESTIMATED_BYTES_PER_SECOND
+    fun estimate(bytes: Long, overWifi: Boolean = false): String {
+        val seconds = bytes / if (overWifi) ESTIMATED_WIFI_BYTES_PER_SECOND else ESTIMATED_BYTES_PER_SECOND
         return when {
-            bytes < 2L * 1024 * 1024 -> "a few seconds"
+            seconds < 10 -> "a few seconds"
             seconds < 60 -> "about ${maxOf(10, ((seconds + 5) / 10) * 10)} seconds"
             seconds < 90 -> "about a minute"
             else -> "about ${(seconds + 30) / 60} minutes"

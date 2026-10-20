@@ -747,7 +747,12 @@ class GlassesFilesActivity : Activity() {
             addView(
                 NexusUi.cardBody(
                     this@GlassesFilesActivity,
-                    "Copying takes ${GlassesFilesFormat.estimate(entry.sizeBytes)}. The file goes to Download › Nexus on this phone.",
+                    if (GlassesFilesHub.laneLikely()) {
+                        "Copying takes ${GlassesFilesFormat.estimate(entry.sizeBytes, overWifi = true)} over Wi-Fi. " +
+                            "The file goes to Download › Nexus on this phone."
+                    } else {
+                        "Copying takes ${GlassesFilesFormat.estimate(entry.sizeBytes)}. The file goes to Download › Nexus on this phone."
+                    },
                 ),
                 NexusUi.block(),
             )
