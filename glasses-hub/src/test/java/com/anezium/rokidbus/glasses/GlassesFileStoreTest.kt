@@ -40,6 +40,29 @@ class GlassesFileStoreTest {
     }
 
     @Test
+    fun `listing removes orphaned staging files but keeps live ones`() {
+        val (store, root) = store()
+        val orphan = File(root, ".nexus-dead${GlassesFilesContract.PARTIAL_SUFFIX}").apply { writeText("x") }
+        val live = File(root, ".nexus-live${GlassesFilesContract.PARTIAL_SUFFIX}").apply { writeText("y") }
+        orphan.setLastModified(1_000_000L)
+        live.setLastModified(1_000_000L + GlassesFileStore.STALE_PARTIAL_MS)
+
+        store.list("", 0, nowMillis = 1_000_000L + GlassesFileStore.STALE_PARTIAL_MS + 1)
+
+        assertFalse(orphan.exists())
+        assertTrue(live.exists())
+    }
+
+    @Test
+    fun `same name and size counts as already present`() {
+        val (store, root) = store()
+        File(root, "book.pdf").writeText("abc")
+        assertTrue(store.alreadyPresent("", "book.pdf", 3))
+        assertFalse(store.alreadyPresent("", "book.pdf", 4))
+        assertFalse(store.alreadyPresent("", "other.pdf", 3))
+    }
+
+    @Test
     fun `listing pages through large folders`() {
         val (store, root) = store()
         repeat(5) { File(root, "f$it").writeText("x") }

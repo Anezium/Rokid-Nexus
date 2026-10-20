@@ -26,12 +26,18 @@ internal sealed interface GlassesFolderListing {
 internal class GlassesFileStore(private val root: File) {
     private val canonicalRoot: File by lazy { root.canonicalFile }
 
-    fun list(path: String, offset: Int, pageSize: Int = GlassesFilesContract.MAX_PAGE_ENTRIES): GlassesFolderListing {
+    fun list(
+        path: String,
+        offset: Int,
+        pageSize: Int = GlassesFilesContract.MAX_PAGE_ENTRIES,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): GlassesFolderListing {
         if (GlassesFilesContract.isProtected(path)) return GlassesFolderListing.Failed(GlassesFilesError.PROTECTED)
         val folder = resolve(path) ?: return GlassesFolderListing.Failed(GlassesFilesError.INVALID_REQUEST)
         if (!folder.exists()) return GlassesFolderListing.Failed(GlassesFilesError.NOT_FOUND)
         if (!folder.isDirectory) return GlassesFolderListing.Failed(GlassesFilesError.NOT_A_FOLDER)
         val children = folder.listFiles() ?: return GlassesFolderListing.Failed(GlassesFilesError.NOT_PERMITTED)
+        removeStalePartials(children, nowMillis)
         val entries = children.asSequence()
             .filter { GlassesFilesContract.isValidName(it.name) && !isPartial(it.name) }
             .map { file ->
@@ -73,6 +79,24 @@ internal class GlassesFileStore(private val root: File) {
             if (children.isNotEmpty()) return GlassesFilesError.NOT_EMPTY
         }
         return if (runCatching { target.delete() }.getOrDefault(false)) null else GlassesFilesError.NOT_PERMITTED
+    }
+
+    /** Is a file with this exact name and size already in [folderPath]? Then sending it again is waste. */
+    fun alreadyPresent(folderPath: String, name: String, sizeBytes: Long): Boolean {
+        val file = resolve(GlassesFilesContract.child(folderPath, name)) ?: return false
+        return file.isFile && file.length() == sizeBytes
+    }
+
+    /**
+     * Staging files left by an upload that died with the link or the hub. A live upload writes
+     * continuously, so anything untouched for [STALE_PARTIAL_MS] is an orphan.
+     */
+    private fun removeStalePartials(children: Array<File>, nowMillis: Long) {
+        children.forEach { file ->
+            if (isPartial(file.name) && nowMillis - file.lastModified() > STALE_PARTIAL_MS) {
+                runCatching { file.delete() }
+            }
+        }
     }
 
     /** A readable regular file under the root, or the reason there is none. */
@@ -124,6 +148,7 @@ internal class GlassesFileStore(private val root: File) {
     companion object {
         /** Leaves room for the rest of the system; filling the glasses to the last byte breaks them. */
         const val FREE_SPACE_MARGIN_BYTES = 64L * 1024 * 1024
+        const val STALE_PARTIAL_MS = 10L * 60 * 1000
 
         fun isPartial(name: String): Boolean =
             name.startsWith(".nexus-") && name.endsWith(GlassesFilesContract.PARTIAL_SUFFIX)

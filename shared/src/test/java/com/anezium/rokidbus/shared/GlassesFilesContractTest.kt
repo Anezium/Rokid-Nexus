@@ -73,6 +73,7 @@ class GlassesFilesContractTest {
             GlassesFilesResult.UploadReady(id, "book (1).pdf"),
             GlassesFilesResult.UploadProgress(id, 131_072L),
             GlassesFilesResult.UploadDone(id, "book (1).pdf"),
+            GlassesFilesResult.UploadDone(id, "book.pdf", alreadyPresent = true),
             GlassesFilesResult.DownloadReady(id, 99L, 1_700_000_000_000),
             GlassesFilesResult.DownloadEnd(id, digest),
             GlassesFilesResult.TransferFailed(id, GlassesFilesError.NO_SPACE),

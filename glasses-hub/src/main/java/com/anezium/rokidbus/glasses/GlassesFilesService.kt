@@ -176,6 +176,11 @@ internal object GlassesFilesService {
         // The phone drives one transfer at a time; a new begin means it has given up on the old one.
         upload?.upload?.abort()
         upload = null
+        if (store.alreadyPresent(request.path, request.name, request.sizeBytes)) {
+            log("files upload skipped reason=already_present")
+            sendResult(GlassesFilesResult.UploadDone(request.transferId, request.name, alreadyPresent = true))
+            return
+        }
         store.beginUpload(request.path, request.name, request.sizeBytes, request.transferId)
             .onSuccess { staged ->
                 upload = ActiveUpload(request.transferId, staged)

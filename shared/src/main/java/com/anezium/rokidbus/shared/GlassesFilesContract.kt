@@ -97,7 +97,8 @@ sealed interface GlassesFilesResult {
 
     data class UploadReady(val transferId: String, val name: String) : GlassesFilesResult
     data class UploadProgress(val transferId: String, val stagedBytes: Long) : GlassesFilesResult
-    data class UploadDone(val transferId: String, val name: String) : GlassesFilesResult
+    /** [alreadyPresent]: a file with the same name and size was there, so nothing was sent. */
+    data class UploadDone(val transferId: String, val name: String, val alreadyPresent: Boolean = false) : GlassesFilesResult
     data class DownloadReady(val transferId: String, val sizeBytes: Long, val modifiedMillis: Long) : GlassesFilesResult
     data class DownloadEnd(val transferId: String, val sha256: String) : GlassesFilesResult
     data class TransferFailed(val transferId: String, val error: GlassesFilesError) : GlassesFilesResult
@@ -313,6 +314,7 @@ object GlassesFilesContract {
             requireId(result.transferId)
             require(isValidName(result.name)) { "Invalid name" }
             base(TYPE_UPLOAD_DONE).put("transferId", result.transferId).put("name", result.name)
+                .apply { if (result.alreadyPresent) put("alreadyPresent", true) }
         }
         is GlassesFilesResult.DownloadReady -> {
             requireId(result.transferId)
@@ -360,6 +362,11 @@ object GlassesFilesContract {
             TYPE_UPLOAD_DONE -> GlassesFilesResult.UploadDone(
                 transferId = payload.id("transferId") ?: return null,
                 name = payload.strictString("name")?.takeIf(::isValidName) ?: return null,
+                alreadyPresent = if (payload.has("alreadyPresent")) {
+                    payload.strictBoolean("alreadyPresent") ?: return null
+                } else {
+                    false
+                },
             )
             TYPE_DOWNLOAD_READY -> GlassesFilesResult.DownloadReady(
                 transferId = payload.id("transferId") ?: return null,
