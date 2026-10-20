@@ -134,10 +134,10 @@ class RelaySettingsActivity : Activity() {
 
         content.addView(BusTheme.gap(this, 12))
         val sourcePolicies = settings.configuredPackages().map(settings::appPolicy)
-        val sourceSummary = if (sourcePolicies.isEmpty()) "Messages from every app" else buildList {
-            add("Messages by default")
-            sourcePolicies.count { it == RelayAppPolicy.OFF }.takeIf { it > 0 }?.let { add("$it off") }
-            sourcePolicies.count { it == RelayAppPolicy.ALL }.takeIf { it > 0 }?.let { add("$it all notifications") }
+        val sourceSummary = if (sourcePolicies.isEmpty()) "Messages only for every app" else buildList {
+            sourcePolicies.count { it == RelayAppPolicy.ALL }.takeIf { it > 0 }?.let { add("All alerts: $it") }
+            sourcePolicies.count { it == RelayAppPolicy.OFF }.takeIf { it > 0 }?.let { add("Off: $it") }
+            add("Others: messages")
         }.joinToString(" · ")
         content.addView(NexusUi.navCard(this, "Source apps", sourceSummary) {
             startActivity(Intent(this, RelayAppsActivity::class.java))
