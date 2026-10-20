@@ -2784,7 +2784,11 @@ scoped storage applies (other apps' non-media files hidden, writes limited to
 `Download` and `Documents`). A full page fits the 128 KiB message budget; without
 the data plane the glasses send the largest prefix that fits a control message.
 `mkdir` creates one folder, `delete` removes one file or one empty folder, never
-recursively. `grant_access` makes the glasses grant themselves all-files access
+recursively. `delete` carries `dir`, the type the user confirmed; the glasses
+answer `changed` and delete nothing when the entry at that path is no longer of
+that type. Only the hubs originate this subtree: both refuse every local Binder
+send under `/core/files`, debug builds included, and never deliver it to local
+subscribers. `grant_access` makes the glasses grant themselves all-files access
 through their fixed ADB command (`appops set <glasses package>
 MANAGE_EXTERNAL_STORAGE allow`); when that is unavailable they open Android's
 own switch for the wearer and answer `needsWearer: true`. Self-arm grants the same
@@ -2799,7 +2803,8 @@ expected byte fails the transfer.
 - Upload: `upload_begin` names the folder, file name and size. If a file with that
   name and size is already there the glasses answer `upload_done` with
   `alreadyPresent: true`. Otherwise they check free space (keeping 64 MiB spare),
-  choose the final name (`book (1).pdf` on a collision, never an overwrite), open
+  choose the final name (`book (1).pdf` on a collision, never an overwrite: the
+  name is claimed with an exclusive create just before the final rename), open
   a hidden `.nexus-<id>.nexuspart` staging file in the same folder and answer
   `upload_ready`. Chunks follow; `upload_progress` acks every two chunks and at
   the end. `upload_end` carries the SHA-256; the glasses verify it, rename the
