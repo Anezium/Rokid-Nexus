@@ -35,6 +35,23 @@ object GlassesFilesLane {
     const val CONNECT_TIMEOUT_MS = 3_000
     const val ACCEPT_TIMEOUT_MS = 8_000
 
+    /** How long one connection gets to prove the key before the glasses listen for the next. */
+    const val HELLO_TIMEOUT_MS = 1_000
+
+    /**
+     * How long the phone waits for the glasses to answer its hello. Longer than the glasses'
+     * whole accept budget, which started before the phone even heard of the lane, so an answer
+     * the glasses sent is never one the phone already gave up on.
+     */
+    const val ANSWER_TIMEOUT_MS = ACCEPT_TIMEOUT_MS + 1_000
+
+    /**
+     * The glasses answer a good hello with this sealed frame. Only that answer tells the phone it
+     * reached its own glasses rather than whatever else listens at that address, so a lane that
+     * never answers leaves the transfer on the bus instead of failing it.
+     */
+    val ANSWER: Frame = Frame.Ack(0)
+
     private const val MAGIC = 0x4E58464C // "NXFL"
     private const val VERSION = 1
     private const val TYPE_DATA: Byte = 1

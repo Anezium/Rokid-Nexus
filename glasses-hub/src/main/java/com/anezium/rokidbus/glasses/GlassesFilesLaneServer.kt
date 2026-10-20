@@ -21,8 +21,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * One transfer's Wi-Fi lane on the glasses: a listening socket on the Wi-Fi address that accepts
- * exactly one phone, proven by the key handed over the bus, then carries sealed frames.
+ * One transfer's Wi-Fi lane on the glasses: a listening socket on the Wi-Fi address that takes
+ * exactly one phone, proven by the key handed over the bus, then carries sealed frames. Anything
+ * else that connects first is sent away without costing the phone its turn.
  *
  * It lives only as long as its transfer and never listens on anything but the Wi-Fi interface.
  * Holding a high-performance Wi-Fi lock for that time keeps the radio out of power save, which
@@ -34,6 +35,7 @@ internal class GlassesFilesLaneServer internal constructor(
     private val key: ByteArray,
     private val wifiLock: WifiManager.WifiLock?,
     private val acceptTimeoutMs: Int = GlassesFilesLane.ACCEPT_TIMEOUT_MS,
+    private val helloTimeoutMs: Int = GlassesFilesLane.HELLO_TIMEOUT_MS,
 ) : Closeable {
     val endpoint = GlassesFilesLaneEndpoint(
         host = server.inetAddress.hostAddress.orEmpty(),
@@ -50,59 +52,66 @@ internal class GlassesFilesLaneServer internal constructor(
     private val sealer = GlassesFilesLane.Sealer(key, transferId, GlassesFilesLane.Direction.GLASSES_TO_PHONE)
 
     /**
-     * Waits for the phone and its hello, both within one accept budget; false when it never came,
-     * lied, or was too slow. A stranger trickling a hello byte by byte cannot stretch the budget.
+     * Waits for the phone and its hello within one accept budget; false when it never came or the
+     * budget ran out. Each connection gets at most the hello budget to prove the key, so a stranger
+     * that connects first, stays silent, or trickles bytes only delays the phone, never locks it out.
      */
     fun accept(): Boolean {
-        if (closed.get()) return false
         val deadline = nowMillis() + acceptTimeoutMs
-        val client = try {
-            server.soTimeout = acceptTimeoutMs
-            server.accept()
-        } catch (_: SocketTimeoutException) {
-            null
-        } catch (_: Exception) {
-            null
+        try {
+            while (!closed.get()) {
+                val remaining = deadline - nowMillis()
+                if (remaining <= 0) return false
+                val client = try {
+                    server.soTimeout = remaining.toInt().coerceAtLeast(1)
+                    server.accept()
+                } catch (_: SocketTimeoutException) {
+                    return false
+                } catch (_: Exception) {
+                    return false
+                }
+                val budget = minOf(deadline - nowMillis(), helloTimeoutMs.toLong())
+                if (budget > 0 && prove(client, budget)) return true
+                runCatching { client.close() }
+            }
+            return false
         } finally {
-            // One phone, once: nothing else gets to try the port.
+            // One phone, once: the port closes as soon as it is taken or the budget runs out.
             runCatching { server.close() }
-        } ?: return false
+        }
+    }
+
+    /** Reads one connection's hello within its budget and answers it; false sends it away. */
+    private fun prove(client: Socket, budgetMs: Long): Boolean {
         pending = client
-        if (closed.get()) {
-            runCatching { client.close() }
-            return false
-        }
-        val remaining = deadline - nowMillis()
-        if (remaining <= 0) {
-            runCatching { client.close() }
-            return false
-        }
-        val watchdog = deadlines.schedule({ if (socket == null) runCatching { client.close() } }, remaining, TimeUnit.MILLISECONDS)
+        val watchdog = deadlines.schedule({ runCatching { client.close() } }, budgetMs, TimeUnit.MILLISECONDS)
         return try {
-            client.soTimeout = remaining.toInt().coerceAtLeast(1)
+            if (closed.get()) return false
+            client.soTimeout = budgetMs.toInt().coerceAtLeast(1)
             client.tcpNoDelay = true
             val stream = DataInputStream(BufferedInputStream(client.getInputStream(), BUFFER_BYTES))
-            if (!GlassesFilesLane.readHello(stream, transferId, key)) {
-                runCatching { client.close() }
-                return false
-            }
+            if (!GlassesFilesLane.readHello(stream, transferId, key)) return false
+            // Past this point the watchdog must not close a lane the phone is told is open.
+            if (!watchdog.cancel(false)) return false
+            val out = DataOutputStream(BufferedOutputStream(client.getOutputStream(), BUFFER_BYTES))
+            sealer.write(out, GlassesFilesLane.ANSWER)
             // Frames can legitimately pause while the other side waits on its own disk or provider.
             client.soTimeout = READ_TIMEOUT_MS
             input = stream
-            output = DataOutputStream(BufferedOutputStream(client.getOutputStream(), BUFFER_BYTES))
+            output = out
             socket = client
-            if (closed.get()) {
-                runCatching { client.close() }
-                return false
-            }
-            true
+            !closed.get()
         } catch (_: Exception) {
-            runCatching { client.close() }
             false
         } finally {
             watchdog.cancel(false)
             pending = null
         }
+    }
+
+    /** The phone stays on the bus: stop waiting for it, unless it is already connected. */
+    fun decline() {
+        if (socket == null) close()
     }
 
     /** Blocks until the next frame from the phone; throws when the lane breaks or is closed. */
@@ -136,13 +145,16 @@ internal class GlassesFilesLaneServer internal constructor(
         private const val BUFFER_BYTES = 64 * 1024
         private const val READ_TIMEOUT_MS = 30_000
 
+        // Room for the phone to queue behind a stranger instead of having its connect refused.
+        private const val BACKLOG = 4
+
         /**
          * Opens a lane on the glasses' Wi-Fi address, or returns null when they are not on a
          * Wi-Fi network: then the transfer simply stays on the bus.
          */
         fun open(context: Context, transferId: String): GlassesFilesLaneServer? {
             val address = wifiAddress(context) ?: return null
-            val server = runCatching { ServerSocket(0, 1, address) }.getOrNull() ?: return null
+            val server = runCatching { ServerSocket(0, BACKLOG, address) }.getOrNull() ?: return null
             val lock = runCatching {
                 @Suppress("DEPRECATION")
                 (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager)

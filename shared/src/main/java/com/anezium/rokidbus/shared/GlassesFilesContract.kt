@@ -76,6 +76,9 @@ sealed interface GlassesFilesRequest {
     data class DownloadBegin(val transferId: String, val path: String, val lane: Boolean = false) : GlassesFilesRequest
     data class DownloadProgress(val transferId: String, val stagedBytes: Long) : GlassesFilesRequest
     data class Cancel(val transferId: String) : GlassesFilesRequest
+
+    /** The phone could not open the offered lane and stays on the bus; the glasses stop waiting. */
+    data class LaneDeclined(val transferId: String) : GlassesFilesRequest
 }
 
 /** Glasses to phone, on [GlassesFilesContract.RESULT_PATH]. */
@@ -173,6 +176,7 @@ object GlassesFilesContract {
     private const val TYPE_DOWNLOAD_BEGIN = "download_begin"
     private const val TYPE_DOWNLOAD_PROGRESS = "download_progress"
     private const val TYPE_CANCEL = "cancel"
+    private const val TYPE_LANE_DECLINED = "lane_declined"
 
     private const val TYPE_LIST_RESULT = "list_result"
     private const val TYPE_OPERATION_RESULT = "operation_result"
@@ -241,6 +245,10 @@ object GlassesFilesContract {
             requireId(request.transferId)
             base(TYPE_CANCEL).put("transferId", request.transferId)
         }
+        is GlassesFilesRequest.LaneDeclined -> {
+            requireId(request.transferId)
+            base(TYPE_LANE_DECLINED).put("transferId", request.transferId)
+        }
     }
 
     fun parseRequest(payload: JSONObject): GlassesFilesRequest? {
@@ -283,6 +291,7 @@ object GlassesFilesContract {
                 stagedBytes = payload.strictLong("staged")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
             )
             TYPE_CANCEL -> GlassesFilesRequest.Cancel(payload.id("transferId") ?: return null)
+            TYPE_LANE_DECLINED -> GlassesFilesRequest.LaneDeclined(payload.id("transferId") ?: return null)
             else -> null
         }
     }

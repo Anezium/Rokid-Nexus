@@ -49,6 +49,7 @@ class GlassesFilesContractTest {
             GlassesFilesRequest.DownloadBegin(id, "DCIM/Camera/img.jpg"),
             GlassesFilesRequest.DownloadProgress(id, 65_536L),
             GlassesFilesRequest.Cancel(id),
+            GlassesFilesRequest.LaneDeclined(id),
         )
         requests.forEach { request ->
             val encoded = GlassesFilesContract.encode(request).put("future", true)

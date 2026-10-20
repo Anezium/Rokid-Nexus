@@ -2834,12 +2834,18 @@ When the phone is on a Wi-Fi network and the glasses advertise capability bit
 port, and a fresh 256-bit key (base64). Absent fields mean no lane; a malformed
 `lane` invalidates the message. Older hubs ignore both sides.
 
-The glasses listen on that address only, accept exactly one connection within
-8 s, and hold a high-performance Wi-Fi lock for the transfer. The phone connects
-from its Wi-Fi network (never mobile data), within 3 s, and its first frame is a
-hello: magic `NXFL`, version 1, the transfer id, and
-`HMAC-SHA256(key, "nexus-files-lane-hello:" + transferId)`. A wrong hello closes
-the socket. Every later frame in either direction is
+The glasses listen on that address only, for at most 8 s, and hold a
+high-performance Wi-Fi lock for the transfer. The phone connects from its Wi-Fi
+network (never mobile data), within 3 s, and its first frame is a hello: magic
+`NXFL`, version 1, the transfer id, and
+`HMAC-SHA256(key, "nexus-files-lane-hello:" + transferId)`. Each connection gets
+1 s to send a good hello; a wrong, silent or slow one is closed and the glasses
+keep listening (backlog 4), so another device on the network can delay the phone
+but not take its place. The port closes as soon as the phone is in. The glasses
+answer the hello with a sealed ack of 0 bytes, and the phone counts the lane as
+open only once that answer arrives (it waits 9 s, longer than the glasses' whole
+budget): a TCP connection alone may reach an unrelated device on another
+network. Every later frame in either direction is
 `[type u8][length u32][AES-256-GCM ciphertext]`, type 1 = data
 (`offset u64` + bytes) and type 2 = ack (`staged u64`); the nonce is a direction
 byte (`P` phone to glasses, `G` glasses to phone), three zero bytes and a
@@ -2850,8 +2856,10 @@ reordered or reflected.
 Over a lane, chunks are 256 KiB, the window is 4 MiB, and acks travel back over
 the lane; control (`*_begin`, `*_ready`, `upload_end`, `download_end`, `cancel`,
 failures) stays on the bus, and the SHA-256 terminator still follows a full
-ack. A lane that cannot be opened leaves the transfer on Bluetooth (a download
-waits up to the 8 s accept before streaming over the bus); one that breaks before
+ack. A lane that cannot be opened leaves the transfer on Bluetooth; the phone then
+sends `lane_declined` `{transferId}`, which ends the glasses' wait at once (a
+download would otherwise hold its first byte until the 8 s budget runs out). One
+that breaks before
 every byte is acknowledged ends the transfer as `link_lost` on both sides, and a
 retry starts over, on whichever path is available then. Measured on an S23 with
 Rokid glasses on the same home network: 20 MiB in 1.1-1.7 s, 300 MiB in 10.7 s,

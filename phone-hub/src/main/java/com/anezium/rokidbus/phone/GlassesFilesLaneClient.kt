@@ -49,7 +49,11 @@ internal class GlassesFilesLaneClient private constructor(
 
         fun isOnWifi(context: Context): Boolean = wifiNetwork(context) != null
 
-        /** Connects and proves the key, or returns null; never throws. */
+        /**
+         * Connects, proves the key, and waits for the glasses to answer; returns null when any of
+         * it fails, never throws. A connection alone proves nothing: on another network the same
+         * address may be some unrelated device.
+         */
         fun connect(context: Context, transferId: String, endpoint: GlassesFilesLaneEndpoint): GlassesFilesLaneClient? {
             val key = GlassesFilesLane.decodeKey(endpoint.key) ?: return null
             val network = wifiNetwork(context) ?: return null
@@ -57,9 +61,11 @@ internal class GlassesFilesLaneClient private constructor(
             return try {
                 socket.connect(InetSocketAddress(endpoint.host, endpoint.port), GlassesFilesLane.CONNECT_TIMEOUT_MS)
                 socket.tcpNoDelay = true
-                socket.soTimeout = READ_TIMEOUT_MS
+                socket.soTimeout = GlassesFilesLane.ANSWER_TIMEOUT_MS
                 val client = GlassesFilesLaneClient(socket, transferId, key)
                 GlassesFilesLane.writeHello(client.output, transferId, key)
+                check(client.read() == GlassesFilesLane.ANSWER)
+                socket.soTimeout = READ_TIMEOUT_MS
                 client
             } catch (_: Exception) {
                 runCatching { socket.close() }

@@ -86,6 +86,10 @@ internal object GlassesFilesService {
                 download?.cancel(request.transferId)
                 control.execute { cancelUpload(request.transferId) }
             }
+            is GlassesFilesRequest.LaneDeclined -> {
+                download?.declineLane(request.transferId)
+                control.execute { upload?.takeIf { it.transferId == request.transferId }?.lane?.decline() }
+            }
             else -> control.execute { onRequest(request) }
         }
         return true
@@ -127,6 +131,7 @@ internal object GlassesFilesService {
             is GlassesFilesRequest.DownloadBegin -> beginDownload(store, request)
             is GlassesFilesRequest.DownloadProgress,
             is GlassesFilesRequest.Cancel,
+            is GlassesFilesRequest.LaneDeclined,
             -> Unit
         }
     }
@@ -378,6 +383,11 @@ internal object GlassesFilesService {
 
         fun cancel(id: String) {
             if (id == transferId) cancelAll()
+        }
+
+        /** The phone could not reach the lane: stream over the bus now rather than at the deadline. */
+        fun declineLane(id: String) {
+            if (id == transferId) offeredLane?.decline()
         }
 
         fun cancelAll() {

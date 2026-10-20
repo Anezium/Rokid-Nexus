@@ -701,11 +701,16 @@ internal class GlassesFilesController(
         protected abstract fun bytesComplete(): Boolean
 
         /**
-         * Connects the offered lane; on failure the transfer quietly stays on the bus. A lane that
-         * breaks before the bytes are all through stops the transfer like a dropped link.
+         * Connects the offered lane; on failure the transfer quietly stays on the bus and the
+         * glasses are told so, so they stop waiting for it. A lane that breaks before the bytes are
+         * all through stops the transfer like a dropped link.
          */
         protected fun openLane(endpoint: GlassesFilesLaneEndpoint, onFrame: (GlassesFilesLane.Frame) -> Unit) {
-            val client = GlassesFilesLaneClient.connect(appContext, wireId, endpoint) ?: return
+            val client = GlassesFilesLaneClient.connect(appContext, wireId, endpoint)
+            if (client == null) {
+                send(GlassesFilesRequest.LaneDeclined(wireId))
+                return
+            }
             lane = client
             // A cancel or failure that landed while connecting found no lane to close; close it here.
             if (synchronized(signal) { cancelled || stop != null }) {
