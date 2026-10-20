@@ -30,11 +30,12 @@ import com.anezium.rokidbus.shared.GlassesFilesLaneEndpoint
 import com.anezium.rokidbus.shared.GlassesFilesOperation
 import com.anezium.rokidbus.shared.GlassesFilesRequest
 import com.anezium.rokidbus.shared.GlassesFilesResult
+import com.anezium.rokidbus.shared.GlassesFilesResync
+import com.anezium.rokidbus.shared.GlassesFilesSendDigest
 import com.anezium.rokidbus.shared.MediaSyncWindowPolicy
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
-import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
@@ -469,7 +470,7 @@ internal class GlassesFilesController(
             waiting.onResult(result)
             return
         }
-        synchronized(lock) { active }?.onResult(result)
+        synchronized(lock) { active }?.receiveResult(result)
     }
 
     private fun onDownloadChunk(chunk: GlassesFilesChunk, bytes: ByteArray) {
@@ -574,14 +575,16 @@ internal class GlassesFilesController(
 
     private fun progress(id: String, doneBytes: Long, totalBytes: Long?, rate: GlassesTransferRate) {
         val now = SystemClock.elapsedRealtime()
-        rate.record(now, doneBytes)
-        synchronized(lock) {
-            update(id) {
-                it.copy(
-                    doneBytes = doneBytes,
-                    totalBytes = totalBytes ?: it.totalBytes,
-                    remainingSeconds = rate.remainingSeconds(now, doneBytes, totalBytes ?: it.totalBytes),
-                )
+        synchronized(rate) {
+            rate.record(now, doneBytes)
+            synchronized(lock) {
+                update(id) {
+                    it.copy(
+                        doneBytes = doneBytes,
+                        totalBytes = totalBytes ?: it.totalBytes,
+                        remainingSeconds = rate.remainingSeconds(now, doneBytes, totalBytes ?: it.totalBytes),
+                    )
+                }
             }
         }
         publish(force = false)
@@ -693,6 +696,9 @@ internal class GlassesFilesController(
         protected var lastActivity = SystemClock.elapsedRealtime()
         protected val rate = GlassesTransferRate()
         @Volatile protected var lane: GlassesFilesLaneClient? = null
+        protected val resync = GlassesFilesResync()
+        private var laneOpening = false
+        private val deferredLaneResults = ArrayList<GlassesFilesResult>()
 
         /** Only worth asking for when the glasses can offer one and the phone is on Wi-Fi. */
         protected fun wantsLane(): Boolean = laneSupported && GlassesFilesLaneClient.isOnWifi(appContext)
@@ -702,29 +708,42 @@ internal class GlassesFilesController(
 
         /**
          * Connects the offered lane; on failure the transfer quietly stays on the bus and the
-         * glasses are told so, so they stop waiting for it. A lane that breaks before the bytes are
-         * all through stops the transfer like a dropped link.
+         * glasses are told so, so they stop waiting for it. An opened lane can switch once to bus.
          */
         protected fun openLane(endpoint: GlassesFilesLaneEndpoint, onFrame: (GlassesFilesLane.Frame) -> Unit) {
+            synchronized(signal) { laneOpening = true }
             val client = GlassesFilesLaneClient.connect(appContext, wireId, endpoint)
             if (client == null) {
+                synchronized(signal) { laneOpening = false; deferredLaneResults.clear() }
                 send(GlassesFilesRequest.LaneDeclined(wireId))
                 return
             }
             lane = client
             // A cancel or failure that landed while connecting found no lane to close; close it here.
-            if (synchronized(signal) { cancelled || stop != null }) {
+            val stopped = synchronized(signal) {
+                laneOpening = false
+                if (cancelled || stop != null) true else {
+                    resync.opened()
+                    false
+                }
+            }
+            if (stopped) {
                 client.close()
                 return
             }
-            synchronized(lock) { update(item.id) { it.copy(viaWifi = true) } }
+            synchronized(signal) {
+                synchronized(lock) { update(item.id) { it.copy(viaWifi = !resync.switched) } }
+            }
             publish(force = true)
+            val deferred = synchronized(signal) { deferredLaneResults.toList().also { deferredLaneResults.clear() } }
+            deferred.forEach { result -> inbox.execute { onResult(result) } }
             laneIo.execute {
                 try {
                     while (true) onFrame(client.read())
                 } catch (_: Exception) {
-                    if (!client.isClosed && !bytesComplete()) fail(GlassesTransferStop.LINK_LOST)
+                    val wasClosed = client.isClosed
                     client.close()
+                    if (!wasClosed) inbox.execute { if (!bytesComplete()) onLaneLost() }
                 }
             }
         }
@@ -733,7 +752,36 @@ internal class GlassesFilesController(
 
         open fun onResult(result: GlassesFilesResult) = Unit
 
+        fun receiveResult(result: GlassesFilesResult) {
+            synchronized(signal) {
+                if (laneOpening && (result is GlassesFilesResult.LaneResync || result is GlassesFilesResult.BusResume)) {
+                    deferredLaneResults += result
+                    return
+                }
+            }
+            onResult(result)
+        }
+
+        protected abstract fun onLaneLost()
+
+        protected fun beginResync(): Boolean {
+            lane?.close()
+            val started = synchronized(signal) {
+                if (cancelled || stop != null || terminal != null) return false
+                resync.begin(SystemClock.elapsedRealtime()).also {
+                    if (it) touch()
+                    signal.notifyAll()
+                }
+            }
+            if (!started) return false
+            synchronized(rate) { rate.reset() }
+            synchronized(lock) { update(item.id) { it.copy(viaWifi = false, remainingSeconds = null) } }
+            publish(force = true)
+            return true
+        }
+
         fun cancel() {
+            lane?.close()
             synchronized(signal) {
                 cancelled = true
                 signal.notifyAll()
@@ -745,6 +793,7 @@ internal class GlassesFilesController(
         }
 
         fun fail(reason: GlassesTransferStop) {
+            lane?.close()
             synchronized(signal) {
                 if (stop == null) stop = reason
                 signal.notifyAll()
@@ -758,16 +807,21 @@ internal class GlassesFilesController(
 
         /** Waits until [ready] holds; null when it did, or how the wait ended otherwise. */
         protected fun await(ready: () -> Boolean): Outcome? {
-            synchronized(signal) {
-                while (true) {
+            while (true) {
+                val idleLane = synchronized(signal) {
                     if (cancelled) return Outcome.Cancelled
                     stop?.let { return Outcome.Stopped(it) }
+                    if (resync.expired(SystemClock.elapsedRealtime())) return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
                     if (ready()) return null
                     if (SystemClock.elapsedRealtime() - lastActivity > GlassesFilesContract.IDLE_TIMEOUT_MS) {
-                        return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
+                        if (!resync.laneOpened || resync.switched || bytesComplete()) return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
+                        true
+                    } else {
+                        signal.wait(WAIT_POLL_MS)
+                        false
                     }
-                    signal.wait(WAIT_POLL_MS)
                 }
+                if (idleLane) onLaneLost()
             }
         }
 
@@ -786,12 +840,40 @@ internal class GlassesFilesController(
 
     private inner class ActiveSend(item: GlassesTransferItem) : ActiveTransfer(item) {
         private var ready: GlassesFilesResult.UploadReady? = null
+        private var attempted = 0L
+        private var resumePending: Long? = null
+
+        override fun onLaneLost() {
+            if (beginResync() && send(GlassesFilesRequest.LaneResync(wireId)) != null) fail(GlassesTransferStop.LINK_LOST)
+        }
 
         override fun onResult(result: GlassesFilesResult) {
+            if (result is GlassesFilesResult.LaneResync && result.transferId == wireId) {
+                onLaneLost()
+                return
+            }
+            if (result is GlassesFilesResult.BusResume && result.transferId == wireId) {
+                beginResync()
+                synchronized(signal) {
+                    if (!resync.switched || cancelled || stop != null) return
+                    val first = resync.offset == null
+                    if (!resync.offer(result.stagedBytes, minOf(sizeBytes, attempted))) {
+                        stop = GlassesTransferStop.LINK_LOST
+                    } else if (first) {
+                        acked = result.stagedBytes
+                        resumePending = result.stagedBytes
+                        Log.i(TAG, "glasses files upload bus resume staged=${result.stagedBytes}")
+                    }
+                    signal.notifyAll()
+                }
+                return
+            }
             synchronized(signal) {
                 when (result) {
                     is GlassesFilesResult.UploadReady -> if (result.transferId == wireId) ready = result
-                    is GlassesFilesResult.UploadProgress -> if (result.transferId == wireId && result.stagedBytes > acked) {
+                    is GlassesFilesResult.UploadProgress -> if (result.transferId == wireId &&
+                        resync.accepts(viaLane = false) && result.stagedBytes > acked
+                    ) {
                         acked = result.stagedBytes
                     }
                     is GlassesFilesResult.UploadDone -> if (result.transferId == wireId) terminal = result
@@ -830,10 +912,12 @@ internal class GlassesFilesController(
                     return Outcome.Done(alreadyPresent = it.alreadyPresent)
                 }
                 val finalName = ready!!.name
+                sizeBytes = size
                 ready!!.lane?.let { offer ->
                     openLane(offer) { frame ->
                         if (frame is GlassesFilesLane.Frame.Ack) {
                             synchronized(signal) {
+                                if (!resync.accepts(viaLane = true)) return@synchronized
                                 if (frame.stagedBytes > acked) acked = frame.stagedBytes
                                 touch()
                                 signal.notifyAll()
@@ -841,39 +925,76 @@ internal class GlassesFilesController(
                         }
                     }
                 }
-                val window = if (lane != null) GlassesFilesLane.WINDOW_BYTES else GlassesFilesContract.ACK_WINDOW_BYTES
-                sizeBytes = size
-                val digest: MessageDigest = GlassesFilesContract.newDigest()
-                var position = 0L
-                openReader(uri, staged).use { reader ->
-                    val buffer = ByteArray(if (lane != null) GlassesFilesLane.CHUNK_BYTES else GlassesFilesContract.CHUNK_BYTES)
+                val digest = GlassesFilesSendDigest()
+                var reader = openReader(uri, staged)
+                try {
                     while (true) {
-                        val count = when (val read = reader.read(buffer, ::isAborting)) {
+                        val resume = synchronized(signal) { resumePending.also { resumePending = null } }
+                        if (resume != null) {
+                            reader.close()
+                            reader = openReader(uri, staged)
+                            digest.rewind(resume)
+                            if (send(GlassesFilesRequest.BusResume(wireId, resume)) != null) {
+                                return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
+                            }
+                            synchronized(signal) { resync.confirm(resume) }
+                            progress(item.id, resume, size, rate)
+                        }
+                        await { failedReason() != null || resumePending != null || !resync.switched || resync.confirmed }
+                            ?.let { return it }
+                        failedReason()?.let { return it }
+                        if (hasResume()) continue
+                        val viaLane = synchronized(signal) { resync.laneOpened && !resync.switched }
+                        val chunkSize = if (viaLane) GlassesFilesLane.CHUNK_BYTES else GlassesFilesContract.CHUNK_BYTES
+                        val buffer = ByteArray(digest.readLimit(chunkSize))
+                        val count = when (val read = reader.read(buffer) { isAborting() || needsResume() }) {
                             is GlassesProviderReader.Read.Bytes -> read.count
-                            GlassesProviderReader.Read.End -> break
-                            GlassesProviderReader.Read.Aborted -> return abortOutcome() ?: Outcome.Cancelled
+                            GlassesProviderReader.Read.End -> -1
+                            GlassesProviderReader.Read.Aborted -> {
+                                if (needsResume()) continue
+                                return abortOutcome() ?: Outcome.Cancelled
+                            }
                             GlassesProviderReader.Read.Stalled,
                             GlassesProviderReader.Read.Failed,
                             -> return Outcome.Stopped(GlassesTransferStop.UNREADABLE)
                         }
+                        if (needsResume()) continue
                         if (count == 0) continue
-                        if (position + count > size) return Outcome.Stopped(GlassesTransferStop.CHANGED)
+                        if (count < 0) {
+                            if (digest.position != size) return Outcome.Stopped(GlassesTransferStop.CHANGED)
+                            await { failedReason() != null || resumePending != null ||
+                                MediaSyncWindowPolicy.mayFinish(acked, size) }?.let { return it }
+                            failedReason()?.let { return it }
+                            if (needsResume()) continue
+                            break
+                        }
+                        if (digest.position + count > size) return Outcome.Stopped(GlassesTransferStop.CHANGED)
+                        if (digest.replaying) {
+                            digest.record(buffer, count)
+                            continue
+                        }
+                        val window = if (viaLane) GlassesFilesLane.WINDOW_BYTES else GlassesFilesContract.ACK_WINDOW_BYTES
                         await {
-                            failedReason() != null ||
-                                MediaSyncWindowPolicy.maySend(position + count, acked, window)
+                            failedReason() != null || resumePending != null ||
+                                MediaSyncWindowPolicy.maySend(digest.position + count, acked, window)
                         }?.let { return it }
                         failedReason()?.let { return it }
-                        digest.update(buffer, 0, count)
-                        if (!sendChunk(position, buffer.copyOf(count))) return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
-                        position += count
+                        if (needsResume()) continue
+                        if (!sendChunk(digest.position, buffer.copyOf(count), viaLane)) {
+                            if (viaLane) {
+                                onLaneLost()
+                                continue
+                            }
+                            return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
+                        }
+                        digest.record(buffer, count)
                         progress(item.id, synchronized(signal) { acked }, size, rate)
                     }
+                } finally {
+                    reader.close()
                 }
-                if (position != size) return Outcome.Stopped(GlassesTransferStop.CHANGED)
-                await { failedReason() != null || MediaSyncWindowPolicy.mayFinish(acked, size) }?.let { return it }
-                failedReason()?.let { return it }
                 progress(item.id, size, size, rate)
-                if (send(GlassesFilesRequest.UploadEnd(wireId, GlassesFilesContract.hex(digest))) != null) {
+                if (send(GlassesFilesRequest.UploadEnd(wireId, digest.finish())) != null) {
                     return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
                 }
                 await { terminal != null }?.let { return it }
@@ -891,6 +1012,8 @@ internal class GlassesFilesController(
         override fun bytesComplete(): Boolean = synchronized(signal) { acked >= sizeBytes }
 
         private fun isAborting(): Boolean = synchronized(signal) { cancelled || stop != null }
+        private fun hasResume(): Boolean = synchronized(signal) { resumePending != null }
+        private fun needsResume(): Boolean = synchronized(signal) { resync.switched && !resync.confirmed || resumePending != null }
 
         /** Reads the private copy when there is one, the provider otherwise, abandonably either way. */
         private fun openReader(uri: Uri, staged: File?): GlassesProviderReader =
@@ -942,8 +1065,12 @@ internal class GlassesFilesController(
             return result
         }
 
-        private fun sendChunk(offset: Long, bytes: ByteArray): Boolean {
-            lane?.let { return it.write(GlassesFilesLane.Frame.Data(offset, bytes)) }
+        private fun sendChunk(offset: Long, bytes: ByteArray, viaLane: Boolean): Boolean {
+            synchronized(signal) {
+                if (cancelled || stop != null || (viaLane && resync.switched)) return false
+                attempted = maxOf(attempted, offset + bytes.size)
+            }
+            if (viaLane) return lane?.write(GlassesFilesLane.Frame.Data(offset, bytes)) == true
             val meta = GlassesFilesContract.chunkMeta(GlassesFilesChunk(wireId, offset))
             repeat(MAX_SEND_ATTEMPTS) {
                 if (sendRemote(BusEnvelope(path = GlassesFilesContract.DATA_PATH, payload = meta, binary = bytes)) == null) {
@@ -958,8 +1085,8 @@ internal class GlassesFilesController(
     private inner class ActiveCopy(item: GlassesTransferItem) : ActiveTransfer(item) {
         // Written only on the inbox thread once [run] has opened them.
         @Volatile private var output: OutputStream? = null
-        private val digest = GlassesFilesContract.newDigest()
-        private var staged = 0L
+        private val receiver = GlassesFilesDownloadReceiver(resync) { output }
+        private val staged: Long get() = receiver.staged
         private var chunksSinceAck = 0
         private var expectedSize: Long? = item.totalBytes
         private var verified: Boolean? = null
@@ -968,17 +1095,35 @@ internal class GlassesFilesController(
 
         override fun bytesComplete(): Boolean = synchronized(signal) { expectedSize?.let { staged >= it } == true }
 
+        override fun onLaneLost() {
+            if (!beginResync()) return
+            val offset = synchronized(signal) {
+                resync.offer(staged, expectedSize ?: Long.MAX_VALUE)
+                chunksSinceAck = 0
+                resync.offset
+            } ?: return
+            Log.i(TAG, "glasses files download bus resume staged=$offset")
+            if (send(GlassesFilesRequest.BusResume(wireId, offset)) != null) fail(GlassesTransferStop.LINK_LOST)
+        }
+
         /** Acks go back over the lane when the bytes came that way. */
         private fun ack() {
-            val viaLane = lane
+            val viaLane = lane?.takeUnless { resync.switched }
             if (viaLane == null || !viaLane.write(GlassesFilesLane.Frame.Ack(staged))) {
                 send(GlassesFilesRequest.DownloadProgress(wireId, staged))
             }
         }
 
         override fun onResult(result: GlassesFilesResult) {
+            if (result is GlassesFilesResult.LaneResync && result.transferId == wireId) {
+                onLaneLost()
+                return
+            }
             synchronized(signal) {
                 when (result) {
+                    is GlassesFilesResult.BusResume -> if (result.transferId == wireId && resync.switched) {
+                        if (!resync.confirm(result.stagedBytes)) stop = GlassesTransferStop.LINK_LOST
+                    }
                     is GlassesFilesResult.DownloadReady -> if (result.transferId == wireId) {
                         expectedSize = result.sizeBytes
                         laneOffer = result.lane
@@ -993,7 +1138,7 @@ internal class GlassesFilesController(
                         }
                     }
                     is GlassesFilesResult.DownloadEnd -> if (result.transferId == wireId) {
-                        verified = staged == expectedSize && GlassesFilesContract.hex(digest) == result.sha256
+                        verified = (!resync.switched || resync.confirmed) && receiver.verify(expectedSize, result.sha256)
                         terminal = result
                     }
                     is GlassesFilesResult.TransferFailed -> if (result.transferId == wireId) terminal = result
@@ -1004,23 +1149,24 @@ internal class GlassesFilesController(
             }
         }
 
-        fun onChunk(chunk: GlassesFilesChunk, bytes: ByteArray) {
+        fun onChunk(chunk: GlassesFilesChunk, bytes: ByteArray, viaLane: Boolean = false) {
             if (chunk.transferId != wireId) return
-            val target = output ?: return
             synchronized(signal) {
-                if (chunk.offset != staged || terminal != null) {
-                    if (stop == null) stop = GlassesTransferStop.LINK_LOST
-                    signal.notifyAll()
-                    return
+                if (!resync.accepts(viaLane) || cancelled || stop != null) return
+                when (if (terminal != null) GlassesFilesDownloadReceiver.Write.OUT_OF_ORDER else receiver.write(chunk.offset, bytes, viaLane)) {
+                    GlassesFilesDownloadReceiver.Write.IGNORED -> return
+                    GlassesFilesDownloadReceiver.Write.OUT_OF_ORDER -> {
+                        stop = GlassesTransferStop.LINK_LOST
+                        signal.notifyAll()
+                        return
+                    }
+                    GlassesFilesDownloadReceiver.Write.NO_SPACE -> {
+                        stop = GlassesTransferStop.PHONE_FULL
+                        signal.notifyAll()
+                        return
+                    }
+                    GlassesFilesDownloadReceiver.Write.WRITTEN -> Unit
                 }
-                val written = runCatching { target.write(bytes) }.isSuccess
-                if (!written) {
-                    if (stop == null) stop = GlassesTransferStop.PHONE_FULL
-                    signal.notifyAll()
-                    return
-                }
-                digest.update(bytes)
-                staged += bytes.size
                 chunksSinceAck += 1
                 touch()
                 if (MediaSyncWindowPolicy.shouldAck(
@@ -1056,7 +1202,7 @@ internal class GlassesFilesController(
                     // Frames join the inbox like bus chunks, so ordering and writing stay in one place.
                     openLane(offer) { frame ->
                         if (frame is GlassesFilesLane.Frame.Data) {
-                            inbox.execute { onChunk(GlassesFilesChunk(wireId, frame.offset), frame.bytes) }
+                            inbox.execute { onChunk(GlassesFilesChunk(wireId, frame.offset), frame.bytes, viaLane = true) }
                         }
                     }
                 }

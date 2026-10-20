@@ -3,6 +3,9 @@ package com.anezium.rokidbus.phone
 import java.io.Closeable
 import java.io.InputStream
 import java.io.IOException
+import java.io.OutputStream
+import com.anezium.rokidbus.shared.GlassesFilesContract
+import com.anezium.rokidbus.shared.GlassesFilesResync
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
@@ -119,6 +122,30 @@ internal object GlassesDownloadAckPolicy {
         stagedBytes == announcedBytes && stagedBytes > 0 -> GlassesReadyAction.ACK_STAGED
         else -> GlassesReadyAction.NONE
     }
+}
+
+/** The staged offset advances only after a completed MediaStore write, on the serial inbox. */
+internal class GlassesFilesDownloadReceiver(
+    private val resync: GlassesFilesResync,
+    private val output: () -> OutputStream?,
+) {
+    enum class Write { IGNORED, WRITTEN, OUT_OF_ORDER, NO_SPACE }
+    var staged = 0L
+        private set
+    private val digest = GlassesFilesContract.newDigest()
+
+    fun write(offset: Long, bytes: ByteArray, viaLane: Boolean): Write {
+        if (!resync.accepts(viaLane)) return Write.IGNORED
+        val target = output() ?: return Write.IGNORED
+        if (offset != staged) return Write.OUT_OF_ORDER
+        if (runCatching { target.write(bytes) }.isFailure) return Write.NO_SPACE
+        digest.update(bytes)
+        staged += bytes.size
+        return Write.WRITTEN
+    }
+
+    fun verify(expectedSize: Long?, sha256: String): Boolean =
+        staged == expectedSize && GlassesFilesContract.hex(digest) == sha256
 }
 
 /**
