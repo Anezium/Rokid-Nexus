@@ -69,9 +69,11 @@ sealed interface GlassesFilesRequest {
         val path: String,
         val name: String,
         val sizeBytes: Long,
+        /** The phone shares a Wi-Fi network with the glasses and would take a lane. */
+        val lane: Boolean = false,
     ) : GlassesFilesRequest
     data class UploadEnd(val transferId: String, val sha256: String) : GlassesFilesRequest
-    data class DownloadBegin(val transferId: String, val path: String) : GlassesFilesRequest
+    data class DownloadBegin(val transferId: String, val path: String, val lane: Boolean = false) : GlassesFilesRequest
     data class DownloadProgress(val transferId: String, val stagedBytes: Long) : GlassesFilesRequest
     data class Cancel(val transferId: String) : GlassesFilesRequest
 }
@@ -97,16 +99,31 @@ sealed interface GlassesFilesResult {
         val needsWearer: Boolean = false,
     ) : GlassesFilesResult
 
-    data class UploadReady(val transferId: String, val name: String) : GlassesFilesResult
+    data class UploadReady(
+        val transferId: String,
+        val name: String,
+        val lane: GlassesFilesLaneEndpoint? = null,
+    ) : GlassesFilesResult
     data class UploadProgress(val transferId: String, val stagedBytes: Long) : GlassesFilesResult
     /** [alreadyPresent]: a file with the same name and size was there, so nothing was sent. */
     data class UploadDone(val transferId: String, val name: String, val alreadyPresent: Boolean = false) : GlassesFilesResult
-    data class DownloadReady(val transferId: String, val sizeBytes: Long, val modifiedMillis: Long) : GlassesFilesResult
+    data class DownloadReady(
+        val transferId: String,
+        val sizeBytes: Long,
+        val modifiedMillis: Long,
+        val lane: GlassesFilesLaneEndpoint? = null,
+    ) : GlassesFilesResult
     data class DownloadEnd(val transferId: String, val sha256: String) : GlassesFilesResult
     data class TransferFailed(val transferId: String, val error: GlassesFilesError) : GlassesFilesResult
 }
 
 data class GlassesFilesChunk(val transferId: String, val offset: Long)
+
+/** Where the glasses listen for this transfer's Wi-Fi lane, and the key that seals it. */
+data class GlassesFilesLaneEndpoint(val host: String, val port: Int, val key: String) {
+    // The key is a secret: keep it out of logs and crash reports.
+    override fun toString(): String = "GlassesFilesLaneEndpoint(host=$host, port=$port)"
+}
 
 /**
  * Private hub-to-hub file explorer for the glasses' shared storage.
@@ -202,6 +219,7 @@ object GlassesFilesContract {
                 .put("path", request.path)
                 .put("name", request.name)
                 .put("size", request.sizeBytes)
+                .apply { if (request.lane) put("lane", true) }
         }
         is GlassesFilesRequest.UploadEnd -> {
             requireId(request.transferId)
@@ -212,6 +230,7 @@ object GlassesFilesContract {
             requireId(request.transferId)
             require(request.path.isNotEmpty() && normalizePath(request.path) == request.path) { "Invalid path" }
             base(TYPE_DOWNLOAD_BEGIN).put("transferId", request.transferId).put("path", request.path)
+                .apply { if (request.lane) put("lane", true) }
         }
         is GlassesFilesRequest.DownloadProgress -> {
             requireId(request.transferId)
@@ -248,6 +267,7 @@ object GlassesFilesContract {
                 path = payload.path("path") ?: return null,
                 name = payload.strictString("name")?.takeIf(::isValidName) ?: return null,
                 sizeBytes = payload.strictLong("size")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
+                lane = payload.optionalFlag("lane") ?: return null,
             )
             TYPE_UPLOAD_END -> GlassesFilesRequest.UploadEnd(
                 transferId = payload.id("transferId") ?: return null,
@@ -256,6 +276,7 @@ object GlassesFilesContract {
             TYPE_DOWNLOAD_BEGIN -> GlassesFilesRequest.DownloadBegin(
                 transferId = payload.id("transferId") ?: return null,
                 path = payload.path("path")?.takeIf(String::isNotEmpty) ?: return null,
+                lane = payload.optionalFlag("lane") ?: return null,
             )
             TYPE_DOWNLOAD_PROGRESS -> GlassesFilesRequest.DownloadProgress(
                 transferId = payload.id("transferId") ?: return null,
@@ -308,6 +329,7 @@ object GlassesFilesContract {
             requireId(result.transferId)
             require(isValidName(result.name)) { "Invalid name" }
             base(TYPE_UPLOAD_READY).put("transferId", result.transferId).put("name", result.name)
+                .putLane(result.lane)
         }
         is GlassesFilesResult.UploadProgress -> {
             requireId(result.transferId)
@@ -328,6 +350,7 @@ object GlassesFilesContract {
                 .put("transferId", result.transferId)
                 .put("size", result.sizeBytes)
                 .put("mtime", result.modifiedMillis)
+                .putLane(result.lane)
         }
         is GlassesFilesResult.DownloadEnd -> {
             requireId(result.transferId)
@@ -358,6 +381,7 @@ object GlassesFilesContract {
             TYPE_UPLOAD_READY -> GlassesFilesResult.UploadReady(
                 transferId = payload.id("transferId") ?: return null,
                 name = payload.strictString("name")?.takeIf(::isValidName) ?: return null,
+                lane = (payload.optionalLane() ?: return null).endpoint,
             )
             TYPE_UPLOAD_PROGRESS -> GlassesFilesResult.UploadProgress(
                 transferId = payload.id("transferId") ?: return null,
@@ -376,6 +400,7 @@ object GlassesFilesContract {
                 transferId = payload.id("transferId") ?: return null,
                 sizeBytes = payload.strictLong("size")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
                 modifiedMillis = payload.strictLong("mtime")?.takeIf { it in 0..MAX_SAFE_INTEGER } ?: return null,
+                lane = (payload.optionalLane() ?: return null).endpoint,
             )
             TYPE_DOWNLOAD_END -> GlassesFilesResult.DownloadEnd(
                 transferId = payload.id("transferId") ?: return null,
@@ -503,6 +528,41 @@ object GlassesFilesContract {
         isValidName(entry.name) &&
             entry.sizeBytes in 0..MAX_SAFE_INTEGER &&
             entry.modifiedMillis in 0..MAX_SAFE_INTEGER
+
+    /** Absent means false; present and not a boolean makes the whole message invalid (null). */
+    private fun JSONObject.optionalFlag(key: String): Boolean? =
+        if (!has(key)) false else strictBoolean(key)
+
+    private class LaneField(val endpoint: GlassesFilesLaneEndpoint?)
+
+    /** Absent means no lane; present but malformed makes the whole message invalid (null). */
+    private fun JSONObject.optionalLane(): LaneField? {
+        if (!has("lane")) return LaneField(null)
+        val lane = opt("lane") as? JSONObject ?: return null
+        val endpoint = GlassesFilesLaneEndpoint(
+            host = lane.strictString("host")?.takeIf(::isValidLaneHost) ?: return null,
+            port = lane.strictLong("port")?.takeIf { it in 1..65_535 }?.toInt() ?: return null,
+            key = lane.strictString("key")?.takeIf { GlassesFilesLane.decodeKey(it) != null } ?: return null,
+        )
+        return LaneField(endpoint)
+    }
+
+    private fun JSONObject.putLane(lane: GlassesFilesLaneEndpoint?): JSONObject {
+        if (lane == null) return this
+        require(isValidLaneHost(lane.host) && lane.port in 1..65_535 && GlassesFilesLane.decodeKey(lane.key) != null) {
+            "Invalid lane endpoint"
+        }
+        return put("lane", JSONObject().put("host", lane.host).put("port", lane.port).put("key", lane.key))
+    }
+
+    /** A literal IPv4 address only: a name would need a lookup the lane has no business doing. */
+    fun isValidLaneHost(value: String): Boolean {
+        val parts = value.split('.')
+        return parts.size == 4 && parts.all { part ->
+            part.isNotEmpty() && part.length <= 3 && part.all(Char::isDigit) && part.toInt() in 0..255 &&
+                (part == "0" || !part.startsWith("0"))
+        }
+    }
 
     /** Absent means success; a present but unknown code makes the whole message invalid (null). */
     private class ErrorField(val error: GlassesFilesError?)
