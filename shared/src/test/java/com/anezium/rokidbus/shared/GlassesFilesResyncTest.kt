@@ -6,6 +6,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GlassesFilesResyncTest {
+    @Test fun `a proven pending lane can resync without ever accepting lane data`() {
+        val resync = GlassesFilesResync()
+        resync.proven()
+        assertTrue(resync.accepts(viaLane = false))
+        assertFalse(resync.accepts(viaLane = true))
+        assertTrue(resync.begin(0))
+        assertFalse(resync.accepts(viaLane = false))
+        assertTrue(resync.offer(12, 100))
+        assertTrue(resync.accepts(viaLane = false))
+        assertTrue(resync.confirm(12))
+        assertFalse(resync.accepts(viaLane = true))
+    }
+
     @Test
     fun `only an opened lane can switch and duplicates cannot extend the confirmation budget`() {
         val resync = GlassesFilesResync()

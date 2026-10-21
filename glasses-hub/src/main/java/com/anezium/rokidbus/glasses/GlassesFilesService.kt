@@ -138,7 +138,11 @@ internal object GlassesFilesService {
         when (request) {
             is GlassesFilesRequest.HotspotOffer -> offerHotspot(request)
             is GlassesFilesRequest.LaneSwitch -> {
-                val active = upload?.takeIf { it.transferId == request.transferId && it.lane?.isConnected() == true } ?: return
+                val active = upload?.takeIf { it.transferId == request.transferId } ?: return
+                if (active.lane?.isConnected() != true || active.resync.switched) {
+                    resumeUpload(request.transferId)
+                    return
+                }
                 active.lastActivity = SystemClock.elapsedRealtime()
                 active.upgradeToLane()?.let { sendResult(GlassesFilesResult.LaneResume(request.transferId, it)) }
             }
@@ -337,7 +341,9 @@ internal object GlassesFilesService {
             return
         }
         log("files lane connected")
-        control.execute { if (!upgrade && upload === active && !active.resync.laneOpened) active.resync.opened() }
+        control.execute {
+            if (!upgrade && upload === active && !active.resync.laneOpened && !active.resync.switched) active.resync.opened()
+        }
         try {
             while (true) {
                 val frame = lane.read()

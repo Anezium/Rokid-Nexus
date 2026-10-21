@@ -36,6 +36,73 @@ class GlassesFilesFallbackTest {
     }
 
     @Test
+    fun `upload lane cut after handshake before activation resumes its bus snapshot`() {
+        val source = ByteArray(200_017) { (it * 17).toByte() }
+        val root = temp.newFolder()
+        val upload = GlassesFileStore(root, JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
+            .beginUpload("", "pending.bin", source.size.toLong(), id).getOrThrow()
+        val key = GlassesFilesLane.newKey()
+        val lane = lane(key)
+        val active = GlassesFilesUpload(id, upload, lane, 0)
+        assertNull(active.write(0, source.copyOfRange(0, 65_536), viaLane = false))
+        val accept = io.submit<Boolean> { lane.accept() }
+        connect(lane, key).close()
+        assertTrue(accept.get(5, TimeUnit.SECONDS))
+        lane.close()
+        assertTrue(lane.isProven)
+        assertFalse(active.resync.laneOpened)
+        assertEquals(65_536L, active.beginResync(1))
+        assertNull(active.upgradeToLane())
+        assertTrue(active.resync.confirm(65_536))
+        assertNull(active.write(65_536, source.copyOfRange(65_536, source.size), viaLane = false))
+        assertNull(upload.finish(sha(source)))
+        assertArrayEquals(source, upload.finalFile().readBytes())
+    }
+
+    @Test
+    fun `download lane cut after handshake before activation finishes on bus with the right bytes`() {
+        val source = ByteArray(200_017) { (it * 31).toByte() }
+        val file = temp.newFile().apply { writeBytes(source) }
+        val key = GlassesFilesLane.newKey()
+        val lane = lane(key)
+        val receiver = ByteArrayOutputStream()
+        val results = java.util.concurrent.CopyOnWriteArrayList<GlassesFilesResult>()
+        var injected = false
+        lateinit var transfer: GlassesFilesDownload
+        transfer = GlassesFilesDownload(id, file, null, io, {
+            results.add(it)
+            if (it is GlassesFilesResult.LaneResync) transfer.onResume(id, 16_384)
+            true
+        }, { offset, bytes ->
+            assertEquals(receiver.size().toLong(), offset)
+            if (!injected) {
+                injected = true
+                receiver.write(bytes, 0, 16_384)
+                assertTrue(transfer.offerHotspotLane(lane))
+                connect(lane, key).use {
+                    lane.close()
+                    transfer.upgradeToLane(id, 16_384)
+                }
+            } else {
+                receiver.write(bytes)
+                transfer.onAck(id, receiver.size().toLong())
+            }
+            true
+        }, {}, ::now)
+        val worker = io.submit { transfer.stream() }
+        try {
+            worker.get(5, TimeUnit.SECONDS)
+            assertTrue(injected)
+            assertTrue(results.any { it == GlassesFilesResult.BusResume(id, 16_384) })
+            assertFalse(results.any { it is GlassesFilesResult.TransferFailed || it is GlassesFilesResult.LaneResume })
+            assertArrayEquals(source, receiver.toByteArray())
+            assertEquals(sha(source), results.filterIsInstance<GlassesFilesResult.DownloadEnd>().single().sha256)
+        } finally {
+            transfer.cancelAll()
+        }
+    }
+
+    @Test
     fun `upload resumes at staging beyond its last ack and ignores a queued late lane frame`() {
         val root = temp.newFolder()
         val source = ByteArray(900_007) { (it * 17).toByte() }

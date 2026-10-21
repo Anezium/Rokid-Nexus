@@ -44,6 +44,8 @@ internal class GlassesFilesLaneServer internal constructor(
     )
 
     private val closed = AtomicBoolean(false)
+    @Volatile var isProven = false
+        private set
     @Volatile private var pending: Socket? = null
     @Volatile private var socket: Socket? = null
     @Volatile private var input: DataInputStream? = null
@@ -91,6 +93,7 @@ internal class GlassesFilesLaneServer internal constructor(
             client.tcpNoDelay = true
             val stream = DataInputStream(BufferedInputStream(client.getInputStream(), BUFFER_BYTES))
             if (!GlassesFilesLane.readHello(stream, transferId, key)) return false
+            isProven = true
             // Past this point the watchdog must not close a lane the phone is told is open.
             if (!watchdog.cancel(false)) return false
             val out = DataOutputStream(BufferedOutputStream(client.getOutputStream(), BUFFER_BYTES))

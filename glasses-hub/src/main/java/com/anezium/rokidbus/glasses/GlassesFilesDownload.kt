@@ -49,6 +49,10 @@ internal class GlassesFilesDownload(
 
     fun upgradeToLane(id: String, staged: Long) {
         if (id != transferId) return
+        if (synchronized(lock) { hotspotLane?.isProven == true && hotspotLane?.isConnected() != true || resync.switched }) {
+            requestResync(id)
+            return
+        }
         synchronized(lock) {
             val connected = hotspotLane?.takeIf { it.isConnected() } ?: return
             if (cancelled || resync.switched) return
@@ -102,7 +106,7 @@ internal class GlassesFilesDownload(
         val started = synchronized(lock) {
             if (cancelled) return
             // The phone can answer the hello before accept() has returned to the worker.
-            if (!resync.laneOpened && offeredLane?.isConnected() == true) resync.opened()
+            if (offeredLane?.isProven == true || hotspotLane?.isProven == true) resync.proven()
             resync.begin(now()).also { lock.notifyAll() }
         }
         if (!started) return
@@ -147,7 +151,7 @@ internal class GlassesFilesDownload(
                 if (offeredLane.accept()) {
                     summary("files lane connected")
                     synchronized(lock) {
-                        if (!resync.laneOpened) resync.opened()
+                        if (!resync.laneOpened && !resync.switched) resync.opened()
                         if (!resync.switched && !cancelled) lane = offeredLane
                     }
                     laneIo.execute { readLaneAcks(offeredLane) }

@@ -25,6 +25,7 @@ internal class GlassesFilesUpload(
     }
 
     fun confirmLane(staged: Long): Boolean {
+        if (resync.switched) return true
         if (upgrade.offset != staged) return false
         laneUpgradeConfirmed = true
         return true
@@ -37,6 +38,7 @@ internal class GlassesFilesUpload(
         if (resync.accepts(viaLane)) upload.write(offset, bytes) else null
 
     fun beginResync(now: Long): Long? {
+        if (lane?.isProven == true) resync.proven()
         if (resync.begin(now)) {
             lane?.close()
             resync.offer(upload.stagedBytes, upload.sizeBytes)

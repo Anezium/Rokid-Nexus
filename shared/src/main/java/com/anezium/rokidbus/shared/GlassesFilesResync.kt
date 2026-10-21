@@ -2,6 +2,7 @@ package com.anezium.rokidbus.shared
 
 /** One opened lane's irreversible switch to the bus. Call under the transfer's existing lock. */
 class GlassesFilesResync {
+    private var laneProven = false
     var laneOpened = false
         private set
     var switched = false
@@ -14,11 +15,17 @@ class GlassesFilesResync {
 
     fun opened() {
         check(!switched)
+        proven()
         laneOpened = true
     }
 
+    /** A sealed handshake can finish before the bus activates the lane. */
+    fun proven() {
+        laneProven = true
+    }
+
     fun begin(now: Long): Boolean {
-        if (!laneOpened || switched) return false
+        if (!laneProven || switched) return false
         switched = true
         startedAt = now
         return true
@@ -39,7 +46,7 @@ class GlassesFilesResync {
     }
 
     fun accepts(viaLane: Boolean): Boolean =
-        if (viaLane) laneOpened && !switched else !laneOpened || (switched && offset != null)
+        if (viaLane) laneOpened && !switched else if (switched) offset != null else !laneOpened
 
     fun expired(now: Long): Boolean = switched && !confirmed &&
         now - startedAt >= GlassesFilesContract.IDLE_TIMEOUT_MS
