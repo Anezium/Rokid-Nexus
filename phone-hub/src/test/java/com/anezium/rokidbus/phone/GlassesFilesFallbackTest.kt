@@ -34,6 +34,23 @@ class GlassesFilesFallbackTest {
     }
 
     @Test
+    fun `bus download freezes completed writes before accepting lane data`() {
+        val source = ByteArray(900_007) { (it * 17).toByte() }
+        val output = ByteArrayOutputStream()
+        val resync = GlassesFilesResync()
+        val receiver = GlassesFilesDownloadReceiver(resync) { output }
+        val staged = 65_536
+        assertEquals(GlassesFilesDownloadReceiver.Write.WRITTEN, receiver.write(0, source.copyOfRange(0, staged), false))
+        val upgrade = com.anezium.rokidbus.shared.GlassesFilesLaneUpgrade()
+        assertTrue(upgrade.snapshot(receiver.staged, source.size.toLong()))
+        resync.opened()
+        assertEquals(GlassesFilesDownloadReceiver.Write.IGNORED, receiver.write(staged.toLong(), byteArrayOf(99), false))
+        assertEquals(GlassesFilesDownloadReceiver.Write.WRITTEN, receiver.write(staged.toLong(), source.copyOfRange(staged, source.size), true))
+        assertTrue(receiver.verify(source.size.toLong(), sha(source)))
+        assertArrayEquals(source, output.toByteArray())
+    }
+
+    @Test
     fun `a failed MediaStore write never advances the advertised staged offset`() {
         val resync = GlassesFilesResync()
         val receiver = GlassesFilesDownloadReceiver(resync) {

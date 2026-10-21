@@ -770,7 +770,9 @@ class BusHubService : Service() {
             },
             isNativePointerAvailable = ::isCxrUp,
         ).also(PhoneCoreRemoteBridge::start)
-        glassesFiles = GlassesFilesController(applicationContext, ::sendRemote).also {
+        glassesFiles = GlassesFilesController(applicationContext, ::sendRemote,
+            cameraActive = { ::cameraCompanionController.isInitialized && cameraCompanionController.activeSessionId() != null },
+        ).also {
             val state = linkState()
             it.onLinkStateChanged(
                 controlUp = state and LinkStateBits.CXR_CONTROL_UP != 0,
@@ -5083,7 +5085,7 @@ class BusHubService : Service() {
     private fun announcePhoneCapabilities() {
         val hudPosition = PhoneHudPositionStore(this)
         val announced = PhoneHubCapabilitiesContract.create(
-            features = PhoneAssistedSetupCapabilityPolicy.advertised(phoneCameraCapabilities()),
+            features = PhoneAssistedSetupCapabilityPolicy.advertised(phoneCameraCapabilities()) or BusCapabilityBits.GLASSES_FILES_HOTSPOT,
             cameraConsumerName = cameraConsumerReadiness.resolveApproved()?.descriptor?.displayName,
             activityAlwaysExpanded =
                 PhoneActivityPresentationSettings(this).isAlwaysExpanded(),
@@ -5221,6 +5223,7 @@ class BusHubService : Service() {
             glassesFiles.onCapabilities(
                 glassesFilesSupported = current && advertised.features and BusCapabilityBits.GLASSES_FILES != 0,
                 laneSupported = current && advertised.features and BusCapabilityBits.GLASSES_FILES_LANE != 0,
+                hotspotSupported = current && advertised.features and BusCapabilityBits.GLASSES_FILES_HOTSPOT != 0,
             )
         }
         updateRemoteGlassesAppState(

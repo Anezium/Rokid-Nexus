@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import com.anezium.rokidbus.shared.GlassesFilesClientNetwork
 import com.anezium.rokidbus.shared.GlassesFilesLane
 import com.anezium.rokidbus.shared.GlassesFilesLaneEndpoint
 import java.io.BufferedInputStream
@@ -54,10 +55,17 @@ internal class GlassesFilesLaneClient private constructor(
          * it fails, never throws. A connection alone proves nothing: on another network the same
          * address may be some unrelated device.
          */
-        fun connect(context: Context, transferId: String, endpoint: GlassesFilesLaneEndpoint): GlassesFilesLaneClient? {
+        fun connect(context: Context, transferId: String, endpoint: GlassesFilesLaneEndpoint, hotspotGateway: String? = null): GlassesFilesLaneClient? {
             val key = GlassesFilesLane.decodeKey(endpoint.key) ?: return null
-            val network = wifiNetwork(context) ?: return null
-            val socket = runCatching { network.socketFactory.createSocket() }.getOrNull() ?: return null
+            val socket = runCatching {
+                if (hotspotGateway == null) {
+                    (wifiNetwork(context) ?: return null).socketFactory.createSocket()
+                } else {
+                    val local = java.net.InetAddress.getByName(hotspotGateway)
+                    if (java.net.NetworkInterface.getByInetAddress(local) == null) return null
+                    Socket().apply { bind(InetSocketAddress(local, 0)) }
+                }
+            }.getOrNull() ?: return null
             return try {
                 socket.connect(InetSocketAddress(endpoint.host, endpoint.port), GlassesFilesLane.CONNECT_TIMEOUT_MS)
                 socket.tcpNoDelay = true
@@ -72,6 +80,17 @@ internal class GlassesFilesLaneClient private constructor(
                 null
             }
         }
+
+        fun clientNetwork(context: Context): GlassesFilesClientNetwork? {
+            val network = wifiNetwork(context) ?: return null
+            val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return null
+            return connectivity.getLinkProperties(network)?.linkAddresses
+                ?.firstOrNull { it.address is java.net.Inet4Address }?.let {
+                    GlassesFilesClientNetwork(it.address.hostAddress.orEmpty(), it.prefixLength)
+                }
+        }
+
+        fun sharesSubnet(context: Context, host: String): Boolean = clientNetwork(context)?.contains(host) == true
 
         private fun wifiNetwork(context: Context): Network? {
             val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return null

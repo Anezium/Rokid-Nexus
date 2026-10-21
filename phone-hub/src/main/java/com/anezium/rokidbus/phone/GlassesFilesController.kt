@@ -11,8 +11,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.Handler
 import android.os.CancellationSignal
+import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -25,8 +25,10 @@ import com.anezium.rokidbus.shared.GlassesFilesAccess
 import com.anezium.rokidbus.shared.GlassesFilesChunk
 import com.anezium.rokidbus.shared.GlassesFilesContract
 import com.anezium.rokidbus.shared.GlassesFilesError
+import com.anezium.rokidbus.shared.GlassesFilesHotspotPolicy
 import com.anezium.rokidbus.shared.GlassesFilesLane
 import com.anezium.rokidbus.shared.GlassesFilesLaneEndpoint
+import com.anezium.rokidbus.shared.GlassesFilesLaneUpgrade
 import com.anezium.rokidbus.shared.GlassesFilesOperation
 import com.anezium.rokidbus.shared.GlassesFilesRequest
 import com.anezium.rokidbus.shared.GlassesFilesResult
@@ -76,6 +78,7 @@ data class GlassesFilesSnapshot(
  * main thread instead.
  */
 object GlassesFilesHub {
+    @Volatile internal var requestHotspotPermission: (() -> Unit)? = null
     @Volatile internal var controller: GlassesFilesController? = null
         set(value) {
             field = value
@@ -171,6 +174,7 @@ object GlassesFilesHub {
 internal class GlassesFilesController(
     context: Context,
     private val sendRemote: (BusEnvelope) -> String?,
+    private val cameraActive: () -> Boolean = { false },
 ) : AutoCloseable {
     private val appContext = context.applicationContext
     private val inbox = Executors.newSingleThreadExecutor { Thread(it, "glasses-files-inbox").apply { isDaemon = true } }
@@ -189,6 +193,8 @@ internal class GlassesFilesController(
     private var dataPlaneUp = false
     private var supported: Boolean? = null
     @Volatile private var laneSupported = false
+    @Volatile private var hotspotSupported = false
+    private val hotspot = GlassesFilesHotspotHost(appContext, timers, ::send)
     private var workerRunning = false
     private var lastPublishAt = 0L
     private var publishScheduled = false
@@ -222,14 +228,16 @@ internal class GlassesFilesController(
             }
             resume = !wasUp && isUp
         }
+        if (!controlUp && !dataUp) hotspot.close()
         publish(force = true)
         if (resume) kickWorker()
     }
 
     fun laneLikely(): Boolean = laneSupported && GlassesFilesLaneClient.isOnWifi(appContext)
 
-    fun onCapabilities(glassesFilesSupported: Boolean, laneSupported: Boolean = false) {
+    fun onCapabilities(glassesFilesSupported: Boolean, laneSupported: Boolean = false, hotspotSupported: Boolean = false) {
         this.laneSupported = laneSupported
+        this.hotspotSupported = hotspotSupported
         synchronized(lock) { supported = glassesFilesSupported }
         publish(force = true)
     }
@@ -434,6 +442,7 @@ internal class GlassesFilesController(
         intake.shutdownNow()
         worker.shutdownNow()
         providerIo.shutdownNow()
+        hotspot.close()
         laneIo.shutdownNow()
         timers.shutdownNow()
         cancelNotification()
@@ -524,6 +533,7 @@ internal class GlassesFilesController(
             // Every unsuccessful exit tells the glasses, so they drop their staging file or stop
             // streaming now instead of after the idle timeout. Harmless if they already gave up.
             if (outcome is Outcome.Stopped) send(GlassesFilesRequest.Cancel(transfer.wireId))
+            transfer.retireHotspot()
             synchronized(lock) {
                 active = null
                 val now = System.currentTimeMillis()
@@ -698,6 +708,66 @@ internal class GlassesFilesController(
         @Volatile protected var lane: GlassesFilesLaneClient? = null
         protected val resync = GlassesFilesResync()
         private var laneOpening = false
+        private var hotspotAttempted = false
+        private var hotspotDeadline = 0L
+        private var sharedNetwork = false
+        protected var upgradePending = false
+        protected var resumeToLane = false
+        protected val upgrade = GlassesFilesLaneUpgrade()
+
+        protected abstract fun onLaneFrame(frame: GlassesFilesLane.Frame)
+        protected abstract fun switchToLane()
+        protected open fun laneUpgradeComplete(): Boolean = !upgradePending
+
+        fun retireHotspot() {
+            synchronized(signal) { hotspotDeadline = 0L }
+            hotspot.finish(wireId)
+        }
+
+        protected fun maybeHotspot() {
+            val remaining = synchronized(lock) {
+                transfers.firstOrNull { it.id == item.id }?.let { (it.totalBytes ?: 0L) - it.doneBytes } ?: 0L
+            }
+            if (!GlassesFilesHotspotPolicy.shouldStart(remaining, sharedNetwork || resync.laneOpened,
+                    cameraActive = cameraActive(), permissionGranted = true, peerSupported = hotspotSupported && laneSupported)) return
+            synchronized(signal) {
+                if (hotspotAttempted || cancelled || stop != null || terminal != null) return
+                hotspotAttempted = true
+                hotspotDeadline = SystemClock.elapsedRealtime() + GlassesFilesHotspotPolicy.SETUP_MS
+            }
+            if (!GlassesFilesHotspotHost.permitted(appContext)) Handler(Looper.getMainLooper()).post { GlassesFilesHub.requestHotspotPermission?.invoke() }
+            awaitHotspotPermission()
+        }
+
+        private fun awaitHotspotPermission() {
+            synchronized(signal) {
+                if (hotspotDeadline == 0L || SystemClock.elapsedRealtime() >= hotspotDeadline || cancelled || stop != null || terminal != null) return
+            }
+            if (cameraActive()) return
+            if (!GlassesFilesHotspotHost.permitted(appContext)) {
+                timers.schedule(::awaitHotspotPermission, 250L, TimeUnit.MILLISECONDS)
+                return
+            }
+            hotspot.acquire(wireId) { inbox.execute { hotspotFailed() } }
+            val remaining = synchronized(signal) { (hotspotDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(1L) }
+            timers.schedule({ inbox.execute {
+                if (synchronized(signal) { hotspotDeadline != 0L && (!resync.laneOpened || !laneUpgradeComplete()) }) hotspotFailed()
+            } }, remaining, TimeUnit.MILLISECONDS)
+        }
+
+        private fun hotspotFailed() {
+            synchronized(signal) {
+                if (hotspotDeadline == 0L) return
+                hotspotDeadline = 0L
+            }
+            if (resync.laneOpened && !bytesComplete()) onLaneLost()
+            hotspot.close()
+        }
+
+        protected fun markWifiBytes() {
+            synchronized(lock) { update(item.id) { it.copy(viaWifi = true) } }
+        }
+
         private val deferredLaneResults = ArrayList<GlassesFilesResult>()
 
         /** Only worth asking for when the glasses can offer one and the phone is on Wi-Fi. */
@@ -710,20 +780,24 @@ internal class GlassesFilesController(
          * Connects the offered lane; on failure the transfer quietly stays on the bus and the
          * glasses are told so, so they stop waiting for it. An opened lane can switch once to bus.
          */
-        protected fun openLane(endpoint: GlassesFilesLaneEndpoint, onFrame: (GlassesFilesLane.Frame) -> Unit) {
+        protected fun openLane(endpoint: GlassesFilesLaneEndpoint, onFrame: (GlassesFilesLane.Frame) -> Unit,
+            hotspotGateway: String? = null) {
+            if (hotspotGateway == null) sharedNetwork = GlassesFilesLaneClient.sharesSubnet(appContext, endpoint.host)
             synchronized(signal) { laneOpening = true }
-            val client = GlassesFilesLaneClient.connect(appContext, wireId, endpoint)
+            val client = GlassesFilesLaneClient.connect(appContext, wireId, endpoint, hotspotGateway)
             if (client == null) {
                 synchronized(signal) { laneOpening = false; deferredLaneResults.clear() }
                 send(GlassesFilesRequest.LaneDeclined(wireId))
+                if (hotspotGateway != null) inbox.execute { hotspotFailed() }
                 return
             }
             lane = client
             // A cancel or failure that landed while connecting found no lane to close; close it here.
             val stopped = synchronized(signal) {
                 laneOpening = false
-                if (cancelled || stop != null) true else {
-                    resync.opened()
+                if (cancelled || stop != null || terminal != null ||
+                    (hotspotGateway != null && (hotspotDeadline == 0L || SystemClock.elapsedRealtime() >= hotspotDeadline))) true else {
+                    if (hotspotGateway == null) resync.opened()
                     false
                 }
             }
@@ -731,10 +805,12 @@ internal class GlassesFilesController(
                 client.close()
                 return
             }
-            synchronized(signal) {
-                synchronized(lock) { update(item.id) { it.copy(viaWifi = !resync.switched) } }
+            if (hotspotGateway != null) inbox.execute {
+                Log.i(TAG, "glasses files hotspot lane proven setupMs=${SystemClock.elapsedRealtime() - (hotspotDeadline - GlassesFilesHotspotPolicy.SETUP_MS)}")
+                synchronized(signal) {
+                    if (!cancelled && stop == null && terminal == null && !resync.laneOpened) switchToLane()
+                }
             }
-            publish(force = true)
             val deferred = synchronized(signal) { deferredLaneResults.toList().also { deferredLaneResults.clear() } }
             deferred.forEach { result -> inbox.execute { onResult(result) } }
             laneIo.execute {
@@ -753,6 +829,18 @@ internal class GlassesFilesController(
         open fun onResult(result: GlassesFilesResult) = Unit
 
         fun receiveResult(result: GlassesFilesResult) {
+            if (result is GlassesFilesResult.HotspotFailed && result.transferId == wireId) {
+                hotspotFailed()
+                return
+            }
+            if (result is GlassesFilesResult.HotspotReady && result.transferId == wireId) {
+                synchronized(signal) {
+                    if (hotspotDeadline == 0L || SystemClock.elapsedRealtime() >= hotspotDeadline || laneOpening || resync.laneOpened || cancelled || stop != null || terminal != null) return
+                    laneOpening = true
+                }
+                laneIo.execute { openLane(result.lane, ::onLaneFrame, result.gateway) }
+                return
+            }
             synchronized(signal) {
                 if (laneOpening && (result is GlassesFilesResult.LaneResync || result is GlassesFilesResult.BusResume)) {
                     deferredLaneResults += result
@@ -769,7 +857,7 @@ internal class GlassesFilesController(
             val started = synchronized(signal) {
                 if (cancelled || stop != null || terminal != null) return false
                 resync.begin(SystemClock.elapsedRealtime()).also {
-                    if (it) touch()
+                    if (it) { touch(); upgradePending = false }
                     signal.notifyAll()
                 }
             }
@@ -843,11 +931,49 @@ internal class GlassesFilesController(
         private var attempted = 0L
         private var resumePending: Long? = null
 
+        override fun switchToLane() {
+            resync.opened()
+            upgradePending = true
+            touch()
+            if (send(GlassesFilesRequest.LaneSwitch(wireId)) != null) onLaneLost()
+        }
+
+        override fun onLaneFrame(frame: GlassesFilesLane.Frame) {
+            if (frame is GlassesFilesLane.Frame.Ack) {
+                synchronized(signal) {
+                    if (!resync.accepts(viaLane = true)) return
+                    if (frame.stagedBytes > acked) {
+                        acked = frame.stagedBytes
+                        markWifiBytes()
+                    }
+                    touch()
+                    signal.notifyAll()
+                }
+            }
+        }
+
         override fun onLaneLost() {
             if (beginResync() && send(GlassesFilesRequest.LaneResync(wireId)) != null) fail(GlassesTransferStop.LINK_LOST)
         }
 
         override fun onResult(result: GlassesFilesResult) {
+            if (result is GlassesFilesResult.LaneResume && result.transferId == wireId) {
+                synchronized(signal) {
+                    if (!upgradePending || resync.switched) return
+                    if (!upgrade.snapshot(result.stagedBytes, minOf(sizeBytes, attempted))) {
+                        stop = GlassesTransferStop.LINK_LOST
+                    } else {
+                        acked = result.stagedBytes
+                        resumePending = result.stagedBytes
+                        resumeToLane = true
+                        upgradePending = false
+                        Log.i(TAG, "glasses files upload lane resume staged=${result.stagedBytes}")
+                    }
+                    touch()
+                    signal.notifyAll()
+                }
+                return
+            }
             if (result is GlassesFilesResult.LaneResync && result.transferId == wireId) {
                 onLaneLost()
                 return
@@ -913,34 +1039,25 @@ internal class GlassesFilesController(
                 }
                 val finalName = ready!!.name
                 sizeBytes = size
-                ready!!.lane?.let { offer ->
-                    openLane(offer) { frame ->
-                        if (frame is GlassesFilesLane.Frame.Ack) {
-                            synchronized(signal) {
-                                if (!resync.accepts(viaLane = true)) return@synchronized
-                                if (frame.stagedBytes > acked) acked = frame.stagedBytes
-                                touch()
-                                signal.notifyAll()
-                            }
-                        }
-                    }
-                }
+                ready!!.lane?.let { offer -> openLane(offer, ::onLaneFrame) }
+                if (!resync.laneOpened) maybeHotspot()
                 val digest = GlassesFilesSendDigest()
                 var reader = openReader(uri, staged)
                 try {
                     while (true) {
                         val resume = synchronized(signal) { resumePending.also { resumePending = null } }
                         if (resume != null) {
+                            val toLane = synchronized(signal) { resumeToLane.also { resumeToLane = false } }
                             reader.close()
                             reader = openReader(uri, staged)
                             digest.rewind(resume)
-                            if (send(GlassesFilesRequest.BusResume(wireId, resume)) != null) {
+                            if (send(if (toLane) GlassesFilesRequest.LaneResume(wireId, resume) else GlassesFilesRequest.BusResume(wireId, resume)) != null) {
                                 return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
                             }
-                            synchronized(signal) { resync.confirm(resume) }
+                            if (!toLane) synchronized(signal) { resync.confirm(resume) }
                             progress(item.id, resume, size, rate)
                         }
-                        await { failedReason() != null || resumePending != null || !resync.switched || resync.confirmed }
+                        await { failedReason() != null || resumePending != null || (!upgradePending && (!resync.switched || resync.confirmed)) }
                             ?.let { return it }
                         failedReason()?.let { return it }
                         if (hasResume()) continue
@@ -981,6 +1098,7 @@ internal class GlassesFilesController(
                         failedReason()?.let { return it }
                         if (needsResume()) continue
                         if (!sendChunk(digest.position, buffer.copyOf(count), viaLane)) {
+                            if (needsResume()) continue
                             if (viaLane) {
                                 onLaneLost()
                                 continue
@@ -1013,7 +1131,7 @@ internal class GlassesFilesController(
 
         private fun isAborting(): Boolean = synchronized(signal) { cancelled || stop != null }
         private fun hasResume(): Boolean = synchronized(signal) { resumePending != null }
-        private fun needsResume(): Boolean = synchronized(signal) { resync.switched && !resync.confirmed || resumePending != null }
+        private fun needsResume(): Boolean = synchronized(signal) { upgradePending || resync.switched && !resync.confirmed || resumePending != null }
 
         /** Reads the private copy when there is one, the provider otherwise, abandonably either way. */
         private fun openReader(uri: Uri, staged: File?): GlassesProviderReader =
@@ -1067,7 +1185,7 @@ internal class GlassesFilesController(
 
         private fun sendChunk(offset: Long, bytes: ByteArray, viaLane: Boolean): Boolean {
             synchronized(signal) {
-                if (cancelled || stop != null || (viaLane && resync.switched)) return false
+                if (cancelled || stop != null || upgradePending || resumePending != null || (viaLane && resync.switched)) return false
                 attempted = maxOf(attempted, offset + bytes.size)
             }
             if (viaLane) return lane?.write(GlassesFilesLane.Frame.Data(offset, bytes)) == true
@@ -1092,6 +1210,26 @@ internal class GlassesFilesController(
         private var verified: Boolean? = null
         private var readyArrived = false
         private var laneOffer: GlassesFilesLaneEndpoint? = null
+        private var laneUpgradeConfirmed = true
+
+        override fun laneUpgradeComplete(): Boolean = laneUpgradeConfirmed
+
+        override fun switchToLane() {
+            if (!upgrade.snapshot(staged, expectedSize ?: Long.MAX_VALUE)) return
+            resync.opened()
+            laneUpgradeConfirmed = false
+            Log.i(TAG, "glasses files download lane resume staged=$staged")
+            chunksSinceAck = 0
+            touch()
+            if (send(GlassesFilesRequest.LaneResume(wireId, staged)) != null) onLaneLost()
+        }
+
+        override fun onLaneFrame(frame: GlassesFilesLane.Frame) {
+            if (frame is GlassesFilesLane.Frame.Data) inbox.execute {
+                onChunk(GlassesFilesChunk(wireId, frame.offset), frame.bytes, viaLane = true)
+            }
+        }
+
 
         override fun bytesComplete(): Boolean = synchronized(signal) { expectedSize?.let { staged >= it } == true }
 
@@ -1121,6 +1259,10 @@ internal class GlassesFilesController(
             }
             synchronized(signal) {
                 when (result) {
+                    is GlassesFilesResult.LaneResume -> if (result.transferId == wireId && upgrade.offset != null) {
+                        if (result.stagedBytes != upgrade.offset) stop = GlassesTransferStop.LINK_LOST
+                        else laneUpgradeConfirmed = true
+                    }
                     is GlassesFilesResult.BusResume -> if (result.transferId == wireId && resync.switched) {
                         if (!resync.confirm(result.stagedBytes)) stop = GlassesTransferStop.LINK_LOST
                     }
@@ -1138,7 +1280,7 @@ internal class GlassesFilesController(
                         }
                     }
                     is GlassesFilesResult.DownloadEnd -> if (result.transferId == wireId) {
-                        verified = (!resync.switched || resync.confirmed) && receiver.verify(expectedSize, result.sha256)
+                        verified = (laneUpgradeConfirmed || resync.confirmed) && (!resync.switched || resync.confirmed) && receiver.verify(expectedSize, result.sha256)
                         terminal = result
                     }
                     is GlassesFilesResult.TransferFailed -> if (result.transferId == wireId) terminal = result
@@ -1177,6 +1319,7 @@ internal class GlassesFilesController(
                     ack()
                 }
             }
+            if (viaLane) markWifiBytes()
             progress(item.id, synchronized(signal) { staged }, expectedSize, rate)
         }
 
@@ -1198,14 +1341,8 @@ internal class GlassesFilesController(
                     return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
                 }
                 await { readyArrived || terminal != null }?.let { return it }
-                synchronized(signal) { laneOffer }?.let { offer ->
-                    // Frames join the inbox like bus chunks, so ordering and writing stay in one place.
-                    openLane(offer) { frame ->
-                        if (frame is GlassesFilesLane.Frame.Data) {
-                            inbox.execute { onChunk(GlassesFilesChunk(wireId, frame.offset), frame.bytes, viaLane = true) }
-                        }
-                    }
-                }
+                synchronized(signal) { laneOffer }?.let { offer -> openLane(offer, ::onLaneFrame) }
+                if (!resync.laneOpened) maybeHotspot()
                 await { terminal != null }?.let { return it }
                 failedReason()?.let { return it }
                 if (verified != true) return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
