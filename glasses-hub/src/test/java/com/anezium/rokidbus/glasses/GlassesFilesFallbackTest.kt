@@ -178,6 +178,7 @@ class GlassesFilesFallbackTest {
         val receiver = ByteArrayOutputStream()
         val receiverLock = Any()
         val firstBus = java.util.concurrent.CountDownLatch(1)
+        val resumeSender = java.util.concurrent.CountDownLatch(1)
         var frozen = false
         lateinit var transfer: GlassesFilesDownload
         transfer = GlassesFilesDownload(id, file, null, io, { results.add(it); true }, { offset, bytes ->
@@ -189,6 +190,7 @@ class GlassesFilesFallbackTest {
                     firstBus.countDown()
                 }
             }
+            if (offset == 0L) assertTrue(resumeSender.await(5, TimeUnit.SECONDS))
             true
         }, {}, ::now)
         val worker = io.submit { transfer.stream() }
@@ -198,14 +200,19 @@ class GlassesFilesFallbackTest {
         assertTrue(transfer.offerHotspotLane(lane))
         connect(lane, key).use { phone ->
             val staged = synchronized(receiverLock) { frozen = true; receiver.size().toLong() }
+            assertTrue(staged in 1 until source.size.toLong())
             transfer.upgradeToLane(id, staged)
+            resumeSender.countDown()
+            var laneBytes = 0L
             while (receiver.size() < source.size) {
                 val frame = phone.read() as GlassesFilesLane.Frame.Data
                 assertEquals(receiver.size().toLong(), frame.offset)
                 receiver.write(frame.bytes)
+                laneBytes += frame.bytes.size
                 phone.ack(receiver.size().toLong())
             }
             worker.get(10, TimeUnit.SECONDS)
+            assertEquals(source.size.toLong() - staged, laneBytes)
             assertTrue(results.contains(GlassesFilesResult.LaneResume(id, staged)))
             assertTrue(results.contains(GlassesFilesResult.DownloadEnd(id, sha(source))))
             assertFalse(results.any { it is GlassesFilesResult.TransferFailed })
