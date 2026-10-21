@@ -35,7 +35,7 @@ internal class GlassesFilesUpload(
     var finalAckSent = upload.sizeBytes == 0L
 
     fun write(offset: Long, bytes: ByteArray, viaLane: Boolean): GlassesFilesError? =
-        if (resync.accepts(viaLane)) upload.write(offset, bytes) else null
+        if (resync.accepts(viaLane) && (!resync.switched || resync.confirmed)) upload.write(offset, bytes) else null
 
     fun beginResync(now: Long): Long? {
         if (lane?.isProven == true) resync.proven()

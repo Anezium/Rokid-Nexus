@@ -36,6 +36,22 @@ class GlassesFilesFallbackTest {
     }
 
     @Test
+    fun `upload resync freezes bus writes until the sender confirms the snapshot`() {
+        val store = GlassesFileStore(temp.newFolder(), JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
+        val upload = store.beginUpload("", "snapshot.bin", 3, id).getOrThrow()
+        val active = GlassesFilesUpload(id, upload, null, 0)
+        active.resync.opened()
+        assertNull(active.write(0, byteArrayOf(1), viaLane = true))
+        assertEquals(1L, active.beginResync(1))
+        assertNull(active.write(1, byteArrayOf(2, 3), viaLane = false))
+        assertEquals(1L, upload.stagedBytes)
+        assertTrue(active.resync.confirm(1))
+        assertNull(active.write(1, byteArrayOf(2, 3), viaLane = false))
+        assertNull(upload.finish(sha(byteArrayOf(1, 2, 3))))
+        assertArrayEquals(byteArrayOf(1, 2, 3), upload.finalFile().readBytes())
+    }
+
+    @Test
     fun `upload lane cut after handshake before activation resumes its bus snapshot`() {
         val source = ByteArray(200_017) { (it * 17).toByte() }
         val root = temp.newFolder()

@@ -25,6 +25,58 @@ import java.util.concurrent.FutureTask
 @Config(sdk = [32])
 class GlassesFilesControllerTest {
     @Test
+    fun `an answer loss bus resume cannot launch another hotspot attempt`() {
+        val controller = GlassesFilesController(RuntimeEnvironment.getApplication(), { null })
+        controller.onCapabilities(glassesFilesSupported = true, laneSupported = true, hotspotSupported = true)
+        val active = activeSend(controller, GlassesTransferItem("row", GlassesTransferDirection.SEND,
+            "large.bin", "", "file:///large.bin", 8L * 1024 * 1024))
+        setField(active, "laneAttempted", true)
+        try {
+            call(active, "receiveResult", GlassesFilesResult.BusResume(field(active, "wireId") as String, 0))
+            assertTrue((field(active, "resync") as GlassesFilesResync).switched)
+            call(active, "maybeHotspot")
+            assertEquals(false, field(active, "hotspotAttempted"))
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun `peer resync cannot switch a transfer that never attempted a lane`() {
+        val requests = mutableListOf<GlassesFilesRequest>()
+        val controller = GlassesFilesController(RuntimeEnvironment.getApplication(), { envelope ->
+            GlassesFilesContract.parseRequest(envelope.payload)?.let(requests::add)
+            null
+        })
+        val active = activeSend(controller)
+        val id = field(active, "wireId") as String
+        try {
+            call(active, "receiveResult", GlassesFilesResult.LaneResync(id))
+            call(active, "receiveResult", GlassesFilesResult.BusResume(id, 0))
+            assertFalse((field(active, "resync") as GlassesFilesResync).switched)
+            assertTrue(requests.isEmpty())
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun `a stale resync result cannot enter the opening transfer deferred results`() {
+        val controller = GlassesFilesController(RuntimeEnvironment.getApplication(), { null })
+        val active = activeSend(controller)
+        setField(active, "laneOpening", true)
+        try {
+            call(active, "receiveResult", GlassesFilesResult.LaneResync("stale_attempt"))
+            call(active, "receiveResult", GlassesFilesResult.BusResume("stale_attempt", 0))
+            assertTrue((field(active, "deferredLaneResults") as List<*>).isEmpty())
+            call(active, "receiveResult", GlassesFilesResult.BusResume(field(active, "wireId") as String, 0))
+            assertEquals(1, (field(active, "deferredLaneResults") as List<*>).size)
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
     fun `bus resume supersedes a pending lane resume before the upload worker continues`() {
         val source = ByteArray(200_017) { (it * 17).toByte() }
         val context = RuntimeEnvironment.getApplication()
