@@ -78,6 +78,10 @@ sealed interface GlassesFilesRequest {
     data class Cancel(val transferId: String) : GlassesFilesRequest
 
     /** The phone could not open the offered lane and stays on the bus; the glasses stop waiting. */
+    data class HotspotOffer(val transferId: String, val batchId: String, val credentials: GlassesFilesHotspotCredentials) : GlassesFilesRequest
+    data class HotspotRelease(val batchId: String) : GlassesFilesRequest
+    data class LaneSwitch(val transferId: String) : GlassesFilesRequest
+    data class LaneResume(val transferId: String, val stagedBytes: Long) : GlassesFilesRequest
     data class LaneDeclined(val transferId: String) : GlassesFilesRequest
     data class LaneResync(val transferId: String) : GlassesFilesRequest
     data class BusResume(val transferId: String, val stagedBytes: Long) : GlassesFilesRequest
@@ -120,6 +124,9 @@ sealed interface GlassesFilesResult {
     ) : GlassesFilesResult
     data class DownloadEnd(val transferId: String, val sha256: String) : GlassesFilesResult
     data class TransferFailed(val transferId: String, val error: GlassesFilesError) : GlassesFilesResult
+    data class HotspotReady(val transferId: String, val lane: GlassesFilesLaneEndpoint, val gateway: String) : GlassesFilesResult
+    data class HotspotFailed(val transferId: String) : GlassesFilesResult
+    data class LaneResume(val transferId: String, val stagedBytes: Long) : GlassesFilesResult
     data class LaneResync(val transferId: String) : GlassesFilesResult
     data class BusResume(val transferId: String, val stagedBytes: Long) : GlassesFilesResult
 }
@@ -251,6 +258,23 @@ object GlassesFilesContract {
             requireId(request.transferId)
             base(TYPE_CANCEL).put("transferId", request.transferId)
         }
+        is GlassesFilesRequest.HotspotOffer -> {
+            requireId(request.transferId)
+            requireId(request.batchId)
+            require(request.credentials.isValid()) { "Invalid hotspot credentials" }
+            base("hotspot_offer").put("transferId", request.transferId).put("batchId", request.batchId)
+                .put("ssid", request.credentials.ssid).put("passphrase", request.credentials.passphrase)
+                .put("security", request.credentials.security)
+        }
+        is GlassesFilesRequest.HotspotRelease -> {
+            requireId(request.batchId)
+            base("hotspot_release").put("batchId", request.batchId)
+        }
+        is GlassesFilesRequest.LaneSwitch -> {
+            requireId(request.transferId)
+            base("lane_switch").put("transferId", request.transferId)
+        }
+        is GlassesFilesRequest.LaneResume -> laneResume(request.transferId, request.stagedBytes)
         is GlassesFilesRequest.LaneDeclined -> {
             requireId(request.transferId)
             base(TYPE_LANE_DECLINED).put("transferId", request.transferId)
@@ -306,6 +330,19 @@ object GlassesFilesContract {
                 stagedBytes = payload.strictLong("staged")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
             )
             TYPE_CANCEL -> GlassesFilesRequest.Cancel(payload.id("transferId") ?: return null)
+            "hotspot_offer" -> {
+                val credentials = GlassesFilesHotspotCredentials(
+                    payload.strictString("ssid") ?: return null,
+                    payload.strictString("passphrase") ?: return null,
+                    payload.strictString("security") ?: return null,
+                ).takeIf { it.isValid() } ?: return null
+                GlassesFilesRequest.HotspotOffer(payload.id("transferId") ?: return null,
+                    payload.id("batchId") ?: return null, credentials)
+            }
+            "hotspot_release" -> GlassesFilesRequest.HotspotRelease(payload.id("batchId") ?: return null)
+            "lane_switch" -> GlassesFilesRequest.LaneSwitch(payload.id("transferId") ?: return null)
+            "lane_resume" -> GlassesFilesRequest.LaneResume(payload.id("transferId") ?: return null,
+                payload.strictLong("staged")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null)
             TYPE_LANE_DECLINED -> GlassesFilesRequest.LaneDeclined(payload.id("transferId") ?: return null)
             TYPE_LANE_RESYNC -> GlassesFilesRequest.LaneResync(payload.id("transferId") ?: return null)
             TYPE_BUS_RESUME -> GlassesFilesRequest.BusResume(
@@ -390,6 +427,16 @@ object GlassesFilesContract {
             requireId(result.transferId)
             base(TYPE_TRANSFER_FAILED).put("transferId", result.transferId).put("errorCode", result.error.wireValue)
         }
+        is GlassesFilesResult.HotspotReady -> {
+            requireId(result.transferId)
+            require(isValidLaneHost(result.gateway)) { "Invalid gateway" }
+            base("hotspot_ready").put("transferId", result.transferId).putLane(result.lane).put("gateway", result.gateway)
+        }
+        is GlassesFilesResult.HotspotFailed -> {
+            requireId(result.transferId)
+            base("hotspot_failed").put("transferId", result.transferId)
+        }
+        is GlassesFilesResult.LaneResume -> laneResume(result.transferId, result.stagedBytes)
         is GlassesFilesResult.LaneResync -> {
             requireId(result.transferId)
             base(TYPE_LANE_RESYNC).put("transferId", result.transferId)
@@ -448,6 +495,12 @@ object GlassesFilesContract {
                 transferId = payload.id("transferId") ?: return null,
                 error = GlassesFilesError.fromWireValue(payload.strictString("errorCode")) ?: return null,
             )
+            "hotspot_ready" -> GlassesFilesResult.HotspotReady(payload.id("transferId") ?: return null,
+                (payload.optionalLane() ?: return null).endpoint ?: return null,
+                payload.strictString("gateway")?.takeIf(::isValidLaneHost) ?: return null)
+            "hotspot_failed" -> GlassesFilesResult.HotspotFailed(payload.id("transferId") ?: return null)
+            "lane_resume" -> GlassesFilesResult.LaneResume(payload.id("transferId") ?: return null,
+                payload.strictLong("staged")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null)
             TYPE_LANE_RESYNC -> GlassesFilesResult.LaneResync(payload.id("transferId") ?: return null)
             TYPE_BUS_RESUME -> GlassesFilesResult.BusResume(
                 payload.id("transferId") ?: return null,
@@ -455,6 +508,12 @@ object GlassesFilesContract {
             )
             else -> null
         }
+    }
+
+    private fun laneResume(transferId: String, staged: Long): JSONObject {
+        requireId(transferId)
+        require(staged in 0..MAX_FILE_BYTES) { "Invalid offset" }
+        return base("lane_resume").put("transferId", transferId).put("staged", staged)
     }
 
     fun chunkMeta(chunk: GlassesFilesChunk): JSONObject {
