@@ -173,7 +173,14 @@ Legacy records and records from another allocation lifetime are dropped without
 forgetting; unavailable lifetime proof prevents deletion. The hub calls
 it on start and batch end; helper start and 30-second maintenance also retry it.
 Cleanup always retains the currently connected ID, regardless of age, and rechecks
-the lifetime before forgetting. Same-lifetime IDs are removed only after verified absence.
+the lifetime immediately before forgetting, with a two-second monotonic bound from
+the listing. It checks again immediately afterwards and logs only the outcome if
+the lifetime changed or became unavailable. Same-lifetime IDs are removed only
+after verified absence. There is a residual check/use window: a full `system_server`
+restart could complete and reassign the same ID between the final check and the
+fresh service lookup inside one `cmd wifi forget-network` invocation. The numeric
+API cannot bind that request to the checked instance; these checks narrow the
+window without making deletion atomic.
 No SSID, passphrase, BSSID, or device identity is persisted or logged by cleanup.
 Its app-precreated `<nonce>.files-result` receipt contains `pending`, `ok`, or
 `error`; retained obligations or unknown output leave cleanup unconfirmed.

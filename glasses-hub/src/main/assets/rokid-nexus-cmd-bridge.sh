@@ -10,7 +10,7 @@ SEENFILE="$BASE/$NAME.seen"
 PENDING_DISABLE="$BASE/$NAME.pending-disable"
 CHANNEL="/sdcard/Android/data/com.anezium.rokidbus.glasses/files/cmd_bridge"
 DOORBELL="$CHANNEL/doorbell"
-VERSION="2026-10-21.6"
+VERSION="2026-10-21.7"
 FILES_NETWORKS="$BASE/$NAME.files-networks"
 FILES_NETWORK_LIMIT=8
 CAPTURE_DIR="/sdcard/DCIM/Camera"
@@ -256,7 +256,35 @@ files_network_lifetime() (
     NF >= 22 && $1 == pid && $2 == "(system_server)" && $22 ~ /^[0-9]+$/ { print $22 }
   ')"
   case "$files_start" in ""|*[!0-9]*) return 1 ;; esac
+  # The final proof also bounds time spent reading proc, not just Wi-Fi queries.
+  if [ -n "$1" ]; then
+    files_checked_at="$(files_monotonic_centis)" || return 1
+    files_elapsed=$((files_checked_at - $1))
+    [ "$files_elapsed" -ge 0 ] && [ "$files_elapsed" -le 200 ] || return 1
+  fi
   printf '%s %s %s\n' "$files_boot" "$files_pid" "$files_start"
+)
+
+files_monotonic_centis() {
+  cat /proc/uptime 2>/dev/null | awk '
+    NR == 1 && $1 ~ /^[0-9]+\.[0-9][0-9]$/ { split($1, t, "."); printf "%.0f\n", t[1] * 100 + t[2]; ok = 1 }
+    END { if (!ok) exit 1 }
+  '
+}
+
+files_forget_network() (
+  # Keep the final lifetime check adjacent to the service lookup. The cmd RPC
+  # cannot carry this proof; a completed restart inside that window is residual.
+  [ "$(files_network_lifetime "$files_listed_at")" = "$files_lifetime" ] || return 1
+  cmd wifi forget-network "$files_id" >/dev/null 2>&1 || true
+  files_after="$(files_network_lifetime)" || {
+    log_line "files cleanup outcome=lifetime_unavailable"
+    return 1
+  }
+  [ "$files_after" = "$files_lifetime" ] || {
+    log_line "files cleanup outcome=lifetime_changed"
+    return 1
+  }
 )
 
 read_files_networks() {
@@ -299,6 +327,7 @@ cleanup_files_networks() (
     # including a reboot with a repeated PID/start tick, the number proves nothing.
     # Legacy records have no lifetime proof and are discarded without forgetting.
     [ "$files_boot $files_pid $files_start" = "$files_lifetime" ] || continue
+    files_listed_at="$(files_monotonic_centis)" || return 1
     files_ids="$(files_saved_network_ids)" || return 1
     if ! printf '%s\n' "$files_ids" | grep -Fxq "$files_id"; then continue; fi
     forget_ids="$files_id"
@@ -306,8 +335,7 @@ cleanup_files_networks() (
     # Recheck the process lifetime at the deletion boundary, after querying Wi-Fi.
     # A current network is retained regardless of the record age.
     if wifi_not_on_forget_network; then
-      [ "$(files_network_lifetime)" = "$files_lifetime" ] || return 1
-      cmd wifi forget-network "$files_id" >/dev/null 2>&1 || true
+      files_forget_network || return 1
       files_ids="$(files_saved_network_ids)" || return 1
       if ! printf '%s\n' "$files_ids" | grep -Fxq "$files_id"; then continue; fi
     fi

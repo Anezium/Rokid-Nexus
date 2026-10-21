@@ -29,6 +29,7 @@ class FilesCleanupTest(unittest.TestCase):
         self.write("networks", HEADER + row(1, "AndroidShare_camera") + row(2, "HomeTest"))
         self.write("status", "Wifi is not connected\n")
         self.write("now", "1000")
+        self.write("uptime", "100.00 0.00\n")
         self.write("api", "32")
         self.write("server-pid", "123")
         self.write("server-start", "456")
@@ -48,8 +49,12 @@ getprop() { cat "$CHANNEL/api"; }
 pidof() { command cat "$CHANNEL/server-pid"; }
 cat() {
   case "$1" in
+    /proc/uptime) command cat "$CHANNEL/uptime" ;;
     /proc/sys/kernel/random/boot_id) command cat "$CHANNEL/boot" ;;
     /proc/*/stat)
+      if [ -f "$CHANNEL/delay-final-proof" ] && [ -f "$CHANNEL/status-checked" ]; then
+        printf '103.01 0.00\n' > "$CHANNEL/uptime"
+      fi
       printf '%s (system_server) S' "$(command cat "$CHANNEL/server-pid")"
       for ((field=4; field<22; field++)); do printf ' 0'; done
       printf ' %s\n' "$(command cat "$CHANNEL/server-start")" ;;
@@ -68,6 +73,8 @@ cmd() {
     list-networks) cat "$CHANNEL/networks" ;;
     status)
       cat "$CHANNEL/status"
+      : > "$CHANNEL/status-checked"
+      if [ -f "$CHANNEL/delay-on-status" ]; then printf '103.01 0.00\n' > "$CHANNEL/uptime"; fi
       if [ -f "$CHANNEL/restart-on-status" ]; then printf '999' > "$CHANNEL/server-start"; fi ;;
     start-scan) : ;;
     list-scan-results)
@@ -82,6 +89,7 @@ cmd() {
       [ ! -f "$CHANNEL/fail-connect" ] ;;
     forget-network)
       printf '%s\n' "$3" >> "$CHANNEL/forgotten"
+      if [ -f "$CHANNEL/restart-on-forget" ]; then printf '999' > "$CHANNEL/server-start"; fi
       if [ ! -f "$CHANNEL/fail-forget" ]; then
         awk -v target="$3" 'NR == 1 || $1 != target' "$CHANNEL/networks" > "$CHANNEL/rows.tmp"
         mv "$CHANNEL/rows.tmp" "$CHANNEL/networks"
@@ -91,7 +99,7 @@ cmd() {
 }
 '''.replace("__DIR__", self.directory.as_posix()) + body
         result = subprocess.run([BASH, "--noprofile", "--norc"], input=script, text=True,
-                                encoding="utf-8", capture_output=True, timeout=15)
+                                encoding="utf-8", capture_output=True, timeout=30)
         self.assertEqual(0, result.returncode, result.stderr + result.stdout)
         return result.stdout.strip()
 
@@ -200,6 +208,31 @@ cmd() {
         self.assertEqual("ok", self.connect())
         self.write("status", "Wifi is not connected\n")
         self.write("restart-on-status", "1")
+        self.assertEqual("error", self.request("wifi_cleanup_files"))
+        self.assertEqual([], self.forgotten())
+
+    def test_listing_older_than_two_seconds_prevents_forget(self):
+        self.assertEqual("ok", self.connect())
+        self.write("status", "Wifi is not connected\n")
+        self.write("delay-on-status", "1")
+        self.assertEqual("error", self.request("wifi_cleanup_files"))
+        self.assertEqual([], self.forgotten())
+
+    def test_restart_during_forget_is_reported_without_identifiers(self):
+        self.assertEqual("ok", self.connect())
+        self.write("status", "Wifi is not connected\n")
+        self.write("restart-on-forget", "1")
+        self.assertEqual("error", self.request("wifi_cleanup_files"))
+        log = (self.directory / "log").read_text(encoding="utf-8")
+        self.assertIn("files cleanup outcome=lifetime_changed", log)
+        self.assertNotIn("11111111", log)
+        self.assertNotIn("999", log)
+
+    def test_final_lifetime_read_exceeding_two_seconds_prevents_forget(self):
+        self.assertEqual("ok", self.connect())
+        (self.directory / "status-checked").unlink(missing_ok=True)
+        self.write("status", "Wifi is not connected\n")
+        self.write("delay-final-proof", "1")
         self.assertEqual("error", self.request("wifi_cleanup_files"))
         self.assertEqual([], self.forgotten())
 
