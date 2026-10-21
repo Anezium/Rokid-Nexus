@@ -10,7 +10,7 @@ SEENFILE="$BASE/$NAME.seen"
 PENDING_DISABLE="$BASE/$NAME.pending-disable"
 CHANNEL="/sdcard/Android/data/com.anezium.rokidbus.glasses/files/cmd_bridge"
 DOORBELL="$CHANNEL/doorbell"
-VERSION="2026-08-10.1"
+VERSION="2026-10-21.1"
 CAPTURE_DIR="/sdcard/DCIM/Camera"
 SCRIPT_PATH="$BASE/$NAME.sh"
 PACKAGE="com.anezium.rokidbus.glasses"
@@ -167,6 +167,68 @@ reject_request() {
   rm -f "$rejected_file"
 }
 
+matching_forget_network_ids() {
+  forget_networks="$(cmd wifi list-networks 2>/dev/null)" || return 1
+  # API 32 uses fixed-width ID/SSID columns. Compare the whole SSID column, never a prefix,
+  # glob or whitespace-separated word; an unfamiliar listing must fail closed.
+  printf '%s\n' "$forget_networks" | NEXUS_FORGET_SSID="$ssid" awk '
+    NR == 1 {
+      if ($0 == "No networks") { empty = 1; next }
+      if ($0 != "Network Id      SSID                         Security type") exit 1
+      header = 1
+      next
+    }
+    {
+      if (!header || length($0) < 47 || substr($0, 1, 12) !~ /^[0-9]+ *$/ ||
+          substr($0, 13, 1) != " " || substr($0, 46, 1) != " ") exit 1
+      if (substr($0, 14, 32) == sprintf("%-32s", ENVIRON["NEXUS_FORGET_SSID"])) {
+        id = substr($0, 1, 12)
+        sub(/ +$/, "", id)
+        print id
+      }
+    }
+    END { if (!header && !empty) exit 1 }
+  '
+}
+
+wifi_not_on_forget_network() {
+  forget_status="$(cmd wifi status 2>/dev/null)" || return 1
+  if printf '%s\n' "$forget_status" | grep -F -x 'Wifi is disabled' >/dev/null 2>&1 ||
+    printf '%s\n' "$forget_status" | grep -F -x 'Wifi is not connected' >/dev/null 2>&1; then
+    return 0
+  fi
+  forget_current_id="$(printf '%s\n' "$forget_status" |
+    sed -n 's/.*Net ID: \([0-9][0-9]*\).*/\1/p')"
+  case "$forget_current_id" in
+    ""|*[!0-9]*) return 1 ;;
+  esac
+  for forget_saved_id in $forget_ids; do
+    [ "$forget_saved_id" != "$forget_current_id" ] || return 1
+  done
+  return 0
+}
+
+forget_wifi_network() {
+  [ "$(getprop ro.build.version.sdk 2>/dev/null)" = "32" ] || return 1
+  ssid="$(printf '%s' "$ssid_encoded" | base64 -d 2>/dev/null)" || return 1
+  forget_ssid_bytes="$(printf '%s' "$ssid" | wc -c | tr -d '[:space:]')"
+  [ -n "$ssid" ] && [ "$forget_ssid_bytes" -le 32 ] || return 1
+  # Round-tripping rejects embedded NULs and stripped newlines as well as malformed base64.
+  [ "$(printf '%s' "$ssid" | base64 | tr -d '\n')" = "$ssid_encoded" ] || return 1
+  [ "$(printf '%s' "$ssid" | LC_ALL=C tr -d '[:cntrl:]')" = "$ssid" ] || return 1
+  forget_ids="$(matching_forget_network_ids)" || return 1
+  for forget_id in $forget_ids; do
+    case "$forget_id" in ""|*[!0-9]*) return 1 ;; esac
+    forget_ids="$(matching_forget_network_ids)" || return 1
+    printf '%s\n' "$forget_ids" | grep -F -x "$forget_id" >/dev/null 2>&1 || return 1
+    wifi_not_on_forget_network || return 1
+    cmd wifi forget-network "$forget_id" >/dev/null 2>&1 || return 1
+  done
+  # The API-32 command can return zero even when its asynchronous action failed.
+  forget_ids="$(matching_forget_network_ids)" || return 1
+  [ -z "$forget_ids" ]
+}
+
 process_request() {
   request_file="$1"
   request_name="${request_file##*/}"
@@ -246,6 +308,22 @@ EOF
       fi
       token_input="${SECRET}:${command}:${nonce}:${ssid_encoded}:${passphrase_encoded}:${security}"
       ;;
+    wifi_forget)
+      ssid_encoded="$field3"
+      token="$field4"
+      case "$ssid_encoded" in
+        ""|*[!A-Za-z0-9+/=]*)
+          reject_request "$request_file" "$file_nonce" format
+          return
+          ;;
+      esac
+      if [ "${#ssid_encoded}" -gt 44 ] || [ -n "$field5" ] || [ -n "$field6" ] ||
+        [ -z "$token" ] || [ "$request_line" != "$command:$nonce:$ssid_encoded:$token" ]; then
+        reject_request "$request_file" "$file_nonce" format
+        return
+      fi
+      token_input="${SECRET}:${command}:${nonce}:${ssid_encoded}"
+      ;;
     delete_capture)
       name_encoded="$field3"
       token="$field4"
@@ -293,6 +371,24 @@ EOF
   rm -f "$request_file"
 
   case "$command" in
+    wifi_forget)
+      if forget_wifi_network; then
+        forget_result=ok
+        write_response "$nonce" ok ""
+        log_line "command completed command=wifi_forget nonce=$nonce"
+      else
+        forget_result=error
+        write_response "$nonce" error not_forgotten
+        log_line "command failed command=wifi_forget nonce=$nonce"
+      fi
+      # The app creates this inode before the request, avoiding the shell-created response's
+      # negative FUSE dentry. Never create it ourselves or follow a substituted symlink.
+      forget_receipt="$CHANNEL/$nonce.forget-result"
+      if [ -f "$forget_receipt" ] && [ ! -L "$forget_receipt" ]; then
+        printf '%s\n' "$forget_result" > "$forget_receipt" 2>/dev/null
+      fi
+      unset ssid ssid_encoded forget_networks forget_status forget_ids
+      ;;
     wifi_enable)
       rm -f "$PENDING_DISABLE"
       if svc wifi enable >/dev/null 2>&1; then

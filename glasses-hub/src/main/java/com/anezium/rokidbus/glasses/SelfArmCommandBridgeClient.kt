@@ -43,6 +43,7 @@ internal object SelfArmCommandBridgeProtocol {
     const val WIFI_ENABLE = "wifi_enable"
     const val WIFI_DISABLE = "wifi_disable"
     const val WIFI_CONNECT = "wifi_connect"
+    const val WIFI_FORGET = "wifi_forget"
     const val ADB_WIFI_ENABLE = "adb_wifi_enable"
     const val ADB_WIFI_DISABLE = "adb_wifi_disable"
     const val MAX_REQUEST_BYTES = 512
@@ -55,6 +56,7 @@ internal object SelfArmCommandBridgeProtocol {
         WIFI_ENABLE,
         WIFI_DISABLE,
         WIFI_CONNECT,
+        WIFI_FORGET,
         DELETE_CAPTURE,
         ADB_WIFI_ENABLE,
         ADB_WIFI_DISABLE,
@@ -135,6 +137,8 @@ internal object SelfArmCommandBridgeProtocol {
                 }
             DELETE_CAPTURE -> arguments.size == 1 &&
                 arguments[0].length in 1..344 && encodedArgumentRegex.matches(arguments[0])
+            WIFI_FORGET -> arguments.size == 1 &&
+                arguments[0].length in 1..44 && encodedArgumentRegex.matches(arguments[0])
             else -> false
         }
         if (!validShape) return Verification.Rejected("format")
@@ -205,6 +209,7 @@ internal object SelfArmCommandBridgeClient {
         security: WifiConnectSecurity = WifiConnectSecurity.WPA2,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
         joined: (() -> Boolean)? = null,
+        onSubmitted: () -> Unit = {},
     ): Boolean {
         if (ssid.isBlank() || ssid.length > 128 || !security.isValidPassphrase(passphrase) ||
             timeoutMs <= 0L
@@ -225,6 +230,7 @@ internal object SelfArmCommandBridgeClient {
             SelfArmCommandBridgeProtocol.WIFI_CONNECT,
             arguments,
             timeoutMs,
+            onSubmitted = onSubmitted,
         ) {
             if (joined == null) awaitWifiNetwork(wifiManager, ssid, timeoutMs)
             else {
@@ -235,6 +241,24 @@ internal object SelfArmCommandBridgeClient {
                 }
                 joined()
             }
+        }
+    }
+
+    fun forgetWifiNetwork(context: Context, ssid: String, timeoutMs: Long = DEFAULT_TIMEOUT_MS): Boolean {
+        val bytes = ssid.toByteArray(Charsets.UTF_8)
+        if (android.os.Build.VERSION.SDK_INT != 32 || ssid.isBlank() || bytes.size !in 1..32 ||
+            ssid.any { it.isISOControl() } || timeoutMs <= 0L
+        ) return false
+        return submit(context.applicationContext, SelfArmCommandBridgeProtocol.WIFI_FORGET,
+            listOf(Base64.encodeToString(bytes, Base64.NO_WRAP)), timeoutMs) { receipt ->
+            val deadline = SystemClock.elapsedRealtime() + timeoutMs
+            while (SystemClock.elapsedRealtime() < deadline) {
+                val result = runCatching { receipt?.readText() }.getOrNull()
+                if (result == "ok\n") return@submit true
+                if (result == "error\n") return@submit false
+                Thread.sleep(RESPONSE_POLL_MS)
+            }
+            false
         }
     }
 
@@ -435,22 +459,28 @@ internal object SelfArmCommandBridgeClient {
         command: String,
         arguments: List<String>,
         timeoutMs: Long,
-        awaitResult: () -> Boolean,
+        onSubmitted: () -> Unit = {},
+        awaitResult: (File?) -> Boolean,
     ): Boolean {
         val secret = loadSecretHex(context) ?: return false
         val channel = ensureChannelDir(context) ?: return false
         val nonce = randomHex(16)
         val requestFile = File(channel, "$nonce.request")
         val tempFile = File(channel, ".$nonce.request.${UUID.randomUUID()}.tmp")
+        // Pre-create this app-owned inode; unlike shell-created responses it has no negative
+        // FUSE dentry. A stale read can only report failure, never a false successful forget.
+        val receipt = if (command == SelfArmCommandBridgeProtocol.WIFI_FORGET) File(channel, "$nonce.forget-result") else null
         return try {
             val request = SelfArmCommandBridgeProtocol.request(secret, command, nonce, arguments)
             if (request.toByteArray(Charsets.UTF_8).size > SelfArmCommandBridgeProtocol.MAX_REQUEST_BYTES) {
                 return false
             }
+            receipt?.writeText("pending\n")
             tempFile.writeText(request)
             if (!tempFile.renameTo(requestFile)) return false
+            onSubmitted()
             ringDoorbell(File(channel, DOORBELL_NAME), nonce)
-            awaitResult()
+            awaitResult(receipt)
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
             false
@@ -459,6 +489,7 @@ internal object SelfArmCommandBridgeClient {
         } finally {
             tempFile.delete()
             requestFile.delete()
+            receipt?.delete()
         }
     }
 

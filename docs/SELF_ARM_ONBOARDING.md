@@ -79,15 +79,16 @@ reconnects over paired TLS, and retries that idempotent phase up to two times. I
 during the planned `adbd` restart, Nexus assumes the restart was dispatched, reconnects, and resumes
 with the post-restart arm verification so the final state is still converged and checked.
 
-The bridge accepts only whitelisted commands: toggling Wi-Fi on/off, and
+The bridge accepts only whitelisted commands: toggling Wi-Fi on/off, forgetting
+a files batch's saved hotspot network (`wifi_forget`, API 32 only), and
 joining a specific SSID/passphrase (`wifi_connect`, with a `security` argument
 of `open`/`wpa2`/`wpa3` — used by the Lens camera link's phone-hosted-hotspot
 fallback to join the phone's `LocalOnlyHotspot` by credentials). Each request
 carries a nonce and a keyed SHA-256 over an app-private random secret, with
 replay rejection — the `wifi_connect` SSID/passphrase/security are part of
 that same signed payload, not separately injectable. The app never reads
-bridge-written files (FUSE negative-cache trap) — it observes the resulting
-system state instead.
+ordinary shell-created response files (FUSE negative-cache trap); it observes
+system state, or the app-precreated forget receipt described below.
 
 Once `WRITE_SECURE_SETTINGS` is granted, the app also repairs its accessibility
 entry **directly** on every launch — no ADB session needed — so accessibility is
@@ -152,11 +153,23 @@ or unopenable FIFO falls back to the sleep-based poll. The line is
 is a 32-byte value generated once, kept app-private and baked into the deployed script. Arguments
 that could contain `:` travel base64-encoded. The bridge re-validates everything itself and refuses
 on any surprise: unknown command, malformed nonce, replayed nonce, bad token, wrong shape.
-The current allow-list is `wifi_enable`, `wifi_disable`, `wifi_connect`,
+The current allow-list is `wifi_enable`, `wifi_disable`, `wifi_connect`, `wifi_forget`,
 `delete_capture`, `adb_wifi_enable`, and `adb_wifi_disable`. The Wireless ADB
 plugin uses the last two only to toggle the transport; pairing start/stop uses
 the hub's already authenticated local KADB identity with separately validated,
 fixed `service call adb` shapes.
+
+`wifi_forget` takes one base64 SSID argument (1–44 encoded characters, at most
+32 decoded UTF-8 bytes, no controls). On Android 12L/API 32 only, it matches
+`cmd wifi list-networks` SSIDs, refuses to forget a currently connected match,
+forgets the matching numeric network IDs, and checks that none remain. Files
+submit it once per joined batch after Wi-Fi ownership reconciliation, on a
+separate cleanup executor. Failure remains best-effort and never blocks restore.
+Unlike the ordinary shell-created response, its outcome uses an app-precreated
+`<nonce>.forget-result` inode containing only `pending`, `ok`, or `error`.
+This avoids the negative-dentry trap; a stale read or an old helper's unknown-command
+rejection leaves cleanup unconfirmed. The app deletes this receipt and its request
+on completion or timeout. Neither file adds persistent Wi-Fi identifiers.
 
 **Adding a command — the whole path.** Every step matters; skipping one is how a command ships in the
 APK and never reaches the glasses.
@@ -191,6 +204,14 @@ deadline (`unzip -p $(pm path …) assets/rokid-nexus-cmd-bridge.sh`) — the co
 from a package we signed, never from a blob handed to it at runtime. A candidate must look like the
 script, carry exactly one secret slot and parse under `sh -n`; the successor has to still be alive
 three seconds later or the previous script is restored and the current loop keeps serving.
+
+The `2026-10-21.1` bridge adds `wifi_forget`; both its asset version and the
+app's `SelfArmConstants.BRIDGE_VERSION` advance together. Already-running bridges
+with APK self-update pick it up automatically at their next five-minute check,
+without re-pairing or a user action. Normal successful self-arm also refreshes
+the internal rendered script and deploys it. A bridge too old to self-update, or
+a stopped bridge, still needs the existing working self-arm/repair path; this
+command does not change that path or claim to repair stale ADB credentials.
 
 Verifying a command on a device:
 

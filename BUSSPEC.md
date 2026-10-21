@@ -2955,7 +2955,19 @@ lease and the phone closes its reservation. An independent glasses watchdog
 also releases abandoned batches. Android can auto-rejoin the previous saved
 network after the hotspot disappears. Wi-Fi enabled by Nexus is released
 through the hub's existing ownership reconciliation; an active camera keeps
-the radio. The transfer card and notification show Wi-Fi only after lane data
+the radio. After reconciliation, a separate best-effort cleanup waits up to 30 s
+for the retained hotspot lease to disappear (or Wi-Fi to turn off), then submits
+the fixed `wifi_forget` bridge command with just the batch SSID in base64.
+Only batches that submitted a bridge join request are eligible, including failed
+joins that might have saved an entry. Repeated release/expiry cannot forget twice;
+camera takeover, link teardown and replacement batches use the same release path.
+The API-32 helper matches the saved-network SSID column exactly, refuses while
+connected to a matching entry, forgets matching numeric IDs, and verifies absence.
+Other Android versions, unknown helper commands and unconfirmed results mean
+not forgotten; they never fail a transfer or block ownership reconciliation.
+The new helper version is `2026-10-21.1`; its existing APK self-update and normal
+re-arm paths are unchanged. No SSID or passphrase is logged or stored by cleanup.
+The transfer card and notification show Wi-Fi only after lane data
 has actually been acknowledged or staged.
 
 Measured on an S23 with

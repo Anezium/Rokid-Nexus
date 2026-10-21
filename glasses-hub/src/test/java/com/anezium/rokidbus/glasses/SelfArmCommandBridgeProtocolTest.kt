@@ -5,6 +5,30 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SelfArmCommandBridgeProtocolTest {
+    @Test fun authenticatedForgetRequestBindsExactlyOneSsidArgument() {
+        val arguments = listOf("QW5kcm9pZFNoYXJlXzEyMzQ=")
+        val request = SelfArmCommandBridgeProtocol.request(SECRET, SelfArmCommandBridgeProtocol.WIFI_FORGET, NONCE, arguments)
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Accepted("wifi_forget", NONCE, arguments),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, emptySet()))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("auth"),
+            SelfArmCommandBridgeProtocol.verify(request.replace(arguments[0], "QW5kcm9pZFNoYXJlXzU2Nzg="), SECRET, emptySet()))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("replay"),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, setOf(NONCE)))
+    }
+
+    @Test fun forgetRejectsMissingExtraMalformedAndOversizedArguments() {
+        listOf(emptyList(), listOf(""), listOf("not-base64!"), listOf("A".repeat(45)),
+            listOf("QQ==", "extra")).forEach { arguments ->
+            val request = SelfArmCommandBridgeProtocol.request(SECRET, "wifi_forget", NONCE, arguments)
+            assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("format"),
+                SelfArmCommandBridgeProtocol.verify(request, SECRET, emptySet()))
+        }
+        val maximum = listOf("A".repeat(44))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Accepted("wifi_forget", NONCE, maximum),
+            SelfArmCommandBridgeProtocol.verify(
+                SelfArmCommandBridgeProtocol.request(SECRET, "wifi_forget", NONCE, maximum), SECRET, emptySet()))
+    }
+
     @Test
     fun prefixKeyedSha256MatchesKnownVectorAndVerifies() {
         val token = SelfArmCommandBridgeProtocol.token(SECRET, "wifi_enable", NONCE)
