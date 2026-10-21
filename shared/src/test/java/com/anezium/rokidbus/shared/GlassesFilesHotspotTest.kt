@@ -12,6 +12,7 @@ class GlassesFilesHotspotTest {
     @Test fun requestsRoundTripAndRejectMalformedIds() {
         listOf(
             GlassesFilesRequest.HotspotOffer(id, "batch_123", credentials),
+            GlassesFilesRequest.HotspotOffer(id, "batch_123", credentials, GlassesFilesClientNetwork("192.168.1.2", 24)),
             GlassesFilesRequest.HotspotRelease("batch_123"),
             GlassesFilesRequest.LaneSwitch(id),
             GlassesFilesRequest.LaneResume(id, 65536),
@@ -70,6 +71,18 @@ class GlassesFilesHotspotTest {
         assertFalse(start(permission = false))
         assertFalse(start(peer = false))
         assertFalse(start(bytes = GlassesFilesHotspotPolicy.MIN_BYTES - 1))
+    }
+
+    @Test fun clientSubnetProtectsSharedNetworkEvenAfterLaneDecline() {
+        val network = GlassesFilesClientNetwork("192.168.1.5", 24)
+        assertTrue(network.contains("192.168.1.6"))
+        assertFalse(network.contains("192.168.2.6"))
+        val offer = GlassesFilesRequest.HotspotOffer(id, "batch_123", credentials, network)
+        listOf(JSONObject.NULL, JSONObject().put("host", "host").put("prefix", 24),
+            JSONObject().put("host", "192.168.1.2").put("prefix", 33),
+            JSONObject().put("host", "192.168.1.2").put("prefix", 24.5)).forEach {
+            assertNull(GlassesFilesContract.parseRequest(GlassesFilesContract.encode(offer).put("clientNetwork", it)))
+        }
     }
 
     @Test fun upgradeFreezesOneReceiverConfirmedOffset() {

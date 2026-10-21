@@ -12,6 +12,20 @@ data class GlassesFilesHotspotCredentials(val ssid: String, val passphrase: Stri
     override fun toString(): String = "GlassesFilesHotspotCredentials(redacted)"
 }
 
+data class GlassesFilesClientNetwork(val host: String, val prefix: Int) {
+    fun isValid(): Boolean = GlassesFilesContract.isValidLaneHost(host) && prefix in 0..32
+
+    fun contains(address: String): Boolean {
+        if (!isValid() || !GlassesFilesContract.isValidLaneHost(address)) return false
+        val local = host.split('.').map(String::toInt)
+        val remote = address.split('.').map(String::toInt)
+        return (0 until prefix).all { bit ->
+            val mask = 1 shl (7 - bit % 8)
+            (local[bit / 8] and mask) == (remote[bit / 8] and mask)
+        }
+    }
+}
+
 object GlassesFilesHotspotPolicy {
     const val MIN_BYTES = 3_670_016L
     const val SETUP_MS = 25_000L

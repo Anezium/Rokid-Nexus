@@ -67,6 +67,34 @@ class GlassesFilesFallbackTest {
     }
 
     @Test
+    fun `bus upload upgrades at completed staging and finishes with the original digest`() {
+        val source = ByteArray(900_007) { (it * 17).toByte() }
+        val root = temp.newFolder()
+        val store = GlassesFileStore(root, JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
+        val upload = store.beginUpload("", "upgrade.bin", source.size.toLong(), id).getOrThrow()
+        val active = GlassesFilesUpload(id, upload, null, 0)
+        val staged = 65_536
+        assertNull(active.write(0, source.copyOfRange(0, staged), viaLane = false))
+        assertEquals(staged.toLong(), active.upgradeToLane())
+        assertNull(active.write(staged.toLong(), byteArrayOf(99, 98), viaLane = false))
+        assertEquals(staged.toLong(), upload.stagedBytes)
+        assertEquals(staged.toLong(), active.upgradeToLane())
+        assertFalse(active.confirmLane(staged + 1L))
+        assertTrue(active.confirmLane(staged.toLong()))
+        val sender = GlassesFilesSendDigest()
+        sender.record(source, staged + 100)
+        sender.rewind(staged.toLong())
+        while (sender.position < source.size) {
+            val count = minOf(sender.readLimit(GlassesFilesLane.CHUNK_BYTES), source.size - sender.position.toInt())
+            val bytes = source.copyOfRange(sender.position.toInt(), sender.position.toInt() + count)
+            if (!sender.replaying) assertNull(active.write(sender.position, bytes, viaLane = true))
+            sender.record(bytes, count)
+        }
+        assertNull(upload.finish(sender.finish()))
+        assertArrayEquals(source, upload.finalFile().readBytes())
+    }
+
+    @Test
     fun `unconfirmed upload expires without duplicate extension and retirement removes staging`() {
         val root = temp.newFolder()
         val store = GlassesFileStore(root, JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
@@ -140,6 +168,49 @@ class GlassesFilesFallbackTest {
         assertTrue(summaries.contains("files lane connected"))
         assertTrue(summaries.contains("files download bus resume staged=$staged"))
         assertTrue(summaries.contains("files download done size=${source.size}"))
+    }
+
+    @Test
+    fun `running bus download upgrades to a proven lane at the receiver snapshot`() {
+        val source = ByteArray(6 * 1024 * 1024 + 17) { (it * 31).toByte() }
+        val file = temp.newFile().apply { writeBytes(source) }
+        val results = LinkedBlockingQueue<GlassesFilesResult>()
+        val receiver = ByteArrayOutputStream()
+        val receiverLock = Any()
+        val firstBus = java.util.concurrent.CountDownLatch(1)
+        var frozen = false
+        lateinit var transfer: GlassesFilesDownload
+        transfer = GlassesFilesDownload(id, file, null, io, { results.add(it); true }, { offset, bytes ->
+            synchronized(receiverLock) {
+                if (!frozen) {
+                    assertEquals(receiver.size().toLong(), offset)
+                    receiver.write(bytes)
+                    transfer.onAck(id, receiver.size().toLong())
+                    firstBus.countDown()
+                }
+            }
+            true
+        }, {}, ::now)
+        val worker = io.submit { transfer.stream() }
+        assertTrue(firstBus.await(5, TimeUnit.SECONDS))
+        val key = GlassesFilesLane.newKey()
+        val lane = lane(key)
+        assertTrue(transfer.offerHotspotLane(lane))
+        connect(lane, key).use { phone ->
+            val staged = synchronized(receiverLock) { frozen = true; receiver.size().toLong() }
+            transfer.upgradeToLane(id, staged)
+            while (receiver.size() < source.size) {
+                val frame = phone.read() as GlassesFilesLane.Frame.Data
+                assertEquals(receiver.size().toLong(), frame.offset)
+                receiver.write(frame.bytes)
+                phone.ack(receiver.size().toLong())
+            }
+            worker.get(10, TimeUnit.SECONDS)
+            assertTrue(results.contains(GlassesFilesResult.LaneResume(id, staged)))
+            assertTrue(results.contains(GlassesFilesResult.DownloadEnd(id, sha(source))))
+            assertFalse(results.any { it is GlassesFilesResult.TransferFailed })
+            assertArrayEquals(source, receiver.toByteArray())
+        }
     }
 
     @Test

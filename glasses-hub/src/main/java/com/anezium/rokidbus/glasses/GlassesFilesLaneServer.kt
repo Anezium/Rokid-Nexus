@@ -152,8 +152,8 @@ internal class GlassesFilesLaneServer internal constructor(
          * Opens a lane on the glasses' Wi-Fi address, or returns null when they are not on a
          * Wi-Fi network: then the transfer simply stays on the bus.
          */
-        fun open(context: Context, transferId: String): GlassesFilesLaneServer? {
-            val address = wifiAddress(context) ?: return null
+        fun open(context: Context, transferId: String, hotspotAddress: InetAddress? = null): GlassesFilesLaneServer? {
+            val address = hotspotAddress ?: wifiAddress(context) ?: return null
             val server = runCatching { ServerSocket(0, BACKLOG, address) }.getOrNull() ?: return null
             val lock = runCatching {
                 @Suppress("DEPRECATION")

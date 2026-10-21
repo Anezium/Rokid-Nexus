@@ -11,12 +11,14 @@ import android.os.Binder
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.Process
+import android.os.SystemClock
 import android.provider.Settings
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.ui.NexusGlyphs
 import com.anezium.rokidbus.client.ui.NexusPluginIcons
+import com.anezium.rokidbus.ink.InkWire
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
@@ -24,21 +26,21 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.FrameProtocol
-import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.GlassesAccessibilityCheckContract
+import com.anezium.rokidbus.shared.GlassesFilesContract
+import com.anezium.rokidbus.shared.GlassesFilesHotspotPolicy
+import com.anezium.rokidbus.shared.GlassesFilesRequest
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.GlassesKeyboardContract
 import com.anezium.rokidbus.shared.GlassesKeyboardReply
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.GlyphContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
-import com.anezium.rokidbus.ink.InkWire
 import com.anezium.rokidbus.shared.LinkStateBits
-import com.anezium.rokidbus.shared.GlassesFilesContract
 import com.anezium.rokidbus.shared.NativeAppContract
+import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PhoneHubCapabilities
 import com.anezium.rokidbus.shared.PhoneHubCapabilitiesContract
-import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.RemoteInputContract
 import com.anezium.rokidbus.shared.RemoteNavigationContract
@@ -47,19 +49,20 @@ import com.anezium.rokidbus.shared.SetupNoteContract
 import com.anezium.rokidbus.shared.SetupNoteMessage
 import com.anezium.rokidbus.shared.SetupPairingOfferContract
 import com.anezium.rokidbus.shared.SetupStage
+import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.TtsContract
 import com.anezium.rokidbus.shared.WirelessAdbAction
 import com.anezium.rokidbus.shared.WirelessAdbContract
 import com.anezium.rokidbus.shared.WirelessAdbReply
 import com.anezium.rokidbus.shared.plugin.PathRules
-import org.json.JSONArray
-import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import org.json.JSONArray
+import org.json.JSONObject
 
 private const val MANUAL_CONNECT_PORT_WAIT_MS = 2_000L
 
@@ -97,6 +100,9 @@ object GlassesHub {
     private val registrations = CopyOnWriteArrayList<Registration>()
     private val launcherListeners = CopyOnWriteArrayList<(List<LauncherEntry>) -> Unit>()
     private val pluginGlyphCache = PluginGlyphCache()
+    @Volatile private var filesHotspotBatch: String? = null
+    @Volatile private var filesHotspotTouchedAt = 0L
+    @Volatile private var phoneFilesHotspotSupported = false
     @Volatile private var wifiOwnership: GlassesWifiOwnership? = null
     // A lambda, not a method reference: the :camera process also loads this object, and a
     // reference would drag MediaSyncEngine's class init (and its executor thread) in with it.
@@ -106,6 +112,7 @@ object GlassesHub {
             wifiRequestExecutor.execute {
                 if (active) {
                     cancelPendingWifiDisable("camera_session_opened")
+                    GlassesFilesService.onCameraStarted()
                 } else {
                     reconcileWifiOwnership(
                         context = context,
@@ -707,6 +714,7 @@ object GlassesHub {
                 BusCapabilityBits.EDITABLE_SURFACE or
                 BusCapabilityBits.GLASSES_FILES or
                 BusCapabilityBits.GLASSES_FILES_LANE or
+                BusCapabilityBits.GLASSES_FILES_HOTSPOT or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             pinSurfaceVersion = PinSurfaceContract.VERSION,
@@ -1382,6 +1390,7 @@ object GlassesHub {
 
     private fun updateRemotePhoneCapabilities(payload: JSONObject) {
         val advertised = PhoneHubCapabilitiesContract.parse(payload)
+        phoneFilesHotspotSupported = advertised.features and BusCapabilityBits.GLASSES_FILES_HOTSPOT != 0
         val next = PhoneHubCapabilitiesContract.create(
             features = supportedPhoneCapabilities(advertised.features),
             cameraConsumerName = advertised.cameraConsumerName,
@@ -1432,6 +1441,7 @@ object GlassesHub {
 
     private fun clearRemotePhoneCapabilities() {
         val previous = remotePhoneCapabilities
+        phoneFilesHotspotSupported = false
         remotePhoneCapabilities = PhoneHubCapabilities(0, null)
         if (cameraLauncherEntry(previous) != null) notifyLauncherEntries()
     }
@@ -1447,6 +1457,86 @@ object GlassesHub {
         val context = appContext ?: return false
         return context.packageManager.checkSignatures(uid, Process.myUid()) ==
             PackageManager.SIGNATURE_MATCH
+    }
+
+    internal fun joinFilesHotspot(
+        offer: GlassesFilesRequest.HotspotOffer,
+        joined: (java.net.InetAddress?, String?) -> Unit,
+    ) {
+        val context = appContext ?: return joined(null, null)
+        wifiRequestExecutor.execute {
+            if (!phoneFilesHotspotSupported || cameraSessionTracker.isActive()) {
+                joined(null, null)
+                return@execute
+            }
+            val credentials = offer.credentials
+            val security = WifiConnectSecurity.fromCommandKeyword(credentials.security)
+            if (!credentials.isValid() || security == null) {
+                joined(null, null)
+                return@execute
+            }
+            val wifi = context.getSystemService(WifiManager::class.java)
+            @Suppress("DEPRECATION")
+            val previousAddress = wifi?.connectionInfo?.ipAddress?.takeIf { it != 0 }?.let(::filesIpv4)?.hostAddress
+            if (previousAddress != null && offer.clientNetwork?.contains(previousAddress) == true) {
+                joined(null, null)
+                return@execute
+            }
+            filesHotspotBatch = offer.batchId
+            touchFilesHotspot()
+            cancelPendingWifiDisable("files_hotspot")
+            wifiEnableReleasePending.set(false)
+            handleGlassesWifiRequest(context, offer.batchId)
+            @Suppress("DEPRECATION")
+            val alreadyJoined = wifi?.connectionInfo?.ssid?.removeSurrounding("\"") == credentials.ssid
+            val applied = alreadyJoined || runCatching {
+                SelfArmCommandBridgeClient.connectWifiNetwork(context, credentials.ssid,
+                    credentials.passphrase, security, timeoutMs = LOHS_REVERSE_JOIN_TIMEOUT_MS)
+            }.getOrDefault(false)
+            @Suppress("DEPRECATION")
+            val info = wifi?.connectionInfo
+            @Suppress("DEPRECATION")
+            val gateway = wifi?.dhcpInfo?.gateway ?: 0
+            val address = info?.ipAddress?.takeIf { it != 0 }?.let(::filesIpv4)
+            val gatewayAddress = gateway.takeIf { it != 0 }?.let(::filesIpv4)?.hostAddress
+            if (!applied || cameraSessionTracker.isActive() || info?.ssid?.removeSurrounding("\"") != credentials.ssid) {
+                joined(null, null)
+            } else {
+                joined(address, gatewayAddress)
+            }
+            wifiRequestExecutor.schedule({ expireFilesHotspot(offer.batchId) },
+                GlassesFilesHotspotPolicy.IDLE_MS, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    private fun filesIpv4(value: Int): java.net.InetAddress = java.net.InetAddress.getByAddress(
+        ByteArray(4) { index -> (value ushr (index * 8)).toByte() },
+    )
+
+    internal fun touchFilesHotspot() {
+        filesHotspotTouchedAt = SystemClock.elapsedRealtime()
+    }
+
+    private fun expireFilesHotspot(batchId: String) {
+        if (filesHotspotBatch != batchId) return
+        val remaining = GlassesFilesHotspotPolicy.IDLE_MS -
+            (SystemClock.elapsedRealtime() - filesHotspotTouchedAt)
+        if (remaining > 0) {
+            wifiRequestExecutor.schedule({ expireFilesHotspot(batchId) }, remaining, TimeUnit.MILLISECONDS)
+        } else {
+            releaseFilesHotspot(batchId)
+        }
+    }
+
+    internal fun releaseFilesHotspot(batchId: String) {
+        val context = appContext ?: return
+        wifiRequestExecutor.execute {
+            if (filesHotspotBatch != batchId) return@execute
+            filesHotspotBatch = null
+            // The batch already spent its idle grace; the shared owner still protects camera/setup.
+            reconcileWifiOwnership(context, "files_hotspot_release", cameraGraceRequested = false,
+                cameraGraceSatisfied = true)
+        }
     }
 
     private fun scheduleGlassesWifiDisable(context: Context, trigger: String) {
@@ -1585,6 +1675,7 @@ object GlassesHub {
         cameraGraceSatisfied: Boolean = false,
     ) {
         val ownership = wifiOwnership ?: return
+        if (filesHotspotBatch != null) return
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         val wifiEnabled = wifiManager?.let { manager ->
             runCatching { manager.isWifiEnabled }

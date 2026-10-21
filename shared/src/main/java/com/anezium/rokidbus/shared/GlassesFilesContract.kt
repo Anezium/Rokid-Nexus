@@ -78,7 +78,7 @@ sealed interface GlassesFilesRequest {
     data class Cancel(val transferId: String) : GlassesFilesRequest
 
     /** The phone could not open the offered lane and stays on the bus; the glasses stop waiting. */
-    data class HotspotOffer(val transferId: String, val batchId: String, val credentials: GlassesFilesHotspotCredentials) : GlassesFilesRequest
+    data class HotspotOffer(val transferId: String, val batchId: String, val credentials: GlassesFilesHotspotCredentials, val clientNetwork: GlassesFilesClientNetwork? = null) : GlassesFilesRequest
     data class HotspotRelease(val batchId: String) : GlassesFilesRequest
     data class LaneSwitch(val transferId: String) : GlassesFilesRequest
     data class LaneResume(val transferId: String, val stagedBytes: Long) : GlassesFilesRequest
@@ -265,6 +265,10 @@ object GlassesFilesContract {
             base("hotspot_offer").put("transferId", request.transferId).put("batchId", request.batchId)
                 .put("ssid", request.credentials.ssid).put("passphrase", request.credentials.passphrase)
                 .put("security", request.credentials.security)
+                .apply { request.clientNetwork?.let {
+                    require(it.isValid()) { "Invalid client network" }
+                    put("clientNetwork", JSONObject().put("host", it.host).put("prefix", it.prefix))
+                } }
         }
         is GlassesFilesRequest.HotspotRelease -> {
             requireId(request.batchId)
@@ -336,8 +340,13 @@ object GlassesFilesContract {
                     payload.strictString("passphrase") ?: return null,
                     payload.strictString("security") ?: return null,
                 ).takeIf { it.isValid() } ?: return null
+                val clientNetwork = if (payload.has("clientNetwork")) {
+                    val network = payload.opt("clientNetwork") as? JSONObject ?: return null
+                    GlassesFilesClientNetwork(network.strictString("host") ?: return null,
+                        network.strictInt("prefix") ?: return null).takeIf { it.isValid() } ?: return null
+                } else null
                 GlassesFilesRequest.HotspotOffer(payload.id("transferId") ?: return null,
-                    payload.id("batchId") ?: return null, credentials)
+                    payload.id("batchId") ?: return null, credentials, clientNetwork)
             }
             "hotspot_release" -> GlassesFilesRequest.HotspotRelease(payload.id("batchId") ?: return null)
             "lane_switch" -> GlassesFilesRequest.LaneSwitch(payload.id("transferId") ?: return null)

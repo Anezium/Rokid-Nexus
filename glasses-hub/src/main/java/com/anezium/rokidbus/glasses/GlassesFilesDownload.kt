@@ -3,8 +3,9 @@ package com.anezium.rokidbus.glasses
 import com.anezium.rokidbus.shared.GlassesFilesContract
 import com.anezium.rokidbus.shared.GlassesFilesError
 import com.anezium.rokidbus.shared.GlassesFilesLane
-import com.anezium.rokidbus.shared.GlassesFilesResync
+import com.anezium.rokidbus.shared.GlassesFilesLaneUpgrade
 import com.anezium.rokidbus.shared.GlassesFilesResult
+import com.anezium.rokidbus.shared.GlassesFilesResync
 import com.anezium.rokidbus.shared.GlassesFilesSendDigest
 import com.anezium.rokidbus.shared.MediaSyncWindowPolicy
 import java.io.File
@@ -26,6 +27,47 @@ internal class GlassesFilesDownload(
     private val lock = Object()
     private val resync = GlassesFilesResync()
     private var lane: GlassesFilesLaneServer? = null
+    private var hotspotLane: GlassesFilesLaneServer? = null
+    private val upgrade = GlassesFilesLaneUpgrade()
+
+    fun canOfferHotspot(): Boolean = synchronized(lock) { !cancelled && !resync.laneOpened && hotspotLane == null }
+
+    fun offerHotspotLane(offered: GlassesFilesLaneServer): Boolean {
+        synchronized(lock) {
+            if (!canOfferHotspot()) return false
+            hotspotLane = offered
+        }
+        laneIo.execute {
+            if (offered.accept()) {
+                laneIo.execute { readLaneAcks(offered) }
+            } else {
+                offered.close()
+            }
+        }
+        return true
+    }
+
+    fun upgradeToLane(id: String, staged: Long) {
+        if (id != transferId) return
+        synchronized(lock) {
+            val connected = hotspotLane?.takeIf { it.isConnected() } ?: return
+            if (cancelled || resync.switched) return
+            val first = upgrade.offset == null
+            if (!upgrade.snapshot(staged, minOf(attempted, size))) {
+                cancelAll()
+                send(GlassesFilesResult.TransferFailed(transferId, GlassesFilesError.INVALID_REQUEST))
+                return
+            }
+            if (first) {
+                resync.opened()
+                lane = connected
+                acked = staged
+                resumePending = staged
+                lock.notifyAll()
+            }
+        }
+        send(GlassesFilesResult.LaneResume(transferId, staged))
+    }
     private var acked = 0L
     private var attempted = 0L
     private var resumePending: Long? = null
@@ -52,6 +94,7 @@ internal class GlassesFilesDownload(
     fun cancelAll() {
         synchronized(lock) { cancelled = true; lock.notifyAll() }
         offeredLane?.close()
+        hotspotLane?.close()
     }
 
     fun requestResync(id: String) {
@@ -64,6 +107,8 @@ internal class GlassesFilesDownload(
         }
         if (!started) return
         offeredLane?.close()
+        hotspotLane?.close()
+        lane?.close()
         send(GlassesFilesResult.LaneResync(transferId))
     }
 
@@ -161,6 +206,7 @@ internal class GlassesFilesDownload(
                 if (hasResume()) continue
                 val sent = sendChunk(digest.position, buffer.copyOf(count), viaLane)
                 if (!sent) {
+                    if (hasResume()) continue
                     if (viaLane) {
                         requestResync(transferId)
                         continue
@@ -175,6 +221,7 @@ internal class GlassesFilesDownload(
         } finally {
             runCatching { input?.close() }
             offeredLane?.close()
+            hotspotLane?.close()
         }
     }
 
@@ -194,7 +241,7 @@ internal class GlassesFilesDownload(
 
     private fun sendChunk(offset: Long, bytes: ByteArray, viaLane: Boolean): Boolean {
         val connected = synchronized(lock) {
-            if (cancelled || (viaLane && resync.switched)) return false
+            if (cancelled || resumePending != null || !resync.accepts(viaLane)) return false
             attempted = maxOf(attempted, offset + bytes.size)
             lane
         }
@@ -238,6 +285,7 @@ internal class GlassesFilesDownload(
 
     private fun finish(error: GlassesFilesError?) {
         offeredLane?.close()
+        hotspotLane?.close()
         if (error != null) {
             summary("files download failed error=${error.wireValue}")
             send(GlassesFilesResult.TransferFailed(transferId, error))

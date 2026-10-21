@@ -45,6 +45,7 @@ internal object GlassesFilesService {
 
     /** Confined to [control]. */
     private var upload: GlassesFilesUpload? = null
+    private var hotspotTransferId: String? = null
 
     @Volatile private var download: GlassesFilesDownload? = null
 
@@ -80,6 +81,14 @@ internal object GlassesFilesService {
             return true
         }
         when (request) {
+            is GlassesFilesRequest.HotspotRelease -> GlassesHub.releaseFilesHotspot(request.batchId)
+            is GlassesFilesRequest.LaneResume -> {
+                download?.upgradeToLane(request.transferId, request.stagedBytes)
+                control.execute {
+                    val active = upload?.takeIf { it.transferId == request.transferId } ?: return@execute
+                    if (!active.confirmLane(request.stagedBytes)) failUpload(active, GlassesFilesError.INVALID_REQUEST)
+                }
+            }
             is GlassesFilesRequest.DownloadProgress -> download?.onAck(request.transferId, request.stagedBytes)
             is GlassesFilesRequest.Cancel -> {
                 download?.cancel(request.transferId)
@@ -87,7 +96,12 @@ internal object GlassesFilesService {
             }
             is GlassesFilesRequest.LaneDeclined -> {
                 download?.declineLane(request.transferId)
-                control.execute { upload?.takeIf { it.transferId == request.transferId }?.lane?.decline() }
+                control.execute {
+                    upload?.takeIf { it.transferId == request.transferId }?.let { active ->
+                        active.lane?.decline()
+                        if (active.lane?.isConnected() != true) active.lane = null
+                    }
+                }
             }
             is GlassesFilesRequest.LaneResync -> {
                 download?.requestResync(request.transferId)
@@ -122,6 +136,12 @@ internal object GlassesFilesService {
     private fun onRequest(request: GlassesFilesRequest) {
         val store = store ?: return
         when (request) {
+            is GlassesFilesRequest.HotspotOffer -> offerHotspot(request)
+            is GlassesFilesRequest.LaneSwitch -> {
+                val active = upload?.takeIf { it.transferId == request.transferId && it.lane?.isConnected() == true } ?: return
+                active.lastActivity = SystemClock.elapsedRealtime()
+                active.upgradeToLane()?.let { sendResult(GlassesFilesResult.LaneResume(request.transferId, it)) }
+            }
             is GlassesFilesRequest.ListFolder -> sendListing(store, request)
             is GlassesFilesRequest.MakeFolder -> sendResult(
                 GlassesFilesResult.Operation(
@@ -141,12 +161,59 @@ internal object GlassesFilesService {
             is GlassesFilesRequest.UploadBegin -> beginUpload(store, request)
             is GlassesFilesRequest.UploadEnd -> finishUpload(request)
             is GlassesFilesRequest.DownloadBegin -> beginDownload(store, request)
+            is GlassesFilesRequest.HotspotRelease,
+            is GlassesFilesRequest.LaneResume,
             is GlassesFilesRequest.DownloadProgress,
             is GlassesFilesRequest.Cancel,
             is GlassesFilesRequest.LaneDeclined,
             is GlassesFilesRequest.LaneResync,
             is GlassesFilesRequest.BusResume,
             -> Unit
+        }
+    }
+
+    fun onCameraStarted() {
+        control.execute {
+            upload?.takeIf { it.transferId == hotspotTransferId }?.let { active ->
+                if (active.lane != null) {
+                    resumeUpload(active.transferId)
+                    active.lane?.close()
+                    sendResult(GlassesFilesResult.HotspotFailed(active.transferId))
+                }
+            }
+            download?.takeIf { it.transferId == hotspotTransferId }?.let { active ->
+                active.requestResync(active.transferId)
+                sendResult(GlassesFilesResult.HotspotFailed(active.transferId))
+            }
+        }
+    }
+
+    private fun offerHotspot(request: GlassesFilesRequest.HotspotOffer) {
+        val sending = download?.takeIf { it.transferId == request.transferId }
+        val receiving = upload?.takeIf { it.transferId == request.transferId }
+        if (receiving == null && sending == null) return
+        if (receiving?.resync?.laneOpened == true || receiving?.lane != null || sending?.canOfferHotspot() == false) return
+        hotspotTransferId = request.transferId
+        GlassesHub.joinFilesHotspot(request) { address, gateway ->
+            control.execute {
+                if ((receiving != null && upload !== receiving) || (sending != null && download !== sending)) return@execute
+                val lane = if (address != null && gateway != null) appContext?.let {
+                    GlassesFilesLaneServer.open(it, request.transferId, address)
+                } else null
+                if (lane == null || gateway == null) {
+                    sendResult(GlassesFilesResult.HotspotFailed(request.transferId))
+                    GlassesHub.releaseFilesHotspot(request.batchId)
+                    return@execute
+                }
+                if (receiving != null) {
+                    receiving.lane = lane
+                    laneIo.execute { serveUploadLane(receiving, lane, upgrade = true) }
+                } else if (sending?.offerHotspotLane(lane) != true) {
+                    lane.close()
+                    return@execute
+                }
+                sendResult(GlassesFilesResult.HotspotReady(request.transferId, lane.endpoint, gateway))
+            }
         }
     }
 
@@ -263,14 +330,14 @@ internal object GlassesFilesService {
      * Feeds the upload from its lane, frame by frame, into the same serial path the bus chunks
      * take. A phone that never connects simply leaves the upload on the bus.
      */
-    private fun serveUploadLane(active: GlassesFilesUpload, lane: GlassesFilesLaneServer) {
+    private fun serveUploadLane(active: GlassesFilesUpload, lane: GlassesFilesLaneServer, upgrade: Boolean = false) {
         if (!lane.accept()) {
             log("files lane not taken")
             lane.close()
             return
         }
         log("files lane connected")
-        control.execute { if (upload === active && !active.resync.laneOpened) active.resync.opened() }
+        control.execute { if (!upgrade && upload === active && !active.resync.laneOpened) active.resync.opened() }
         try {
             while (true) {
                 val frame = lane.read()
@@ -294,7 +361,7 @@ internal object GlassesFilesService {
             sendResult(GlassesFilesResult.TransferFailed(request.transferId, GlassesFilesError.CANCELLED))
             return
         }
-        if (active.resync.switched && !active.resync.confirmed) {
+        if ((active.resync.switched && !active.resync.confirmed) || (!active.laneUpgradeConfirmed && !active.resync.confirmed)) {
             failUpload(active, GlassesFilesError.INVALID_REQUEST)
             return
         }
@@ -331,6 +398,7 @@ internal object GlassesFilesService {
     }
 
     private fun expireIdleUpload() {
+        if (upload != null || download != null) GlassesHub.touchFilesHotspot()
         val active = upload ?: return
         val now = SystemClock.elapsedRealtime()
         if (!active.resync.expired(now) && now - active.lastActivity < GlassesFilesContract.IDLE_TIMEOUT_MS) return

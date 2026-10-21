@@ -2904,7 +2904,10 @@ Denial, unsupported hotspot security, bridge failure, or setup exceeding 25 s
 leaves the transfer on Bluetooth. No retry occurs within that transfer.
 
 Request `hotspot_offer` contains `{transferId, batchId, ssid, passphrase,
-security}`. IDs use the existing ID rules; SSID is nonblank, at most 32 UTF-8
+security}` and optional `clientNetwork: {host, prefix}` (literal IPv4 and
+integer prefix 0?32). The phone snapshots its client subnet before starting the
+hotspot; the glasses refuse a join if their current address belongs to it,
+even when opening the shared lane failed. IDs use the existing ID rules; SSID is nonblank, at most 32 UTF-8
 bytes, without control characters; security is `open`, `wpa2`, or `wpa3`.
 Open requires an empty passphrase; WPA2/WPA3 require 8–128 characters, matching
 the existing join bridge. Credentials and lane keys stay in memory and on the
