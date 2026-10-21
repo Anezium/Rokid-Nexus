@@ -765,7 +765,10 @@ internal class GlassesFilesController(
         }
 
         protected fun markWifiBytes() {
-            synchronized(lock) { update(item.id) { it.copy(viaWifi = true) } }
+            synchronized(lock) {
+                if (synchronized(signal) { cancelled || stop != null || resync.switched }) return
+                update(item.id) { it.copy(viaWifi = true) }
+            }
         }
 
         private val deferredLaneResults = ArrayList<GlassesFilesResult>()
@@ -807,9 +810,7 @@ internal class GlassesFilesController(
             }
             if (hotspotGateway != null) inbox.execute {
                 Log.i(TAG, "glasses files hotspot lane proven setupMs=${SystemClock.elapsedRealtime() - (hotspotDeadline - GlassesFilesHotspotPolicy.SETUP_MS)}")
-                synchronized(signal) {
-                    if (!cancelled && stop == null && terminal == null && !resync.laneOpened) switchToLane()
-                }
+                switchToLane()
             }
             val deferred = synchronized(signal) { deferredLaneResults.toList().also { deferredLaneResults.clear() } }
             deferred.forEach { result -> inbox.execute { onResult(result) } }
@@ -932,23 +933,28 @@ internal class GlassesFilesController(
         private var resumePending: Long? = null
 
         override fun switchToLane() {
-            resync.opened()
-            upgradePending = true
-            touch()
+            synchronized(signal) {
+                if (cancelled || stop != null || terminal != null || resync.laneOpened) return
+                resync.opened()
+                upgradePending = true
+                touch()
+            }
             if (send(GlassesFilesRequest.LaneSwitch(wireId)) != null) onLaneLost()
         }
 
         override fun onLaneFrame(frame: GlassesFilesLane.Frame) {
             if (frame is GlassesFilesLane.Frame.Ack) {
-                synchronized(signal) {
+                val advanced = synchronized(signal) {
                     if (!resync.accepts(viaLane = true)) return
+                    val advanced = frame.stagedBytes > acked
                     if (frame.stagedBytes > acked) {
                         acked = frame.stagedBytes
-                        markWifiBytes()
                     }
                     touch()
                     signal.notifyAll()
+                    advanced
                 }
+                if (advanced) markWifiBytes()
             }
         }
 
@@ -1215,13 +1221,17 @@ internal class GlassesFilesController(
         override fun laneUpgradeComplete(): Boolean = laneUpgradeConfirmed
 
         override fun switchToLane() {
-            if (!upgrade.snapshot(staged, expectedSize ?: Long.MAX_VALUE)) return
-            resync.opened()
-            laneUpgradeConfirmed = false
-            Log.i(TAG, "glasses files download lane resume staged=$staged")
-            chunksSinceAck = 0
-            touch()
-            if (send(GlassesFilesRequest.LaneResume(wireId, staged)) != null) onLaneLost()
+            val offset = synchronized(signal) {
+                if (cancelled || stop != null || terminal != null || resync.laneOpened) return
+                if (!upgrade.snapshot(staged, expectedSize ?: Long.MAX_VALUE)) return
+                resync.opened()
+                laneUpgradeConfirmed = false
+                Log.i(TAG, "glasses files download lane resume staged=$staged")
+                chunksSinceAck = 0
+                touch()
+                staged
+            }
+            if (send(GlassesFilesRequest.LaneResume(wireId, offset)) != null) onLaneLost()
         }
 
         override fun onLaneFrame(frame: GlassesFilesLane.Frame) {
