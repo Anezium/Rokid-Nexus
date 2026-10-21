@@ -748,7 +748,7 @@ internal class GlassesFilesController(
                 timers.schedule(::awaitHotspotPermission, 250L, TimeUnit.MILLISECONDS)
                 return
             }
-            hotspot.acquire(wireId) { inbox.execute { hotspotFailed() } }
+            hotspot.acquire(wireId, synchronized(signal) { hotspotDeadline }) { inbox.execute { hotspotFailed() } }
             val remaining = synchronized(signal) { (hotspotDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(1L) }
             timers.schedule({ inbox.execute {
                 if (synchronized(signal) { hotspotDeadline != 0L && (!resync.laneOpened || !laneUpgradeComplete()) }) hotspotFailed()

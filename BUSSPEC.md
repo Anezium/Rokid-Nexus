@@ -2901,7 +2901,11 @@ and continues throughout hotspot setup. Camera activity vetoes the join.
 The phone requests Nearby Wi-Fi Devices (API 33+) or fine location (API 30–32)
 only from the files screen, once per visit, when qualifying work needs it.
 Denial, unsupported hotspot security, bridge failure, or setup exceeding 25 s
-leaves the transfer on Bluetooth. No retry occurs within that transfer.
+leaves the transfer on Bluetooth. No second hotspot setup occurs within that transfer.
+After `onStarted`, the phone waits at most 5 s, within the original 25 s budget,
+for an up Wi-Fi/AP interface to own a new private IPv4 gateway address outside
+its client subnet before sending the offer. Existing addresses and cellular/VPN
+interfaces cannot establish readiness; timeout closes the reservation.
 
 Request `hotspot_offer` contains `{transferId, batchId, ssid, passphrase,
 security}` and optional `clientNetwork: {host, prefix}` (literal IPv4 and
@@ -2913,7 +2917,7 @@ Open requires an empty passphrase; WPA2/WPA3 require 8–128 characters, matchin
 the existing join bridge. Credentials and lane keys stay in memory and on the
 private bus, never in Nexus logs, storage, or notifications. The existing
 `connectWifiNetwork` bridge request file and Android's saved-network entry are
-accepted exceptions, as for camera `lohs_reverse`; the bridge is unchanged.
+accepted exceptions, as for camera `lohs_reverse`.
 
 The glasses join through that bridge under the hub's existing Wi-Fi ownership,
 then bind their existing lane server only to the joined hotspot IPv4 address.
@@ -2921,10 +2925,11 @@ Files detect the join from the Wi-Fi network's link properties, without an SSID
 or BSSID comparison: an IPv4 address and default-route gateway must be present,
 the address must differ from the pre-join address and be outside `clientNetwork`.
 Only the same batch may reuse its retained address/gateway pair without an
-address change. Release clears that pair. The bridge's existing SSID-based
-Boolean is advisory for files, since background location redaction can make
-it false after a successful join; its join timeout remains at most 15 s inside
-the glasses' 20 s deadline and the phone's 25 s setup budget. A guessed lease
+address change. Release clears that pair. Files opt into a lease-based bridge
+completion predicate, returning as soon as that lease is ready despite SSID
+redaction. Until then, files reissue the connect about every 5 s inside the
+original 20 s glasses deadline and 25 s phone setup budget. The camera keeps
+its existing SSID-based bridge wait and 15 s timeout. A guessed lease
 still needs the authenticated lane handshake before any transfer upgrade.
 Result `hotspot_ready` contains `{transferId, lane: {host, port, key}, gateway}`;
 `gateway` is a literal IPv4 address. The phone connects from that local hotspot

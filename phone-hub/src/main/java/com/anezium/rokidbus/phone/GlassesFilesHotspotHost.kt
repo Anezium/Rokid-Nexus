@@ -9,6 +9,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.anezium.rokidbus.shared.GlassesFilesClientNetwork
 import com.anezium.rokidbus.shared.GlassesFilesHotspotCredentials
 import com.anezium.rokidbus.shared.GlassesFilesHotspotPolicy
@@ -32,21 +33,24 @@ internal class GlassesFilesHotspotHost(
     private var clientNetwork: GlassesFilesClientNetwork? = null
     private var failed: (() -> Unit)? = null
     private var idle: ScheduledFuture<*>? = null
+    private var readiness: ScheduledFuture<*>? = null
+    private var ready = false
 
     @Synchronized
     @SuppressLint("MissingPermission")
-    fun acquire(transferId: String, onFailed: () -> Unit) {
+    fun acquire(transferId: String, setupDeadline: Long, onFailed: () -> Unit) {
         idle?.cancel(false)
         activeId = transferId
         failed = onFailed
         val existing = batchId
         if (existing != null) {
-            credentials?.let { send(GlassesFilesRequest.HotspotOffer(transferId, existing, it, clientNetwork)) }
+            if (ready) credentials?.let { send(GlassesFilesRequest.HotspotOffer(transferId, existing, it, clientNetwork)) }
             return
         }
         val batch = "files_" + UUID.randomUUID().toString().replace("-", "")
         batchId = batch
         clientNetwork = GlassesFilesLaneClient.clientNetwork(context)
+        val before = GlassesFilesHotspotReadiness.snapshot()
         val callback = object : WifiManager.LocalOnlyHotspotCallback() {
             override fun onStarted(started: WifiManager.LocalOnlyHotspotReservation) {
                 synchronized(this@GlassesFilesHotspotHost) {
@@ -70,7 +74,8 @@ internal class GlassesFilesHotspotHost(
                         return
                     }
                     credentials = offered
-                    activeId?.let { send(GlassesFilesRequest.HotspotOffer(it, batch, offered, clientNetwork)) }
+                    awaitReady(batch, before, minOf(setupDeadline,
+                        SystemClock.elapsedRealtime() + GlassesFilesHotspotReadiness.TIMEOUT_MS))
                 }
             }
 
@@ -79,6 +84,21 @@ internal class GlassesFilesHotspotHost(
         }
         runCatching { context.getSystemService(WifiManager::class.java)?.startLocalOnlyHotspot(callback, main)
             ?: error("Wi-Fi unavailable") }.onFailure { fail(batch) }
+    }
+
+    @Synchronized
+    private fun awaitReady(batch: String, before: List<GlassesFilesHotspotReadiness.Interface>, deadline: Long) {
+        if (batchId != batch) return
+        if (SystemClock.elapsedRealtime() >= deadline) {
+            fail(batch)
+        } else if (GlassesFilesHotspotReadiness.isReady(before, GlassesFilesHotspotReadiness.snapshot(), clientNetwork)) {
+            ready = true
+            credentials?.let { offered -> activeId?.let {
+                send(GlassesFilesRequest.HotspotOffer(it, batch, offered, clientNetwork))
+            } }
+        } else {
+            readiness = timers.schedule({ awaitReady(batch, before, deadline) }, 100L, TimeUnit.MILLISECONDS)
+        }
     }
 
     @Synchronized
@@ -107,6 +127,9 @@ internal class GlassesFilesHotspotHost(
         batchId = null
         activeId = null
         credentials = null
+        ready = false
+        readiness?.cancel(false)
+        readiness = null
         clientNetwork = null
         failed = null
         idle?.cancel(false)

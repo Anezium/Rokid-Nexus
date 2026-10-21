@@ -204,6 +204,7 @@ internal object SelfArmCommandBridgeClient {
         passphrase: String,
         security: WifiConnectSecurity = WifiConnectSecurity.WPA2,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+        joined: (() -> Boolean)? = null,
     ): Boolean {
         if (ssid.isBlank() || ssid.length > 128 || !security.isValidPassphrase(passphrase) ||
             timeoutMs <= 0L
@@ -218,13 +219,23 @@ internal object SelfArmCommandBridgeClient {
         if (arguments[0].length !in 1..172 || arguments[1].length > 172) return false
         val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
             ?: return false
-        if (isConnectedTo(wifiManager, ssid)) return true
+        if (joined?.invoke() ?: isConnectedTo(wifiManager, ssid)) return true
         return submit(
             context.applicationContext,
             SelfArmCommandBridgeProtocol.WIFI_CONNECT,
             arguments,
             timeoutMs,
-        ) { awaitWifiNetwork(wifiManager, ssid, timeoutMs) }
+        ) {
+            if (joined == null) awaitWifiNetwork(wifiManager, ssid, timeoutMs)
+            else {
+                val deadline = SystemClock.elapsedRealtime() + timeoutMs
+                while (SystemClock.elapsedRealtime() < deadline) {
+                    if (joined()) return@submit true
+                    Thread.sleep(RESPONSE_POLL_MS)
+                }
+                joined()
+            }
+        }
     }
 
     /**

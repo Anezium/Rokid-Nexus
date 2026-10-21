@@ -1493,15 +1493,7 @@ object GlassesHub {
             wifiEnableReleasePending.set(false)
             val joinDeadline = SystemClock.elapsedRealtime() + 20_000L
             handleGlassesWifiRequest(context, offer.batchId, allowAccessibilityFallback = false)
-            val alreadyJoined = GlassesFilesHotspotJoin.isJoined(previousAddress,
-                previousLease, offer.clientNetwork, retainedLease)
-            if (!alreadyJoined) runCatching {
-                // The unchanged bridge waits on SSID, which may stay redacted even after DHCP.
-                // Its Boolean is advisory here; link properties decide whether files can proceed.
-                SelfArmCommandBridgeClient.connectWifiNetwork(context, credentials.ssid,
-                    credentials.passphrase, security, timeoutMs = minOf(LOHS_REVERSE_JOIN_TIMEOUT_MS,
-                        (joinDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)))
-            }
+            var lastAttempt: Long? = null
             var address: java.net.InetAddress? = null
             var gatewayAddress: String? = null
             while (!cameraSessionTracker.isActive() && SystemClock.elapsedRealtime() < joinDeadline) {
@@ -1511,6 +1503,20 @@ object GlassesHub {
                     address = lease?.address
                     gatewayAddress = lease?.gateway?.hostAddress
                     break
+                }
+                val now = SystemClock.elapsedRealtime()
+                if (GlassesFilesHotspotJoin.shouldRetry(now, joinDeadline, lastAttempt)) {
+                    lastAttempt = now
+                    runCatching {
+                        SelfArmCommandBridgeClient.connectWifiNetwork(context, credentials.ssid,
+                            credentials.passphrase, security,
+                            timeoutMs = minOf(GlassesFilesHotspotJoin.RETRY_MS, joinDeadline - now),
+                            joined = {
+                                cameraSessionTracker.isActive() || GlassesFilesHotspotJoin.isJoined(
+                                    previousAddress, filesWifiLease(context), offer.clientNetwork, retainedLease)
+                            })
+                    }
+                    continue
                 }
                 Thread.sleep(100L)
             }
