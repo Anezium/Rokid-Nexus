@@ -1513,12 +1513,12 @@ object GlassesHub {
                     break
                 }
                 val now = SystemClock.elapsedRealtime()
-                if (GlassesFilesHotspotJoin.shouldRetry(now, joinDeadline, lastAttempt)) {
+                if (GlassesFilesHotspotJoin.shouldConnect(now, joinDeadline, lastAttempt)) {
                     lastAttempt = now
                     targetConfirmed = runCatching {
                         SelfArmCommandBridgeClient.connectWifiNetwork(context, credentials.ssid,
                             credentials.passphrase, security,
-                            timeoutMs = minOf(GlassesFilesHotspotJoin.RETRY_MS, joinDeadline - now),
+                            timeoutMs = joinDeadline - now,
                             joined = {
                                 cameraSessionTracker.isActive() || GlassesFilesHotspotJoin.isJoined(
                                     true, previousAddress, filesWifiLease(context), offer.clientNetwork, retainedLease)

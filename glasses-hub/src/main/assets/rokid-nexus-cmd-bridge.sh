@@ -10,7 +10,7 @@ SEENFILE="$BASE/$NAME.seen"
 PENDING_DISABLE="$BASE/$NAME.pending-disable"
 CHANNEL="/sdcard/Android/data/com.anezium.rokidbus.glasses/files/cmd_bridge"
 DOORBELL="$CHANNEL/doorbell"
-VERSION="2026-10-21.2"
+VERSION="2026-10-21.3"
 CAPTURE_DIR="/sdcard/DCIM/Camera"
 SCRIPT_PATH="$BASE/$NAME.sh"
 PACKAGE="com.anezium.rokidbus.glasses"
@@ -386,10 +386,25 @@ EOF
         if [ "$connect_valid" = "1" ]; then
           rm -f "$PENDING_DISABLE"
           cmd wifi start-scan >/dev/null 2>&1 || true
-          if { [ "$security" = "open" ] && cmd wifi connect-network "$ssid" open >/dev/null 2>&1; } ||
-            { [ "$security" != "open" ] && cmd wifi connect-network "$ssid" "$security" "$passphrase" >/dev/null 2>&1; }; then
+          # Connecting cancels an active scan on this ROM. Wait for a recent target result
+          # before selecting it; never let an expired app request initiate a late join.
+          connect_scan=0
+          connect_scanned=0
+          while [ "$connect_scan" -lt 15 ] && [ -f "$CHANNEL/$nonce.connect-result" ]; do
+            if cmd wifi list-scan-results 2>/dev/null | TARGET_SSID="$ssid" awk '
+              NR > 1 && $4 + 0 >= 0 && $4 + 0 < 3 && index($0, ENVIRON["TARGET_SSID"]) { found = 1 }
+              END { exit !found }'; then
+              connect_scanned=1
+              break
+            fi
+            connect_scan=$((connect_scan + 1))
+            sleep 0.2
+          done
+          if [ "$connect_scanned" = "1" ] && [ -f "$CHANNEL/$nonce.connect-result" ] &&
+            { { [ "$security" = "open" ] && cmd wifi connect-network "$ssid" open >/dev/null 2>&1; } ||
+              { [ "$security" != "open" ] && cmd wifi connect-network "$ssid" "$security" "$passphrase" >/dev/null 2>&1; }; }; then
             connect_poll=0
-            while [ "$connect_poll" -lt 12 ]; do
+            while [ "$connect_poll" -lt 40 ] && [ -f "$CHANNEL/$nonce.connect-result" ]; do
               connect_status="$(cmd wifi status 2>/dev/null)"
               if printf '%s\n' "$connect_status" | grep -Fxq "Wifi is connected to \"$ssid\"" &&
                 printf '%s\n' "$connect_status" | grep -q 'Supplicant state: COMPLETED' &&
@@ -409,7 +424,7 @@ EOF
       fi
       write_response "$nonce" "$connect_result" ""
       log_line "command completed command=wifi_connect_files nonce=$nonce result=$connect_result"
-      unset ssid passphrase ssid_encoded passphrase_encoded connect_status connect_valid connect_poll connect_receipt
+      unset ssid passphrase ssid_encoded passphrase_encoded connect_status connect_valid connect_poll connect_receipt connect_scan connect_scanned
       ;;
     wifi_forget)
       if forget_wifi_network; then

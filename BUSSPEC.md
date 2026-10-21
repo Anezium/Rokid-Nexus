@@ -2930,8 +2930,10 @@ background SSID redaction: an IPv4 address and default-route gateway must be pre
 the address must differ from the pre-join address and be outside `clientNetwork`.
 Only the same batch may reuse its retained address/gateway pair without an
 address change. Release clears that pair. Files require both the exact target
-confirmation and the lease predicate. Until then, files retry about every 5 s inside the
-original 20 s glasses deadline and 25 s phone setup budget. The camera keeps
+confirmation and the lease predicate. One prepared connect waits for a recent
+scan containing the target before issuing the connect, then lets association
+finish inside the original 20 s glasses deadline and 25 s phone setup budget.
+Repeated shell requests cannot cancel the scan or reconfigure an in-flight join. The camera keeps
 its existing SSID-based bridge wait and 15 s timeout. The authenticated lane
 handshake is still required before any transfer upgrade.
 Result `hotspot_ready` contains `{transferId, lane: {host, port, key}, gateway}`;

@@ -19,22 +19,22 @@ class GlassesFilesHotspotJoinTest {
     private val home = ipv4("192.168.1.25")
     private val hotspot = lease("10.218.114.98", "10.218.114.54")
 
-    @Test fun `an early failed connect is retried within the original deadline`() {
+    @Test fun `one prepared connect owns the deadline without interrupting scans or authentication`() {
         val attempts = mutableListOf<Long>()
         var lastAttempt: Long? = null
         for (now in 0L..20_000L step 100L) {
-            if (GlassesFilesHotspotJoin.shouldRetry(now, 20_000L, lastAttempt)) {
+            if (GlassesFilesHotspotJoin.shouldConnect(now, 20_000L, lastAttempt)) {
                 attempts += now
                 lastAttempt = now
             }
         }
-        org.junit.Assert.assertEquals(listOf(0L, 5_000L, 10_000L, 15_000L), attempts)
-        assertFalse(GlassesFilesHotspotJoin.shouldRetry(20_001L, 20_000L, null))
+        org.junit.Assert.assertEquals(listOf(0L), attempts)
+        assertFalse(GlassesFilesHotspotJoin.shouldConnect(20_001L, 20_000L, null))
     }
 
     @Test fun `a lease acquired during an attempt can finish before its retry window`() {
         assertFalse(GlassesFilesHotspotJoin.isJoined(true, home, null, null))
-        assertFalse(GlassesFilesHotspotJoin.shouldRetry(1_500L, 20_000L, 0L))
+        assertFalse(GlassesFilesHotspotJoin.shouldConnect(1_500L, 20_000L, 0L))
         assertTrue(GlassesFilesHotspotJoin.isJoined(true, home, hotspot, null))
     }
 

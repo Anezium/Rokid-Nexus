@@ -4,10 +4,8 @@ import com.anezium.rokidbus.shared.GlassesFilesClientNetwork
 import java.net.Inet4Address
 
 internal object GlassesFilesHotspotJoin {
-    const val RETRY_MS = 5_000L
-
-    fun shouldRetry(now: Long, deadline: Long, lastAttempt: Long?): Boolean =
-        now < deadline && (lastAttempt == null || now - lastAttempt >= RETRY_MS)
+    fun shouldConnect(now: Long, deadline: Long, lastAttempt: Long?): Boolean =
+        now < deadline && lastAttempt == null
 
     data class Lease(val address: Inet4Address, val gateway: Inet4Address?)
 
