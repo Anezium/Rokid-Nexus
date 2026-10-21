@@ -2918,6 +2918,11 @@ the existing join bridge. Credentials and lane keys stay in memory and on the
 private bus, never in Nexus logs, storage, or notifications. The existing
 `connectWifiNetwork` bridge request file and Android's saved-network entry are
 accepted exceptions, as for camera `lohs_reverse`.
+On API 36+, files use the public configurable LocalOnlyHotspot API, preferring
+5 GHz when supported to avoid missing 2.4 GHz scan results during Bluetooth
+uploads. Android still generates the credentials and security configuration.
+Older phones retain the default reservation. Failure still leaves
+Bluetooth running; this does not change camera hotspot configuration.
 
 The glasses join through that bridge under the hub's existing Wi-Fi ownership,
 then bind their existing lane server only to the joined hotspot IPv4 address.

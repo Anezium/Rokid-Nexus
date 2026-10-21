@@ -10,7 +10,7 @@ SEENFILE="$BASE/$NAME.seen"
 PENDING_DISABLE="$BASE/$NAME.pending-disable"
 CHANNEL="/sdcard/Android/data/com.anezium.rokidbus.glasses/files/cmd_bridge"
 DOORBELL="$CHANNEL/doorbell"
-VERSION="2026-10-21.3"
+VERSION="2026-10-21.4"
 CAPTURE_DIR="/sdcard/DCIM/Camera"
 SCRIPT_PATH="$BASE/$NAME.sh"
 PACKAGE="com.anezium.rokidbus.glasses"
@@ -390,7 +390,7 @@ EOF
           # before selecting it; never let an expired app request initiate a late join.
           connect_scan=0
           connect_scanned=0
-          while [ "$connect_scan" -lt 15 ] && [ -f "$CHANNEL/$nonce.connect-result" ]; do
+          while [ "$connect_scan" -lt 40 ] && [ -f "$CHANNEL/$nonce.connect-result" ]; do
             if cmd wifi list-scan-results 2>/dev/null | TARGET_SSID="$ssid" awk '
               NR > 1 && $4 + 0 >= 0 && $4 + 0 < 3 && index($0, ENVIRON["TARGET_SSID"]) { found = 1 }
               END { exit !found }'; then
@@ -398,6 +398,9 @@ EOF
               break
             fi
             connect_scan=$((connect_scan + 1))
+            if [ "$connect_scan" = "12" ] || [ "$connect_scan" = "24" ]; then
+              cmd wifi start-scan >/dev/null 2>&1 || true
+            fi
             sleep 0.2
           done
           if [ "$connect_scanned" = "1" ] && [ -f "$CHANNEL/$nonce.connect-result" ] &&

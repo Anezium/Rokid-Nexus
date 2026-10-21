@@ -82,8 +82,20 @@ internal class GlassesFilesHotspotHost(
             override fun onFailed(reason: Int) = fail(batch)
             override fun onStopped() = fail(batch)
         }
-        runCatching { context.getSystemService(WifiManager::class.java)?.startLocalOnlyHotspot(callback, main)
-            ?: error("Wi-Fi unavailable") }.onFailure { fail(batch) }
+        runCatching {
+            val wifi = context.getSystemService(WifiManager::class.java) ?: error("Wi-Fi unavailable")
+            val band = GlassesFilesHotspotCompatibility.configuredBand(Build.VERSION.SDK_INT, wifi.is5GHzBandSupported)
+            if (Build.VERSION.SDK_INT >= 36 && band != null) {
+                // Prefer 5 GHz to avoid the missing 2.4 GHz scan results observed during
+                // concurrent Bluetooth uploads. Android still generates the credentials.
+                val config = SoftApConfiguration.Builder()
+                    .setChannels(android.util.SparseIntArray().apply { put(band, 0) })
+                    .build()
+                wifi.startLocalOnlyHotspotWithConfiguration(config, context.mainExecutor, callback)
+            } else {
+                wifi.startLocalOnlyHotspot(callback, main)
+            }
+        }.onFailure { fail(batch) }
     }
 
     @Synchronized
