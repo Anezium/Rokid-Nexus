@@ -6,6 +6,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GlassesFilesResyncTest {
+    @Test fun `snapshot rejects old bus epoch before and after confirmation but admits resumed bytes`() {
+        val resync = GlassesFilesResync()
+        assertTrue(resync.acceptsChunk(false, 0))
+        assertFalse(resync.acceptsChunk(false, 1))
+        resync.proven()
+        assertTrue(resync.begin(0))
+        assertFalse(resync.acceptsChunk(false, 1))
+        assertTrue(resync.offer(12, 100))
+        assertFalse(resync.acceptsChunk(false, 0))
+        assertTrue(resync.acceptsChunk(false, 1))
+        assertTrue(resync.confirm(12))
+        assertFalse(resync.acceptsChunk(false, 0))
+        assertTrue(resync.acceptsChunk(false, 1))
+    }
+
     @Test fun `a proven pending lane can resync without ever accepting lane data`() {
         val resync = GlassesFilesResync()
         resync.proven()

@@ -48,6 +48,12 @@ class GlassesFilesResync {
     fun accepts(viaLane: Boolean): Boolean =
         if (viaLane) laneOpened && !switched else if (switched) offset != null else !laneOpened
 
+    /** Stamp before handing bytes to the bus; an in-flight send keeps its old epoch. */
+    val busEpoch: Int get() = if (switched) 1 else 0
+
+    fun acceptsChunk(viaLane: Boolean, epoch: Int): Boolean =
+        accepts(viaLane) && (viaLane || epoch == busEpoch)
+
     fun expired(now: Long): Boolean = switched && !confirmed &&
         now - startedAt >= GlassesFilesContract.IDLE_TIMEOUT_MS
 }

@@ -19,7 +19,7 @@ internal class GlassesFilesDownload(
     private val offeredLane: GlassesFilesLaneServer?,
     private val laneIo: Executor,
     private val send: (GlassesFilesResult) -> Boolean,
-    private val sendBus: (Long, ByteArray) -> Boolean,
+    private val sendBus: (Long, ByteArray, Int) -> Boolean,
     private val finished: (GlassesFilesDownload) -> Unit,
     private val now: () -> Long,
     private val summary: (String) -> Unit = {},
@@ -244,15 +244,15 @@ internal class GlassesFilesDownload(
     }
 
     private fun sendChunk(offset: Long, bytes: ByteArray, viaLane: Boolean): Boolean {
-        val connected = synchronized(lock) {
+        val (connected, epoch) = synchronized(lock) {
             if (cancelled || resumePending != null || !resync.accepts(viaLane)) return false
             attempted = maxOf(attempted, offset + bytes.size)
-            lane
+            lane to resync.busEpoch
         }
         if (viaLane) return connected?.write(GlassesFilesLane.Frame.Data(offset, bytes)) == true
         repeat(3) {
             if (synchronized(lock) { cancelled }) return false
-            if (sendBus(offset, bytes)) return true
+            if (sendBus(offset, bytes, epoch)) return true
             runCatching { Thread.sleep(250L) }
         }
         return false

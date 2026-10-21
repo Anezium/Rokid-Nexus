@@ -25,7 +25,7 @@ class GlassesFilesFallbackTest {
         assertEquals(GlassesFilesDownloadReceiver.Write.IGNORED, receiver.write(123_457, byteArrayOf(1, 2, 3), true))
         assertEquals(123_457L, receiver.staged)
         // Binary bus data can overtake the control confirmation.
-        assertEquals(GlassesFilesDownloadReceiver.Write.WRITTEN, receiver.write(123_457, source.copyOfRange(123_457, source.size), false))
+        assertEquals(GlassesFilesDownloadReceiver.Write.WRITTEN, receiver.write(123_457, source.copyOfRange(123_457, source.size), false, busEpoch = 1))
         assertFalse(resync.confirm(123_458))
         assertTrue(resync.confirm(123_457))
         assertFalse(resync.begin(200))
@@ -75,7 +75,7 @@ class GlassesFilesFallbackTest {
         resync.begin(0)
         resync.offer(receiver.staged, 2)
         resync.confirm(1)
-        receiver.write(1, byteArrayOf(9), false)
+        receiver.write(1, byteArrayOf(9), false, busEpoch = 1)
         assertFalse(receiver.verify(2, sha(byteArrayOf(1, 2))))
     }
 

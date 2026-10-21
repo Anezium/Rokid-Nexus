@@ -131,7 +131,7 @@ sealed interface GlassesFilesResult {
     data class BusResume(val transferId: String, val stagedBytes: Long) : GlassesFilesResult
 }
 
-data class GlassesFilesChunk(val transferId: String, val offset: Long)
+data class GlassesFilesChunk(val transferId: String, val offset: Long, val busEpoch: Int = 0)
 
 /** Where the glasses listen for this transfer's Wi-Fi lane, and the key that seals it. */
 data class GlassesFilesLaneEndpoint(val host: String, val port: Int, val key: String) {
@@ -528,7 +528,9 @@ object GlassesFilesContract {
     fun chunkMeta(chunk: GlassesFilesChunk): JSONObject {
         requireId(chunk.transferId)
         require(chunk.offset in 0..MAX_FILE_BYTES) { "Invalid offset" }
+        require(chunk.busEpoch in 0..1) { "Invalid bus epoch" }
         return base(TYPE_CHUNK).put("transferId", chunk.transferId).put("offset", chunk.offset)
+            .apply { if (chunk.busEpoch != 0) put("busEpoch", chunk.busEpoch) }
     }
 
     fun parseChunk(payload: JSONObject, binary: ByteArray?): GlassesFilesChunk? {
@@ -537,6 +539,8 @@ object GlassesFilesContract {
         return GlassesFilesChunk(
             transferId = payload.id("transferId") ?: return null,
             offset = payload.strictLong("offset")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
+            busEpoch = if (!payload.has("busEpoch")) 0 else
+                payload.strictLong("busEpoch")?.takeIf { it in 0..1 }?.toInt() ?: return null,
         )
     }
 

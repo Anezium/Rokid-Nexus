@@ -1216,12 +1216,13 @@ internal class GlassesFilesController(
         }
 
         private fun sendChunk(offset: Long, bytes: ByteArray, viaLane: Boolean): Boolean {
-            synchronized(signal) {
+            val epoch = synchronized(signal) {
                 if (cancelled || stop != null || upgradePending || resumePending != null || (viaLane && resync.switched)) return false
                 attempted = maxOf(attempted, offset + bytes.size)
+                resync.busEpoch
             }
             if (viaLane) return lane?.write(GlassesFilesLane.Frame.Data(offset, bytes)) == true
-            val meta = GlassesFilesContract.chunkMeta(GlassesFilesChunk(wireId, offset))
+            val meta = GlassesFilesContract.chunkMeta(GlassesFilesChunk(wireId, offset, epoch))
             repeat(MAX_SEND_ATTEMPTS) {
                 if (sendRemote(BusEnvelope(path = GlassesFilesContract.DATA_PATH, payload = meta, binary = bytes)) == null) {
                     return true
@@ -1332,8 +1333,8 @@ internal class GlassesFilesController(
         fun onChunk(chunk: GlassesFilesChunk, bytes: ByteArray, viaLane: Boolean = false) {
             if (chunk.transferId != wireId) return
             synchronized(signal) {
-                if (!resync.accepts(viaLane) || cancelled || stop != null) return
-                when (if (terminal != null) GlassesFilesDownloadReceiver.Write.OUT_OF_ORDER else receiver.write(chunk.offset, bytes, viaLane)) {
+                if (!resync.acceptsChunk(viaLane, chunk.busEpoch) || cancelled || stop != null) return
+                when (if (terminal != null) GlassesFilesDownloadReceiver.Write.OUT_OF_ORDER else receiver.write(chunk.offset, bytes, viaLane, chunk.busEpoch)) {
                     GlassesFilesDownloadReceiver.Write.IGNORED -> return
                     GlassesFilesDownloadReceiver.Write.OUT_OF_ORDER -> {
                         stop = GlassesTransferStop.LINK_LOST

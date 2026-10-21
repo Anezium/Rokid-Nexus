@@ -134,8 +134,8 @@ internal class GlassesFilesDownloadReceiver(
         private set
     private val digest = GlassesFilesContract.newDigest()
 
-    fun write(offset: Long, bytes: ByteArray, viaLane: Boolean): Write {
-        if (!resync.accepts(viaLane)) return Write.IGNORED
+    fun write(offset: Long, bytes: ByteArray, viaLane: Boolean, busEpoch: Int = 0): Write {
+        if (!resync.acceptsChunk(viaLane, busEpoch)) return Write.IGNORED
         val target = output() ?: return Write.IGNORED
         if (offset != staged) return Write.OUT_OF_ORDER
         if (runCatching { target.write(bytes) }.isFailure) return Write.NO_SPACE

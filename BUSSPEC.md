@@ -2871,7 +2871,14 @@ after the last completed staging write and sends `bus_resume`
 The sender echoes that exact `bus_resume` offset on the opposite route to confirm
 it, rewinds its source to that offset, and continues using the normal bus chunk
 and window sizes. The receiver may accept bus chunks after sending its offset,
-since binary chunks can overtake the JSON confirmation. Repeated resync messages
+since binary chunks can overtake the JSON confirmation. Bus chunk metadata carries
+`busEpoch`: omitted or integer `0` for the original stream, integer `1` for the
+irreversible resumed stream. Senders capture the epoch before submitting bytes,
+including across send retries. After freezing the snapshot, receivers ignore
+epoch-0 chunks even after confirmation, and admit only epoch-1 bus chunks. Both
+receivers can stage resumed bytes before confirmation. This rejects old
+bus sends held during hotspot setup without dropping resumed download data that
+overtakes confirmation. Other epoch values/types are invalid. Repeated resync messages
 reuse the frozen offset and never restart the timeout or rewind a second time.
 Offsets are strict integers from zero through the transfer size; the sender also
 rejects an offset beyond the bytes it attempted to send. Ordinary progress acks

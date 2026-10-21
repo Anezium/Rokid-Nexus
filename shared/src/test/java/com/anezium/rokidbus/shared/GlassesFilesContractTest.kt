@@ -187,6 +187,16 @@ class GlassesFilesContractTest {
     }
 
     @Test
+    fun `chunk bus epochs distinguish resumed bytes and reject malformed values`() {
+        val resumed = GlassesFilesChunk(id, 32_768L, busEpoch = 1)
+        val meta = GlassesFilesContract.chunkMeta(resumed)
+        assertEquals(resumed, GlassesFilesContract.parseChunk(meta, byteArrayOf(1)))
+        for (value in listOf(-1, 2, "1", 1.5, true, JSONObject.NULL)) {
+            assertNull(GlassesFilesContract.parseChunk(JSONObject(meta.toString()).put("busEpoch", value), byteArrayOf(1)))
+        }
+    }
+
+    @Test
     fun `path normalization keeps only safe relative segments`() {
         assertEquals("", GlassesFilesContract.normalizePath(""))
         assertEquals("", GlassesFilesContract.normalizePath("/"))

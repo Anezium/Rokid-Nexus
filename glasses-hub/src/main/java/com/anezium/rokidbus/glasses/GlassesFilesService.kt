@@ -296,9 +296,9 @@ internal object GlassesFilesService {
 
     private fun onUploadChunk(chunk: GlassesFilesChunk, bytes: ByteArray, viaLane: Boolean = false, owner: GlassesFilesUpload? = null) {
         val active = upload?.takeIf { it.transferId == chunk.transferId } ?: return
-        if ((owner != null && owner !== active) || !active.resync.accepts(viaLane)) return
+        if ((owner != null && owner !== active) || !active.resync.acceptsChunk(viaLane, chunk.busEpoch)) return
         active.lastActivity = SystemClock.elapsedRealtime()
-        val error = active.write(chunk.offset, bytes, viaLane)
+        val error = active.write(chunk.offset, bytes, viaLane, chunk.busEpoch)
         if (error != null) {
             failUpload(active, error)
             return
@@ -428,8 +428,8 @@ internal object GlassesFilesService {
         val active = GlassesFilesDownload(
             request.transferId, file, lane, laneIo,
             send = ::sendResult,
-            sendBus = { offset, bytes ->
-                val meta = GlassesFilesContract.chunkMeta(GlassesFilesChunk(request.transferId, offset))
+            sendBus = { offset, bytes, epoch ->
+                val meta = GlassesFilesContract.chunkMeta(GlassesFilesChunk(request.transferId, offset, epoch))
                 GlassesHub.sendToPhone(GlassesFilesContract.DATA_PATH, meta, bytes)
             },
             finished = { if (download === it) download = null },

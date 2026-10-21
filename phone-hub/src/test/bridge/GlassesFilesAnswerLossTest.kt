@@ -67,8 +67,13 @@ class GlassesFilesAnswerLossTest {
     @Test fun `download shared lane truncated answer completes on Bluetooth`() = transfer(upload = false, hotspot = false, truncate = true)
     @Test fun `download hotspot lane dropped answer completes on Bluetooth`() = transfer(upload = false, hotspot = true, truncate = false)
     @Test fun `download hotspot lane truncated answer completes on Bluetooth`() = transfer(upload = false, hotspot = true, truncate = true)
+    @Test fun `download held old bus send after lost answer completes with resumed data before confirmation`() = transfer(upload = false, hotspot = true, truncate = false, holdOldSend = true)
+    @Test fun `download held old bus send after truncated answer completes with resumed data before confirmation`() = transfer(upload = false, hotspot = true, truncate = true, holdOldSend = true)
+    @Test fun `upload held old bus send after lost answer completes after snapshot confirmation`() = transfer(upload = true, hotspot = true, truncate = false, holdOldSend = true)
+    @Test fun `upload held old bus send after truncated answer completes after snapshot confirmation`() = transfer(upload = true, hotspot = true, truncate = true, holdOldSend = true)
+    @Test fun `upload resumed bus data overtakes snapshot confirmation after lost answer`() = transfer(upload = true, hotspot = true, truncate = false, holdOldSend = true, overtakeUploadConfirmation = true)
 
-    private fun transfer(upload: Boolean, hotspot: Boolean, truncate: Boolean) {
+    private fun transfer(upload: Boolean, hotspot: Boolean, truncate: Boolean, holdOldSend: Boolean = false, overtakeUploadConfirmation: Boolean = false) {
         val context = RuntimeEnvironment.getApplication()
         val connectivity = shadowOf(context.getSystemService(ConnectivityManager::class.java))
         val network = ShadowNetwork.newInstance(71)
@@ -91,6 +96,11 @@ class GlassesFilesAnswerLossTest {
         val resyncDelivered = CountDownLatch(1)
         val confirmed = CountDownLatch(1)
         val corrupted = CountDownLatch(1)
+        val resumedData = CountDownLatch(1)
+        val confirmationDelivered = CountDownLatch(1)
+        val heldUpload = AtomicReference<BusEnvelope>()
+        var pendingUploadConfirmation: GlassesFilesRequest.BusResume? = null
+        var oldDownloadDelivered = false
         val messages = CopyOnWriteArrayList<GlassesFilesResult>()
         val requests = CopyOnWriteArrayList<GlassesFilesRequest>()
         val sockets = CopyOnWriteArrayList<java.io.Closeable>()
@@ -114,7 +124,13 @@ class GlassesFilesAnswerLossTest {
                     resyncDelivered.countDown()
                 }
             }
-            if (truncate && resyncResult && declined.count > 0) io.execute { checked(failure, delivery) } else delivery()
+            if (holdOldSend && !upload && result is GlassesFilesResult.BusResume) {
+                io.execute { checked(failure) {
+                    check(resumedData.await(5, TimeUnit.SECONDS))
+                    delivery()
+                    confirmationDelivered.countDown()
+                } }
+            } else if (truncate && resyncResult && declined.count > 0) io.execute { checked(failure, delivery) } else delivery()
         }
 
         fun openLane(id: String) {
@@ -184,70 +200,110 @@ class GlassesFilesAnswerLossTest {
 
         controller = GlassesFilesController(context, { envelope ->
             if (envelope.binary == null && GlassesFilesContract.parseRequest(envelope.payload) is GlassesFilesRequest.LaneDeclined) declined.countDown()
-            control.execute { checked(failure) {
-                val bytes = envelope.binary
-                if (bytes != null) {
-                    val chunk = GlassesFilesContract.parseChunk(envelope.payload, bytes)!!
-                    assertNull(peerUpload!!.write(chunk.offset, bytes, viaLane = false))
-                    deliver(GlassesFilesResult.UploadProgress(chunk.transferId, peerUpload!!.upload.stagedBytes))
-                    offerHotspot(chunk.transferId)
-                } else when (val request = GlassesFilesContract.parseRequest(envelope.payload)) {
-                    is GlassesFilesRequest.UploadBegin -> {
-                        if (!hotspot) openLane(request.transferId)
-                        val store = GlassesFileStore(temp.newFolder(), JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
-                        peerUpload = GlassesFilesUpload(request.transferId,
-                            store.beginUpload("", request.name, request.sizeBytes, request.transferId).getOrThrow(),
-                            if (hotspot) null else lane, SystemClock.elapsedRealtime())
-                        deliver(GlassesFilesResult.UploadReady(request.transferId, request.name, if (hotspot) null else endpoint))
-                        if (!hotspot) serveUpload(upgrade = false)
-                    }
-                    is GlassesFilesRequest.DownloadBegin -> {
-                        if (!hotspot) openLane(request.transferId)
-                        peerDownload = GlassesFilesDownload(request.transferId, input, if (hotspot) null else lane, io,
-                            { result ->
-                                deliver(if (result is GlassesFilesResult.DownloadReady && !hotspot) result.copy(lane = endpoint) else result)
-                                true
-                            }, { offset, data ->
-                                assertTrue(controller.handleRemote(BusEnvelope(path = GlassesFilesContract.DATA_PATH,
-                                    payload = GlassesFilesContract.chunkMeta(GlassesFilesChunk(request.transferId, offset)), binary = data)))
-                                control.execute { checked(failure) { offerHotspot(request.transferId) } }
-                                if (hotspot) {
-                                    check(corrupted.await(10, TimeUnit.SECONDS))
-                                    check(resyncDelivered.await(5, TimeUnit.SECONDS))
-                                }
-                                true
-                            }, {}, SystemClock::elapsedRealtime)
-                        io.execute { checked(failure) { peerDownload!!.stream() } }
-                    }
-                    is GlassesFilesRequest.LaneDeclined -> {
-                        requests += request
-                        peerUpload?.lane?.decline()
-                        peerDownload?.declineLane(request.transferId)
-                    }
-                    is GlassesFilesRequest.LaneResync -> resumeUpload(request.transferId)
-                    is GlassesFilesRequest.BusResume -> {
-                        requests += request
-                        if (upload) {
-                            assertTrue(peerUpload!!.resync.confirm(request.stagedBytes))
-                            confirmed.countDown()
-                        } else peerDownload!!.onResume(request.transferId, request.stagedBytes)
-                    }
-                    is GlassesFilesRequest.DownloadProgress -> peerDownload!!.onAck(request.transferId, request.stagedBytes)
-                    is GlassesFilesRequest.UploadEnd -> {
-                        val peer = peerUpload!!
-                        assertTrue("upload needs receiver-confirmed resync", peer.resync.confirmed)
-                        assertNull(peer.upload.finish(request.sha256))
-                        assertEquals(sha(source), request.sha256)
-                        deliver(GlassesFilesResult.UploadDone(request.transferId, request.transferId))
-                    }
-                    else -> Unit
-                }
-            } }
-            if (hotspot && envelope.binary != null) {
+            val sending = envelope.binary?.let { GlassesFilesContract.parseChunk(envelope.payload, it) }
+            if (holdOldSend && sending?.offset == GlassesFilesContract.CHUNK_BYTES.toLong() && heldUpload.compareAndSet(null, envelope)) {
+                control.execute { checked(failure) { offerHotspot(sending.transferId) } }
                 check(corrupted.await(10, TimeUnit.SECONDS))
                 check(resyncDelivered.await(5, TimeUnit.SECONDS))
+                null
+            } else {
+                control.execute { checked(failure) {
+                    val bytes = envelope.binary
+                    if (bytes != null) {
+                        val chunk = GlassesFilesContract.parseChunk(envelope.payload, bytes)!!
+                        assertNull(peerUpload!!.write(chunk.offset, bytes, viaLane = false, busEpoch = chunk.busEpoch))
+                        pendingUploadConfirmation?.let { confirmation ->
+                            assertFalse(peerUpload!!.resync.confirmed)
+                            assertEquals(chunk.offset + bytes.size, peerUpload!!.upload.stagedBytes)
+                            assertTrue(peerUpload!!.resync.confirm(confirmation.stagedBytes))
+                            confirmed.countDown()
+                            pendingUploadConfirmation = null
+                        }
+                        deliver(GlassesFilesResult.UploadProgress(chunk.transferId, peerUpload!!.upload.stagedBytes))
+                        if (!holdOldSend) offerHotspot(chunk.transferId)
+                    } else when (val request = GlassesFilesContract.parseRequest(envelope.payload)) {
+                        is GlassesFilesRequest.UploadBegin -> {
+                            if (!hotspot) openLane(request.transferId)
+                            val store = GlassesFileStore(temp.newFolder(), JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
+                            peerUpload = GlassesFilesUpload(request.transferId,
+                                store.beginUpload("", request.name, request.sizeBytes, request.transferId).getOrThrow(),
+                                if (hotspot) null else lane, SystemClock.elapsedRealtime())
+                            deliver(GlassesFilesResult.UploadReady(request.transferId, request.name, if (hotspot) null else endpoint))
+                            if (!hotspot) serveUpload(upgrade = false)
+                        }
+                        is GlassesFilesRequest.DownloadBegin -> {
+                            if (!hotspot) openLane(request.transferId)
+                            peerDownload = GlassesFilesDownload(request.transferId, input, if (hotspot) null else lane, io,
+                                { result ->
+                                    deliver(if (result is GlassesFilesResult.DownloadReady && !hotspot) result.copy(lane = endpoint) else result)
+                                    true
+                                }, { offset, data, epoch ->
+                                    val held = holdOldSend && !oldDownloadDelivered && offset > 0
+                                    if (held) {
+                                        control.execute { checked(failure) { offerHotspot(request.transferId) } }
+                                        check(corrupted.await(10, TimeUnit.SECONDS))
+                                        check(resyncDelivered.await(5, TimeUnit.SECONDS))
+                                        check(confirmed.await(5, TimeUnit.SECONDS))
+                                    }
+                                    assertTrue(controller.handleRemote(BusEnvelope(path = GlassesFilesContract.DATA_PATH,
+                                        payload = GlassesFilesContract.chunkMeta(GlassesFilesChunk(request.transferId, offset, epoch)), binary = data)))
+                                    if (holdOldSend) {
+                                        (field(controller, "inbox") as ExecutorService).submit {}.get(5, TimeUnit.SECONDS)
+                                        if (held) oldDownloadDelivered = true
+                                        else if (offset > 0 && resumedData.count > 0) {
+                                            assertFalse((field(active, "resync") as GlassesFilesResync).confirmed)
+                                            resumedData.countDown()
+                                            check(confirmationDelivered.await(5, TimeUnit.SECONDS))
+                                        }
+                                    } else control.execute { checked(failure) { offerHotspot(request.transferId) } }
+                                    if (hotspot && !holdOldSend) {
+                                        check(corrupted.await(10, TimeUnit.SECONDS))
+                                        check(resyncDelivered.await(5, TimeUnit.SECONDS))
+                                    }
+                                    true
+                                }, {}, SystemClock::elapsedRealtime)
+                            io.execute { checked(failure) { peerDownload!!.stream() } }
+                        }
+                        is GlassesFilesRequest.LaneDeclined -> {
+                            requests += request
+                            peerUpload?.lane?.decline()
+                            peerDownload?.declineLane(request.transferId)
+                        }
+                        is GlassesFilesRequest.LaneResync -> resumeUpload(request.transferId)
+                        is GlassesFilesRequest.BusResume -> {
+                            requests += request
+                            if (upload) {
+                                if (overtakeUploadConfirmation) pendingUploadConfirmation = request
+                                else assertTrue(peerUpload!!.resync.confirm(request.stagedBytes))
+                                heldUpload.get()?.let { old ->
+                                    val bytes = old.binary!!
+                                    val chunk = GlassesFilesContract.parseChunk(old.payload, bytes)!!
+                                    assertNull(peerUpload!!.write(chunk.offset, bytes, viaLane = false, busEpoch = chunk.busEpoch))
+                                    assertEquals("old bytes must not advance the confirmed snapshot", request.stagedBytes, peerUpload!!.upload.stagedBytes)
+                                }
+                                if (!overtakeUploadConfirmation) confirmed.countDown()
+                            } else {
+                                peerDownload!!.onResume(request.transferId, request.stagedBytes)
+                                confirmed.countDown()
+                            }
+                        }
+                        is GlassesFilesRequest.DownloadProgress -> peerDownload!!.onAck(request.transferId, request.stagedBytes)
+                        is GlassesFilesRequest.UploadEnd -> {
+                            val peer = peerUpload!!
+                            assertTrue("upload needs receiver-confirmed resync", peer.resync.confirmed)
+                            assertNull(peer.upload.finish(request.sha256))
+                            assertEquals(sha(source), request.sha256)
+                            deliver(GlassesFilesResult.UploadDone(request.transferId, request.transferId))
+                        }
+                        else -> Unit
+                    }
+                } }
+                if (hotspot && envelope.binary != null && !holdOldSend) {
+                    check(corrupted.await(10, TimeUnit.SECONDS))
+                    check(resyncDelivered.await(5, TimeUnit.SECONDS))
+                }
+                null
             }
-            null
         }, openUpload = { _, _ -> input.inputStream() })
         controller.onLinkStateChanged(controlUp = true, dataUp = true)
         controller.onCapabilities(glassesFilesSupported = true, laneSupported = true)
@@ -264,7 +320,11 @@ class GlassesFilesAnswerLossTest {
         try {
             assertTrue("proxy must lose only the sealed answer", corrupted.await(10, TimeUnit.SECONDS))
             assertTrue("phone must decline its failed attempt", declined.await(5, TimeUnit.SECONDS))
-            if (upload) assertTrue("upload receiver snapshot was never confirmed: ${failure.get()}", confirmed.await(3, TimeUnit.SECONDS))
+            if (upload) {
+                val didConfirm = confirmed.await(3, TimeUnit.SECONDS)
+                failure.get()?.let { throw it }
+                assertTrue("upload receiver snapshot was never confirmed", didConfirm)
+            }
             val outcome = worker.get(5, TimeUnit.SECONDS)
             failure.get()?.let { throw it }
             assertEquals(outcome.toString(), "Done", outcome!!.javaClass.simpleName)
@@ -274,6 +334,10 @@ class GlassesFilesAnswerLossTest {
             val snapshot = requests.filterIsInstance<GlassesFilesRequest.BusResume>().first().stagedBytes
             if (hotspot) assertTrue("hotspot must interrupt an already running bus transfer", snapshot > 0)
             else assertEquals(0L, snapshot)
+            if (holdOldSend) {
+                assertEquals(GlassesFilesContract.CHUNK_BYTES.toLong(), snapshot)
+                if (upload) assertNotNull(heldUpload.get()) else assertTrue(oldDownloadDelivered)
+            }
             assertFalse(messages.any { it is GlassesFilesResult.TransferFailed })
             val received = if (upload) peerUpload!!.upload.finalFile().readBytes() else output.readBytes()
             assertArrayEquals(source, received)

@@ -36,7 +36,7 @@ class GlassesFilesFallbackTest {
     }
 
     @Test
-    fun `upload resync freezes bus writes until the sender confirms the snapshot`() {
+    fun `upload snapshot rejects old bus writes and admits resumed bytes before confirmation`() {
         val store = GlassesFileStore(temp.newFolder(), JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
         val upload = store.beginUpload("", "snapshot.bin", 3, id).getOrThrow()
         val active = GlassesFilesUpload(id, upload, null, 0)
@@ -45,8 +45,11 @@ class GlassesFilesFallbackTest {
         assertEquals(1L, active.beginResync(1))
         assertNull(active.write(1, byteArrayOf(2, 3), viaLane = false))
         assertEquals(1L, upload.stagedBytes)
+        assertNull(active.write(1, byteArrayOf(2, 3), viaLane = false, busEpoch = 1))
+        assertEquals(3L, upload.stagedBytes)
         assertTrue(active.resync.confirm(1))
-        assertNull(active.write(1, byteArrayOf(2, 3), viaLane = false))
+        assertNull(active.write(1, byteArrayOf(99), viaLane = false))
+        assertEquals(3L, upload.stagedBytes)
         assertNull(upload.finish(sha(byteArrayOf(1, 2, 3))))
         assertArrayEquals(byteArrayOf(1, 2, 3), upload.finalFile().readBytes())
     }
@@ -70,7 +73,7 @@ class GlassesFilesFallbackTest {
         assertEquals(65_536L, active.beginResync(1))
         assertNull(active.upgradeToLane())
         assertTrue(active.resync.confirm(65_536))
-        assertNull(active.write(65_536, source.copyOfRange(65_536, source.size), viaLane = false))
+        assertNull(active.write(65_536, source.copyOfRange(65_536, source.size), viaLane = false, busEpoch = 1))
         assertNull(upload.finish(sha(source)))
         assertArrayEquals(source, upload.finalFile().readBytes())
     }
@@ -89,7 +92,7 @@ class GlassesFilesFallbackTest {
             results.add(it)
             if (it is GlassesFilesResult.LaneResync) transfer.onResume(id, 16_384)
             true
-        }, { offset, bytes ->
+        }, { offset, bytes, _ ->
             assertEquals(receiver.size().toLong(), offset)
             if (!injected) {
                 injected = true
@@ -140,7 +143,7 @@ class GlassesFilesFallbackTest {
         while (sender.position < source.size) {
             val count = minOf(sender.readLimit(GlassesFilesContract.CHUNK_BYTES), source.size - sender.position.toInt())
             val bytes = source.copyOfRange(sender.position.toInt(), sender.position.toInt() + count)
-            if (!sender.replaying) assertNull(active.write(sender.position, bytes, viaLane = false))
+            if (!sender.replaying) assertNull(active.write(sender.position, bytes, viaLane = false, busEpoch = 1))
             sender.record(bytes, count)
         }
 
@@ -202,7 +205,7 @@ class GlassesFilesFallbackTest {
         active.write(0, byteArrayOf(1, 2), viaLane = true)
         active.beginResync(1)
         active.resync.confirm(2)
-        active.write(2, byteArrayOf(3, 4), viaLane = false)
+        active.write(2, byteArrayOf(3, 4), viaLane = false, busEpoch = 1)
         assertEquals(GlassesFilesError.INTEGRITY, upload.finish(sha(byteArrayOf(9, 2, 3, 4))))
         assertTrue(root.listFiles()!!.isEmpty())
     }
@@ -218,7 +221,7 @@ class GlassesFilesFallbackTest {
         val resumed = AtomicLong(-1)
         val summaries = java.util.concurrent.CopyOnWriteArrayList<String>()
         lateinit var transfer: GlassesFilesDownload
-        transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { offset, bytes ->
+        transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { offset, bytes, _ ->
             assertEquals(receiver.size().toLong(), offset)
             assertTrue(bytes.size <= GlassesFilesContract.CHUNK_BYTES)
             if (resumed.compareAndSet(-1, offset)) {
@@ -264,7 +267,7 @@ class GlassesFilesFallbackTest {
         val resumeSender = java.util.concurrent.CountDownLatch(1)
         var frozen = false
         lateinit var transfer: GlassesFilesDownload
-        transfer = GlassesFilesDownload(id, file, null, io, { results.add(it); true }, { offset, bytes ->
+        transfer = GlassesFilesDownload(id, file, null, io, { results.add(it); true }, { offset, bytes, _ ->
             synchronized(receiverLock) {
                 if (!frozen) {
                     assertEquals(receiver.size().toLong(), offset)
@@ -310,7 +313,7 @@ class GlassesFilesFallbackTest {
         val lane = lane(key)
         val clock = AtomicLong(1_000)
         val results = LinkedBlockingQueue<GlassesFilesResult>()
-        val transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { _, _ -> false }, {}, clock::get)
+        val transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { _, _, _ -> false }, {}, clock::get)
         val worker = io.submit { transfer.stream() }
         results.poll(5, TimeUnit.SECONDS)
         connect(lane, key).use { it.read() }
@@ -327,7 +330,7 @@ class GlassesFilesFallbackTest {
         val key = GlassesFilesLane.newKey()
         val lane = lane(key)
         val results = LinkedBlockingQueue<GlassesFilesResult>()
-        val transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { _, _ -> error("unexpected bus data") }, {}, ::now)
+        val transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { _, _, _ -> error("unexpected bus data") }, {}, ::now)
         val worker = io.submit { transfer.stream() }
         results.poll(5, TimeUnit.SECONDS)
         connect(lane, key).use { phone ->
@@ -345,7 +348,7 @@ class GlassesFilesFallbackTest {
         val key = GlassesFilesLane.newKey()
         val lane = lane(key)
         val results = LinkedBlockingQueue<GlassesFilesResult>()
-        val transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { _, _ -> error("cancelled") }, {}, ::now)
+        val transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { _, _, _ -> error("cancelled") }, {}, ::now)
         val worker = io.submit { transfer.stream() }
         results.poll(5, TimeUnit.SECONDS)
         connect(lane, key).use { it.read() }
