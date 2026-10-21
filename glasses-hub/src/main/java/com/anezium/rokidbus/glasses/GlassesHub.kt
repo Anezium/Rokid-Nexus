@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.IBinder
@@ -57,6 +59,7 @@ import com.anezium.rokidbus.shared.GlassesFilesHotspotPolicy
 import com.anezium.rokidbus.shared.GlassesFilesRequest
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.Inet4Address
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
@@ -101,6 +104,7 @@ object GlassesHub {
     private val launcherListeners = CopyOnWriteArrayList<(List<LauncherEntry>) -> Unit>()
     private val pluginGlyphCache = PluginGlyphCache()
     @Volatile private var filesHotspotBatch: String? = null
+    private var filesHotspotLease: GlassesFilesHotspotJoin.Lease? = null
     @Volatile private var filesHotspotTouchedAt = 0L
     @Volatile private var phoneFilesHotspotSupported = false
     @Volatile private var wifiOwnership: GlassesWifiOwnership? = null
@@ -1475,38 +1479,37 @@ object GlassesHub {
                 joined(null, null)
                 return@execute
             }
-            val wifi = context.getSystemService(WifiManager::class.java)
-            @Suppress("DEPRECATION")
-            val previousAddress = wifi?.connectionInfo?.ipAddress?.takeIf { it != 0 }?.let(::filesIpv4)?.hostAddress
-            if (previousAddress != null && offer.clientNetwork?.contains(previousAddress) == true) {
+            val previousLease = filesWifiLease(context)
+            val previousAddress = previousLease?.address
+            if (previousAddress != null && offer.clientNetwork?.contains(previousAddress.hostAddress.orEmpty()) == true) {
                 joined(null, null)
                 return@execute
             }
+            val retainedLease = filesHotspotLease.takeIf { filesHotspotBatch == offer.batchId }
+            if (filesHotspotBatch != offer.batchId) filesHotspotLease = null
             filesHotspotBatch = offer.batchId
             touchFilesHotspot()
             cancelPendingWifiDisable("files_hotspot")
             wifiEnableReleasePending.set(false)
             val joinDeadline = SystemClock.elapsedRealtime() + 20_000L
             handleGlassesWifiRequest(context, offer.batchId, allowAccessibilityFallback = false)
-            @Suppress("DEPRECATION")
-            val alreadyJoined = wifi?.connectionInfo?.ssid?.removeSurrounding("\"") == credentials.ssid
-            val applied = alreadyJoined || runCatching {
+            val alreadyJoined = GlassesFilesHotspotJoin.isJoined(previousAddress,
+                previousLease, offer.clientNetwork, retainedLease)
+            if (!alreadyJoined) runCatching {
+                // The unchanged bridge waits on SSID, which may stay redacted even after DHCP.
+                // Its Boolean is advisory here; link properties decide whether files can proceed.
                 SelfArmCommandBridgeClient.connectWifiNetwork(context, credentials.ssid,
-                    credentials.passphrase, security, timeoutMs = LOHS_REVERSE_JOIN_TIMEOUT_MS)
-            }.getOrDefault(false)
+                    credentials.passphrase, security, timeoutMs = minOf(LOHS_REVERSE_JOIN_TIMEOUT_MS,
+                        (joinDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)))
+            }
             var address: java.net.InetAddress? = null
             var gatewayAddress: String? = null
-            // Association is observable before DHCP; only the joined interface may host a lane.
-            while (applied && !cameraSessionTracker.isActive() && SystemClock.elapsedRealtime() < joinDeadline) {
-                @Suppress("DEPRECATION")
-                val info = wifi?.connectionInfo
-                @Suppress("DEPRECATION")
-                val gateway = wifi?.dhcpInfo?.gateway ?: 0
-                if (LohsGatewayResolver.normalizeSsid(info?.ssid) == credentials.ssid && info?.ipAddress != null &&
-                    info.ipAddress != 0 && gateway != 0
-                ) {
-                    address = filesIpv4(info.ipAddress)
-                    gatewayAddress = filesIpv4(gateway).hostAddress
+            while (!cameraSessionTracker.isActive() && SystemClock.elapsedRealtime() < joinDeadline) {
+                val lease = filesWifiLease(context)
+                if (GlassesFilesHotspotJoin.isJoined(previousAddress, lease, offer.clientNetwork, retainedLease)) {
+                    filesHotspotLease = lease
+                    address = lease?.address
+                    gatewayAddress = lease?.gateway?.hostAddress
                     break
                 }
                 Thread.sleep(100L)
@@ -1517,9 +1520,18 @@ object GlassesHub {
         }
     }
 
-    private fun filesIpv4(value: Int): java.net.InetAddress = java.net.InetAddress.getByAddress(
-        ByteArray(4) { index -> (value ushr (index * 8)).toByte() },
-    )
+    private fun filesWifiLease(context: Context): GlassesFilesHotspotJoin.Lease? = runCatching {
+        val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return null
+        @Suppress("DEPRECATION")
+        val network = connectivity.allNetworks.firstOrNull { candidate ->
+            connectivity.getNetworkCapabilities(candidate)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        } ?: return null
+        val properties = connectivity.getLinkProperties(network) ?: return null
+        val address = properties.linkAddresses.map { it.address }.filterIsInstance<Inet4Address>()
+            .firstOrNull { !it.isAnyLocalAddress && !it.isLoopbackAddress && !it.isLinkLocalAddress } ?: return null
+        val gateway = properties.routes.firstOrNull { it.isDefaultRoute && it.gateway is Inet4Address }?.gateway as? Inet4Address
+        GlassesFilesHotspotJoin.Lease(address, gateway)
+    }.getOrNull()
 
     internal fun touchFilesHotspot() {
         filesHotspotTouchedAt = SystemClock.elapsedRealtime()
@@ -1541,6 +1553,7 @@ object GlassesHub {
         wifiRequestExecutor.execute {
             if (filesHotspotBatch != batchId) return@execute
             filesHotspotBatch = null
+            filesHotspotLease = null
             // The batch already spent its idle grace; the shared owner still protects camera/setup.
             reconcileWifiOwnership(context, "files_hotspot_release", cameraGraceRequested = false,
                 cameraGraceSatisfied = true)

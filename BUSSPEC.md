@@ -2917,6 +2917,15 @@ accepted exceptions, as for camera `lohs_reverse`; the bridge is unchanged.
 
 The glasses join through that bridge under the hub's existing Wi-Fi ownership,
 then bind their existing lane server only to the joined hotspot IPv4 address.
+Files detect the join from the Wi-Fi network's link properties, without an SSID
+or BSSID comparison: an IPv4 address and default-route gateway must be present,
+the address must differ from the pre-join address and be outside `clientNetwork`.
+Only the same batch may reuse its retained address/gateway pair without an
+address change. Release clears that pair. The bridge's existing SSID-based
+Boolean is advisory for files, since background location redaction can make
+it false after a successful join; its join timeout remains at most 15 s inside
+the glasses' 20 s deadline and the phone's 25 s setup budget. A guessed lease
+still needs the authenticated lane handshake before any transfer upgrade.
 Result `hotspot_ready` contains `{transferId, lane: {host, port, key}, gateway}`;
 `gateway` is a literal IPv4 address. The phone connects from that local hotspot
 gateway address, avoiding its Wi-Fi client network and cellular routing. This
