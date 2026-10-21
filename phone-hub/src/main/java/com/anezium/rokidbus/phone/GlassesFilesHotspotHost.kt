@@ -61,13 +61,7 @@ internal class GlassesFilesHotspotHost(
                     reservation = started
                     android.util.Log.i("GlassesFiles", "files hotspot started")
                     val config = started.softApConfiguration
-                    val security = when (config.securityType) {
-                        SoftApConfiguration.SECURITY_TYPE_OPEN -> "open"
-                        SoftApConfiguration.SECURITY_TYPE_WPA2_PSK -> "wpa2"
-                        SoftApConfiguration.SECURITY_TYPE_WPA3_SAE,
-                        SoftApConfiguration.SECURITY_TYPE_WPA3_SAE_TRANSITION -> "wpa3"
-                        else -> null
-                    }
+                    val security = security(config.securityType)
                     val offered = security?.let { GlassesFilesHotspotCredentials(config.ssid.orEmpty(), config.passphrase.orEmpty(), it) }
                     if (offered?.isValid() != true) {
                         fail(batch)
@@ -143,6 +137,16 @@ internal class GlassesFilesHotspotHost(
     }
 
     companion object {
+        internal fun security(type: Int): String? = when (type) {
+            SoftApConfiguration.SECURITY_TYPE_OPEN -> "open"
+            // The Rokid SAE driver can stall after exchanging commits. Mixed hotspots advertise
+            // PSK too, so use that supported mode without weakening SAE-only reservations.
+            SoftApConfiguration.SECURITY_TYPE_WPA2_PSK,
+            SoftApConfiguration.SECURITY_TYPE_WPA3_SAE_TRANSITION -> "wpa2"
+            SoftApConfiguration.SECURITY_TYPE_WPA3_SAE -> "wpa3"
+            else -> null
+        }
+
         fun permission(): String = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.NEARBY_WIFI_DEVICES
             else Manifest.permission.ACCESS_FINE_LOCATION
 
