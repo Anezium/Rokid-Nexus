@@ -97,14 +97,19 @@ internal class GlassesFilesLaneServer internal constructor(
             // Past this point the watchdog must not close a lane the phone is told is open.
             if (!watchdog.cancel(false)) return false
             val out = DataOutputStream(BufferedOutputStream(client.getOutputStream(), BUFFER_BYTES))
-            sealer.write(out, GlassesFilesLane.ANSWER)
             // Frames can legitimately pause while the other side waits on its own disk or provider.
             client.soTimeout = READ_TIMEOUT_MS
+            // Connected before the answer leaves: the phone's bus reaction to that answer must
+            // never find a proven lane that still reads as absent.
             input = stream
             output = out
             socket = client
+            sealer.write(out, GlassesFilesLane.ANSWER)
             !closed.get()
         } catch (_: Exception) {
+            input = null
+            output = null
+            socket = null
             false
         } finally {
             watchdog.cancel(false)

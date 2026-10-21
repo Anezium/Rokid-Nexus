@@ -108,7 +108,7 @@ internal object GlassesFilesService {
                 download?.onResume(request.transferId, request.stagedBytes)
                 control.execute {
                     val active = upload?.takeIf { it.transferId == request.transferId } ?: return@execute
-                    if (!active.onBusResume(request.stagedBytes)) failUpload(active, GlassesFilesError.INVALID_REQUEST)
+                    if (!active.onBusResume(request.stagedBytes, SystemClock.elapsedRealtime())) failUpload(active, GlassesFilesError.INVALID_REQUEST)
                 }
             }
             else -> control.execute { onRequest(request) }
@@ -339,10 +339,6 @@ internal object GlassesFilesService {
     private fun finishUpload(request: GlassesFilesRequest.UploadEnd) {
         val active = upload?.takeIf { it.transferId == request.transferId } ?: run {
             sendResult(GlassesFilesResult.TransferFailed(request.transferId, GlassesFilesError.CANCELLED))
-            return
-        }
-        if ((active.resync.switched && !active.resync.confirmed) || (!active.laneUpgradeConfirmed && !active.resync.confirmed)) {
-            failUpload(active, GlassesFilesError.INVALID_REQUEST)
             return
         }
         upload = null

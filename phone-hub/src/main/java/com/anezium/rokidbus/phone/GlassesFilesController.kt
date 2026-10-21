@@ -1285,9 +1285,9 @@ internal class GlassesFilesController(
             if (send(GlassesFilesRequest.BusResume(wireId, offset)) != null) fail(GlassesTransferStop.LINK_LOST)
         }
 
-        /** Acks go back over the lane when the bytes came that way. */
+        /** Acks go back over the lane once it is open; a lane still being proven cannot carry them. */
         private fun ack() {
-            val viaLane = lane?.takeUnless { resync.switched }
+            val viaLane = lane?.takeIf { resync.accepts(viaLane = true) }
             if (viaLane == null || !viaLane.write(GlassesFilesLane.Frame.Ack(staged))) {
                 send(GlassesFilesRequest.DownloadProgress(wireId, staged))
             }
@@ -1321,7 +1321,9 @@ internal class GlassesFilesController(
                         }
                     }
                     is GlassesFilesResult.DownloadEnd -> if (result.transferId == wireId) {
-                        verified = (laneUpgradeConfirmed || resync.confirmed) && (!resync.switched || resync.confirmed) && receiver.verify(expectedSize, result.sha256)
+                        // A resync or upgrade still awaiting its echo cannot change what was
+                        // written: the size and digest alone decide whether the file is whole.
+                        verified = receiver.verify(expectedSize, result.sha256)
                         terminal = result
                     }
                     is GlassesFilesResult.TransferFailed -> if (result.transferId == wireId) terminal = result

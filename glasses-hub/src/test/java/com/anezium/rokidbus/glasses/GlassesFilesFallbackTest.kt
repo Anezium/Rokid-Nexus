@@ -395,6 +395,156 @@ class GlassesFilesFallbackTest {
         assertTrue(results.isEmpty())
     }
 
+    @Test
+    fun `download resync begun after the full acknowledgement sends the terminator without a snapshot`() {
+        val source = ByteArray(100_003) { (it * 7).toByte() }
+        val file = temp.newFile().apply { writeBytes(source) }
+        val key = GlassesFilesLane.newKey()
+        val lane = lane(key)
+        val results = LinkedBlockingQueue<GlassesFilesResult>()
+        val transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { _, _, _ -> error("unexpected bus data") }, {}, ::now)
+        val worker = io.submit { transfer.stream() }
+        results.poll(5, TimeUnit.SECONDS)
+        connect(lane, key).use { phone ->
+            assertArrayEquals(source, (phone.read() as GlassesFilesLane.Frame.Data).bytes)
+            awaitTerminatorWait()
+            // The camera takes the Wi-Fi in the same instant the last ack lands: both land under
+            // the transfer lock before the worker can look.
+            synchronized(field(transfer, "lock")!!) {
+                transfer.onAck(id, source.size.toLong(), viaLane = true)
+                transfer.requestResync(id)
+            }
+        }
+        worker.get(5, TimeUnit.SECONDS)
+        assertEquals(listOf(GlassesFilesResult.LaneResync(id), GlassesFilesResult.DownloadEnd(id, sha(source))), results.toList())
+    }
+
+    @Test
+    fun `download snapshot at the full size after the final ack ends without resending`() {
+        val source = ByteArray(100_003) { (it * 7).toByte() }
+        val file = temp.newFile().apply { writeBytes(source) }
+        val key = GlassesFilesLane.newKey()
+        val lane = lane(key)
+        val results = LinkedBlockingQueue<GlassesFilesResult>()
+        val transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { _, _, _ -> error("unexpected bus data") }, {}, ::now)
+        val worker = io.submit { transfer.stream() }
+        results.poll(5, TimeUnit.SECONDS)
+        connect(lane, key).use { phone ->
+            assertArrayEquals(source, (phone.read() as GlassesFilesLane.Frame.Data).bytes)
+            awaitTerminatorWait()
+            synchronized(field(transfer, "lock")!!) {
+                transfer.onAck(id, source.size.toLong(), viaLane = true)
+                // The phone lost its lane first and already states that it holds every byte.
+                transfer.onResume(id, source.size.toLong())
+            }
+        }
+        worker.get(5, TimeUnit.SECONDS)
+        assertEquals(listOf(GlassesFilesResult.LaneResync(id), GlassesFilesResult.BusResume(id, source.size.toLong()),
+            GlassesFilesResult.DownloadEnd(id, sha(source))), results.toList())
+    }
+
+    @Test
+    fun `cancel during a failing bus send ends the download quietly`() {
+        val file = temp.newFile().apply { writeBytes(ByteArray(100_003)) }
+        val results = LinkedBlockingQueue<GlassesFilesResult>()
+        lateinit var transfer: GlassesFilesDownload
+        transfer = GlassesFilesDownload(id, file, null, io, { results.add(it); true }, { _, _, _ ->
+            transfer.cancelAll()
+            false
+        }, {}, ::now)
+        io.submit { transfer.stream() }.get(5, TimeUnit.SECONDS)
+        assertTrue(results.poll(1, TimeUnit.SECONDS) is GlassesFilesResult.DownloadReady)
+        assertTrue(results.toList().toString(), results.isEmpty())
+    }
+
+    @Test
+    fun `upload terminator after a camera takeover with every byte staged publishes`() {
+        val source = ByteArray(70_001) { (it * 13).toByte() }
+        val root = temp.newFolder()
+        val upload = GlassesFileStore(root, JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
+            .beginUpload("", "camera.bin", source.size.toLong(), id).getOrThrow()
+        val key = GlassesFilesLane.newKey()
+        val lane = lane(key)
+        val active = GlassesFilesUpload(id, upload, lane, 0)
+        val accept = io.submit<Boolean> { lane.accept() }
+        val phone = connect(lane, key)
+        assertTrue(accept.get(5, TimeUnit.SECONDS))
+        active.resync.opened()
+        val staged = active.onChunk(0, source, viaLane = true, busEpoch = 0, now = 1) as GlassesFilesUpload.Chunk.Staged
+        assertEquals(source.size.toLong(), staged.ack)
+        active.ackSent(source.size.toLong())
+        assertEquals(GlassesFilesUpload.Signal.BusResume(source.size.toLong(), first = true), active.onCameraTakeover(2))
+        assertTrue(active.resync.switched)
+        assertFalse(active.resync.confirmed)
+        assertNull(active.finish(sha(source)))
+        assertArrayEquals(source, upload.finalFile().readBytes())
+        phone.close()
+    }
+
+    @Test
+    fun `upload terminator with bytes missing still fails on integrity`() {
+        val root = temp.newFolder()
+        val upload = GlassesFileStore(root, JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
+            .beginUpload("", "short.bin", 4, id).getOrThrow()
+        val active = GlassesFilesUpload(id, upload, null, 0)
+        active.resync.opened()
+        assertNull(active.write(0, byteArrayOf(1, 2), viaLane = true))
+        assertEquals(2L, active.beginResync(1))
+        assertEquals(GlassesFilesError.INTEGRITY, active.finish(sha(byteArrayOf(1, 2, 3, 4))))
+        assertTrue(root.listFiles()!!.isEmpty())
+    }
+
+    @Test
+    fun `the resync confirmation from the phone counts as upload activity`() {
+        val upload = GlassesFileStore(temp.newFolder(), JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
+            .beginUpload("", "idle.bin", 12, id).getOrThrow()
+        val active = GlassesFilesUpload(id, upload, null, 0)
+        active.resync.opened()
+        assertNull(active.write(0, byteArrayOf(1, 2), viaLane = true))
+        assertEquals(2L, active.beginResync(1_000))
+        assertTrue(active.onBusResume(2, 20_000))
+        assertFalse(active.onBusResume(3, 20_000))
+        assertEquals(GlassesFilesUpload.Tick.Idle, active.onTick(40_000))
+        assertEquals(GlassesFilesUpload.Tick.Expired, active.onTick(50_001))
+    }
+
+    @Test
+    fun `an upload lane switch on a lane that is gone resumes on the bus`() {
+        val upload = GlassesFileStore(temp.newFolder(), JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
+            .beginUpload("", "switch.bin", 100_000, id).getOrThrow()
+        val key = GlassesFilesLane.newKey()
+        val lane = lane(key)
+        val active = GlassesFilesUpload(id, upload, lane, 0)
+        assertNull(active.write(0, ByteArray(32_768), viaLane = false))
+        val accept = io.submit<Boolean> { lane.accept() }
+        connect(lane, key).close()
+        assertTrue(accept.get(5, TimeUnit.SECONDS))
+        lane.close()
+        assertEquals(GlassesFilesUpload.Signal.BusResume(32_768, first = true), active.onLaneSwitch(5))
+        assertEquals(GlassesFilesUpload.Signal.BusResume(32_768, first = false), active.onLaneSwitch(6))
+        assertEquals(GlassesFilesUpload.Signal.BusResume(32_768, first = false), active.onLaneEof(7))
+        assertEquals(GlassesFilesUpload.Signal.BusResume(32_768, first = false), active.onResyncRequest(8))
+    }
+
+    /** Spins until the stream worker is blocked waiting for the terminator's full acknowledgement. */
+    private fun awaitTerminatorWait() {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (System.nanoTime() < deadline) {
+            val waiting = Thread.getAllStackTraces().entries.any { (thread, frames) ->
+                thread.state == Thread.State.TIMED_WAITING && frames.any { it.methodName == "awaitAck" } &&
+                    frames.any { it.methodName == "stream" }
+            }
+            if (waiting) return
+            Thread.sleep(1)
+        }
+        error("stream worker never reached its wait")
+    }
+
+    private fun field(target: Any, name: String): Any? =
+        generateSequence(target.javaClass as Class<*>?) { it.superclass }
+            .mapNotNull { type -> type.declaredFields.firstOrNull { it.name == name } }
+            .firstOrNull()?.apply { isAccessible = true }?.get(target)
+
     private fun lane(key: ByteArray) = GlassesFilesLaneServer(id,
         ServerSocket(0, 4, InetAddress.getLoopbackAddress()), key, null, acceptTimeoutMs = 5_000)
 

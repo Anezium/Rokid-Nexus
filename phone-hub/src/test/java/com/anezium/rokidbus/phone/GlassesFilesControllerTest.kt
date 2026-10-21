@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.shared.GlassesFilesLane
 import com.anezium.rokidbus.shared.GlassesFilesResync
+import com.anezium.rokidbus.shared.GlassesFilesChunk
 import com.anezium.rokidbus.shared.GlassesFilesContract
 import com.anezium.rokidbus.shared.GlassesFilesRequest
 import com.anezium.rokidbus.shared.GlassesFilesResult
@@ -166,6 +167,98 @@ class GlassesFilesControllerTest {
         failure.get()?.let { throw it }
         assertEquals(GlassesTransferStop.LINK_LOST, field(active, "stop"))
         controller.close()
+    }
+
+    @Test
+    fun `download end verifies by size and digest while a resync still awaits its echo`() {
+        val source = ByteArray(80_000) { (it * 5).toByte() }
+        val requests = mutableListOf<GlassesFilesRequest>()
+        val controller = GlassesFilesController(RuntimeEnvironment.getApplication(), { envelope ->
+            GlassesFilesContract.parseRequest(envelope.payload)?.let(requests::add)
+            null
+        })
+        val active = activeCopy(controller, source.size.toLong())
+        val id = field(active, "wireId") as String
+        val output = ByteArrayOutputStream()
+        setField(active, "output", output)
+        try {
+            call(active, "receiveResult", GlassesFilesResult.DownloadReady(id, source.size.toLong(), 0L, null))
+            var offset = 0
+            while (offset < source.size) {
+                val end = minOf(offset + GlassesFilesContract.CHUNK_BYTES, source.size)
+                call(active, "onChunk", GlassesFilesChunk(id, offset.toLong()), source.copyOfRange(offset, end), false)
+                offset = end
+            }
+            // The glasses' lane ack reader died and asked for resync just as the phone finished.
+            (field(active, "resync") as GlassesFilesResync).proven()
+            call(active, "onLaneLost")
+            val resync = field(active, "resync") as GlassesFilesResync
+            assertTrue(resync.switched)
+            assertFalse(resync.confirmed)
+            assertEquals(listOf<GlassesFilesRequest>(GlassesFilesRequest.BusResume(id, source.size.toLong())),
+                requests.filterIsInstance<GlassesFilesRequest.BusResume>())
+            call(active, "receiveResult", GlassesFilesResult.DownloadEnd(id, sha(source)))
+            assertEquals(true, field(active, "verified"))
+            call(active, "receiveResult", GlassesFilesResult.DownloadEnd(id, sha(source + 1)))
+            assertEquals(false, field(active, "verified"))
+            assertArrayEquals(source, output.toByteArray())
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun `download acks stay on the bus while a hotspot lane is proven but not switched to`() {
+        val requests = mutableListOf<GlassesFilesRequest>()
+        val controller = GlassesFilesController(RuntimeEnvironment.getApplication(), { envelope ->
+            GlassesFilesContract.parseRequest(envelope.payload)?.let(requests::add)
+            null
+        })
+        val active = activeCopy(controller, 1_000_000L)
+        val id = field(active, "wireId") as String
+        setField(active, "output", ByteArrayOutputStream())
+        val key = GlassesFilesLane.newKey()
+        val server = java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())
+        val phoneSocket = java.net.Socket(java.net.InetAddress.getLoopbackAddress(), server.localPort)
+        val glassesSocket = server.accept().apply { soTimeout = 300 }
+        val client = GlassesFilesLaneClient::class.java.declaredConstructors
+            .single { it.parameterCount == 3 && it.parameterTypes[0] == java.net.Socket::class.java }
+            .apply { isAccessible = true }.newInstance(phoneSocket, id, key)
+        setField(active, "lane", client)
+        val glassesInput = java.io.DataInputStream(glassesSocket.getInputStream())
+        val opener = GlassesFilesLane.Opener(key, id, GlassesFilesLane.Direction.PHONE_TO_GLASSES)
+        try {
+            call(active, "receiveResult", GlassesFilesResult.DownloadReady(id, 1_000_000L, 0L, null))
+            val chunk = ByteArray(GlassesFilesContract.CHUNK_BYTES)
+            repeat(GlassesFilesContract.ACK_EVERY_CHUNKS) {
+                call(active, "onChunk", GlassesFilesChunk(id, it.toLong() * chunk.size), chunk, false)
+            }
+            val staged = GlassesFilesContract.ACK_EVERY_CHUNKS.toLong() * chunk.size
+            assertEquals(listOf<GlassesFilesRequest>(GlassesFilesRequest.DownloadProgress(id, staged)), requests)
+            assertTrue(runCatching { glassesInput.readByte() }.exceptionOrNull() is java.net.SocketTimeoutException)
+            // Once the switch has opened the lane, acks ride it instead.
+            (field(active, "resync") as GlassesFilesResync).opened()
+            repeat(GlassesFilesContract.ACK_EVERY_CHUNKS) {
+                call(active, "onChunk", GlassesFilesChunk(id, staged + it.toLong() * chunk.size), chunk, true)
+            }
+            assertEquals(1, requests.size)
+            assertEquals(GlassesFilesLane.Frame.Ack(2 * staged), opener.read(glassesInput))
+        } finally {
+            controller.close()
+            runCatching { phoneSocket.close() }
+            runCatching { glassesSocket.close() }
+            runCatching { server.close() }
+        }
+    }
+
+    private fun activeCopy(controller: GlassesFilesController, sizeBytes: Long): Any {
+        val item = GlassesTransferItem("row", GlassesTransferDirection.COPY, "copy.bin", "", "copy.bin", sizeBytes)
+        val type = GlassesFilesController::class.java.declaredClasses.single { it.simpleName == "ActiveCopy" }
+        val active = type.declaredConstructors.single().apply { isAccessible = true }.newInstance(controller, item)
+        setField(controller, "active", active)
+        @Suppress("UNCHECKED_CAST")
+        (field(controller, "transfers") as MutableList<GlassesTransferItem>).add(item)
+        return active
     }
 
     private fun activeSend(controller: GlassesFilesController, item: GlassesTransferItem =

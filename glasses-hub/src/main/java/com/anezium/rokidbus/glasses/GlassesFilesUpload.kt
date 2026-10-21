@@ -86,7 +86,13 @@ internal class GlassesFilesUpload(
 
     fun onResyncRequest(now: Long): Signal.BusResume? = resume(now)
 
-    fun onBusResume(staged: Long): Boolean = !resync.switched || resync.confirm(staged)
+    /** The phone's echo is activity: its source rewind and prefix rehash follow before any byte. */
+    fun onBusResume(staged: Long, now: Long): Boolean {
+        if (!resync.switched) return true
+        if (!resync.confirm(staged)) return false
+        lastActivity = now
+        return true
+    }
 
     /** The camera takes the Wi-Fi: a lane that carried or could carry bytes moves to the bus. */
     fun onCameraTakeover(now: Long): Signal.BusResume? {
@@ -103,7 +109,11 @@ internal class GlassesFilesUpload(
         return Tick.Expired
     }
 
-    /** Verifies the digest and publishes the file; the lane has nothing left to carry. */
+    /**
+     * Verifies the digest and publishes the file. A resync or lane upgrade still awaiting its echo
+     * is moot once the phone sends the terminator: every byte it covers is either staged, in which
+     * case the size and digest decide, or missing, which the integrity check reports.
+     */
     fun finish(sha256: String): GlassesFilesError? {
         lane?.close()
         return upload.finish(sha256)

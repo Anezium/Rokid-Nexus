@@ -53,15 +53,11 @@ internal class GlassesFilesDownload(
             requestResync(id)
             return
         }
-        synchronized(lock) {
+        val accepted = synchronized(lock) {
             val connected = hotspotLane?.takeIf { it.isConnected() } ?: return
             if (cancelled || resync.switched) return
             val first = upgrade.offset == null
-            if (!upgrade.snapshot(staged, minOf(attempted, size))) {
-                cancelAll()
-                send(GlassesFilesResult.TransferFailed(transferId, GlassesFilesError.INVALID_REQUEST))
-                return
-            }
+            if (!upgrade.snapshot(staged, minOf(attempted, size))) return@synchronized false
             if (first) {
                 resync.opened()
                 lane = connected
@@ -69,6 +65,12 @@ internal class GlassesFilesDownload(
                 resumePending = staged
                 lock.notifyAll()
             }
+            true
+        }
+        if (!accepted) {
+            cancelAll()
+            send(GlassesFilesResult.TransferFailed(transferId, GlassesFilesError.INVALID_REQUEST))
+            return
         }
         send(GlassesFilesResult.LaneResume(transferId, staged))
     }
@@ -189,7 +191,10 @@ internal class GlassesFilesDownload(
                         finish(waitFailure())
                         return
                     }
-                    if (hasResume()) continue
+                    // A snapshot below the full size means the receiver lost acknowledged bytes
+                    // after all; one at the full size, or a resync still waiting for its snapshot,
+                    // has nothing left to resend and the size-and-digest terminator decides.
+                    if (synchronized(lock) { !MediaSyncWindowPolicy.mayFinish(acked, size) || resumePending?.let { it != size } == true }) continue
                     send(GlassesFilesResult.DownloadEnd(transferId, digest.finish()))
                     finish(null)
                     return
@@ -215,7 +220,7 @@ internal class GlassesFilesDownload(
                         requestResync(transferId)
                         continue
                     }
-                    finish(GlassesFilesError.LINK_LOST)
+                    finish(if (synchronized(lock) { cancelled }) null else GlassesFilesError.LINK_LOST)
                     return
                 }
                 digest.record(buffer, count)

@@ -45,6 +45,22 @@ class GlassesFilesLaneServerTest {
     }
 
     @Test
+    fun `the lane reads as connected by the time the phone holds its answer`() {
+        val key = GlassesFilesLane.newKey()
+        val lane = server(key, acceptTimeoutMs = 5_000)
+        val accepted = io.submit<Boolean> { lane.accept() }
+        val (socket, answered) = connectAsPhone(lane.endpoint.port, key)
+        socket.use {
+            assertTrue(answered)
+            // The phone's bus reaction to the answer must never find a proven lane that is not
+            // connected yet; the server publishes its socket before the answer leaves.
+            assertTrue(lane.isProven)
+            assertTrue(lane.isConnected())
+            assertTrue(accepted.get(5, TimeUnit.SECONDS))
+        }
+    }
+
+    @Test
     fun `the phone with the key is accepted and frames flow`() {
         val key = GlassesFilesLane.newKey()
         val lane = server(key, acceptTimeoutMs = 5_000)
