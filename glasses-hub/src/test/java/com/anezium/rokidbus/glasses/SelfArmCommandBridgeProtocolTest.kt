@@ -5,6 +5,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SelfArmCommandBridgeProtocolTest {
+    @Test fun fileCleanupAuthenticatesExactlyTheFixedNoArgumentCommand() {
+        val command = SelfArmCommandBridgeProtocol.WIFI_CLEANUP_FILES
+        val request = SelfArmCommandBridgeProtocol.request(SECRET, command, NONCE)
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Accepted(command, NONCE),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, emptySet()))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("replay"),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, setOf(NONCE)))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("auth"),
+            SelfArmCommandBridgeProtocol.verify(request.replace(command, "wifi_disable"), SECRET, emptySet()))
+        listOf(listOf("7"), listOf("QQ=="), listOf("7", "8")).forEach {
+            assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("format"),
+                SelfArmCommandBridgeProtocol.verify(
+                    SelfArmCommandBridgeProtocol.request(SECRET, command, NONCE, it), SECRET, emptySet()))
+        }
+    }
+
     @Test fun fileConnectRequiresAuthenticatedCredentialsAndCannotBeReplayedAsCameraConnect() {
         val command = SelfArmCommandBridgeProtocol.WIFI_CONNECT_FILES
         val arguments = listOf("VGVzdA==", "YWJjZGVmZ2gxMjM0", "wpa2")

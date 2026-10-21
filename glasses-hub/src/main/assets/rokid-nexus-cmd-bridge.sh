@@ -10,7 +10,10 @@ SEENFILE="$BASE/$NAME.seen"
 PENDING_DISABLE="$BASE/$NAME.pending-disable"
 CHANNEL="/sdcard/Android/data/com.anezium.rokidbus.glasses/files/cmd_bridge"
 DOORBELL="$CHANNEL/doorbell"
-VERSION="2026-10-21.4"
+VERSION="2026-10-21.5"
+FILES_NETWORKS="$BASE/$NAME.files-networks"
+FILES_NETWORK_LIMIT=8
+FILES_NETWORK_MAX_AGE=86400
 CAPTURE_DIR="/sdcard/DCIM/Camera"
 SCRIPT_PATH="$BASE/$NAME.sh"
 PACKAGE="com.anezium.rokidbus.glasses"
@@ -229,6 +232,111 @@ forget_wifi_network() {
   [ -z "$forget_ids" ]
 }
 
+files_saved_network_ids() {
+  cmd wifi list-networks 2>/dev/null | awk '
+    NR == 1 {
+      if ($0 == "No networks") { empty = 1; next }
+      if ($0 != "Network Id      SSID                         Security type") exit 1
+      header = 1; next
+    }
+    {
+      if (!header || length($0) < 47 || substr($0, 1, 12) !~ /^[0-9]+ *$/ ||
+          substr($0, 13, 1) != " " || substr($0, 46, 1) != " ") exit 1
+      id = substr($0, 1, 12); sub(/ +$/, "", id); print id
+    }
+    END { if (!header && !empty) exit 1 }
+  '
+}
+
+read_files_networks() {
+  [ ! -L "$FILES_NETWORKS" ] || return 1
+  [ -e "$FILES_NETWORKS" ] || return 0
+  [ -f "$FILES_NETWORKS" ] && [ "$(stat -c %u "$FILES_NETWORKS")" = "$(id -u)" ] || return 1
+  [ "$(wc -c < "$FILES_NETWORKS")" -le 512 ] || return 1
+  awk -v limit="$FILES_NETWORK_LIMIT" '
+    NF != 2 || $1 !~ /^[0-9]+$/ || length($1) > 10 || $1 > 2147483647 ||
+      $2 !~ /^[0-9]+$/ || length($2) > 10 || seen[$1]++ || NR > limit { bad = 1 }
+    { print }
+    END { exit bad }
+  ' "$FILES_NETWORKS"
+}
+
+write_files_networks() (
+  umask 077
+  [ ! -L "$FILES_NETWORKS" ] || return 1
+  files_tmp="$(mktemp "$FILES_NETWORKS.XXXXXX")" || return 1
+  if { [ -z "$files_records" ] || printf '%s\n' "$files_records"; } > "$files_tmp" &&
+    mv "$files_tmp" "$FILES_NETWORKS"; then
+    [ -n "$files_records" ] || rm -f "$FILES_NETWORKS"
+    return 0
+  fi
+  rm -f "$files_tmp"
+  return 1
+)
+
+cleanup_files_networks() (
+  [ "$(getprop ro.build.version.sdk 2>/dev/null)" = "32" ] || return 1
+  files_records="$(read_files_networks)" || return 1
+  [ -n "$files_records" ] || return 0
+  files_now="$(date +%s)"
+  case "$files_now" in ""|*[!0-9]*) return 1 ;; esac
+  files_remaining=""
+  while read -r files_id files_created; do
+    files_ids="$(files_saved_network_ids)" || return 1
+    if ! printf '%s\n' "$files_ids" | grep -Fxq "$files_id"; then continue; fi
+    forget_ids="$files_id"
+    forget_current_id=""
+    # A live files lease lasts at most one day. Expiry releases only its recorded ID;
+    # ordinary cleanup never disconnects the current network.
+    if wifi_not_on_forget_network ||
+      { [ "$files_now" -ge "$files_created" ] &&
+        [ "$((files_now - files_created))" -ge "$FILES_NETWORK_MAX_AGE" ] &&
+        [ "$forget_current_id" = "$files_id" ]; }; then
+      cmd wifi forget-network "$files_id" >/dev/null 2>&1 || true
+      files_ids="$(files_saved_network_ids)" || return 1
+      if ! printf '%s\n' "$files_ids" | grep -Fxq "$files_id"; then continue; fi
+    fi
+    files_remaining="${files_remaining}${files_id} ${files_created}
+"
+  done <<EOF
+$files_records
+EOF
+  files_records="$(printf '%s' "$files_remaining")"
+  write_files_networks || return 1
+  [ -z "$files_records" ]
+)
+
+connect_files_network() (
+  cleanup_files_networks || true
+  files_records="$(read_files_networks)" || return 1
+  files_count="$(printf '%s' "$files_records" | awk 'NF { n++ } END { print n+0 }')"
+  [ "$files_count" -lt "$FILES_NETWORK_LIMIT" ] || return 1
+  files_before="$(files_saved_network_ids)" || return 1
+  files_matching="$(matching_forget_network_ids)" || return 1
+  for files_id in $files_matching; do
+    # A camera/user entry that happens to share the SSID is never adopted by files.
+    printf '%s\n' "$files_records" | awk -v id="$files_id" '$1 == id { found = 1 } END { exit !found }' || return 1
+  done
+  if [ "$security" = "open" ]; then
+    cmd wifi connect-network "$ssid" open >/dev/null 2>&1
+  else
+    cmd wifi connect-network "$ssid" "$security" "$passphrase" >/dev/null 2>&1
+  fi
+  files_connect_status=$?
+  # Even a failed association can save a network. Record new exact-match IDs before
+  # answering the app; app death cannot consume this shell-owned obligation.
+  files_matching="$(matching_forget_network_ids)" || return 1
+  for files_id in $files_matching; do
+    if printf '%s\n' "$files_before" | grep -Fxq "$files_id"; then continue; fi
+    files_count=$((files_count + 1))
+    [ "$files_count" -le "$FILES_NETWORK_LIMIT" ] || return 1
+    files_records="${files_records}${files_records:+
+}${files_id} $(date +%s)"
+  done
+  write_files_networks || return 1
+  return "$files_connect_status"
+)
+
 process_request() {
   request_file="$1"
   request_name="${request_file##*/}"
@@ -268,7 +376,7 @@ EOF
     return
   fi
   case "$command" in
-    wifi_enable|wifi_disable|adb_wifi_enable|adb_wifi_disable)
+    wifi_enable|wifi_disable|adb_wifi_enable|adb_wifi_disable|wifi_cleanup_files)
       token="$field3"
       if [ -n "$field4" ] || [ -n "$field5" ] || [ -n "$field6" ] ||
         [ "$request_line" != "$command:$nonce:$token" ]; then
@@ -404,8 +512,7 @@ EOF
             sleep 0.2
           done
           if [ "$connect_scanned" = "1" ] && [ -f "$CHANNEL/$nonce.connect-result" ] &&
-            { { [ "$security" = "open" ] && cmd wifi connect-network "$ssid" open >/dev/null 2>&1; } ||
-              { [ "$security" != "open" ] && cmd wifi connect-network "$ssid" "$security" "$passphrase" >/dev/null 2>&1; }; }; then
+            connect_files_network; then
             connect_poll=0
             while [ "$connect_poll" -lt 40 ] && [ -f "$CHANNEL/$nonce.connect-result" ]; do
               connect_status="$(cmd wifi status 2>/dev/null)"
@@ -428,6 +535,15 @@ EOF
       write_response "$nonce" "$connect_result" ""
       log_line "command completed command=wifi_connect_files nonce=$nonce result=$connect_result"
       unset ssid passphrase ssid_encoded passphrase_encoded connect_status connect_valid connect_poll connect_receipt connect_scan connect_scanned
+      ;;
+    wifi_cleanup_files)
+      if cleanup_files_networks; then files_result=ok; else files_result=error; fi
+      files_receipt="$CHANNEL/$nonce.files-result"
+      if [ -f "$files_receipt" ] && [ ! -L "$files_receipt" ]; then
+        printf '%s\n' "$files_result" > "$files_receipt" 2>/dev/null
+      fi
+      write_response "$nonce" "$files_result" ""
+      log_line "command completed command=wifi_cleanup_files nonce=$nonce result=$files_result"
       ;;
     wifi_forget)
       if forget_wifi_network; then
@@ -603,6 +719,7 @@ run_maintenance_if_due() {
   maintenance_now="$SECONDS"
   if [ "$((maintenance_now - last_heartbeat))" -ge "$MAINTENANCE_INTERVAL" ]; then
     write_heartbeat
+    cleanup_files_networks || true
     last_heartbeat="$maintenance_now"
   fi
   if [ "$((maintenance_now - last_update_check))" -ge "$SELF_UPDATE_INTERVAL" ]; then
@@ -728,6 +845,7 @@ loop_forever() {
   last_heartbeat="$SECONDS"
   last_update_check="$SECONDS"
   write_heartbeat
+  cleanup_files_networks || true
   while true; do
     if prepare_channel; then
       # The redirection persists for the whole healthy serving loop and closes automatically when

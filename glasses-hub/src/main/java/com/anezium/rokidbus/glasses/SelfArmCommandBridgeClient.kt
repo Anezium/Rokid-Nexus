@@ -45,6 +45,7 @@ internal object SelfArmCommandBridgeProtocol {
     const val WIFI_CONNECT = "wifi_connect"
     const val WIFI_CONNECT_FILES = "wifi_connect_files"
     const val WIFI_FORGET = "wifi_forget"
+    const val WIFI_CLEANUP_FILES = "wifi_cleanup_files"
     const val ADB_WIFI_ENABLE = "adb_wifi_enable"
     const val ADB_WIFI_DISABLE = "adb_wifi_disable"
     const val MAX_REQUEST_BYTES = 512
@@ -59,6 +60,7 @@ internal object SelfArmCommandBridgeProtocol {
         WIFI_CONNECT,
         WIFI_CONNECT_FILES,
         WIFI_FORGET,
+        WIFI_CLEANUP_FILES,
         DELETE_CAPTURE,
         ADB_WIFI_ENABLE,
         ADB_WIFI_DISABLE,
@@ -127,7 +129,7 @@ internal object SelfArmCommandBridgeProtocol {
         if (command !in allowedCommands) return Verification.Rejected("command")
         val arguments = fields.subList(2, fields.lastIndex)
         val validShape = when (command) {
-            WIFI_ENABLE, WIFI_DISABLE, ADB_WIFI_ENABLE, ADB_WIFI_DISABLE -> arguments.isEmpty()
+            WIFI_ENABLE, WIFI_DISABLE, ADB_WIFI_ENABLE, ADB_WIFI_DISABLE, WIFI_CLEANUP_FILES -> arguments.isEmpty()
             WIFI_CONNECT, WIFI_CONNECT_FILES -> arguments.size == 3 &&
                 arguments[0].length in 1..172 && encodedArgumentRegex.matches(arguments[0]) &&
                 when (WifiConnectSecurity.fromCommandKeyword(arguments[2])) {
@@ -254,6 +256,22 @@ internal object SelfArmCommandBridgeClient {
                 }
                 joined()
             }
+        }
+    }
+
+    fun cleanupFilesNetworks(context: Context, timeoutMs: Long = DEFAULT_TIMEOUT_MS): Boolean {
+        if (android.os.Build.VERSION.SDK_INT != 32 || timeoutMs <= 0L) return false
+        return submit(context.applicationContext, SelfArmCommandBridgeProtocol.WIFI_CLEANUP_FILES,
+            emptyList(), timeoutMs) { receipt ->
+            val deadline = SystemClock.elapsedRealtime() + timeoutMs
+            while (SystemClock.elapsedRealtime() < deadline) {
+                when (runCatching { receipt?.readText() }.getOrNull()) {
+                    "ok\n" -> return@submit true
+                    "error\n" -> return@submit false
+                }
+                Thread.sleep(RESPONSE_POLL_MS)
+            }
+            false
         }
     }
 
@@ -485,6 +503,7 @@ internal object SelfArmCommandBridgeClient {
         val receipt = when (command) {
             SelfArmCommandBridgeProtocol.WIFI_FORGET -> File(channel, "$nonce.forget-result")
             SelfArmCommandBridgeProtocol.WIFI_CONNECT_FILES -> File(channel, "$nonce.connect-result")
+            SelfArmCommandBridgeProtocol.WIFI_CLEANUP_FILES -> File(channel, "$nonce.files-result")
             else -> null
         }
         return try {

@@ -235,6 +235,9 @@ object GlassesHub {
             MediaSyncEngine.start(context.applicationContext)
             GlassesFilesService.start(context.applicationContext)
             requestWifiOwnershipReconciliation(applicationContext, "hub_start")
+            filesHotspotCleanupExecutor.execute {
+                SelfArmCommandBridgeClient.cleanupFilesNetworks(applicationContext)
+            }
         }
     }
 
@@ -1523,7 +1526,7 @@ object GlassesHub {
                                 cameraSessionTracker.isActive() || GlassesFilesHotspotJoin.isJoined(
                                     true, previousAddress, filesWifiLease(context), offer.clientNetwork, retainedLease)
                             },
-                            onSubmitted = { filesHotspotCleanup.onConnectSubmitted(offer.batchId, credentials.ssid) },
+                            onSubmitted = { filesHotspotCleanup.onConnectSubmitted(offer.batchId) },
                             requireTargetConfirmation = true)
                     }.getOrDefault(false)
                     continue
@@ -1578,23 +1581,24 @@ object GlassesHub {
             // The batch already spent its idle grace; the shared owner still protects camera/setup.
             reconcileWifiOwnership(context, "files_hotspot_release", cameraGraceRequested = false,
                 cameraGraceSatisfied = true)
-        }, forget = { ssid ->
+        }, forget = {
             val deadline = SystemClock.elapsedRealtime() + 30_000L
-            filesHotspotCleanupExecutor.schedule({ forgetFilesHotspot(context, ssid, lease, deadline) },
+            filesHotspotCleanupExecutor.schedule({ forgetFilesHotspot(context, lease, deadline) },
                 2_000L, TimeUnit.MILLISECONDS)
         })
+        filesHotspotCleanupExecutor.execute { SelfArmCommandBridgeClient.cleanupFilesNetworks(context) }
     }
 
-    private fun forgetFilesHotspot(context: Context, ssid: String, lease: GlassesFilesHotspotJoin.Lease?, deadline: Long) {
+    private fun forgetFilesHotspot(context: Context, lease: GlassesFilesHotspotJoin.Lease?, deadline: Long) {
         val radioOff = runCatching { !context.getSystemService(WifiManager::class.java).isWifiEnabled }.getOrDefault(false)
         if (!radioOff && lease != null && filesWifiLease(context) == lease) {
             if (SystemClock.elapsedRealtime() < deadline) {
-                filesHotspotCleanupExecutor.schedule({ forgetFilesHotspot(context, ssid, lease, deadline) },
+                filesHotspotCleanupExecutor.schedule({ forgetFilesHotspot(context, lease, deadline) },
                     500L, TimeUnit.MILLISECONDS)
             } else log("files hotspot forget applied=false")
             return
         }
-        val applied = runCatching { SelfArmCommandBridgeClient.forgetWifiNetwork(context, ssid) }.getOrDefault(false)
+        val applied = runCatching { SelfArmCommandBridgeClient.cleanupFilesNetworks(context) }.getOrDefault(false)
         log("files hotspot forget applied=$applied")
     }
 
