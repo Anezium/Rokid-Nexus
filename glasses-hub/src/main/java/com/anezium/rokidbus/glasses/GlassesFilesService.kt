@@ -176,19 +176,18 @@ internal object GlassesFilesService {
         }
     }
 
-    fun onCameraStarted() {
+    fun onCameraStarted(ended: (String) -> Unit = { sendResult(GlassesFilesResult.HotspotFailed(it)) }) {
         control.execute {
             upload?.takeIf { it.transferId == hotspotTransferId }?.let { active ->
                 if (active.lane != null) {
                     resumeUpload(active.transferId)
                     active.lane?.close()
-                    sendResult(GlassesFilesResult.HotspotFailed(active.transferId))
                 }
             }
             download?.takeIf { it.transferId == hotspotTransferId }?.let { active ->
                 active.requestResync(active.transferId)
-                sendResult(GlassesFilesResult.HotspotFailed(active.transferId))
             }
+            hotspotTransferId?.let(ended)
         }
     }
 

@@ -30,6 +30,7 @@ internal class GlassesFilesHotspotHost(
     private var reservation: WifiManager.LocalOnlyHotspotReservation? = null
     private var credentials: GlassesFilesHotspotCredentials? = null
     private var activeId: String? = null
+    private var lastTransferId: String? = null
     private var clientNetwork: GlassesFilesClientNetwork? = null
     private var failed: (() -> Unit)? = null
     private var idle: ScheduledFuture<*>? = null
@@ -41,6 +42,7 @@ internal class GlassesFilesHotspotHost(
     fun acquire(transferId: String, setupDeadline: Long, onFailed: () -> Unit) {
         idle?.cancel(false)
         activeId = transferId
+        lastTransferId = transferId
         failed = onFailed
         val existing = batchId
         if (existing != null) {
@@ -134,10 +136,16 @@ internal class GlassesFilesHotspotHost(
     }
 
     @Synchronized
+    fun onPeerFailed(transferId: String) {
+        if (lastTransferId == transferId) close()
+    }
+
+    @Synchronized
     override fun close() {
         val batch = batchId
         batchId = null
         activeId = null
+        lastTransferId = null
         credentials = null
         ready = false
         readiness?.cancel(false)

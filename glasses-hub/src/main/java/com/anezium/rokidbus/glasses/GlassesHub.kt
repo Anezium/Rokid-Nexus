@@ -1582,7 +1582,7 @@ object GlassesHub {
             reconcileWifiOwnership(context, "files_hotspot_release", cameraGraceRequested = false,
                 cameraGraceSatisfied = true)
         }, forget = {
-            val deadline = SystemClock.elapsedRealtime() + 30_000L
+            val deadline = SystemClock.elapsedRealtime() + GlassesFilesHotspotCleanup.WAIT_MS
             filesHotspotCleanupExecutor.schedule({ forgetFilesHotspot(context, lease, deadline) },
                 2_000L, TimeUnit.MILLISECONDS)
         })

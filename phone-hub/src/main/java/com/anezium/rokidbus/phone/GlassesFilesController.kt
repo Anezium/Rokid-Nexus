@@ -477,6 +477,7 @@ internal class GlassesFilesController(
     }
 
     private fun onResult(result: GlassesFilesResult) {
+        if (result is GlassesFilesResult.HotspotFailed) hotspot.onPeerFailed(result.transferId)
         val requestId = when (result) {
             is GlassesFilesResult.Listing -> result.requestId
             is GlassesFilesResult.Operation -> result.requestId
