@@ -2921,16 +2921,19 @@ accepted exceptions, as for camera `lohs_reverse`.
 
 The glasses join through that bridge under the hub's existing Wi-Fi ownership,
 then bind their existing lane server only to the joined hotspot IPv4 address.
-Files detect the join from the Wi-Fi network's link properties, without an SSID
-or BSSID comparison: an IPv4 address and default-route gateway must be present,
+Files first require the API-32-only `wifi_connect_files` bridge to confirm the
+exact requested SSID and completed association, using a nonce-scoped app-created
+boolean receipt. The helper requests a scan before connecting and never writes
+network identifiers into its response or logs. A saved network auto-joined after
+radio-on cannot establish readiness. The app then checks link properties despite
+background SSID redaction: an IPv4 address and default-route gateway must be present,
 the address must differ from the pre-join address and be outside `clientNetwork`.
 Only the same batch may reuse its retained address/gateway pair without an
-address change. Release clears that pair. Files opt into a lease-based bridge
-completion predicate, returning as soon as that lease is ready despite SSID
-redaction. Until then, files reissue the connect about every 5 s inside the
+address change. Release clears that pair. Files require both the exact target
+confirmation and the lease predicate. Until then, files retry about every 5 s inside the
 original 20 s glasses deadline and 25 s phone setup budget. The camera keeps
-its existing SSID-based bridge wait and 15 s timeout. A guessed lease
-still needs the authenticated lane handshake before any transfer upgrade.
+its existing SSID-based bridge wait and 15 s timeout. The authenticated lane
+handshake is still required before any transfer upgrade.
 Result `hotspot_ready` contains `{transferId, lane: {host, port, key}, gateway}`;
 `gateway` is a literal IPv4 address. The phone connects from that local hotspot
 gateway address, avoiding its Wi-Fi client network and cellular routing. This

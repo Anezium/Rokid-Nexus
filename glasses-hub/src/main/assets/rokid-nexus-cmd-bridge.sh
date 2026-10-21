@@ -10,7 +10,7 @@ SEENFILE="$BASE/$NAME.seen"
 PENDING_DISABLE="$BASE/$NAME.pending-disable"
 CHANNEL="/sdcard/Android/data/com.anezium.rokidbus.glasses/files/cmd_bridge"
 DOORBELL="$CHANNEL/doorbell"
-VERSION="2026-10-21.1"
+VERSION="2026-10-21.2"
 CAPTURE_DIR="/sdcard/DCIM/Camera"
 SCRIPT_PATH="$BASE/$NAME.sh"
 PACKAGE="com.anezium.rokidbus.glasses"
@@ -277,7 +277,7 @@ EOF
       fi
       token_input="${SECRET}:${command}:${nonce}"
       ;;
-    wifi_connect)
+    wifi_connect|wifi_connect_files)
       ssid_encoded="$field3"
       passphrase_encoded="$field4"
       security="$field5"
@@ -371,6 +371,46 @@ EOF
   rm -f "$request_file"
 
   case "$command" in
+    wifi_connect_files)
+      connect_result=error
+      if [ "$(getprop ro.build.version.sdk 2>/dev/null)" = "32" ] &&
+        ssid="$(printf '%s' "$ssid_encoded" | base64 -d 2>/dev/null)" &&
+        passphrase="$(printf '%s' "$passphrase_encoded" | base64 -d 2>/dev/null)" &&
+        [ -n "$ssid" ] && [ "${#ssid}" -le 32 ] &&
+        ! printf '%s%s' "$ssid" "$passphrase" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+        case "$security" in
+          open) [ -z "$passphrase" ] && connect_valid=1 || connect_valid=0 ;;
+          wpa2|wpa3) [ "${#passphrase}" -ge 8 ] && [ "${#passphrase}" -le 128 ] && connect_valid=1 || connect_valid=0 ;;
+          *) connect_valid=0 ;;
+        esac
+        if [ "$connect_valid" = "1" ]; then
+          rm -f "$PENDING_DISABLE"
+          cmd wifi start-scan >/dev/null 2>&1 || true
+          if { [ "$security" = "open" ] && cmd wifi connect-network "$ssid" open >/dev/null 2>&1; } ||
+            { [ "$security" != "open" ] && cmd wifi connect-network "$ssid" "$security" "$passphrase" >/dev/null 2>&1; }; then
+            connect_poll=0
+            while [ "$connect_poll" -lt 12 ]; do
+              connect_status="$(cmd wifi status 2>/dev/null)"
+              if printf '%s\n' "$connect_status" | grep -Fxq "Wifi is connected to \"$ssid\"" &&
+                printf '%s\n' "$connect_status" | grep -q 'Supplicant state: COMPLETED' &&
+                ip -4 addr show wlan0 2>/dev/null | grep -q 'inet '; then
+                connect_result=ok
+                break
+              fi
+              connect_poll=$((connect_poll + 1))
+              sleep 0.2
+            done
+          fi
+        fi
+      fi
+      connect_receipt="$CHANNEL/$nonce.connect-result"
+      if [ -f "$connect_receipt" ] && [ ! -L "$connect_receipt" ]; then
+        printf '%s\n' "$connect_result" > "$connect_receipt" 2>/dev/null
+      fi
+      write_response "$nonce" "$connect_result" ""
+      log_line "command completed command=wifi_connect_files nonce=$nonce result=$connect_result"
+      unset ssid passphrase ssid_encoded passphrase_encoded connect_status connect_valid connect_poll connect_receipt
+      ;;
     wifi_forget)
       if forget_wifi_network; then
         forget_result=ok

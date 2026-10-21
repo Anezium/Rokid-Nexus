@@ -12,16 +12,17 @@ internal object GlassesFilesHotspotJoin {
     data class Lease(val address: Inet4Address, val gateway: Inet4Address?)
 
     fun isJoined(
+        targetConfirmed: Boolean,
         previousAddress: Inet4Address?,
         current: Lease?,
         clientNetwork: GlassesFilesClientNetwork?,
         retainedLease: Lease? = null,
     ): Boolean {
-        if (current == null || !usable(current.address) || !usable(current.gateway) ||
+        if (!targetConfirmed || current == null || !usable(current.address) || !usable(current.gateway) ||
             current.address == current.gateway || clientNetwork?.contains(current.address.hostAddress.orEmpty()) == true
         ) return false
-        // SSID is redacted in the background. Only a changed lease or this batch's retained lease
-        // can justify offering a lane; the phone still has to prove it with the sealed handshake.
+        // Radio-on can auto-join a saved network. A new lease alone cannot identify the hotspot;
+        // require the bridge's exact target confirmation before the sealed lane handshake.
         return current.address != previousAddress || current == retainedLease
     }
 

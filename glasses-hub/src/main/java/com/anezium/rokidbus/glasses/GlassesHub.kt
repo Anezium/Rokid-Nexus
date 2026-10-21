@@ -1501,11 +1501,12 @@ object GlassesHub {
             val joinDeadline = SystemClock.elapsedRealtime() + 20_000L
             handleGlassesWifiRequest(context, offer.batchId, allowAccessibilityFallback = false)
             var lastAttempt: Long? = null
+            var targetConfirmed = retainedLease != null
             var address: java.net.InetAddress? = null
             var gatewayAddress: String? = null
             while (!cameraSessionTracker.isActive() && SystemClock.elapsedRealtime() < joinDeadline) {
                 val lease = filesWifiLease(context)
-                if (GlassesFilesHotspotJoin.isJoined(previousAddress, lease, offer.clientNetwork, retainedLease)) {
+                if (GlassesFilesHotspotJoin.isJoined(targetConfirmed, previousAddress, lease, offer.clientNetwork, retainedLease)) {
                     filesHotspotLease = lease
                     address = lease?.address
                     gatewayAddress = lease?.gateway?.hostAddress
@@ -1514,16 +1515,17 @@ object GlassesHub {
                 val now = SystemClock.elapsedRealtime()
                 if (GlassesFilesHotspotJoin.shouldRetry(now, joinDeadline, lastAttempt)) {
                     lastAttempt = now
-                    runCatching {
+                    targetConfirmed = runCatching {
                         SelfArmCommandBridgeClient.connectWifiNetwork(context, credentials.ssid,
                             credentials.passphrase, security,
                             timeoutMs = minOf(GlassesFilesHotspotJoin.RETRY_MS, joinDeadline - now),
                             joined = {
                                 cameraSessionTracker.isActive() || GlassesFilesHotspotJoin.isJoined(
-                                    previousAddress, filesWifiLease(context), offer.clientNetwork, retainedLease)
+                                    true, previousAddress, filesWifiLease(context), offer.clientNetwork, retainedLease)
                             },
-                            onSubmitted = { filesHotspotCleanup.onConnectSubmitted(offer.batchId, credentials.ssid) })
-                    }
+                            onSubmitted = { filesHotspotCleanup.onConnectSubmitted(offer.batchId, credentials.ssid) },
+                            requireTargetConfirmation = true)
+                    }.getOrDefault(false)
                     continue
                 }
                 Thread.sleep(100L)

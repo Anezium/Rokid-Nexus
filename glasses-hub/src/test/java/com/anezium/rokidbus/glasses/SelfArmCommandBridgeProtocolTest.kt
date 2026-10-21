@@ -5,6 +5,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SelfArmCommandBridgeProtocolTest {
+    @Test fun fileConnectRequiresAuthenticatedCredentialsAndCannotBeReplayedAsCameraConnect() {
+        val command = SelfArmCommandBridgeProtocol.WIFI_CONNECT_FILES
+        val arguments = listOf("VGVzdA==", "YWJjZGVmZ2gxMjM0", "wpa2")
+        val request = SelfArmCommandBridgeProtocol.request(SECRET, command, NONCE, arguments)
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Accepted(command, NONCE, arguments),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, emptySet()))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("auth"),
+            SelfArmCommandBridgeProtocol.verify(request.replace(command, "wifi_connect"), SECRET, emptySet()))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("replay"),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, setOf(NONCE)))
+        listOf(emptyList(), arguments + "extra", listOf("bad!", arguments[1], "wpa2"),
+            listOf(arguments[0], arguments[1], "future")).forEach { malformed ->
+            assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("format"),
+                SelfArmCommandBridgeProtocol.verify(
+                    SelfArmCommandBridgeProtocol.request(SECRET, command, NONCE, malformed), SECRET, emptySet()))
+        }
+    }
+
     @Test fun authenticatedForgetRequestBindsExactlyOneSsidArgument() {
         val arguments = listOf("QW5kcm9pZFNoYXJlXzEyMzQ=")
         val request = SelfArmCommandBridgeProtocol.request(SECRET, SelfArmCommandBridgeProtocol.WIFI_FORGET, NONCE, arguments)

@@ -43,6 +43,7 @@ internal object SelfArmCommandBridgeProtocol {
     const val WIFI_ENABLE = "wifi_enable"
     const val WIFI_DISABLE = "wifi_disable"
     const val WIFI_CONNECT = "wifi_connect"
+    const val WIFI_CONNECT_FILES = "wifi_connect_files"
     const val WIFI_FORGET = "wifi_forget"
     const val ADB_WIFI_ENABLE = "adb_wifi_enable"
     const val ADB_WIFI_DISABLE = "adb_wifi_disable"
@@ -56,6 +57,7 @@ internal object SelfArmCommandBridgeProtocol {
         WIFI_ENABLE,
         WIFI_DISABLE,
         WIFI_CONNECT,
+        WIFI_CONNECT_FILES,
         WIFI_FORGET,
         DELETE_CAPTURE,
         ADB_WIFI_ENABLE,
@@ -126,7 +128,7 @@ internal object SelfArmCommandBridgeProtocol {
         val arguments = fields.subList(2, fields.lastIndex)
         val validShape = when (command) {
             WIFI_ENABLE, WIFI_DISABLE, ADB_WIFI_ENABLE, ADB_WIFI_DISABLE -> arguments.isEmpty()
-            WIFI_CONNECT -> arguments.size == 3 &&
+            WIFI_CONNECT, WIFI_CONNECT_FILES -> arguments.size == 3 &&
                 arguments[0].length in 1..172 && encodedArgumentRegex.matches(arguments[0]) &&
                 when (WifiConnectSecurity.fromCommandKeyword(arguments[2])) {
                     WifiConnectSecurity.OPEN -> arguments[1].isEmpty()
@@ -210,7 +212,9 @@ internal object SelfArmCommandBridgeClient {
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
         joined: (() -> Boolean)? = null,
         onSubmitted: () -> Unit = {},
+        requireTargetConfirmation: Boolean = false,
     ): Boolean {
+        if (requireTargetConfirmation && android.os.Build.VERSION.SDK_INT != 32) return false
         if (ssid.isBlank() || ssid.length > 128 || !security.isValidPassphrase(passphrase) ||
             timeoutMs <= 0L
         ) {
@@ -224,15 +228,24 @@ internal object SelfArmCommandBridgeClient {
         if (arguments[0].length !in 1..172 || arguments[1].length > 172) return false
         val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
             ?: return false
-        if (joined?.invoke() ?: isConnectedTo(wifiManager, ssid)) return true
+        if (!requireTargetConfirmation && (joined?.invoke() ?: isConnectedTo(wifiManager, ssid))) return true
         return submit(
             context.applicationContext,
-            SelfArmCommandBridgeProtocol.WIFI_CONNECT,
+            if (requireTargetConfirmation) SelfArmCommandBridgeProtocol.WIFI_CONNECT_FILES else SelfArmCommandBridgeProtocol.WIFI_CONNECT,
             arguments,
             timeoutMs,
             onSubmitted = onSubmitted,
-        ) {
-            if (joined == null) awaitWifiNetwork(wifiManager, ssid, timeoutMs)
+        ) { receipt ->
+            if (requireTargetConfirmation) {
+                val deadline = SystemClock.elapsedRealtime() + timeoutMs
+                while (SystemClock.elapsedRealtime() < deadline) {
+                    if (receipt?.readText()?.trim() == "ok" && (joined?.invoke() ?: isConnectedTo(wifiManager, ssid))) {
+                        return@submit true
+                    }
+                    Thread.sleep(RESPONSE_POLL_MS)
+                }
+                false
+            } else if (joined == null) awaitWifiNetwork(wifiManager, ssid, timeoutMs)
             else {
                 val deadline = SystemClock.elapsedRealtime() + timeoutMs
                 while (SystemClock.elapsedRealtime() < deadline) {
@@ -468,8 +481,12 @@ internal object SelfArmCommandBridgeClient {
         val requestFile = File(channel, "$nonce.request")
         val tempFile = File(channel, ".$nonce.request.${UUID.randomUUID()}.tmp")
         // Pre-create this app-owned inode; unlike shell-created responses it has no negative
-        // FUSE dentry. A stale read can only report failure, never a false successful forget.
-        val receipt = if (command == SelfArmCommandBridgeProtocol.WIFI_FORGET) File(channel, "$nonce.forget-result") else null
+        // FUSE dentry. A stale read can only report failure, never a false successful command.
+        val receipt = when (command) {
+            SelfArmCommandBridgeProtocol.WIFI_FORGET -> File(channel, "$nonce.forget-result")
+            SelfArmCommandBridgeProtocol.WIFI_CONNECT_FILES -> File(channel, "$nonce.connect-result")
+            else -> null
+        }
         return try {
             val request = SelfArmCommandBridgeProtocol.request(secret, command, nonce, arguments)
             if (request.toByteArray(Charsets.UTF_8).size > SelfArmCommandBridgeProtocol.MAX_REQUEST_BYTES) {
