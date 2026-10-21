@@ -21,3 +21,11 @@ delivers it after the failed attempt sends `LaneDeclined`. All eight combination
 successful completion, exact bytes, and matching SHA-256. Hotspot cases stage bus bytes
 before offering the lane. Android services are supplied by Robolectric; this does not
 test real Wi-Fi association, a LocalOnlyHotspot reservation, or the physical Bluetooth link.
+
+The suite also holds original bus sends through the snapshot exchange in both
+directions and admits resumed data before JSON confirmation. Two upload schedules
+pause the actual worker after its final resume check but before epoch capture,
+then overlap BusResume between resync start and snapshot installation. Test-only
+Robolectric shadows pause those method boundaries and call through to production
+code. The buffered chunk must wait for the snapshot and worker rewind. All 15
+cases require completion with exact bytes and SHA-256.

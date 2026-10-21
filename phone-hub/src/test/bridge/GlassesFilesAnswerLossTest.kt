@@ -36,8 +36,11 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
+import org.robolectric.annotation.RealObject
 import org.robolectric.shadows.ShadowContentResolver
 import org.robolectric.shadows.ShadowNetwork
+import org.robolectric.shadow.api.Shadow
+import org.robolectric.util.ReflectionHelpers.ClassParameter
 import java.io.ByteArrayInputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -51,6 +54,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import javax.net.SocketFactory
 
@@ -73,7 +77,20 @@ class GlassesFilesAnswerLossTest {
     @Test fun `upload held old bus send after truncated answer completes after snapshot confirmation`() = transfer(upload = true, hotspot = true, truncate = true, holdOldSend = true)
     @Test fun `upload resumed bus data overtakes snapshot confirmation after lost answer`() = transfer(upload = true, hotspot = true, truncate = false, holdOldSend = true, overtakeUploadConfirmation = true)
 
-    private fun transfer(upload: Boolean, hotspot: Boolean, truncate: Boolean, holdOldSend: Boolean = false, overtakeUploadConfirmation: Boolean = false) {
+    @Test
+    @Config(instrumentedPackages = ["com.anezium.rokidbus.phone.GlassesFilesController"],
+        shadows = [UploadEpochBoundary::class, ResumeSnapshotBoundary::class])
+    fun `upload buffered chunk waits for snapshot and rewind after lost answer`() =
+        transfer(upload = true, hotspot = true, truncate = false, pauseBeforeEpoch = true)
+
+    @Test
+    @Config(instrumentedPackages = ["com.anezium.rokidbus.phone.GlassesFilesController"],
+        shadows = [UploadEpochBoundary::class, ResumeSnapshotBoundary::class])
+    fun `upload buffered chunk waits for snapshot and rewind after truncated answer`() =
+        transfer(upload = true, hotspot = true, truncate = true, pauseBeforeEpoch = true)
+
+    private fun transfer(upload: Boolean, hotspot: Boolean, truncate: Boolean, holdOldSend: Boolean = false,
+        overtakeUploadConfirmation: Boolean = false, pauseBeforeEpoch: Boolean = false) {
         val context = RuntimeEnvironment.getApplication()
         val connectivity = shadowOf(context.getSystemService(ConnectivityManager::class.java))
         val network = ShadowNetwork.newInstance(71)
@@ -98,6 +115,9 @@ class GlassesFilesAnswerLossTest {
         val corrupted = CountDownLatch(1)
         val resumedData = CountDownLatch(1)
         val confirmationDelivered = CountDownLatch(1)
+        val resyncBegan = CountDownLatch(1)
+        val installSnapshot = CountDownLatch(1)
+        val pausedBeforeEpoch = AtomicBoolean(false)
         val heldUpload = AtomicReference<BusEnvelope>()
         var pendingUploadConfirmation: GlassesFilesRequest.BusResume? = null
         var oldDownloadDelivered = false
@@ -130,7 +150,9 @@ class GlassesFilesAnswerLossTest {
                     delivery()
                     confirmationDelivered.countDown()
                 } }
-            } else if (truncate && resyncResult && declined.count > 0) io.execute { checked(failure, delivery) } else delivery()
+            } else if (pauseBeforeEpoch && resyncResult || truncate && resyncResult && declined.count > 0) {
+                io.execute { checked(failure, delivery) }
+            } else delivery()
         }
 
         fun openLane(id: String) {
@@ -220,7 +242,7 @@ class GlassesFilesAnswerLossTest {
                             pendingUploadConfirmation = null
                         }
                         deliver(GlassesFilesResult.UploadProgress(chunk.transferId, peerUpload!!.upload.stagedBytes))
-                        if (!holdOldSend) offerHotspot(chunk.transferId)
+                        if (!holdOldSend && !pauseBeforeEpoch) offerHotspot(chunk.transferId)
                     } else when (val request = GlassesFilesContract.parseRequest(envelope.payload)) {
                         is GlassesFilesRequest.UploadBegin -> {
                             if (!hotspot) openLane(request.transferId)
@@ -298,7 +320,7 @@ class GlassesFilesAnswerLossTest {
                         else -> Unit
                     }
                 } }
-                if (hotspot && envelope.binary != null && !holdOldSend) {
+                if (hotspot && envelope.binary != null && !holdOldSend && !pauseBeforeEpoch) {
                     check(corrupted.await(10, TimeUnit.SECONDS))
                     check(resyncDelivered.await(5, TimeUnit.SECONDS))
                 }
@@ -311,11 +333,46 @@ class GlassesFilesAnswerLossTest {
             "answer-loss.bin", "", if (upload) Uri.fromFile(input).toString() else "answer-loss.bin", source.size.toLong(),
             state = GlassesTransferState.RUNNING)
         val type = GlassesFilesController::class.java.declaredClasses.single { it.simpleName == if (upload) "ActiveSend" else "ActiveCopy" }
-        active = type.declaredConstructors.single().apply { isAccessible = true }.newInstance(controller, item)
+        active = type.declaredConstructors.single { it.parameterCount == 2 }.apply { isAccessible = true }.newInstance(controller, item)
         setField(controller, "active", active)
         @Suppress("UNCHECKED_CAST")
         (field(controller, "transfers") as MutableList<GlassesTransferItem>).add(item)
-        val worker = FutureTask { call(active, "run") }
+        if (pauseBeforeEpoch) {
+            ResumeSnapshotBoundary.afterBegin = {
+                resyncBegan.countDown()
+                check(installSnapshot.await(5, TimeUnit.SECONDS))
+            }
+            UploadEpochBoundary.beforeCapture = { offset, sendChunk ->
+                if (offset == GlassesFilesContract.CHUNK_BYTES.toLong() && pausedBeforeEpoch.compareAndSet(false, true)) {
+                    // The real worker has passed needsResume(), but has not entered the epoch lock.
+                    control.execute { checked(failure) { offerHotspot(field(active, "wireId") as String) } }
+                    check(resyncBegan.await(10, TimeUnit.SECONDS))
+                    try {
+                        val resync = field(active, "resync") as GlassesFilesResync
+                        assertTrue(resync.switched)
+                        assertNull(resync.offset)
+                        assertFalse(resync.confirmed)
+                        assertNull(field(active, "resumePending"))
+                        val sent = sendChunk()
+                        control.submit {}.get(5, TimeUnit.SECONDS)
+                        failure.get()?.let { throw it }
+                        assertEquals("buffered original bytes must not acquire the resumed epoch",
+                            offset, peerUpload!!.upload.stagedBytes)
+                        assertFalse("sender must wait for the snapshot and worker rewind", sent)
+                        sent
+                    } finally {
+                        installSnapshot.countDown()
+                        check(resyncDelivered.await(5, TimeUnit.SECONDS))
+                    }
+                } else sendChunk()
+            }
+        }
+        val worker = FutureTask {
+            try { call(active, "run") } catch (error: java.lang.reflect.InvocationTargetException) {
+                failure.compareAndSet(null, error.targetException)
+                throw error
+            }
+        }
         Thread(worker, "answer-loss-phone").apply { isDaemon = true; start() }
         try {
             assertTrue("proxy must lose only the sealed answer", corrupted.await(10, TimeUnit.SECONDS))
@@ -338,18 +395,55 @@ class GlassesFilesAnswerLossTest {
                 assertEquals(GlassesFilesContract.CHUNK_BYTES.toLong(), snapshot)
                 if (upload) assertNotNull(heldUpload.get()) else assertTrue(oldDownloadDelivered)
             }
+            if (pauseBeforeEpoch) {
+                assertTrue(pausedBeforeEpoch.get())
+                assertEquals(GlassesFilesContract.CHUNK_BYTES.toLong(), snapshot)
+            }
             assertFalse(messages.any { it is GlassesFilesResult.TransferFailed })
             val received = if (upload) peerUpload!!.upload.finalFile().readBytes() else output.readBytes()
             assertArrayEquals(source, received)
             assertEquals(sha(source), sha(received))
             if (!upload) assertEquals(sha(source), messages.filterIsInstance<GlassesFilesResult.DownloadEnd>().single().sha256)
         } finally {
+            installSnapshot.countDown()
             controller.close()
             worker.cancel(true)
             peerDownload?.cancelAll()
             sockets.forEach { runCatching { it.close() } }
             io.shutdownNow()
             control.shutdownNow()
+            UploadEpochBoundary.beforeCapture = null
+            ResumeSnapshotBoundary.afterBegin = null
+        }
+    }
+
+    @Implements(className = "com.anezium.rokidbus.phone.GlassesFilesController\$ActiveSend", isInAndroidSdk = false)
+    class UploadEpochBoundary : ResumeSnapshotBoundary() {
+        @Implementation fun sendChunk(offset: Long, bytes: ByteArray, viaLane: Boolean): Boolean {
+            val send = { Shadow.directlyOn<Boolean>(real, real.javaClass.name, "sendChunk",
+                ClassParameter.from(Long::class.javaPrimitiveType!!, offset),
+                ClassParameter.from(ByteArray::class.java, bytes),
+                ClassParameter.from(Boolean::class.javaPrimitiveType!!, viaLane)) }
+            return beforeCapture?.invoke(offset, send) ?: send()
+        }
+
+        companion object {
+            var beforeCapture: ((Long, () -> Boolean) -> Boolean)? = null
+        }
+    }
+
+    @Implements(className = "com.anezium.rokidbus.phone.GlassesFilesController\$ActiveTransfer", isInAndroidSdk = false)
+    open class ResumeSnapshotBoundary {
+        @RealObject lateinit var real: Any
+
+        @Implementation fun beginResync(): Boolean {
+            val started = Shadow.directlyOn<Boolean>(real, real.javaClass.superclass!!.name, "beginResync")
+            if (started) afterBegin?.invoke()
+            return started
+        }
+
+        companion object {
+            var afterBegin: (() -> Unit)? = null
         }
     }
 

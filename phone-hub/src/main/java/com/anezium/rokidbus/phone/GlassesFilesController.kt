@@ -1217,7 +1217,9 @@ internal class GlassesFilesController(
 
         private fun sendChunk(offset: Long, bytes: ByteArray, viaLane: Boolean): Boolean {
             val epoch = synchronized(signal) {
-                if (cancelled || stop != null || upgradePending || resumePending != null || (viaLane && resync.switched)) return false
+                // The worker must process the snapshot rewind before a buffer can acquire epoch 1.
+                if (cancelled || stop != null || upgradePending || resumePending != null ||
+                    (resync.switched && !resync.confirmed) || (viaLane && resync.switched)) return false
                 attempted = maxOf(attempted, offset + bytes.size)
                 resync.busEpoch
             }
