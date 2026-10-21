@@ -2965,18 +2965,26 @@ lease and the phone closes its reservation. An independent glasses watchdog
 also releases abandoned batches. Android can auto-rejoin the previous saved
 network after the hotspot disappears. Wi-Fi enabled by Nexus is released
 through the hub's existing ownership reconciliation; an active camera keeps
-the radio. After reconciliation, a separate best-effort cleanup waits up to 30 s
+the radio. Camera takeover also notifies the phone during batch idle, releasing
+its reservation immediately. After reconciliation, a separate cleanup waits up to 45 s
 for the retained hotspot lease to disappear (or Wi-Fi to turn off), then submits
-the fixed `wifi_forget` bridge command with just the batch SSID in base64.
+the fixed, no-argument `wifi_cleanup_files` bridge command.
 Only batches that submitted a bridge join request are eligible, including failed
 joins that might have saved an entry. Repeated release/expiry cannot forget twice;
 camera takeover, link teardown and replacement batches use the same release path.
-The API-32 helper matches the saved-network SSID column exactly, refuses while
-connected to a matching entry, forgets matching numeric IDs, and verifies absence.
+The API-32 helper records only numeric network IDs created by `wifi_connect_files`
+and creation timestamps in a shell-owned file, bounded to eight entries. It never
+adopts preexisting camera/user entries, even if their SSID matches. Ordinary cleanup
+rechecks and retains the currently connected ID; a 24-hour lease expiry releases only
+the recorded files network. Records are removed only after verified absence. Hub
+start/batch end and helper start/30-second maintenance retry cleanup, so app process
+death or an early cleanup deadline cannot discard the obligation.
 Other Android versions, unknown helper commands and unconfirmed results mean
 not forgotten; they never fail a transfer or block ownership reconciliation.
-The new helper version is `2026-10-21.1`; its existing APK self-update and normal
-re-arm paths are unchanged. No SSID or passphrase is logged or stored by cleanup.
+The current helper version is `2026-10-21.5`; its existing APK self-update and normal
+re-arm paths are unchanged. No SSID, passphrase, BSSID, or device identity is logged
+or stored by cleanup. Outcome-only receipts are `<nonce>.connect-result` for the
+files target confirmation and `<nonce>.files-result` for numeric cleanup.
 The transfer card and notification show Wi-Fi only after lane data
 has actually been acknowledged or staged.
 

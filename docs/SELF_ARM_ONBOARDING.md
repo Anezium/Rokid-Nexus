@@ -153,18 +153,35 @@ or unopenable FIFO falls back to the sleep-based poll. The line is
 is a 32-byte value generated once, kept app-private and baked into the deployed script. Arguments
 that could contain `:` travel base64-encoded. The bridge re-validates everything itself and refuses
 on any surprise: unknown command, malformed nonce, replayed nonce, bad token, wrong shape.
-The current allow-list is `wifi_enable`, `wifi_disable`, `wifi_connect`, `wifi_forget`,
+The current allow-list (helper `2026-10-21.5`) is `wifi_enable`, `wifi_disable`,
+`wifi_connect`, `wifi_connect_files`, `wifi_forget`, `wifi_cleanup_files`,
 `delete_capture`, `adb_wifi_enable`, and `adb_wifi_disable`. The Wireless ADB
 plugin uses the last two only to toggle the transport; pairing start/stop uses
 the hub's already authenticated local KADB identity with separately validated,
 fixed `service call adb` shapes.
 
+`wifi_connect_files` takes the same authenticated base64 SSID/passphrase and
+security arguments as `wifi_connect`, with API-32-only target confirmation.
+Its app-precreated `<nonce>.connect-result` receipt contains `pending`, `ok`, or
+`error`; `ok` requires the requested target, completed supplicant state, and an
+IPv4 address. The camera `wifi_connect` path is unchanged.
+
+`wifi_cleanup_files` takes no arguments. On API 32 it retries only network IDs
+created by `wifi_connect_files`, recorded with creation timestamps in a shell-owned
+file (at most eight entries; a files lease expires after 24 hours). The hub calls
+it on start and batch end; helper start and 30-second maintenance also retry it.
+Ordinary cleanup retains the currently connected ID; expiry releases only the
+recorded files lease. IDs are removed from the record only after verified absence.
+No SSID, passphrase, BSSID, or device identity is persisted or logged by cleanup.
+Its app-precreated `<nonce>.files-result` receipt contains `pending`, `ok`, or
+`error`; retained obligations or unknown output leave cleanup unconfirmed.
+
 `wifi_forget` takes one base64 SSID argument (1–44 encoded characters, at most
 32 decoded UTF-8 bytes, no controls). On Android 12L/API 32 only, it matches
 `cmd wifi list-networks` SSIDs, refuses to forget a currently connected match,
-forgets the matching numeric network IDs, and checks that none remain. Files
-submit it once per joined batch after Wi-Fi ownership reconciliation, on a
-separate cleanup executor. Failure remains best-effort and never blocks restore.
+forgets the matching numeric network IDs, and checks that none remain. Files use
+`wifi_cleanup_files` instead, after Wi-Fi ownership reconciliation on a separate
+cleanup executor. Failure remains best-effort and never blocks restore.
 Unlike the ordinary shell-created response, its outcome uses an app-precreated
 `<nonce>.forget-result` inode containing only `pending`, `ok`, or `error`.
 This avoids the negative-dentry trap; a stale read or an old helper's unknown-command
