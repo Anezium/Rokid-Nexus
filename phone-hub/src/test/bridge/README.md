@@ -25,7 +25,9 @@ test real Wi-Fi association, a LocalOnlyHotspot reservation, or the physical Blu
 The suite also holds original bus sends through the snapshot exchange in both
 directions and admits resumed data before JSON confirmation. Two upload schedules
 pause the actual worker after its final resume check but before epoch capture,
-then overlap BusResume between resync start and snapshot installation. Test-only
+then overlap BusResume between resync start and snapshot installation. Two download
+schedules pause before epoch capture, prove the pending hotspot handshake, and
+delay the phone snapshot until the stream returns to its snapshot wait. Test-only
 Robolectric shadows pause those method boundaries and call through to production
-code. The buffered chunk must wait for the snapshot and worker rewind. All 15
+code. The buffered chunk must wait for the snapshot and worker rewind. All 17
 cases require completion with exact bytes and SHA-256.

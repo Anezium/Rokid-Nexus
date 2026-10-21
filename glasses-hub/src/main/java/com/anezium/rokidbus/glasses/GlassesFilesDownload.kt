@@ -210,7 +210,7 @@ internal class GlassesFilesDownload(
                 if (hasResume()) continue
                 val sent = sendChunk(digest.position, buffer.copyOf(count), viaLane)
                 if (!sent) {
-                    if (hasResume()) continue
+                    if (needsResume()) continue
                     if (viaLane) {
                         requestResync(transferId)
                         continue
@@ -259,6 +259,7 @@ internal class GlassesFilesDownload(
     }
 
     private fun hasResume(): Boolean = synchronized(lock) { resumePending != null }
+    private fun needsResume(): Boolean = synchronized(lock) { resync.switched && !resync.confirmed || resumePending != null }
 
     private fun awaitAck(satisfied: () -> Boolean): Boolean {
         var deadline = now() + GlassesFilesContract.IDLE_TIMEOUT_MS

@@ -89,6 +89,18 @@ class GlassesFilesAnswerLossTest {
     fun `upload buffered chunk waits for snapshot and rewind after truncated answer`() =
         transfer(upload = true, hotspot = true, truncate = true, pauseBeforeEpoch = true)
 
+    @Test
+    @Config(instrumentedPackages = ["com.anezium.rokidbus.glasses.GlassesFilesDownload"],
+        shadows = [DownloadEpochBoundary::class])
+    fun `download buffered chunk waits for delayed snapshot after lost answer`() =
+        transfer(upload = false, hotspot = true, truncate = false, pauseBeforeEpoch = true)
+
+    @Test
+    @Config(instrumentedPackages = ["com.anezium.rokidbus.glasses.GlassesFilesDownload"],
+        shadows = [DownloadEpochBoundary::class])
+    fun `download buffered chunk waits for delayed snapshot after truncated answer`() =
+        transfer(upload = false, hotspot = true, truncate = true, pauseBeforeEpoch = true)
+
     private fun transfer(upload: Boolean, hotspot: Boolean, truncate: Boolean, holdOldSend: Boolean = false,
         overtakeUploadConfirmation: Boolean = false, pauseBeforeEpoch: Boolean = false) {
         val context = RuntimeEnvironment.getApplication()
@@ -118,6 +130,10 @@ class GlassesFilesAnswerLossTest {
         val resyncBegan = CountDownLatch(1)
         val installSnapshot = CountDownLatch(1)
         val pausedBeforeEpoch = AtomicBoolean(false)
+        val refusedBeforeSnapshot = AtomicBoolean(false)
+        val waitingForSnapshot = AtomicBoolean(false)
+        val snapshotRequested = CountDownLatch(1)
+        val snapshotWaitOrFinish = CountDownLatch(1)
         val heldUpload = AtomicReference<BusEnvelope>()
         var pendingUploadConfirmation: GlassesFilesRequest.BusResume? = null
         var oldDownloadDelivered = false
@@ -277,13 +293,19 @@ class GlassesFilesAnswerLossTest {
                                             resumedData.countDown()
                                             check(confirmationDelivered.await(5, TimeUnit.SECONDS))
                                         }
-                                    } else control.execute { checked(failure) { offerHotspot(request.transferId) } }
-                                    if (hotspot && !holdOldSend) {
+                                    } else if (!pauseBeforeEpoch) control.execute { checked(failure) { offerHotspot(request.transferId) } }
+                                    if (hotspot && !holdOldSend && !pauseBeforeEpoch) {
                                         check(corrupted.await(10, TimeUnit.SECONDS))
                                         check(resyncDelivered.await(5, TimeUnit.SECONDS))
                                     }
                                     true
-                                }, {}, SystemClock::elapsedRealtime)
+                                }, { snapshotWaitOrFinish.countDown() }, {
+                                    if (!upload && refusedBeforeSnapshot.get() && waitingForSnapshot.compareAndSet(false, true)) {
+                                        snapshotWaitOrFinish.countDown()
+                                        check(installSnapshot.await(5, TimeUnit.SECONDS))
+                                    }
+                                    SystemClock.elapsedRealtime()
+                                })
                             io.execute { checked(failure) { peerDownload!!.stream() } }
                         }
                         is GlassesFilesRequest.LaneDeclined -> {
@@ -305,6 +327,10 @@ class GlassesFilesAnswerLossTest {
                                 }
                                 if (!overtakeUploadConfirmation) confirmed.countDown()
                             } else {
+                                if (pauseBeforeEpoch) {
+                                    snapshotRequested.countDown()
+                                    check(installSnapshot.await(5, TimeUnit.SECONDS))
+                                }
                                 peerDownload!!.onResume(request.transferId, request.stagedBytes)
                                 confirmed.countDown()
                             }
@@ -337,7 +363,7 @@ class GlassesFilesAnswerLossTest {
         setField(controller, "active", active)
         @Suppress("UNCHECKED_CAST")
         (field(controller, "transfers") as MutableList<GlassesTransferItem>).add(item)
-        if (pauseBeforeEpoch) {
+        if (pauseBeforeEpoch && upload) {
             ResumeSnapshotBoundary.afterBegin = {
                 resyncBegan.countDown()
                 check(installSnapshot.await(5, TimeUnit.SECONDS))
@@ -367,6 +393,28 @@ class GlassesFilesAnswerLossTest {
                 } else sendChunk()
             }
         }
+        if (pauseBeforeEpoch && !upload) {
+            DownloadEpochBoundary.beforeCapture = { offset, sendChunk ->
+                if (offset == GlassesFilesContract.CHUNK_BYTES.toLong() && pausedBeforeEpoch.compareAndSet(false, true)) {
+                    control.execute { checked(failure) { offerHotspot(field(active, "wireId") as String) } }
+                    check(resyncDelivered.await(10, TimeUnit.SECONDS))
+                    check(snapshotRequested.await(10, TimeUnit.SECONDS))
+                    val resync = field(peerDownload!!, "resync") as GlassesFilesResync
+                    assertTrue("the real handshake must prove the pending hotspot lane", lane.isProven)
+                    assertFalse(resync.laneOpened)
+                    assertTrue(resync.switched)
+                    assertNull(resync.offset)
+                    assertFalse(resync.confirmed)
+                    assertNull(field(peerDownload!!, "resumePending"))
+                    assertEquals(offset, (field(active, "resync") as GlassesFilesResync).offset)
+                    val sent = sendChunk()
+                    assertFalse("the production guard must refuse the original buffered bytes", sent)
+                    assertEquals(offset, output.length())
+                    refusedBeforeSnapshot.set(true)
+                    sent
+                } else sendChunk()
+            }
+        }
         val worker = FutureTask {
             try { call(active, "run") } catch (error: java.lang.reflect.InvocationTargetException) {
                 failure.compareAndSet(null, error.targetException)
@@ -377,6 +425,15 @@ class GlassesFilesAnswerLossTest {
         try {
             assertTrue("proxy must lose only the sealed answer", corrupted.await(10, TimeUnit.SECONDS))
             assertTrue("phone must decline its failed attempt", declined.await(5, TimeUnit.SECONDS))
+            if (pauseBeforeEpoch && !upload) {
+                val reachedBoundary = snapshotWaitOrFinish.await(5, TimeUnit.SECONDS)
+                failure.get()?.let { throw it }
+                assertTrue("stream must reach the snapshot wait or finish", reachedBoundary)
+                assertTrue("download must wait for its delayed snapshot instead of finishing: $messages", waitingForSnapshot.get())
+                assertFalse(messages.any { it is GlassesFilesResult.TransferFailed || it is GlassesFilesResult.DownloadEnd })
+                assertEquals(GlassesFilesContract.CHUNK_BYTES.toLong(), output.length())
+                installSnapshot.countDown()
+            }
             if (upload) {
                 val didConfirm = confirmed.await(3, TimeUnit.SECONDS)
                 failure.get()?.let { throw it }
@@ -413,7 +470,25 @@ class GlassesFilesAnswerLossTest {
             io.shutdownNow()
             control.shutdownNow()
             UploadEpochBoundary.beforeCapture = null
+            DownloadEpochBoundary.beforeCapture = null
             ResumeSnapshotBoundary.afterBegin = null
+        }
+    }
+
+    @Implements(GlassesFilesDownload::class, isInAndroidSdk = false)
+    class DownloadEpochBoundary {
+        @RealObject lateinit var real: Any
+
+        @Implementation fun sendChunk(offset: Long, bytes: ByteArray, viaLane: Boolean): Boolean {
+            val send = { Shadow.directlyOn<Boolean>(real, real.javaClass.name, "sendChunk",
+                ClassParameter.from(Long::class.javaPrimitiveType!!, offset),
+                ClassParameter.from(ByteArray::class.java, bytes),
+                ClassParameter.from(Boolean::class.javaPrimitiveType!!, viaLane)) }
+            return beforeCapture?.invoke(offset, send) ?: send()
+        }
+
+        companion object {
+            var beforeCapture: ((Long, () -> Boolean) -> Boolean)? = null
         }
     }
 

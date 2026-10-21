@@ -307,6 +307,42 @@ class GlassesFilesFallbackTest {
     }
 
     @Test
+    fun `download bus submission failure terminates without resync`() = downloadBusFailure(resume = false)
+
+    @Test
+    fun `download bus submission failure stays terminal after resync`() = downloadBusFailure(resume = true)
+
+    private fun downloadBusFailure(resume: Boolean) {
+        val file = temp.newFile().apply { writeBytes(ByteArray(90_017)) }
+        val key = GlassesFilesLane.newKey()
+        val lane = if (resume) lane(key) else null
+        val results = java.util.concurrent.CopyOnWriteArrayList<GlassesFilesResult>()
+        val epochs = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        lateinit var transfer: GlassesFilesDownload
+        transfer = GlassesFilesDownload(id, file, null, io, { results.add(it); true }, { _, _, epoch ->
+            epochs += epoch
+            if (lane != null && epochs.size == 1) {
+                assertTrue(transfer.offerHotspotLane(lane))
+                connect(lane, key).use {
+                    lane.close()
+                    transfer.requestResync(id)
+                    transfer.onResume(id, 0)
+                }
+            }
+            false
+        }, {}, ::now)
+        try {
+            io.submit { transfer.stream() }.get(5, TimeUnit.SECONDS)
+            assertEquals(if (resume) listOf(0, 0, 0, 1, 1, 1) else listOf(0, 0, 0), epochs.toList())
+            assertEquals(listOf(GlassesFilesResult.TransferFailed(id, GlassesFilesError.LINK_LOST)),
+                results.filterIsInstance<GlassesFilesResult.TransferFailed>())
+            assertFalse(results.any { it is GlassesFilesResult.DownloadEnd })
+        } finally {
+            transfer.cancelAll()
+        }
+    }
+
+    @Test
     fun `download resync expires when the phone never states its offset`() {
         val file = temp.newFile().apply { writeBytes(ByteArray(5 * 1024 * 1024)) }
         val key = GlassesFilesLane.newKey()
