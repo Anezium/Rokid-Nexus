@@ -2918,9 +2918,6 @@ the existing join bridge. Credentials and lane keys stay in memory and on the
 private bus, never in Nexus logs, storage, or notifications. The existing
 `connectWifiNetwork` bridge request file and Android's saved-network entry are
 accepted exceptions, as for camera `lohs_reverse`.
-For WPA2/WPA3 transition reservations, files offer the advertised WPA2 mode to
-avoid the Rokid SAE commit stall. SAE-only reservations remain WPA3; unknown
-security modes fail closed. The camera's security selection is unchanged.
 
 The glasses join through that bridge under the hub's existing Wi-Fi ownership,
 then bind their existing lane server only to the joined hotspot IPv4 address.
