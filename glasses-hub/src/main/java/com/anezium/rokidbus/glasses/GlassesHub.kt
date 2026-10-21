@@ -1486,7 +1486,7 @@ object GlassesHub {
             touchFilesHotspot()
             cancelPendingWifiDisable("files_hotspot")
             wifiEnableReleasePending.set(false)
-            handleGlassesWifiRequest(context, offer.batchId)
+            handleGlassesWifiRequest(context, offer.batchId, allowAccessibilityFallback = false)
             @Suppress("DEPRECATION")
             val alreadyJoined = wifi?.connectionInfo?.ssid?.removeSurrounding("\"") == credentials.ssid
             val applied = alreadyJoined || runCatching {
@@ -1566,7 +1566,7 @@ object GlassesHub {
         if (cancelled) log("glassesWifiGrace cancelled trigger=$trigger")
     }
 
-    private fun handleGlassesWifiRequest(context: Context, sessionId: String) {
+    private fun handleGlassesWifiRequest(context: Context, sessionId: String, allowAccessibilityFallback: Boolean = true) {
         SelfArmBootRepairCoordinator.revokeWifiObligation("camera_request")
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         if (wifiManager == null) {
@@ -1590,7 +1590,7 @@ object GlassesHub {
                     .getOrDefault(false)
                 // Camera-owned Wi-Fi acquisition must not start the onboarding-only
                 // wireless-debugging bootstrap; it gets only the Wi-Fi toggle mode.
-                applied || attemptWifiAccessibilityEnable(context)
+                applied || (allowAccessibilityFallback && attemptWifiAccessibilityEnable(context))
             },
         )
         log("glassesWifiRequest enabled=true hubOwned=${result.hubOwned} applied=${result.applied}")
