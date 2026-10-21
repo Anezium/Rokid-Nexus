@@ -37,6 +37,7 @@ import com.anezium.rokidbus.shared.GlassesFilesHotspotPolicy
 import com.anezium.rokidbus.shared.GlassesFilesLaneUpgrade
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
@@ -175,6 +176,14 @@ internal class GlassesFilesController(
     context: Context,
     private val sendRemote: (BusEnvelope) -> String?,
     private val cameraActive: () -> Boolean = { false },
+    private val openUpload: (Uri, (() -> Unit) -> Unit) -> InputStream = { uri, registerCancel ->
+        val cancellation = CancellationSignal()
+        registerCancel { cancellation.cancel() }
+        val descriptor = context.applicationContext.contentResolver.openFileDescriptor(uri, "r", cancellation)
+            ?: throw IOException("provider returned no descriptor")
+        registerCancel { runCatching { descriptor.close() } }
+        ParcelFileDescriptor.AutoCloseInputStream(descriptor)
+    },
 ) : AutoCloseable {
     private val appContext = context.applicationContext
     private val inbox = Executors.newSingleThreadExecutor { Thread(it, "glasses-files-inbox").apply { isDaemon = true } }
@@ -712,7 +721,6 @@ internal class GlassesFilesController(
         private var hotspotDeadline = 0L
         private var sharedNetwork = false
         protected var upgradePending = false
-        protected var resumeToLane = false
         protected val upgrade = GlassesFilesLaneUpgrade()
 
         protected abstract fun onLaneFrame(frame: GlassesFilesLane.Frame)
@@ -930,7 +938,7 @@ internal class GlassesFilesController(
     private inner class ActiveSend(item: GlassesTransferItem) : ActiveTransfer(item) {
         private var ready: GlassesFilesResult.UploadReady? = null
         private var attempted = 0L
-        private var resumePending: Long? = null
+        private var resumePending: UploadResume? = null
 
         override fun switchToLane() {
             synchronized(signal) {
@@ -970,8 +978,7 @@ internal class GlassesFilesController(
                         stop = GlassesTransferStop.LINK_LOST
                     } else {
                         acked = result.stagedBytes
-                        resumePending = result.stagedBytes
-                        resumeToLane = true
+                        resumePending = UploadResume(result.stagedBytes, toLane = true)
                         upgradePending = false
                         Log.i(TAG, "glasses files upload lane resume staged=${result.stagedBytes}")
                     }
@@ -993,7 +1000,7 @@ internal class GlassesFilesController(
                         stop = GlassesTransferStop.LINK_LOST
                     } else if (first) {
                         acked = result.stagedBytes
-                        resumePending = result.stagedBytes
+                        resumePending = UploadResume(result.stagedBytes, toLane = false)
                         Log.i(TAG, "glasses files upload bus resume staged=${result.stagedBytes}")
                     }
                     signal.notifyAll()
@@ -1053,15 +1060,15 @@ internal class GlassesFilesController(
                     while (true) {
                         val resume = synchronized(signal) { resumePending.also { resumePending = null } }
                         if (resume != null) {
-                            val toLane = synchronized(signal) { resumeToLane.also { resumeToLane = false } }
                             reader.close()
                             reader = openReader(uri, staged)
-                            digest.rewind(resume)
-                            if (send(if (toLane) GlassesFilesRequest.LaneResume(wireId, resume) else GlassesFilesRequest.BusResume(wireId, resume)) != null) {
+                            if (resume.toLane && synchronized(signal) { resync.switched }) continue
+                            digest.rewind(resume.offset)
+                            if (send(if (resume.toLane) GlassesFilesRequest.LaneResume(wireId, resume.offset) else GlassesFilesRequest.BusResume(wireId, resume.offset)) != null) {
                                 return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
                             }
-                            if (!toLane) synchronized(signal) { resync.confirm(resume) }
-                            progress(item.id, resume, size, rate)
+                            if (!resume.toLane) synchronized(signal) { resync.confirm(resume.offset) }
+                            progress(item.id, resume.offset, size, rate)
                         }
                         await { failedReason() != null || resumePending != null || (!upgradePending && (!resync.switched || resync.confirmed)) }
                             ?.let { return it }
@@ -1145,12 +1152,7 @@ internal class GlassesFilesController(
                 if (staged != null) {
                     staged.inputStream()
                 } else {
-                    val cancellation = CancellationSignal()
-                    registerCancel { cancellation.cancel() }
-                    val descriptor = appContext.contentResolver.openFileDescriptor(uri, "r", cancellation)
-                        ?: throw IOException("provider returned no descriptor")
-                    registerCancel { runCatching { descriptor.close() } }
-                    ParcelFileDescriptor.AutoCloseInputStream(descriptor)
+                    openUpload(uri, registerCancel)
                 }
             })
 
@@ -1205,6 +1207,8 @@ internal class GlassesFilesController(
             return false
         }
     }
+
+    private data class UploadResume(val offset: Long, val toLane: Boolean)
 
     private inner class ActiveCopy(item: GlassesTransferItem) : ActiveTransfer(item) {
         // Written only on the inbox thread once [run] has opened them.
