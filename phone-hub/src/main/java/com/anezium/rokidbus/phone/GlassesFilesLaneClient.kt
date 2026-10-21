@@ -4,9 +4,9 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import com.anezium.rokidbus.shared.GlassesFilesClientNetwork
 import com.anezium.rokidbus.shared.GlassesFilesLane
 import com.anezium.rokidbus.shared.GlassesFilesLaneEndpoint
+import com.anezium.rokidbus.shared.GlassesFilesClientNetwork
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.Closeable

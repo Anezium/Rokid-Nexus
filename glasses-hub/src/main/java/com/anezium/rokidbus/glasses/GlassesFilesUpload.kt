@@ -1,8 +1,8 @@
 package com.anezium.rokidbus.glasses
 
 import com.anezium.rokidbus.shared.GlassesFilesError
-import com.anezium.rokidbus.shared.GlassesFilesLaneUpgrade
 import com.anezium.rokidbus.shared.GlassesFilesResync
+import com.anezium.rokidbus.shared.GlassesFilesLaneUpgrade
 
 /** All writes and resync snapshots run on the service's serial control executor. */
 internal class GlassesFilesUpload(

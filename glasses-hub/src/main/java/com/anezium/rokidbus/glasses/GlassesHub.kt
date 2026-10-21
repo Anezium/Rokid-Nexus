@@ -18,7 +18,6 @@ import com.anezium.rokidbus.client.IBusService
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.ui.NexusGlyphs
 import com.anezium.rokidbus.client.ui.NexusPluginIcons
-import com.anezium.rokidbus.ink.InkWire
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
@@ -26,21 +25,21 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.GlassesAccessibilityCheckContract
-import com.anezium.rokidbus.shared.GlassesFilesContract
-import com.anezium.rokidbus.shared.GlassesFilesHotspotPolicy
-import com.anezium.rokidbus.shared.GlassesFilesRequest
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.GlassesKeyboardContract
 import com.anezium.rokidbus.shared.GlassesKeyboardReply
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.GlyphContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
+import com.anezium.rokidbus.ink.InkWire
 import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.GlassesFilesContract
 import com.anezium.rokidbus.shared.NativeAppContract
-import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PhoneHubCapabilities
 import com.anezium.rokidbus.shared.PhoneHubCapabilitiesContract
+import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.RemoteInputContract
 import com.anezium.rokidbus.shared.RemoteNavigationContract
@@ -49,20 +48,21 @@ import com.anezium.rokidbus.shared.SetupNoteContract
 import com.anezium.rokidbus.shared.SetupNoteMessage
 import com.anezium.rokidbus.shared.SetupPairingOfferContract
 import com.anezium.rokidbus.shared.SetupStage
-import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.TtsContract
 import com.anezium.rokidbus.shared.WirelessAdbAction
 import com.anezium.rokidbus.shared.WirelessAdbContract
 import com.anezium.rokidbus.shared.WirelessAdbReply
 import com.anezium.rokidbus.shared.plugin.PathRules
+import com.anezium.rokidbus.shared.GlassesFilesHotspotPolicy
+import com.anezium.rokidbus.shared.GlassesFilesRequest
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import org.json.JSONArray
-import org.json.JSONObject
 
 private const val MANUAL_CONNECT_PORT_WAIT_MS = 2_000L
 
@@ -1486,6 +1486,7 @@ object GlassesHub {
             touchFilesHotspot()
             cancelPendingWifiDisable("files_hotspot")
             wifiEnableReleasePending.set(false)
+            val joinDeadline = SystemClock.elapsedRealtime() + 20_000L
             handleGlassesWifiRequest(context, offer.batchId, allowAccessibilityFallback = false)
             @Suppress("DEPRECATION")
             val alreadyJoined = wifi?.connectionInfo?.ssid?.removeSurrounding("\"") == credentials.ssid
@@ -1493,17 +1494,24 @@ object GlassesHub {
                 SelfArmCommandBridgeClient.connectWifiNetwork(context, credentials.ssid,
                     credentials.passphrase, security, timeoutMs = LOHS_REVERSE_JOIN_TIMEOUT_MS)
             }.getOrDefault(false)
-            @Suppress("DEPRECATION")
-            val info = wifi?.connectionInfo
-            @Suppress("DEPRECATION")
-            val gateway = wifi?.dhcpInfo?.gateway ?: 0
-            val address = info?.ipAddress?.takeIf { it != 0 }?.let(::filesIpv4)
-            val gatewayAddress = gateway.takeIf { it != 0 }?.let(::filesIpv4)?.hostAddress
-            if (!applied || cameraSessionTracker.isActive() || info?.ssid?.removeSurrounding("\"") != credentials.ssid) {
-                joined(null, null)
-            } else {
-                joined(address, gatewayAddress)
+            var address: java.net.InetAddress? = null
+            var gatewayAddress: String? = null
+            // Association is observable before DHCP; only the joined interface may host a lane.
+            while (applied && !cameraSessionTracker.isActive() && SystemClock.elapsedRealtime() < joinDeadline) {
+                @Suppress("DEPRECATION")
+                val info = wifi?.connectionInfo
+                @Suppress("DEPRECATION")
+                val gateway = wifi?.dhcpInfo?.gateway ?: 0
+                if (LohsGatewayResolver.normalizeSsid(info?.ssid) == credentials.ssid && info?.ipAddress != null &&
+                    info.ipAddress != 0 && gateway != 0
+                ) {
+                    address = filesIpv4(info.ipAddress)
+                    gatewayAddress = filesIpv4(gateway).hostAddress
+                    break
+                }
+                Thread.sleep(100L)
             }
+            joined(address, gatewayAddress)
             wifiRequestExecutor.schedule({ expireFilesHotspot(offer.batchId) },
                 GlassesFilesHotspotPolicy.IDLE_MS, TimeUnit.MILLISECONDS)
         }
