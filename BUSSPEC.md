@@ -2889,6 +2889,58 @@ v1 bus behavior. These messages use the unreleased bit 14 lane contract and add
 no capability or plugin route. The phone drops its Wi-Fi tag and resets its time
 estimate as soon as resync starts.
 
+##### Phone hotspot lane
+
+Both hubs announce `GLASSES_FILES_HOTSPOT` (`1 << 15`). Only peers with this
+bit use the following messages on the existing private request/result routes.
+There is no plugin capability. A transfer first tries the shared-network lane;
+when that is unavailable or declined, at least 3.5 MiB remaining (about 20 s
+over Bluetooth) qualifies for a phone LocalOnlyHotspot. Bluetooth starts at once
+and continues throughout hotspot setup. Camera activity vetoes the join.
+
+The phone requests Nearby Wi-Fi Devices (API 33+) or fine location (API 30–32)
+only from the files screen, once per visit, when qualifying work needs it.
+Denial, unsupported hotspot security, bridge failure, or setup exceeding 25 s
+leaves the transfer on Bluetooth. No retry occurs within that transfer.
+
+Request `hotspot_offer` contains `{transferId, batchId, ssid, passphrase,
+security}`. IDs use the existing ID rules; SSID is nonblank, at most 32 UTF-8
+bytes, without control characters; security is `open`, `wpa2`, or `wpa3`.
+Open requires an empty passphrase; WPA2/WPA3 require 8–128 characters, matching
+the existing join bridge. Credentials and lane keys stay in memory and on the
+private bus, never in Nexus logs, storage, or notifications. The existing
+`connectWifiNetwork` bridge request file and Android's saved-network entry are
+accepted exceptions, as for camera `lohs_reverse`; the bridge is unchanged.
+
+The glasses join through that bridge under the hub's existing Wi-Fi ownership,
+then bind their existing lane server only to the joined hotspot IPv4 address.
+Result `hotspot_ready` contains `{transferId, lane: {host, port, key}, gateway}`;
+`gateway` is a literal IPv4 address. The phone connects from that local hotspot
+gateway address, avoiding its Wi-Fi client network and cellular routing. This
+direction reuses the existing server, one-phone proof, Wi-Fi lock and sealed
+hello/Ack(0) handshake unchanged, with a fresh key for every transfer.
+Result `hotspot_failed` `{transferId}` leaves Bluetooth running.
+
+After proof, request `lane_switch` `{transferId}` freezes an upload receiver's
+completed staging offset; result `lane_resume` `{transferId, staged}` reports
+it and request `lane_resume` echoes it before the sender continues on the lane.
+For downloads the phone freezes its receiver on its serial inbox and sends
+request `lane_resume`; the glasses sender echoes result `lane_resume` and
+rewinds. Offsets are strict integers within the file and attempted-send bounds.
+The receiver rejects late bus chunks after its snapshot; lane frames may
+overtake the confirmation. The sender rehashes its source prefix exactly as
+for bus resync. A lost proven lane uses the existing irreversible lane-to-bus
+resync; it never attempts another upgrade in that transfer.
+
+One reservation and `batchId` serve a batch, with fresh lanes per transfer.
+After 35 s idle, request `hotspot_release` `{batchId}` releases the glasses
+lease and the phone closes its reservation. An independent glasses watchdog
+also releases abandoned batches. Android can auto-rejoin the previous saved
+network after the hotspot disappears. Wi-Fi enabled by Nexus is released
+through the hub's existing ownership reconciliation; an active camera keeps
+the radio. The transfer card and notification show Wi-Fi only after lane data
+has actually been acknowledged or staged.
+
 Measured on an S23 with
 Rokid glasses on the same home network: 20 MiB in 1.1-1.7 s, 300 MiB in 10.7 s,
 against about 28 s for 5 MiB over Bluetooth.
