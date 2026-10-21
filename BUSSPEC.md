@@ -2973,15 +2973,18 @@ Only batches that submitted a bridge join request are eligible, including failed
 joins that might have saved an entry. Repeated release/expiry cannot forget twice;
 camera takeover, link teardown and replacement batches use the same release path.
 The API-32 helper records only numeric network IDs created by `wifi_connect_files`
-and creation timestamps in a shell-owned file, bounded to eight entries. It never
-adopts preexisting camera/user entries, even if their SSID matches. Ordinary cleanup
-rechecks and retains the currently connected ID; a 24-hour lease expiry releases only
-the recorded files network. Records are removed only after verified absence. Hub
+and creation timestamps in a shell-owned file, bounded to eight entries and 1024 bytes.
+Each record is bound to the current boot ID and `system_server` PID/start tick, the
+API-32 WifiConfigManager allocation lifetime. Unknown lifetime proof prevents deletion;
+legacy records and records from other lifetimes are discarded without forgetting.
+It never adopts preexisting camera/user entries, even if their SSID matches. Cleanup
+rechecks the lifetime before forgetting and always retains the currently connected ID,
+regardless of age. Same-lifetime records are removed only after verified absence. Hub
 start/batch end and helper start/30-second maintenance retry cleanup, so app process
 death or an early cleanup deadline cannot discard the obligation.
 Other Android versions, unknown helper commands and unconfirmed results mean
 not forgotten; they never fail a transfer or block ownership reconciliation.
-The current helper version is `2026-10-21.5`; its existing APK self-update and normal
+The current helper version is `2026-10-21.6`; its existing APK self-update and normal
 re-arm paths are unchanged. No SSID, passphrase, BSSID, or device identity is logged
 or stored by cleanup. Outcome-only receipts are `<nonce>.connect-result` for the
 files target confirmation and `<nonce>.files-result` for numeric cleanup.

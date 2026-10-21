@@ -30,6 +30,9 @@ class FilesCleanupTest(unittest.TestCase):
         self.write("status", "Wifi is not connected\n")
         self.write("now", "1000")
         self.write("api", "32")
+        self.write("server-pid", "123")
+        self.write("server-start", "456")
+        self.write("boot", "11111111-1111-1111-1111-111111111111")
 
     def write(self, name, value):
         (self.directory / name).write_text(value, encoding="utf-8", newline="\n")
@@ -42,6 +45,17 @@ SEENFILE="$CHANNEL/seen"
 LOGFILE="$CHANNEL/log"
 PENDING_DISABLE="$CHANNEL/disable"
 getprop() { cat "$CHANNEL/api"; }
+pidof() { command cat "$CHANNEL/server-pid"; }
+cat() {
+  case "$1" in
+    /proc/sys/kernel/random/boot_id) command cat "$CHANNEL/boot" ;;
+    /proc/*/stat)
+      printf '%s (system_server) S' "$(command cat "$CHANNEL/server-pid")"
+      for ((field=4; field<22; field++)); do printf ' 0'; done
+      printf ' %s\n' "$(command cat "$CHANNEL/server-start")" ;;
+    *) command cat "$@" ;;
+  esac
+}
 date() {
   if [ "$1" = +%s ]; then cat "$CHANNEL/now"; else command date "$@"; fi
 }
@@ -52,7 +66,9 @@ cmd() {
   printf '%s\n' "$2" >> "$CHANNEL/calls"
   case "$2" in
     list-networks) cat "$CHANNEL/networks" ;;
-    status) cat "$CHANNEL/status" ;;
+    status)
+      cat "$CHANNEL/status"
+      if [ -f "$CHANNEL/restart-on-status" ]; then printf '999' > "$CHANNEL/server-start"; fi ;;
     start-scan) : ;;
     list-scan-results)
       printf 'BSSID Frequency RSSI Age(sec) SSID Flags\n'
@@ -62,6 +78,7 @@ cmd() {
         printf '%-12d %-32s WPA2\n' 7 BatchTest >> "$CHANNEL/networks"
       fi
       printf 'Wifi is connected to "BatchTest"\nWifiInfo: Net ID: 7, Supplicant state: COMPLETED\n' > "$CHANNEL/status"
+      if [ -f "$CHANNEL/restart-on-connect" ]; then printf '999' > "$CHANNEL/server-start"; fi
       [ ! -f "$CHANNEL/fail-connect" ] ;;
     forget-network)
       printf '%s\n' "$3" >> "$CHANNEL/forgotten"
@@ -97,7 +114,8 @@ cmd() {
 
     def test_process_restart_recovers_only_created_numeric_ids(self):
         self.assertEqual("ok", self.connect())
-        self.assertEqual("7 1000\n", (self.directory / "files-networks").read_text(encoding="utf-8"))
+        self.assertEqual("7 1000 11111111-1111-1111-1111-111111111111 123 456\n",
+                         (self.directory / "files-networks").read_text(encoding="utf-8"))
         self.write("status", "WifiInfo: Net ID: 2, Supplicant state: COMPLETED\n")
         # A fresh shell has no app or previous request state, only the numeric record.
         self.assertEqual("ok", self.request("wifi_cleanup_files"))
@@ -118,7 +136,8 @@ cmd() {
     def test_failed_association_still_records_the_saved_network(self):
         self.write("fail-connect", "1")
         self.assertEqual("error", self.connect())
-        self.assertEqual("7 1000\n", (self.directory / "files-networks").read_text(encoding="utf-8"))
+        self.assertEqual("7 1000 11111111-1111-1111-1111-111111111111 123 456\n",
+                         (self.directory / "files-networks").read_text(encoding="utf-8"))
         self.write("status", "Wifi is disabled\n")
         self.assertEqual("ok", self.request("wifi_cleanup_files"))
 
@@ -129,11 +148,38 @@ cmd() {
         self.assertEqual([], self.forgotten())
         self.assertNotIn("connect-network", (self.directory / "calls").read_text(encoding="utf-8"))
 
-    def test_expired_files_lease_releases_its_own_current_id(self):
+    def test_restart_reassigned_user_id_is_never_forgotten(self):
         self.assertEqual("ok", self.connect())
-        self.write("now", "87400")
+        self.write("server-pid", "124")
+        self.write("server-start", "999")
+        self.write("networks", HEADER + row(7, "ReassignedHome"))
+        self.write("status", "Wifi is not connected\n")
         self.assertEqual("ok", self.request("wifi_cleanup_files"))
-        self.assertEqual(["7"], self.forgotten())
+        self.assertEqual([], self.forgotten())
+
+    def test_reused_server_pid_with_different_start_is_never_forgotten(self):
+        self.assertEqual("ok", self.connect())
+        self.write("server-start", "999")
+        self.write("networks", HEADER + row(7, "ReassignedHome"))
+        self.write("status", "Wifi is not connected\n")
+        self.assertEqual("ok", self.request("wifi_cleanup_files"))
+        self.assertEqual([], self.forgotten())
+
+    def test_reboot_with_repeated_pid_and_start_is_never_forgotten(self):
+        self.assertEqual("ok", self.connect())
+        self.write("boot", "22222222-2222-2222-2222-222222222222")
+        self.write("networks", HEADER + row(7, "ReassignedHome"))
+        self.write("status", "Wifi is not connected\n")
+        self.assertEqual("ok", self.request("wifi_cleanup_files"))
+        self.assertEqual([], self.forgotten())
+
+    def test_expired_record_never_forgets_the_current_home_network(self):
+        self.assertEqual("ok", self.connect())
+        self.write("networks", HEADER + row(7, "ReassignedHome"))
+        self.write("status", "WifiInfo: Net ID: 7, Supplicant state: COMPLETED\n")
+        self.write("now", "87400")
+        self.assertEqual("error", self.request("wifi_cleanup_files"))
+        self.assertEqual([], self.forgotten())
 
     def test_unknown_status_and_listing_fail_closed(self):
         self.assertEqual("ok", self.connect())
@@ -143,6 +189,38 @@ cmd() {
         self.assertEqual("error", self.request("wifi_cleanup_files"))
         self.assertEqual([], self.forgotten())
         self.assertTrue((self.directory / "files-networks").exists())
+
+    def test_legacy_record_is_dropped_without_forgetting(self):
+        self.write("files-networks", "2 1000\n")
+        self.assertEqual("ok", self.request("wifi_cleanup_files"))
+        self.assertEqual([], self.forgotten())
+        self.assertFalse((self.directory / "files-networks").exists())
+
+    def test_restart_during_status_check_prevents_forget(self):
+        self.assertEqual("ok", self.connect())
+        self.write("status", "Wifi is not connected\n")
+        self.write("restart-on-status", "1")
+        self.assertEqual("error", self.request("wifi_cleanup_files"))
+        self.assertEqual([], self.forgotten())
+
+    def test_restart_during_join_cannot_record_a_reassigned_id(self):
+        self.write("restart-on-connect", "1")
+        self.assertEqual("error", self.connect())
+        self.assertEqual("ok", self.request("wifi_cleanup_files"))
+        self.assertEqual([], self.forgotten())
+        self.assertFalse((self.directory / "files-networks").exists())
+
+    def test_missing_lifetime_proof_prevents_forget_and_join(self):
+        self.assertEqual("ok", self.connect())
+        self.write("status", "Wifi is not connected\n")
+        for name, value in [("server-pid", "123 124"), ("server-start", "unknown"), ("boot", "")]:
+            with self.subTest(name=name):
+                original = (self.directory / name).read_text(encoding="utf-8")
+                self.write(name, value)
+                self.assertEqual("error", self.request("wifi_cleanup_files"))
+                self.assertEqual("error", self.connect())
+                self.assertEqual([], self.forgotten())
+                self.write(name, original)
 
     def test_failed_forget_retains_obligation_for_next_restart(self):
         self.assertEqual("ok", self.connect())
@@ -163,7 +241,8 @@ cmd() {
 
     def test_record_count_is_bounded_and_invalid_records_fail_closed(self):
         self.write("networks", HEADER + "".join(row(i, f"Test{i}") for i in range(8)))
-        self.write("files-networks", "".join(f"{i} 1000\n" for i in range(8)))
+        self.write("files-networks", "".join(
+            f"{i} 1000 11111111-1111-1111-1111-111111111111 123 456\n" for i in range(8)))
         self.write("status", "unknown\n")
         self.assertEqual("error", self.connect())
         self.assertNotIn("connect-network", (self.directory / "calls").read_text(encoding="utf-8"))

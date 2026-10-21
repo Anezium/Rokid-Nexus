@@ -10,10 +10,9 @@ SEENFILE="$BASE/$NAME.seen"
 PENDING_DISABLE="$BASE/$NAME.pending-disable"
 CHANNEL="/sdcard/Android/data/com.anezium.rokidbus.glasses/files/cmd_bridge"
 DOORBELL="$CHANNEL/doorbell"
-VERSION="2026-10-21.5"
+VERSION="2026-10-21.6"
 FILES_NETWORKS="$BASE/$NAME.files-networks"
 FILES_NETWORK_LIMIT=8
-FILES_NETWORK_MAX_AGE=86400
 CAPTURE_DIR="/sdcard/DCIM/Camera"
 SCRIPT_PATH="$BASE/$NAME.sh"
 PACKAGE="com.anezium.rokidbus.glasses"
@@ -248,14 +247,29 @@ files_saved_network_ids() {
   '
 }
 
+files_network_lifetime() (
+  files_pid="$(pidof system_server 2>/dev/null)" || return 1
+  case "$files_pid" in ""|0|*[!0-9]*) return 1 ;; esac
+  files_boot="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" || return 1
+  printf '%s\n' "$files_boot" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || return 1
+  files_start="$(cat "/proc/$files_pid/stat" 2>/dev/null | awk -v pid="$files_pid" '
+    NF >= 22 && $1 == pid && $2 == "(system_server)" && $22 ~ /^[0-9]+$/ { print $22 }
+  ')"
+  case "$files_start" in ""|*[!0-9]*) return 1 ;; esac
+  printf '%s %s %s\n' "$files_boot" "$files_pid" "$files_start"
+)
+
 read_files_networks() {
   [ ! -L "$FILES_NETWORKS" ] || return 1
   [ -e "$FILES_NETWORKS" ] || return 0
   [ -f "$FILES_NETWORKS" ] && [ "$(stat -c %u "$FILES_NETWORKS")" = "$(id -u)" ] || return 1
-  [ "$(wc -c < "$FILES_NETWORKS")" -le 512 ] || return 1
+  [ "$(wc -c < "$FILES_NETWORKS")" -le 1024 ] || return 1
   awk -v limit="$FILES_NETWORK_LIMIT" '
-    NF != 2 || $1 !~ /^[0-9]+$/ || length($1) > 10 || $1 > 2147483647 ||
+    (NF != 2 && NF != 5) || $1 !~ /^[0-9]+$/ || length($1) > 10 || $1 > 2147483647 ||
       $2 !~ /^[0-9]+$/ || length($2) > 10 || seen[$1]++ || NR > limit { bad = 1 }
+    NF == 5 && (length($3) != 36 || $3 !~ /^[0-9a-f-]+$/ ||
+      $4 !~ /^[0-9]+$/ || length($4) > 10 ||
+      $5 !~ /^[0-9]+$/ || length($5) > 20) { bad = 1 }
     { print }
     END { exit bad }
   ' "$FILES_NETWORKS"
@@ -278,25 +292,26 @@ cleanup_files_networks() (
   [ "$(getprop ro.build.version.sdk 2>/dev/null)" = "32" ] || return 1
   files_records="$(read_files_networks)" || return 1
   [ -n "$files_records" ] || return 0
-  files_now="$(date +%s)"
-  case "$files_now" in ""|*[!0-9]*) return 1 ;; esac
+  files_lifetime="$(files_network_lifetime)" || return 1
   files_remaining=""
-  while read -r files_id files_created; do
+  while read -r files_id files_created files_boot files_pid files_start; do
+    # API 32 never reuses an ID inside one WifiConfigManager. Across its lifetime,
+    # including a reboot with a repeated PID/start tick, the number proves nothing.
+    # Legacy records have no lifetime proof and are discarded without forgetting.
+    [ "$files_boot $files_pid $files_start" = "$files_lifetime" ] || continue
     files_ids="$(files_saved_network_ids)" || return 1
     if ! printf '%s\n' "$files_ids" | grep -Fxq "$files_id"; then continue; fi
     forget_ids="$files_id"
     forget_current_id=""
-    # A live files lease lasts at most one day. Expiry releases only its recorded ID;
-    # ordinary cleanup never disconnects the current network.
-    if wifi_not_on_forget_network ||
-      { [ "$files_now" -ge "$files_created" ] &&
-        [ "$((files_now - files_created))" -ge "$FILES_NETWORK_MAX_AGE" ] &&
-        [ "$forget_current_id" = "$files_id" ]; }; then
+    # Recheck the process lifetime at the deletion boundary, after querying Wi-Fi.
+    # A current network is retained regardless of the record age.
+    if wifi_not_on_forget_network; then
+      [ "$(files_network_lifetime)" = "$files_lifetime" ] || return 1
       cmd wifi forget-network "$files_id" >/dev/null 2>&1 || true
       files_ids="$(files_saved_network_ids)" || return 1
       if ! printf '%s\n' "$files_ids" | grep -Fxq "$files_id"; then continue; fi
     fi
-    files_remaining="${files_remaining}${files_id} ${files_created}
+    files_remaining="${files_remaining}${files_id} ${files_created} ${files_boot} ${files_pid} ${files_start}
 "
   done <<EOF
 $files_records
@@ -309,6 +324,11 @@ EOF
 connect_files_network() (
   cleanup_files_networks || true
   files_records="$(read_files_networks)" || return 1
+  files_lifetime="$(files_network_lifetime)" || return 1
+  # Unproven/stale records cannot authorize adopting an existing exact-match entry.
+  files_records="$(printf '%s\n' "$files_records" | awk -v lifetime="$files_lifetime" '
+    NF == 5 && $3 " " $4 " " $5 == lifetime { print }
+  ')"
   files_count="$(printf '%s' "$files_records" | awk 'NF { n++ } END { print n+0 }')"
   [ "$files_count" -lt "$FILES_NETWORK_LIMIT" ] || return 1
   files_before="$(files_saved_network_ids)" || return 1
@@ -317,6 +337,7 @@ connect_files_network() (
     # A camera/user entry that happens to share the SSID is never adopted by files.
     printf '%s\n' "$files_records" | awk -v id="$files_id" '$1 == id { found = 1 } END { exit !found }' || return 1
   done
+  [ "$(files_network_lifetime)" = "$files_lifetime" ] || return 1
   if [ "$security" = "open" ]; then
     cmd wifi connect-network "$ssid" open >/dev/null 2>&1
   else
@@ -326,12 +347,13 @@ connect_files_network() (
   # Even a failed association can save a network. Record new exact-match IDs before
   # answering the app; app death cannot consume this shell-owned obligation.
   files_matching="$(matching_forget_network_ids)" || return 1
+  [ "$(files_network_lifetime)" = "$files_lifetime" ] || return 1
   for files_id in $files_matching; do
     if printf '%s\n' "$files_before" | grep -Fxq "$files_id"; then continue; fi
     files_count=$((files_count + 1))
     [ "$files_count" -le "$FILES_NETWORK_LIMIT" ] || return 1
     files_records="${files_records}${files_records:+
-}${files_id} $(date +%s)"
+}${files_id} $(date +%s) ${files_lifetime}"
   done
   write_files_networks || return 1
   return "$files_connect_status"

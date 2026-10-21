@@ -167,11 +167,13 @@ Its app-precreated `<nonce>.connect-result` receipt contains `pending`, `ok`, or
 IPv4 address. The camera `wifi_connect` path is unchanged.
 
 `wifi_cleanup_files` takes no arguments. On API 32 it retries only network IDs
-created by `wifi_connect_files`, recorded with creation timestamps in a shell-owned
-file (at most eight entries; a files lease expires after 24 hours). The hub calls
+created by `wifi_connect_files`, recorded with creation timestamps and the boot ID plus
+`system_server` PID/start tick in a shell-owned file (at most eight entries/1024 bytes).
+Legacy records and records from another allocation lifetime are dropped without
+forgetting; unavailable lifetime proof prevents deletion. The hub calls
 it on start and batch end; helper start and 30-second maintenance also retry it.
-Ordinary cleanup retains the currently connected ID; expiry releases only the
-recorded files lease. IDs are removed from the record only after verified absence.
+Cleanup always retains the currently connected ID, regardless of age, and rechecks
+the lifetime before forgetting. Same-lifetime IDs are removed only after verified absence.
 No SSID, passphrase, BSSID, or device identity is persisted or logged by cleanup.
 Its app-precreated `<nonce>.files-result` receipt contains `pending`, `ok`, or
 `error`; retained obligations or unknown output leave cleanup unconfirmed.
