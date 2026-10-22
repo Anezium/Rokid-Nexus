@@ -2615,7 +2615,8 @@ Native-app discovery, remote text input, and system navigation are hub-owned
 features. Every path begins `/core/`, is reserved by `PathRules`, and is
 consumed before plugin routing. No plugin capability authorizes sending or
 subscribing to these paths, and no external registration can impersonate either
-hub. All payloads are versioned JSON; binary bodies are invalid.
+hub. All payloads are versioned JSON; binary bodies are invalid, except the file
+chunks on `/core/files/data` described under *Glasses files*.
 
 ### Native apps
 
@@ -2748,6 +2749,81 @@ loss and inactivity hide the overlay. Neither pointer path runs a shell command,
 writes a setting, or requests an additional permission. The fallback is a
 trusted hub-to-hub control under `/core`; it has no plugin capability, receive
 prefix, or public SDK surface.
+
+### Glasses files
+
+The phone hub's *Glasses files* screen browses the glasses' shared storage and
+moves files both ways. The glasses hub announces it with capability bit
+`GLASSES_FILES` (`1 << 13`); a phone that does not see the bit asks for a
+glasses update instead of sending.
+
+- Phone → glasses `/core/files/request`: `list`, `mkdir`, `delete`,
+  `grant_access`, `upload_begin`, `upload_end`, `download_begin`,
+  `download_progress`, or `cancel`.
+- Glasses → phone `/core/files/result`: `list_result`, `operation_result`,
+  `upload_ready`, `upload_progress`, `upload_done`, `download_ready`,
+  `download_end`, or `transfer_failed`.
+- Either direction `/core/files/data`: one binary chunk (at most 64 KiB, 32 KiB
+  in practice) whose JSON meta carries the `transferId` and absolute `offset`.
+
+Every message carries `version: 1` and a `type`. Requests carry a `requestId`,
+transfers a `transferId`; both match `[A-Za-z0-9][A-Za-z0-9_-]{7,127}`.
+
+Paths are relative to the glasses' shared-storage root (`/storage/emulated/0`),
+`/`-separated, with the root as the empty string. A path is at most 1,024
+characters and 32 segments; a segment is 1-255 UTF-8 bytes, never `.` or `..`,
+and contains no `/`, `\`, control character or lone surrogate. Neither hub sends
+or accepts an absolute path, and the glasses re-check every resolution against
+their canonical root. `Android/data` and `Android/obb` (any case) are refused as
+`protected` before Android is asked.
+
+`list_result` returns up to 200 entries (`name`, `dir`, `size`, `mtime`) from
+`offset`, folders first and then names case-insensitively, plus `total` and the
+glasses' `access`: `full` when the hub holds all-files access, `limited` when only
+scoped storage applies (other apps' non-media files hidden, writes limited to
+`Download` and `Documents`). A full page fits the 128 KiB message budget; without
+the data plane the glasses send the largest prefix that fits a control message.
+`mkdir` creates one folder, `delete` removes one file or one empty folder, never
+recursively. `delete` carries `dir`, the type the user confirmed; the glasses
+answer `changed` and delete nothing when the entry at that path is no longer of
+that type. They first move the entry to a private random name, check what they
+moved, and put it back unless it is still the confirmed type. Only the hubs originate this subtree: both refuse every local Binder
+send under `/core/files`, debug builds included, and never deliver it to local
+subscribers. `grant_access` makes the glasses grant themselves all-files access
+through their fixed ADB command (`appops set <glasses package>
+MANAGE_EXTERNAL_STORAGE allow`); when that is unavailable they open Android's
+own switch for the wearer and answer `needsWearer: true`. Self-arm grants the same
+appop best effort.
+
+Transfers use the photo-sync discipline: the receiver acknowledges what it has
+durably written, the sender stays within a 128 KiB window, and the terminator is
+sent only after every byte is acknowledged, because control JSON and binary
+chunks ride different transports. A chunk at any offset other than the next
+expected byte fails the transfer.
+
+- Upload: `upload_begin` names the folder, file name and size. If a file with that
+  name and size is already there the glasses answer `upload_done` with
+  `alreadyPresent: true`. Otherwise they check free space for twice the file plus 64 MiB spare
+  (publication briefly holds the staging copy and the final file; unknown free
+  space counts as none, and room for one copy is checked again before publishing),
+  choose the final name (`book (1).pdf` on a collision, never an overwrite), open
+  a hidden `.nexus-<id>.nexuspart` staging file in the same folder and answer
+  `upload_ready`. Chunks follow; `upload_progress` acks every two chunks and at
+  the end. `upload_end` carries the SHA-256; the glasses verify it, copy the verified
+  bytes into a file created exclusively (`O_EXCL`) under the final name, taking
+  the next numbered name if it was taken meanwhile, and answer `upload_done`.
+  Shared storage is FUSE, with no `link()` and no no-replace rename, so nothing
+  is ever renamed onto a destination. Staging files
+  untouched for ten minutes are deleted when their folder is listed.
+- Download: `download_begin` names a file; the glasses answer `download_ready`
+  with size and mtime, stream chunks, and send `download_end` with the SHA-256
+  after the phone's `download_progress` covers the whole file. The phone writes
+  into `Download/Nexus/` through MediaStore with `IS_PENDING` until the digest
+  matches.
+
+One transfer runs at a time; a new begin supersedes a stale one. A transfer idle
+for 30 s, a `cancel`, or loss of the data plane ends it on both sides and removes
+partial files. Resume is not supported.
 
 ## Audio lease v1
 

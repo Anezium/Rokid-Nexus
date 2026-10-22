@@ -34,6 +34,7 @@ import com.anezium.rokidbus.shared.GlyphContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.ink.InkWire
 import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.GlassesFilesContract
 import com.anezium.rokidbus.shared.NativeAppContract
 import com.anezium.rokidbus.shared.PhoneHubCapabilities
 import com.anezium.rokidbus.shared.PhoneHubCapabilitiesContract
@@ -216,6 +217,7 @@ object GlassesHub {
             // launcher's boot auto-open — making this the reliable re-arm hook.
             AccessibilityRearmWatcher.start(context.applicationContext, "hub_start")
             MediaSyncEngine.start(context.applicationContext)
+            GlassesFilesService.start(context.applicationContext)
             requestWifiOwnershipReconciliation(applicationContext, "hub_start")
         }
     }
@@ -264,7 +266,15 @@ object GlassesHub {
 
     fun onRemoteEnvelope(envelope: BusEnvelope) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
-        log("remote RX ${envelope.path} id=${envelope.id}")
+        // File chunks arrive dozens per second; the SPP reader already logs each frame.
+        if (envelope.path != GlassesFilesContract.DATA_PATH) log("remote RX ${envelope.path} id=${envelope.id}")
+        if (GlassesFilesContract.isFilesPath(envelope.path)) {
+            // A user-driven transfer is foreign traffic to photo sync, which backs off around it.
+            MediaSyncEngine.trafficMonitor.note(envelope.path)
+            // Anything else in the subtree is dropped here, never handed to local subscribers.
+            if (!GlassesFilesService.handle(envelope)) log("files route dropped path=${envelope.path}")
+            return
+        }
         if (envelope.path == RemoteInputContract.COMMAND_PATH ||
             envelope.path == RemoteNavigationContract.REQUEST_PATH
         ) {
@@ -695,6 +705,7 @@ object GlassesHub {
                 BusCapabilityBits.ACTIVITY_EXTRAS or
                 BusCapabilityBits.INK_SURFACE or
                 BusCapabilityBits.EDITABLE_SURFACE or
+                BusCapabilityBits.GLASSES_FILES or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             pinSurfaceVersion = PinSurfaceContract.VERSION,
@@ -741,6 +752,11 @@ object GlassesHub {
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
+        if (GlassesFilesContract.isFilesPath(envelope.path)) {
+            // Explorer traffic only ever comes from the phone hub over the transport.
+            log("blocked local file explorer send uid=$senderUid")
+            return
+        }
         val allowed = senderUid == Process.myUid() ||
             (isDebuggableBuild() && registrations.any { it.uid == senderUid })
         if (!allowed) {
@@ -1279,6 +1295,7 @@ object GlassesHub {
         // CXR is enough for control JSON, but every photo session needs the SPP data plane. Using
         // the aggregate CXR-or-SPP state loses the rising edge when SPP returns while CXR stayed up.
         MediaSyncEngine.onLinkStateChanged(MediaSyncLinkPolicy.isDataPlaneUp(state))
+        GlassesFilesService.onLinkStateChanged(MediaSyncLinkPolicy.isDataPlaneUp(state))
         registrations.forEach { registration ->
             runCatching { registration.callback.onLinkState(state) }
                 .onFailure { removeRegistration(registration) }

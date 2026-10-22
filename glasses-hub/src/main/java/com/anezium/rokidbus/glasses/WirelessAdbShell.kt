@@ -22,6 +22,14 @@ internal object WirelessAdbShell {
         return executeFixed(context, command, "Wi-Fi", redactOutput = false)
     }
 
+    /** Fixed command: lets the hub's own file explorer reach all of shared storage. */
+    fun grantAllFilesAccess(context: Context): Result = executeFixed(
+        context = context,
+        command = "appops set ${context.packageName} MANAGE_EXTERNAL_STORAGE allow",
+        operation = "all-files access",
+        redactOutput = false,
+    )
+
     fun startPairing(context: Context, serviceName: String, pairingCode: String): Result {
         if (!supportsApiLevel(Build.VERSION.SDK_INT)) {
             return Result(success = false, error = "unsupported Android API")

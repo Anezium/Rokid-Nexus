@@ -29,6 +29,8 @@ internal object GlassesManualArmCommand {
         return buildString {
             appendCommonVariables()
             appendLine("pm grant \"\$PKG\" android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1 || true")
+            // Mirrors the glasses-side self-arm: best effort, for the glasses file explorer.
+            appendLine("appops set \"\$PKG\" MANAGE_EXTERNAL_STORAGE allow >/dev/null 2>&1 || true")
             appendAccessibilityRepair()
             appendLine("printf '%s' '$encodedWatchdog' | base64 -d > \"\$WATCHDOG\"")
             appendLine("chmod 700 \"\$WATCHDOG\"")

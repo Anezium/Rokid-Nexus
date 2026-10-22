@@ -21,6 +21,8 @@
          API 32, so READ_EXTERNAL_STORAGE is still the media-read permission (the READ_MEDIA_*
          split lands at API 33) and it is requested at runtime from MainActivity. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- Granted through the self-arm helper; the file explorer degrades to scoped storage without it. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />

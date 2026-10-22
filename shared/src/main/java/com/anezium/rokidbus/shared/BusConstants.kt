@@ -249,6 +249,9 @@ object BusCapabilityBits {
     const val INK_SURFACE = 1 shl 10
     const val EDITABLE_SURFACE = 1 shl 11
     const val ACTIVITY_EXTRAS = 1 shl 12
+
+    /** Glasses only: the hub serves the private `/core/files` explorer routes. */
+    const val GLASSES_FILES = 1 shl 13
 }
 
 object LinkStateBits {

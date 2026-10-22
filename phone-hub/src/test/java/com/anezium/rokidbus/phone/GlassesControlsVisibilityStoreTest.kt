@@ -32,12 +32,14 @@ class GlassesControlsVisibilityStoreTest {
     }
 
     @Test
-    fun `the section disappears once both cards are hidden`() {
+    fun `the section disappears once every card is hidden`() {
         val store = store()
 
         store.setRemoteVisible(false)
         store.setNativeAppsVisible(false)
+        assertTrue(store.isSectionVisible())
 
+        store.setFilesVisible(false)
         assertFalse(store.isSectionVisible())
     }
 

@@ -163,6 +163,12 @@
             android:exported="false"
             android:parentActivityName=".MainActivity" />
 
+        <activity
+            android:name=".GlassesFilesActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:parentActivityName=".MainActivity" />
+
         <service
             android:name=".BusHubService"
             android:exported="true"
