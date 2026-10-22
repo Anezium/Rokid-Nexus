@@ -171,9 +171,7 @@ internal object GlassesFilesService {
             upload?.takeIf { it.transferId == hotspotTransferId }?.let { active ->
                 active.onCameraTakeover(SystemClock.elapsedRealtime())?.let { sendSignal(active, it) }
             }
-            download?.takeIf { it.transferId == hotspotTransferId }?.let { active ->
-                active.requestResync(active.transferId)
-            }
+            download?.takeIf { it.transferId == hotspotTransferId }?.onCameraTakeover()
             hotspotTransferId?.let(ended)
         }
     }

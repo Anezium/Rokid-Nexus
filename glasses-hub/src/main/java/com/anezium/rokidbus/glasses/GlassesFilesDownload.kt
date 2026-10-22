@@ -103,6 +103,16 @@ internal class GlassesFilesDownload(
         hotspotLane?.close()
     }
 
+    /**
+     * The camera takes the Wi-Fi. A proven hotspot lane resyncs like any lost lane; one still
+     * waiting for the phone is closed so it stops listening on an interface that is going away,
+     * and the transfer, which never left the bus, continues there.
+     */
+    fun onCameraTakeover() {
+        requestResync(transferId)
+        hotspotLane?.close()
+    }
+
     fun requestResync(id: String) {
         if (id != transferId) return
         val started = synchronized(lock) {

@@ -965,7 +965,9 @@ internal class GlassesFilesController(
 
         override fun switchToLane() {
             synchronized(signal) {
-                if (cancelled || stop != null || terminal != null || resync.laneOpened) return
+                // The peer's resync can land between the proven connect and this switch: the
+                // transfer is then already on the bus for good.
+                if (cancelled || stop != null || terminal != null || resync.laneOpened || resync.switched) return
                 resync.opened()
                 upgradePending = true
                 touch()
@@ -1253,7 +1255,7 @@ internal class GlassesFilesController(
 
         override fun switchToLane() {
             val offset = synchronized(signal) {
-                if (cancelled || stop != null || terminal != null || resync.laneOpened) return
+                if (cancelled || stop != null || terminal != null || resync.laneOpened || resync.switched) return
                 if (!upgrade.snapshot(staged, expectedSize ?: Long.MAX_VALUE)) return
                 resync.opened()
                 laneUpgradeConfirmed = false

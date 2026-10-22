@@ -307,6 +307,37 @@ class GlassesFilesFallbackTest {
     }
 
     @Test
+    fun `camera takeover closes an unproven download hotspot lane and leaves the bus stream alone`() {
+        val source = ByteArray(3 * GlassesFilesContract.CHUNK_BYTES + 11) { (it * 13).toByte() }
+        val file = temp.newFile().apply { writeBytes(source) }
+        val lane = lane(GlassesFilesLane.newKey())
+        val results = java.util.concurrent.CopyOnWriteArrayList<GlassesFilesResult>()
+        val receiver = ByteArrayOutputStream()
+        val epochs = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        val listeningAfterTakeover = java.util.concurrent.atomic.AtomicBoolean(true)
+        lateinit var transfer: GlassesFilesDownload
+        transfer = GlassesFilesDownload(id, file, null, io, { results.add(it); true }, { offset, bytes, epoch ->
+            epochs += epoch
+            if (offset == 0L) {
+                assertTrue(transfer.offerHotspotLane(lane))
+                transfer.onCameraTakeover()
+                // Probed here: the stream's own exit closes every lane later anyway.
+                listeningAfterTakeover.set(runCatching { Socket(InetAddress.getLoopbackAddress(), lane.endpoint.port).close() }.isSuccess)
+            }
+            assertEquals(receiver.size().toLong(), offset)
+            receiver.write(bytes)
+            transfer.onAck(id, receiver.size().toLong())
+            true
+        }, {}, ::now)
+        io.submit { transfer.stream() }.get(5, TimeUnit.SECONDS)
+        assertFalse("the hotspot lane kept listening after the camera took the Wi-Fi", listeningAfterTakeover.get())
+        assertFalse(lane.isConnected())
+        assertEquals(List(4) { 0 }, epochs.toList())
+        assertEquals(listOf(GlassesFilesResult.DownloadEnd(id, sha(source))), results.filter { it !is GlassesFilesResult.DownloadReady })
+        assertArrayEquals(source, receiver.toByteArray())
+    }
+
+    @Test
     fun `download bus submission failure terminates without resync`() = downloadBusFailure(resume = false)
 
     @Test

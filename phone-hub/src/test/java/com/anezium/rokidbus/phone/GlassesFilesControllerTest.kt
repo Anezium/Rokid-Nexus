@@ -43,6 +43,56 @@ class GlassesFilesControllerTest {
     }
 
     @Test
+    fun `a peer resync that lands before the upload hotspot switch keeps the transfer on the bus`() {
+        val requests = mutableListOf<GlassesFilesRequest>()
+        val controller = GlassesFilesController(RuntimeEnvironment.getApplication(), { envelope ->
+            GlassesFilesContract.parseRequest(envelope.payload)?.let(requests::add)
+            null
+        })
+        val active = activeSend(controller)
+        val id = field(active, "wireId") as String
+        setField(active, "laneAttempted", true)
+        try {
+            // The glasses lost the proven hotspot lane to the camera right after the handshake;
+            // their snapshot reaches the inbox before the switch the connect scheduled.
+            call(active, "receiveResult", GlassesFilesResult.BusResume(id, 0))
+            call(active, "switchToLane")
+            val resync = field(active, "resync") as GlassesFilesResync
+            assertTrue(resync.switched)
+            assertFalse(resync.laneOpened)
+            assertEquals(false, field(active, "upgradePending"))
+            assertTrue(requests.toString(), requests.none { it is GlassesFilesRequest.LaneSwitch })
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun `a peer resync that lands before the download hotspot switch keeps the transfer on the bus`() {
+        val requests = mutableListOf<GlassesFilesRequest>()
+        val controller = GlassesFilesController(RuntimeEnvironment.getApplication(), { envelope ->
+            GlassesFilesContract.parseRequest(envelope.payload)?.let(requests::add)
+            null
+        })
+        val active = activeCopy(controller, 1_000_000L)
+        val id = field(active, "wireId") as String
+        setField(active, "output", ByteArrayOutputStream())
+        setField(active, "laneAttempted", true)
+        try {
+            call(active, "receiveResult", GlassesFilesResult.DownloadReady(id, 1_000_000L, 0L, null))
+            call(active, "receiveResult", GlassesFilesResult.LaneResync(id))
+            call(active, "switchToLane")
+            val resync = field(active, "resync") as GlassesFilesResync
+            assertTrue(resync.switched)
+            assertFalse(resync.laneOpened)
+            assertEquals(true, field(active, "laneUpgradeConfirmed"))
+            assertEquals(listOf(GlassesFilesRequest.BusResume(id, 0)), requests.filter { it !is GlassesFilesRequest.DownloadProgress })
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
     fun `peer resync cannot switch a transfer that never attempted a lane`() {
         val requests = mutableListOf<GlassesFilesRequest>()
         val controller = GlassesFilesController(RuntimeEnvironment.getApplication(), { envelope ->
