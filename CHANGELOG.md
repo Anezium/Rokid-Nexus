@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.8.0
+
+Update both Nexus hubs together. Relay 1.3.0 ships alongside; it does not need this hub update.
+
+### Phone hub
+
+- **Glasses files.** A new screen browses the glasses' storage. You can send files from the phone into any folder, copy files from the glasses to the phone (`Download/Nexus/`), create folders and delete. A file that is already on the glasses with the same name and size is not sent again, and a name clash becomes `name (1).ext` instead of overwriting. Every copy is checked end to end with SHA-256.
+- **Transfers use Wi-Fi when they can.** When the phone and glasses share a Wi-Fi network, files move over it at up to ~30 MB/s. When they don't, the phone opens a private hotspot and the glasses join it for the transfer. Otherwise files go over Bluetooth at about 180 KB/s. If Wi-Fi drops during a transfer, it finishes over Bluetooth from where it stopped. Transfers keep running in the background with a progress notification, and a stopped transfer offers Retry.
+- The phone asks for the nearby Wi-Fi devices permission the first time it needs the hotspot.
+
+### Glasses hub
+
+- Serves the file explorer and keeps uploads safe. A file is written to a staging copy, checked, then published without ever overwriting an existing file. An interrupted transfer leaves nothing behind.
+- Full storage access is granted automatically by the helper. If it is missing, **Allow full access** opens the right settings screen.
+- The Wi-Fi network the glasses join for a transfer is forgotten afterwards, even after a hub crash, and Wi-Fi returns to the state it was in. The camera keeps priority: opening it releases the transfer hotspot at once.
+- The helper updates itself to `2026-10-21.7` after the install.
+
 ## 1.7.1
 
 Update both Nexus hubs together. Glasses whose helper died after a reinstall can now be brought back from the phone, without a computer (#53).

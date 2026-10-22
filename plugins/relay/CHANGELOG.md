@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.0
 
 - Choose Off, Messages only, or All notifications per source application from a
   searchable app list. Messages only remains the default for existing and new apps.
