@@ -324,8 +324,10 @@ class GlassesFilesFallbackTest {
             if (offset == 0L) {
                 assertTrue(transfer.offerHotspotLane(lane))
                 transfer.onCameraTakeover()
-                // Probed here: the stream's own exit closes every lane later anyway.
-                listeningAfterTakeover.set(runCatching { Socket(InetAddress.getLoopbackAddress(), lane.endpoint.port).close() }.isSuccess)
+                // Probed here: the stream's own exit closes every lane later anyway. On Linux a
+                // listener closed while accept() still polls it can take one more connection for a
+                // few milliseconds, so wait for the refusal instead of probing once.
+                listeningAfterTakeover.set(stillListening(lane.endpoint.port))
             }
             assertEquals(receiver.size().toLong(), offset)
             receiver.write(bytes)
@@ -729,6 +731,15 @@ class GlassesFilesFallbackTest {
         generateSequence(target.javaClass as Class<*>?) { it.superclass }
             .mapNotNull { type -> type.declaredFields.firstOrNull { it.name == name } }
             .firstOrNull()?.apply { isAccessible = true }?.get(target)
+
+    private fun stillListening(port: Int): Boolean {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+        while (System.nanoTime() < deadline) {
+            if (runCatching { Socket(InetAddress.getLoopbackAddress(), port).close() }.isFailure) return false
+            Thread.sleep(20)
+        }
+        return true
+    }
 
     private fun lane(key: ByteArray) = GlassesFilesLaneServer(id,
         ServerSocket(0, 4, InetAddress.getLoopbackAddress()), key, null, acceptTimeoutMs = 5_000)
