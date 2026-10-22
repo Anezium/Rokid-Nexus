@@ -2823,7 +2823,217 @@ expected byte fails the transfer.
 
 One transfer runs at a time; a new begin supersedes a stale one. A transfer idle
 for 30 s, a `cancel`, or loss of the data plane ends it on both sides and removes
-partial files. Resume is not supported.
+partial files. A new attempt starts from zero; an active Wi-Fi lane can fall back
+to the bus as described below.
+
+#### Wi-Fi lane
+
+When the phone is on a Wi-Fi network and the glasses advertise capability bit
+`GLASSES_FILES_LANE` (`1 << 14`), `upload_begin` and `download_begin` carry
+`lane: true`. If the glasses also have a Wi-Fi IPv4 address, `upload_ready` /
+`download_ready` carry `lane: {host, port, key}`: a literal IPv4 address, a
+port, and a fresh 256-bit key (base64). Absent fields mean no lane; a malformed
+`lane` invalidates the message. Older hubs ignore both sides.
+
+The glasses listen on that address only, for at most 8 s, and hold a
+high-performance Wi-Fi lock for the transfer. The phone connects from its Wi-Fi
+network (never mobile data), within 3 s, and its first frame is a hello: magic
+`NXFL`, version 1, the transfer id, and
+`HMAC-SHA256(key, "nexus-files-lane-hello:" + transferId)`. Each connection gets
+1 s to send a good hello; a wrong, silent or slow one is closed and the glasses
+keep listening (backlog 4), so another device on the network can delay the phone
+but not take its place. The port closes as soon as the phone is in. The glasses
+answer the hello with a sealed ack of 0 bytes, and the phone counts the lane as
+open only once that answer arrives (it waits 9 s, longer than the glasses' whole
+budget): a TCP connection alone may reach an unrelated device on another
+network. Every later frame in either direction is
+`[type u8][length u32][AES-256-GCM ciphertext]`, type 1 = data
+(`offset u64` + bytes) and type 2 = ack (`staged u64`); the nonce is a direction
+byte (`P` phone to glasses, `G` glasses to phone), three zero bytes and a
+per-direction 64-bit frame counter, and the AAD is
+`"nexus-files-lane:" + transferId + ":" + type`, so frames cannot be replayed,
+reordered or reflected.
+
+Over a lane, chunks are 256 KiB, the window is 4 MiB, and acks travel back over
+the lane; control (`*_begin`, `*_ready`, `upload_end`, `download_end`, `cancel`,
+failures) stays on the bus, and the SHA-256 terminator still follows a full
+ack. A lane that cannot be opened leaves the transfer on Bluetooth; the phone then
+sends `lane_declined` `{transferId}`, which ends the glasses' wait at once (a
+download would otherwise hold its first byte until the 8 s budget runs out).
+
+If an opened lane breaks before every byte is acknowledged while the bus is
+still up, either hub sends `lane_resync` `{transferId}` over its existing
+request/result route. Both hubs close the lane and ignore any later lane frame,
+including frames already queued for writing. This switch happens at most once
+per transfer; it never opens another lane. The receiver freezes its next offset
+after the last completed staging write and sends `bus_resume`
+`{transferId, staged}` over the bus: a result for uploads, a request for downloads.
+The sender echoes that exact `bus_resume` offset on the opposite route to confirm
+it, rewinds its source to that offset, and continues using the normal bus chunk
+and window sizes. The receiver may accept bus chunks after sending its offset,
+since binary chunks can overtake the JSON confirmation. Bus chunk metadata carries
+`busEpoch`: omitted or integer `0` for the original stream, integer `1` for the
+irreversible resumed stream. Senders capture the epoch before submitting bytes,
+including across send retries. Epoch 1 is captured only after the receiver snapshot
+is installed and the sending worker has processed its source rewind. After freezing
+the snapshot, receivers ignore epoch-0 chunks even after confirmation, and admit
+only epoch-1 bus chunks. Both receivers can stage resumed bytes before confirmation. This rejects old
+bus sends held during hotspot setup without dropping resumed download data that
+overtakes confirmation. Other epoch values/types are invalid. Repeated resync messages
+reuse the frozen offset and never restart the timeout or rewind a second time.
+Offsets are strict integers from zero through the transfer size; the sender also
+rejects an offset beyond the bytes it attempted to send. Ordinary progress acks
+cannot substitute for the receiver's explicit resume offset. The sender rebuilds
+its SHA-256 from the source prefix before sending the remaining bytes, so the
+final digest still covers every file byte exactly once. The rehash sends
+nothing and a source read can take long, so from the echo on, whenever the
+receiver has heard nothing from the sender for 10 s, the sender repeats its
+`bus_resume` echo with the same offset: through the rehash, through a pending
+source read, and after the return to data. The receiver counts an agreeing
+repeat as activity for its idle budget; the repeat neither restarts the resync
+budget nor rewinds anything, and a disagreeing one is invalid as before. The
+echo never stands in for a source that is not coming back: a single source
+read that returns nothing for 30 s has stalled and ends the transfer. A digest
+mismatch fails as before. A lane EOF after the final ack remains harmless; a
+sender missing that ack can still request the receiver's fully staged offset.
+
+Both the offset exchange and its confirmation have the existing 30 s idle
+budget, measured from the first resync signal without extension by duplicates
+or late lane traffic. An unanswered resync, bus failure, cancel, or a superseding
+begin removes staging as before. Transfers that never opened a lane retain the
+v1 bus behavior. These messages use the unreleased bit 14 lane contract and add
+no capability or plugin route. The phone drops its Wi-Fi tag and resets its time
+estimate as soon as resync starts.
+
+##### Lane states on the wire
+
+Each side of a transfer is in exactly one of these states; what it admits is all
+the peer can observe.
+
+| State | Entered by | Admits | Left by |
+|---|---|---|---|
+| Bus | every transfer starts here; a declined or unproven lane keeps it here | bus chunks with `busEpoch` 0 | a completed sealed handshake that is activated (shared lane connect, or the `lane_switch` / `lane_resume` upgrade) |
+| Lane | handshake completed and activated | lane frames only; bus chunks are ignored | lane EOF or error, an idle lane, camera takeover, the hotspot budget, or the peer's `lane_resync` / `bus_resume` |
+| Resync pending | `lane_resync` sent or received, including for a proven lane that broke before activation | nothing | the receiver's `bus_resume` snapshot; 30 s without it ends the transfer |
+| Resync offered | the receiver froze its offset | bus chunks with `busEpoch` 1 | the sender's `bus_resume` echo, within the same 30 s |
+| Resync confirmed | the echo matched the snapshot | bus chunks with `busEpoch` 1 | the terminator, cancel, link loss or the idle timeout; the sender's repeated echo, through its prefix rehash and any slow source read after it, keeps the idle timeout from ending a progressing rewind |
+
+Only a side holding proof of the handshake may start a resync: its own completed
+handshake, or the peer's authenticated `lane_resync` / `bus_resume`, which can only
+follow one. A lane that never proved itself leaves the transfer on the bus with
+nothing to resend. Terminators are decided by size and SHA-256 alone: an
+`upload_end` or `download_end` that arrives in any resync state is verified against
+the staged bytes, because the sender only sends it after a full acknowledgement and
+a resync cannot change what was written.
+
+##### Phone hotspot lane
+
+Both hubs announce `GLASSES_FILES_HOTSPOT` (`1 << 15`). Only peers with this
+bit use the following messages on the existing private request/result routes.
+There is no plugin capability. A transfer first tries the shared-network lane;
+when that is unavailable or declined, at least 3.5 MiB remaining (about 20 s
+over Bluetooth) qualifies for a phone LocalOnlyHotspot. Bluetooth starts at once
+and continues throughout hotspot setup. Camera activity vetoes the join.
+
+The phone requests Nearby Wi-Fi Devices (API 33+) or fine location (API 30–32)
+only from the files screen, once per visit, when qualifying work needs it.
+Denial, unsupported hotspot security, bridge failure, or setup exceeding 25 s
+leaves the transfer on Bluetooth. No second hotspot setup occurs within that transfer.
+After `onStarted`, the phone waits at most 5 s, within the original 25 s budget,
+for an up Wi-Fi/AP interface to own a new private IPv4 gateway address outside
+its client subnet before sending the offer. Existing addresses and cellular/VPN
+interfaces cannot establish readiness; timeout closes the reservation.
+
+Request `hotspot_offer` contains `{transferId, batchId, ssid, passphrase,
+security}` and optional `clientNetwork: {host, prefix}` (literal IPv4 and
+integer prefix 0?32). The phone snapshots its client subnet before starting the
+hotspot; the glasses refuse a join if their current address belongs to it,
+even when opening the shared lane failed. IDs use the existing ID rules; SSID is nonblank, at most 32 UTF-8
+bytes, without control characters; security is `open`, `wpa2`, or `wpa3`.
+Open requires an empty passphrase; WPA2/WPA3 require 8–128 characters, matching
+the existing join bridge. Credentials and lane keys stay in memory and on the
+private bus, never in Nexus logs, storage, or notifications. The existing
+`connectWifiNetwork` bridge request file and Android's saved-network entry are
+accepted exceptions, as for camera `lohs_reverse`.
+On API 36+, files use the public configurable LocalOnlyHotspot API, preferring
+5 GHz when supported to avoid missing 2.4 GHz scan results during Bluetooth
+uploads. Android still generates the credentials and security configuration.
+Older phones retain the default reservation. Failure still leaves
+Bluetooth running; this does not change camera hotspot configuration.
+
+The glasses join through that bridge under the hub's existing Wi-Fi ownership,
+then bind their existing lane server only to the joined hotspot IPv4 address.
+Files first require the API-32-only `wifi_connect_files` bridge to confirm the
+exact requested SSID and completed association, using a nonce-scoped app-created
+boolean receipt. The helper requests a scan before connecting and never writes
+network identifiers into its response or logs. A saved network auto-joined after
+radio-on cannot establish readiness. The app then checks link properties despite
+background SSID redaction: an IPv4 address and default-route gateway must be present,
+the address must differ from the pre-join address and be outside `clientNetwork`.
+Only the same batch may reuse its retained address/gateway pair without an
+address change. Release clears that pair. Files require both the exact target
+confirmation and the lease predicate. One prepared connect waits for a recent
+scan containing the target before issuing the connect, then lets association
+finish inside the original 20 s glasses deadline and 25 s phone setup budget.
+Repeated shell requests cannot cancel the scan or reconfigure an in-flight join. The camera keeps
+its existing SSID-based bridge wait and 15 s timeout. The authenticated lane
+handshake is still required before any transfer upgrade.
+Result `hotspot_ready` contains `{transferId, lane: {host, port, key}, gateway}`;
+`gateway` is a literal IPv4 address. The phone connects from that local hotspot
+gateway address, avoiding its Wi-Fi client network and cellular routing. This
+direction reuses the existing server, one-phone proof, Wi-Fi lock and sealed
+hello/Ack(0) handshake unchanged, with a fresh key for every transfer.
+Result `hotspot_failed` `{transferId}` leaves Bluetooth running.
+
+After proof, request `lane_switch` `{transferId}` freezes an upload receiver's
+completed staging offset; result `lane_resume` `{transferId, staged}` reports
+it and request `lane_resume` echoes it before the sender continues on the lane.
+For downloads the phone freezes its receiver on its serial inbox and sends
+request `lane_resume`; the glasses sender echoes result `lane_resume` and
+rewinds. Offsets are strict integers within the file and attempted-send bounds.
+The receiver rejects late bus chunks after its snapshot; lane frames may
+overtake the confirmation. The sender rehashes its source prefix exactly as
+for bus resync, repeating its `lane_resume` echo whenever the receiver has
+heard nothing from it for 10 s, through the rehash and any slow source read
+after it, which the receiver counts as activity. A lost proven lane uses the
+existing irreversible lane-to-bus resync; it never attempts another upgrade in
+that transfer.
+
+One reservation and `batchId` serve a batch, with fresh lanes per transfer.
+After 35 s idle, request `hotspot_release` `{batchId}` releases the glasses
+lease and the phone closes its reservation. An independent glasses watchdog
+also releases abandoned batches. Android can auto-rejoin the previous saved
+network after the hotspot disappears. Wi-Fi enabled by Nexus is released
+through the hub's existing ownership reconciliation; an active camera keeps
+the radio. Camera takeover also notifies the phone during batch idle, releasing
+its reservation immediately. After reconciliation, a separate cleanup waits up to 45 s
+for the retained hotspot lease to disappear (or Wi-Fi to turn off), then submits
+the fixed, no-argument `wifi_cleanup_files` bridge command.
+Only batches that submitted a bridge join request are eligible, including failed
+joins that might have saved an entry. Repeated release/expiry cannot forget twice;
+camera takeover, link teardown and replacement batches use the same release path.
+The API-32 helper records only numeric network IDs created by `wifi_connect_files`
+and creation timestamps in a shell-owned file, bounded to eight entries and 1024 bytes.
+Each record is bound to the current boot ID and `system_server` PID/start tick, the
+API-32 WifiConfigManager allocation lifetime. Unknown lifetime proof prevents deletion;
+legacy records and records from other lifetimes are discarded without forgetting.
+It never adopts preexisting camera/user entries, even if their SSID matches. Cleanup
+rechecks the lifetime before forgetting and always retains the currently connected ID,
+regardless of age. Same-lifetime records are removed only after verified absence. Hub
+start/batch end and helper start/30-second maintenance retry cleanup, so app process
+death or an early cleanup deadline cannot discard the obligation.
+Other Android versions, unknown helper commands and unconfirmed results mean
+not forgotten; they never fail a transfer or block ownership reconciliation.
+The current helper version is `2026-10-21.7`; its existing APK self-update and normal
+re-arm paths are unchanged. No SSID, passphrase, BSSID, or device identity is logged
+or stored by cleanup. Outcome-only receipts are `<nonce>.connect-result` for the
+files target confirmation and `<nonce>.files-result` for numeric cleanup.
+The transfer card and notification show Wi-Fi only after lane data
+has actually been acknowledged or staged.
+
+Measured on an S23 with
+Rokid glasses on the same home network: 20 MiB in 1.1-1.7 s, 300 MiB in 10.7 s,
+against about 28 s for 5 MiB over Bluetooth.
 
 ## Audio lease v1
 

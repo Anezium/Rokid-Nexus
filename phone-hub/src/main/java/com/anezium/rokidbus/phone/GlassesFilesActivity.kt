@@ -70,6 +70,14 @@ class GlassesFilesActivity : Activity() {
     private var grantFailed = false
     private var seenDone = emptySet<String>()
     private var backCallback: Any? = null
+    private var hotspotPermissionAsked = false
+    private val hotspotPermissionRequest: () -> Unit = {
+        if (!hotspotPermissionAsked && !isFinishing && !GlassesFilesHotspotHost.permitted(this)) {
+            hotspotPermissionAsked = true
+            showNotice(getString(R.string.glasses_files_fast_permission))
+            requestPermissions(arrayOf(GlassesFilesHotspotHost.permission()), REQUEST_HOTSPOT_PERMISSION)
+        }
+    }
 
     private val listener: (GlassesFilesSnapshot) -> Unit = ::onSnapshot
     private val clearNotice = Runnable { if (::noticeHost.isInitialized) noticeHost.removeAllViews() }
@@ -79,6 +87,7 @@ class GlassesFilesActivity : Activity() {
         path = savedInstanceState?.getString(STATE_PATH)
             ?: getSharedPreferences(NexusPhoneState.PREFS, MODE_PRIVATE).getString(PREF_LAST_PATH, "").orEmpty()
         path = GlassesFilesContract.normalizePath(path) ?: ""
+        hotspotPermissionAsked = savedInstanceState?.getBoolean("hotspotPermissionAsked") ?: false
         buildUi()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerBackCallback()
     }
@@ -86,11 +95,13 @@ class GlassesFilesActivity : Activity() {
     override fun onStart() {
         super.onStart()
         BusHubService.start(applicationContext)
+        GlassesFilesHub.requestHotspotPermission = hotspotPermissionRequest
         GlassesFilesHub.addListener(listener)
         load(path, restoring = true)
     }
 
     override fun onStop() {
+        if (GlassesFilesHub.requestHotspotPermission === hotspotPermissionRequest) GlassesFilesHub.requestHotspotPermission = null
         GlassesFilesHub.removeListener(listener)
         super.onStop()
     }
@@ -104,6 +115,7 @@ class GlassesFilesActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putString(STATE_PATH, path)
+        outState.putBoolean("hotspotPermissionAsked", hotspotPermissionAsked)
     }
 
     @Deprecated("Uses the platform back callback on API 33+")
@@ -641,7 +653,8 @@ class GlassesFilesActivity : Activity() {
         GlassesTransferState.RUNNING -> {
             val done = GlassesFilesFormat.size(item.doneBytes)
             val bytes = item.totalBytes?.let { "$done OF ${GlassesFilesFormat.size(it)}" } ?: done
-            "$bytes · ${GlassesFilesFormat.remaining(item.remainingSeconds)}".uppercase()
+            val wifi = if (item.viaWifi) " · WI-FI" else ""
+            "$bytes · ${GlassesFilesFormat.remaining(item.remainingSeconds)}$wifi".uppercase()
         }
         GlassesTransferState.DONE -> when {
             item.alreadyPresent -> "ALREADY ON THE GLASSES"
@@ -746,7 +759,12 @@ class GlassesFilesActivity : Activity() {
             addView(
                 NexusUi.cardBody(
                     this@GlassesFilesActivity,
-                    "Copying takes ${GlassesFilesFormat.estimate(entry.sizeBytes)}. The file goes to Download › Nexus on this phone.",
+                    if (GlassesFilesHub.laneLikely()) {
+                        "Copying takes ${GlassesFilesFormat.estimate(entry.sizeBytes, overWifi = true)} over Wi-Fi. " +
+                            "The file goes to Download › Nexus on this phone."
+                    } else {
+                        "Copying takes ${GlassesFilesFormat.estimate(entry.sizeBytes)}. The file goes to Download › Nexus on this phone."
+                    },
                 ),
                 NexusUi.block(),
             )
@@ -1048,6 +1066,7 @@ class GlassesFilesActivity : Activity() {
     private fun dp(value: Int): Int = NexusUi.dp(this, value)
 
     private companion object {
+        const val REQUEST_HOTSPOT_PERMISSION = 51
         const val STATE_PATH = "path"
         const val PREF_LAST_PATH = "glasses_files_last_path"
         const val ROOT_LABEL = "Glasses storage"

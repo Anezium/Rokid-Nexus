@@ -69,11 +69,22 @@ sealed interface GlassesFilesRequest {
         val path: String,
         val name: String,
         val sizeBytes: Long,
+        /** The phone shares a Wi-Fi network with the glasses and would take a lane. */
+        val lane: Boolean = false,
     ) : GlassesFilesRequest
     data class UploadEnd(val transferId: String, val sha256: String) : GlassesFilesRequest
-    data class DownloadBegin(val transferId: String, val path: String) : GlassesFilesRequest
+    data class DownloadBegin(val transferId: String, val path: String, val lane: Boolean = false) : GlassesFilesRequest
     data class DownloadProgress(val transferId: String, val stagedBytes: Long) : GlassesFilesRequest
     data class Cancel(val transferId: String) : GlassesFilesRequest
+
+    /** The phone could not open the offered lane and stays on the bus; the glasses stop waiting. */
+    data class HotspotOffer(val transferId: String, val batchId: String, val credentials: GlassesFilesHotspotCredentials, val clientNetwork: GlassesFilesClientNetwork? = null) : GlassesFilesRequest
+    data class HotspotRelease(val batchId: String) : GlassesFilesRequest
+    data class LaneSwitch(val transferId: String) : GlassesFilesRequest
+    data class LaneResume(val transferId: String, val stagedBytes: Long) : GlassesFilesRequest
+    data class LaneDeclined(val transferId: String) : GlassesFilesRequest
+    data class LaneResync(val transferId: String) : GlassesFilesRequest
+    data class BusResume(val transferId: String, val stagedBytes: Long) : GlassesFilesRequest
 }
 
 /** Glasses to phone, on [GlassesFilesContract.RESULT_PATH]. */
@@ -97,16 +108,36 @@ sealed interface GlassesFilesResult {
         val needsWearer: Boolean = false,
     ) : GlassesFilesResult
 
-    data class UploadReady(val transferId: String, val name: String) : GlassesFilesResult
+    data class UploadReady(
+        val transferId: String,
+        val name: String,
+        val lane: GlassesFilesLaneEndpoint? = null,
+    ) : GlassesFilesResult
     data class UploadProgress(val transferId: String, val stagedBytes: Long) : GlassesFilesResult
     /** [alreadyPresent]: a file with the same name and size was there, so nothing was sent. */
     data class UploadDone(val transferId: String, val name: String, val alreadyPresent: Boolean = false) : GlassesFilesResult
-    data class DownloadReady(val transferId: String, val sizeBytes: Long, val modifiedMillis: Long) : GlassesFilesResult
+    data class DownloadReady(
+        val transferId: String,
+        val sizeBytes: Long,
+        val modifiedMillis: Long,
+        val lane: GlassesFilesLaneEndpoint? = null,
+    ) : GlassesFilesResult
     data class DownloadEnd(val transferId: String, val sha256: String) : GlassesFilesResult
     data class TransferFailed(val transferId: String, val error: GlassesFilesError) : GlassesFilesResult
+    data class HotspotReady(val transferId: String, val lane: GlassesFilesLaneEndpoint, val gateway: String) : GlassesFilesResult
+    data class HotspotFailed(val transferId: String) : GlassesFilesResult
+    data class LaneResume(val transferId: String, val stagedBytes: Long) : GlassesFilesResult
+    data class LaneResync(val transferId: String) : GlassesFilesResult
+    data class BusResume(val transferId: String, val stagedBytes: Long) : GlassesFilesResult
 }
 
-data class GlassesFilesChunk(val transferId: String, val offset: Long)
+data class GlassesFilesChunk(val transferId: String, val offset: Long, val busEpoch: Int = 0)
+
+/** Where the glasses listen for this transfer's Wi-Fi lane, and the key that seals it. */
+data class GlassesFilesLaneEndpoint(val host: String, val port: Int, val key: String) {
+    // The key is a secret: keep it out of logs and crash reports.
+    override fun toString(): String = "GlassesFilesLaneEndpoint(host=$host, port=$port)"
+}
 
 /**
  * Private hub-to-hub file explorer for the glasses' shared storage.
@@ -136,6 +167,22 @@ object GlassesFilesContract {
     /** A transfer with no progress in either direction for this long is abandoned by both hubs. */
     const val IDLE_TIMEOUT_MS = 30_000L
 
+    /**
+     * From a rewind on, a sender repeats its resume echo whenever the receiver has heard nothing
+     * from it for this long: through the prefix rehash, through a pending source read, and after
+     * the return to data. The receiver sees at most this interval, one read poll and the bus
+     * latency between two signs of life, well inside [IDLE_TIMEOUT_MS], whatever the source does.
+     */
+    const val REPLAY_HEARTBEAT_MS = 10_000L
+
+    /**
+     * A single source read that returns nothing for this long has stalled: the sender gives up
+     * rather than keep its peer alive with echoes for a source that is not coming back. Before a
+     * rewind there is no echo to repeat, so a read the sender tolerates has to fit the peer's
+     * idle budget by itself; the two bounds are the same for that reason.
+     */
+    const val SOURCE_STALL_MS = IDLE_TIMEOUT_MS
+
     const val MAX_PAGE_ENTRIES = 200
     const val MAX_MESSAGE_BYTES = 128 * 1024
     const val MAX_PATH_CHARS = 1024
@@ -156,6 +203,9 @@ object GlassesFilesContract {
     private const val TYPE_DOWNLOAD_BEGIN = "download_begin"
     private const val TYPE_DOWNLOAD_PROGRESS = "download_progress"
     private const val TYPE_CANCEL = "cancel"
+    private const val TYPE_LANE_DECLINED = "lane_declined"
+    private const val TYPE_LANE_RESYNC = "lane_resync"
+    private const val TYPE_BUS_RESUME = "bus_resume"
 
     private const val TYPE_LIST_RESULT = "list_result"
     private const val TYPE_OPERATION_RESULT = "operation_result"
@@ -202,6 +252,7 @@ object GlassesFilesContract {
                 .put("path", request.path)
                 .put("name", request.name)
                 .put("size", request.sizeBytes)
+                .apply { if (request.lane) put("lane", true) }
         }
         is GlassesFilesRequest.UploadEnd -> {
             requireId(request.transferId)
@@ -212,6 +263,7 @@ object GlassesFilesContract {
             requireId(request.transferId)
             require(request.path.isNotEmpty() && normalizePath(request.path) == request.path) { "Invalid path" }
             base(TYPE_DOWNLOAD_BEGIN).put("transferId", request.transferId).put("path", request.path)
+                .apply { if (request.lane) put("lane", true) }
         }
         is GlassesFilesRequest.DownloadProgress -> {
             requireId(request.transferId)
@@ -221,6 +273,40 @@ object GlassesFilesContract {
         is GlassesFilesRequest.Cancel -> {
             requireId(request.transferId)
             base(TYPE_CANCEL).put("transferId", request.transferId)
+        }
+        is GlassesFilesRequest.HotspotOffer -> {
+            requireId(request.transferId)
+            requireId(request.batchId)
+            require(request.credentials.isValid()) { "Invalid hotspot credentials" }
+            base("hotspot_offer").put("transferId", request.transferId).put("batchId", request.batchId)
+                .put("ssid", request.credentials.ssid).put("passphrase", request.credentials.passphrase)
+                .put("security", request.credentials.security)
+                .apply { request.clientNetwork?.let {
+                    require(it.isValid()) { "Invalid client network" }
+                    put("clientNetwork", JSONObject().put("host", it.host).put("prefix", it.prefix))
+                } }
+        }
+        is GlassesFilesRequest.HotspotRelease -> {
+            requireId(request.batchId)
+            base("hotspot_release").put("batchId", request.batchId)
+        }
+        is GlassesFilesRequest.LaneSwitch -> {
+            requireId(request.transferId)
+            base("lane_switch").put("transferId", request.transferId)
+        }
+        is GlassesFilesRequest.LaneResume -> laneResume(request.transferId, request.stagedBytes)
+        is GlassesFilesRequest.LaneDeclined -> {
+            requireId(request.transferId)
+            base(TYPE_LANE_DECLINED).put("transferId", request.transferId)
+        }
+        is GlassesFilesRequest.LaneResync -> {
+            requireId(request.transferId)
+            base(TYPE_LANE_RESYNC).put("transferId", request.transferId)
+        }
+        is GlassesFilesRequest.BusResume -> {
+            requireId(request.transferId)
+            require(request.stagedBytes in 0..MAX_FILE_BYTES) { "Invalid offset" }
+            base(TYPE_BUS_RESUME).put("transferId", request.transferId).put("staged", request.stagedBytes)
         }
     }
 
@@ -248,6 +334,7 @@ object GlassesFilesContract {
                 path = payload.path("path") ?: return null,
                 name = payload.strictString("name")?.takeIf(::isValidName) ?: return null,
                 sizeBytes = payload.strictLong("size")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
+                lane = payload.optionalFlag("lane") ?: return null,
             )
             TYPE_UPLOAD_END -> GlassesFilesRequest.UploadEnd(
                 transferId = payload.id("transferId") ?: return null,
@@ -256,12 +343,37 @@ object GlassesFilesContract {
             TYPE_DOWNLOAD_BEGIN -> GlassesFilesRequest.DownloadBegin(
                 transferId = payload.id("transferId") ?: return null,
                 path = payload.path("path")?.takeIf(String::isNotEmpty) ?: return null,
+                lane = payload.optionalFlag("lane") ?: return null,
             )
             TYPE_DOWNLOAD_PROGRESS -> GlassesFilesRequest.DownloadProgress(
                 transferId = payload.id("transferId") ?: return null,
                 stagedBytes = payload.strictLong("staged")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
             )
             TYPE_CANCEL -> GlassesFilesRequest.Cancel(payload.id("transferId") ?: return null)
+            "hotspot_offer" -> {
+                val credentials = GlassesFilesHotspotCredentials(
+                    payload.strictString("ssid") ?: return null,
+                    payload.strictString("passphrase") ?: return null,
+                    payload.strictString("security") ?: return null,
+                ).takeIf { it.isValid() } ?: return null
+                val clientNetwork = if (payload.has("clientNetwork")) {
+                    val network = payload.opt("clientNetwork") as? JSONObject ?: return null
+                    GlassesFilesClientNetwork(network.strictString("host") ?: return null,
+                        network.strictInt("prefix") ?: return null).takeIf { it.isValid() } ?: return null
+                } else null
+                GlassesFilesRequest.HotspotOffer(payload.id("transferId") ?: return null,
+                    payload.id("batchId") ?: return null, credentials, clientNetwork)
+            }
+            "hotspot_release" -> GlassesFilesRequest.HotspotRelease(payload.id("batchId") ?: return null)
+            "lane_switch" -> GlassesFilesRequest.LaneSwitch(payload.id("transferId") ?: return null)
+            "lane_resume" -> GlassesFilesRequest.LaneResume(payload.id("transferId") ?: return null,
+                payload.strictLong("staged")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null)
+            TYPE_LANE_DECLINED -> GlassesFilesRequest.LaneDeclined(payload.id("transferId") ?: return null)
+            TYPE_LANE_RESYNC -> GlassesFilesRequest.LaneResync(payload.id("transferId") ?: return null)
+            TYPE_BUS_RESUME -> GlassesFilesRequest.BusResume(
+                payload.id("transferId") ?: return null,
+                payload.strictLong("staged")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
+            )
             else -> null
         }
     }
@@ -308,6 +420,7 @@ object GlassesFilesContract {
             requireId(result.transferId)
             require(isValidName(result.name)) { "Invalid name" }
             base(TYPE_UPLOAD_READY).put("transferId", result.transferId).put("name", result.name)
+                .putLane(result.lane)
         }
         is GlassesFilesResult.UploadProgress -> {
             requireId(result.transferId)
@@ -328,6 +441,7 @@ object GlassesFilesContract {
                 .put("transferId", result.transferId)
                 .put("size", result.sizeBytes)
                 .put("mtime", result.modifiedMillis)
+                .putLane(result.lane)
         }
         is GlassesFilesResult.DownloadEnd -> {
             requireId(result.transferId)
@@ -337,6 +451,25 @@ object GlassesFilesContract {
         is GlassesFilesResult.TransferFailed -> {
             requireId(result.transferId)
             base(TYPE_TRANSFER_FAILED).put("transferId", result.transferId).put("errorCode", result.error.wireValue)
+        }
+        is GlassesFilesResult.HotspotReady -> {
+            requireId(result.transferId)
+            require(isValidLaneHost(result.gateway)) { "Invalid gateway" }
+            base("hotspot_ready").put("transferId", result.transferId).putLane(result.lane).put("gateway", result.gateway)
+        }
+        is GlassesFilesResult.HotspotFailed -> {
+            requireId(result.transferId)
+            base("hotspot_failed").put("transferId", result.transferId)
+        }
+        is GlassesFilesResult.LaneResume -> laneResume(result.transferId, result.stagedBytes)
+        is GlassesFilesResult.LaneResync -> {
+            requireId(result.transferId)
+            base(TYPE_LANE_RESYNC).put("transferId", result.transferId)
+        }
+        is GlassesFilesResult.BusResume -> {
+            requireId(result.transferId)
+            require(result.stagedBytes in 0..MAX_FILE_BYTES) { "Invalid offset" }
+            base(TYPE_BUS_RESUME).put("transferId", result.transferId).put("staged", result.stagedBytes)
         }
     }
 
@@ -358,6 +491,7 @@ object GlassesFilesContract {
             TYPE_UPLOAD_READY -> GlassesFilesResult.UploadReady(
                 transferId = payload.id("transferId") ?: return null,
                 name = payload.strictString("name")?.takeIf(::isValidName) ?: return null,
+                lane = (payload.optionalLane() ?: return null).endpoint,
             )
             TYPE_UPLOAD_PROGRESS -> GlassesFilesResult.UploadProgress(
                 transferId = payload.id("transferId") ?: return null,
@@ -376,6 +510,7 @@ object GlassesFilesContract {
                 transferId = payload.id("transferId") ?: return null,
                 sizeBytes = payload.strictLong("size")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
                 modifiedMillis = payload.strictLong("mtime")?.takeIf { it in 0..MAX_SAFE_INTEGER } ?: return null,
+                lane = (payload.optionalLane() ?: return null).endpoint,
             )
             TYPE_DOWNLOAD_END -> GlassesFilesResult.DownloadEnd(
                 transferId = payload.id("transferId") ?: return null,
@@ -385,14 +520,33 @@ object GlassesFilesContract {
                 transferId = payload.id("transferId") ?: return null,
                 error = GlassesFilesError.fromWireValue(payload.strictString("errorCode")) ?: return null,
             )
+            "hotspot_ready" -> GlassesFilesResult.HotspotReady(payload.id("transferId") ?: return null,
+                (payload.optionalLane() ?: return null).endpoint ?: return null,
+                payload.strictString("gateway")?.takeIf(::isValidLaneHost) ?: return null)
+            "hotspot_failed" -> GlassesFilesResult.HotspotFailed(payload.id("transferId") ?: return null)
+            "lane_resume" -> GlassesFilesResult.LaneResume(payload.id("transferId") ?: return null,
+                payload.strictLong("staged")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null)
+            TYPE_LANE_RESYNC -> GlassesFilesResult.LaneResync(payload.id("transferId") ?: return null)
+            TYPE_BUS_RESUME -> GlassesFilesResult.BusResume(
+                payload.id("transferId") ?: return null,
+                payload.strictLong("staged")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
+            )
             else -> null
         }
+    }
+
+    private fun laneResume(transferId: String, staged: Long): JSONObject {
+        requireId(transferId)
+        require(staged in 0..MAX_FILE_BYTES) { "Invalid offset" }
+        return base("lane_resume").put("transferId", transferId).put("staged", staged)
     }
 
     fun chunkMeta(chunk: GlassesFilesChunk): JSONObject {
         requireId(chunk.transferId)
         require(chunk.offset in 0..MAX_FILE_BYTES) { "Invalid offset" }
+        require(chunk.busEpoch in 0..1) { "Invalid bus epoch" }
         return base(TYPE_CHUNK).put("transferId", chunk.transferId).put("offset", chunk.offset)
+            .apply { if (chunk.busEpoch != 0) put("busEpoch", chunk.busEpoch) }
     }
 
     fun parseChunk(payload: JSONObject, binary: ByteArray?): GlassesFilesChunk? {
@@ -401,6 +555,8 @@ object GlassesFilesContract {
         return GlassesFilesChunk(
             transferId = payload.id("transferId") ?: return null,
             offset = payload.strictLong("offset")?.takeIf { it in 0..MAX_FILE_BYTES } ?: return null,
+            busEpoch = if (!payload.has("busEpoch")) 0 else
+                payload.strictLong("busEpoch")?.takeIf { it in 0..1 }?.toInt() ?: return null,
         )
     }
 
@@ -503,6 +659,41 @@ object GlassesFilesContract {
         isValidName(entry.name) &&
             entry.sizeBytes in 0..MAX_SAFE_INTEGER &&
             entry.modifiedMillis in 0..MAX_SAFE_INTEGER
+
+    /** Absent means false; present and not a boolean makes the whole message invalid (null). */
+    private fun JSONObject.optionalFlag(key: String): Boolean? =
+        if (!has(key)) false else strictBoolean(key)
+
+    private class LaneField(val endpoint: GlassesFilesLaneEndpoint?)
+
+    /** Absent means no lane; present but malformed makes the whole message invalid (null). */
+    private fun JSONObject.optionalLane(): LaneField? {
+        if (!has("lane")) return LaneField(null)
+        val lane = opt("lane") as? JSONObject ?: return null
+        val endpoint = GlassesFilesLaneEndpoint(
+            host = lane.strictString("host")?.takeIf(::isValidLaneHost) ?: return null,
+            port = lane.strictLong("port")?.takeIf { it in 1..65_535 }?.toInt() ?: return null,
+            key = lane.strictString("key")?.takeIf { GlassesFilesLane.decodeKey(it) != null } ?: return null,
+        )
+        return LaneField(endpoint)
+    }
+
+    private fun JSONObject.putLane(lane: GlassesFilesLaneEndpoint?): JSONObject {
+        if (lane == null) return this
+        require(isValidLaneHost(lane.host) && lane.port in 1..65_535 && GlassesFilesLane.decodeKey(lane.key) != null) {
+            "Invalid lane endpoint"
+        }
+        return put("lane", JSONObject().put("host", lane.host).put("port", lane.port).put("key", lane.key))
+    }
+
+    /** A literal IPv4 address only: a name would need a lookup the lane has no business doing. */
+    fun isValidLaneHost(value: String): Boolean {
+        val parts = value.split('.')
+        return parts.size == 4 && parts.all { part ->
+            part.isNotEmpty() && part.length <= 3 && part.all(Char::isDigit) && part.toInt() in 0..255 &&
+                (part == "0" || !part.startsWith("0"))
+        }
+    }
 
     /** Absent means success; a present but unknown code makes the whole message invalid (null). */
     private class ErrorField(val error: GlassesFilesError?)

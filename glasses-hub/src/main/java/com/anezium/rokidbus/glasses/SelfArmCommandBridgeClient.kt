@@ -43,6 +43,9 @@ internal object SelfArmCommandBridgeProtocol {
     const val WIFI_ENABLE = "wifi_enable"
     const val WIFI_DISABLE = "wifi_disable"
     const val WIFI_CONNECT = "wifi_connect"
+    const val WIFI_CONNECT_FILES = "wifi_connect_files"
+    const val WIFI_FORGET = "wifi_forget"
+    const val WIFI_CLEANUP_FILES = "wifi_cleanup_files"
     const val ADB_WIFI_ENABLE = "adb_wifi_enable"
     const val ADB_WIFI_DISABLE = "adb_wifi_disable"
     const val MAX_REQUEST_BYTES = 512
@@ -55,6 +58,9 @@ internal object SelfArmCommandBridgeProtocol {
         WIFI_ENABLE,
         WIFI_DISABLE,
         WIFI_CONNECT,
+        WIFI_CONNECT_FILES,
+        WIFI_FORGET,
+        WIFI_CLEANUP_FILES,
         DELETE_CAPTURE,
         ADB_WIFI_ENABLE,
         ADB_WIFI_DISABLE,
@@ -123,8 +129,8 @@ internal object SelfArmCommandBridgeProtocol {
         if (command !in allowedCommands) return Verification.Rejected("command")
         val arguments = fields.subList(2, fields.lastIndex)
         val validShape = when (command) {
-            WIFI_ENABLE, WIFI_DISABLE, ADB_WIFI_ENABLE, ADB_WIFI_DISABLE -> arguments.isEmpty()
-            WIFI_CONNECT -> arguments.size == 3 &&
+            WIFI_ENABLE, WIFI_DISABLE, ADB_WIFI_ENABLE, ADB_WIFI_DISABLE, WIFI_CLEANUP_FILES -> arguments.isEmpty()
+            WIFI_CONNECT, WIFI_CONNECT_FILES -> arguments.size == 3 &&
                 arguments[0].length in 1..172 && encodedArgumentRegex.matches(arguments[0]) &&
                 when (WifiConnectSecurity.fromCommandKeyword(arguments[2])) {
                     WifiConnectSecurity.OPEN -> arguments[1].isEmpty()
@@ -135,6 +141,8 @@ internal object SelfArmCommandBridgeProtocol {
                 }
             DELETE_CAPTURE -> arguments.size == 1 &&
                 arguments[0].length in 1..344 && encodedArgumentRegex.matches(arguments[0])
+            WIFI_FORGET -> arguments.size == 1 &&
+                arguments[0].length in 1..44 && encodedArgumentRegex.matches(arguments[0])
             else -> false
         }
         if (!validShape) return Verification.Rejected("format")
@@ -204,7 +212,11 @@ internal object SelfArmCommandBridgeClient {
         passphrase: String,
         security: WifiConnectSecurity = WifiConnectSecurity.WPA2,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+        joined: (() -> Boolean)? = null,
+        onSubmitted: () -> Unit = {},
+        requireTargetConfirmation: Boolean = false,
     ): Boolean {
+        if (requireTargetConfirmation && android.os.Build.VERSION.SDK_INT != 32) return false
         if (ssid.isBlank() || ssid.length > 128 || !security.isValidPassphrase(passphrase) ||
             timeoutMs <= 0L
         ) {
@@ -218,13 +230,67 @@ internal object SelfArmCommandBridgeClient {
         if (arguments[0].length !in 1..172 || arguments[1].length > 172) return false
         val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
             ?: return false
-        if (isConnectedTo(wifiManager, ssid)) return true
+        if (!requireTargetConfirmation && (joined?.invoke() ?: isConnectedTo(wifiManager, ssid))) return true
         return submit(
             context.applicationContext,
-            SelfArmCommandBridgeProtocol.WIFI_CONNECT,
+            if (requireTargetConfirmation) SelfArmCommandBridgeProtocol.WIFI_CONNECT_FILES else SelfArmCommandBridgeProtocol.WIFI_CONNECT,
             arguments,
             timeoutMs,
-        ) { awaitWifiNetwork(wifiManager, ssid, timeoutMs) }
+            onSubmitted = onSubmitted,
+        ) { receipt ->
+            if (requireTargetConfirmation) {
+                val deadline = SystemClock.elapsedRealtime() + timeoutMs
+                while (SystemClock.elapsedRealtime() < deadline) {
+                    if (receipt?.readText()?.trim() == "ok" && (joined?.invoke() ?: isConnectedTo(wifiManager, ssid))) {
+                        return@submit true
+                    }
+                    Thread.sleep(RESPONSE_POLL_MS)
+                }
+                false
+            } else if (joined == null) awaitWifiNetwork(wifiManager, ssid, timeoutMs)
+            else {
+                val deadline = SystemClock.elapsedRealtime() + timeoutMs
+                while (SystemClock.elapsedRealtime() < deadline) {
+                    if (joined()) return@submit true
+                    Thread.sleep(RESPONSE_POLL_MS)
+                }
+                joined()
+            }
+        }
+    }
+
+    fun cleanupFilesNetworks(context: Context, timeoutMs: Long = DEFAULT_TIMEOUT_MS): Boolean {
+        if (android.os.Build.VERSION.SDK_INT != 32 || timeoutMs <= 0L) return false
+        return submit(context.applicationContext, SelfArmCommandBridgeProtocol.WIFI_CLEANUP_FILES,
+            emptyList(), timeoutMs) { receipt ->
+            val deadline = SystemClock.elapsedRealtime() + timeoutMs
+            while (SystemClock.elapsedRealtime() < deadline) {
+                when (runCatching { receipt?.readText() }.getOrNull()) {
+                    "ok\n" -> return@submit true
+                    "error\n" -> return@submit false
+                }
+                Thread.sleep(RESPONSE_POLL_MS)
+            }
+            false
+        }
+    }
+
+    fun forgetWifiNetwork(context: Context, ssid: String, timeoutMs: Long = DEFAULT_TIMEOUT_MS): Boolean {
+        val bytes = ssid.toByteArray(Charsets.UTF_8)
+        if (android.os.Build.VERSION.SDK_INT != 32 || ssid.isBlank() || bytes.size !in 1..32 ||
+            ssid.any { it.isISOControl() } || timeoutMs <= 0L
+        ) return false
+        return submit(context.applicationContext, SelfArmCommandBridgeProtocol.WIFI_FORGET,
+            listOf(Base64.encodeToString(bytes, Base64.NO_WRAP)), timeoutMs) { receipt ->
+            val deadline = SystemClock.elapsedRealtime() + timeoutMs
+            while (SystemClock.elapsedRealtime() < deadline) {
+                val result = runCatching { receipt?.readText() }.getOrNull()
+                if (result == "ok\n") return@submit true
+                if (result == "error\n") return@submit false
+                Thread.sleep(RESPONSE_POLL_MS)
+            }
+            false
+        }
     }
 
     /**
@@ -424,22 +490,33 @@ internal object SelfArmCommandBridgeClient {
         command: String,
         arguments: List<String>,
         timeoutMs: Long,
-        awaitResult: () -> Boolean,
+        onSubmitted: () -> Unit = {},
+        awaitResult: (File?) -> Boolean,
     ): Boolean {
         val secret = loadSecretHex(context) ?: return false
         val channel = ensureChannelDir(context) ?: return false
         val nonce = randomHex(16)
         val requestFile = File(channel, "$nonce.request")
         val tempFile = File(channel, ".$nonce.request.${UUID.randomUUID()}.tmp")
+        // Pre-create this app-owned inode; unlike shell-created responses it has no negative
+        // FUSE dentry. A stale read can only report failure, never a false successful command.
+        val receipt = when (command) {
+            SelfArmCommandBridgeProtocol.WIFI_FORGET -> File(channel, "$nonce.forget-result")
+            SelfArmCommandBridgeProtocol.WIFI_CONNECT_FILES -> File(channel, "$nonce.connect-result")
+            SelfArmCommandBridgeProtocol.WIFI_CLEANUP_FILES -> File(channel, "$nonce.files-result")
+            else -> null
+        }
         return try {
             val request = SelfArmCommandBridgeProtocol.request(secret, command, nonce, arguments)
             if (request.toByteArray(Charsets.UTF_8).size > SelfArmCommandBridgeProtocol.MAX_REQUEST_BYTES) {
                 return false
             }
+            receipt?.writeText("pending\n")
             tempFile.writeText(request)
             if (!tempFile.renameTo(requestFile)) return false
+            onSubmitted()
             ringDoorbell(File(channel, DOORBELL_NAME), nonce)
-            awaitResult()
+            awaitResult(receipt)
         } catch (interrupted: InterruptedException) {
             Thread.currentThread().interrupt()
             false
@@ -448,6 +525,7 @@ internal object SelfArmCommandBridgeClient {
         } finally {
             tempFile.delete()
             requestFile.delete()
+            receipt?.delete()
         }
     }
 

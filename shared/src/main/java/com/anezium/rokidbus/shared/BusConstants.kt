@@ -252,6 +252,12 @@ object BusCapabilityBits {
 
     /** Glasses only: the hub serves the private `/core/files` explorer routes. */
     const val GLASSES_FILES = 1 shl 13
+
+    /** Glasses only: the explorer can move a transfer's bytes over a Wi-Fi lane. */
+    const val GLASSES_FILES_LANE = 1 shl 14
+
+    /** Phone-hosted fast file lanes when no shared Wi-Fi lane is available. */
+    const val GLASSES_FILES_HOTSPOT = 1 shl 15
 }
 
 object LinkStateBits {

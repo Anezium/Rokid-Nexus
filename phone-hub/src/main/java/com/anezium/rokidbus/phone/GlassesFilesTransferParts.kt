@@ -3,6 +3,9 @@ package com.anezium.rokidbus.phone
 import java.io.Closeable
 import java.io.InputStream
 import java.io.IOException
+import java.io.OutputStream
+import com.anezium.rokidbus.shared.GlassesFilesContract
+import com.anezium.rokidbus.shared.GlassesFilesResync
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
@@ -121,6 +124,30 @@ internal object GlassesDownloadAckPolicy {
     }
 }
 
+/** The staged offset advances only after a completed MediaStore write, on the serial inbox. */
+internal class GlassesFilesDownloadReceiver(
+    private val resync: GlassesFilesResync,
+    private val output: () -> OutputStream?,
+) {
+    enum class Write { IGNORED, WRITTEN, OUT_OF_ORDER, NO_SPACE }
+    var staged = 0L
+        private set
+    private val digest = GlassesFilesContract.newDigest()
+
+    fun write(offset: Long, bytes: ByteArray, viaLane: Boolean, busEpoch: Int = 0): Write {
+        if (!resync.acceptsChunk(viaLane, busEpoch)) return Write.IGNORED
+        val target = output() ?: return Write.IGNORED
+        if (offset != staged) return Write.OUT_OF_ORDER
+        if (runCatching { target.write(bytes) }.isFailure) return Write.NO_SPACE
+        digest.update(bytes)
+        staged += bytes.size
+        return Write.WRITTEN
+    }
+
+    fun verify(expectedSize: Long?, sha256: String): Boolean =
+        staged == expectedSize && GlassesFilesContract.hex(digest) == sha256
+}
+
 /**
  * Reads a document provider stream on a separate I/O thread so the transfer worker can walk away.
  *
@@ -128,6 +155,8 @@ internal object GlassesDownloadAckPolicy {
  * neither responds reliably to interruption. Each read is handed to [io] and awaited in short
  * polls; a cancel, a dropped link or [stallMillis] without progress abandons it, closes what can
  * be closed, and returns control to the worker. An abandoned I/O thread finishes on its own time.
+ * The worker gets a word in on every poll a read stays pending, so what it owes its peer meanwhile
+ * does not wait for the provider.
  */
 internal class GlassesProviderReader(
     private val io: ExecutorService,
@@ -151,7 +180,7 @@ internal class GlassesProviderReader(
     // its descriptor closed, so late registrations run on the spot.
     private val hooks = CancelHooks()
 
-    fun read(buffer: ByteArray, shouldAbort: () -> Boolean): Read {
+    fun read(buffer: ByteArray, shouldAbort: () -> Boolean, whilePending: () -> Unit = {}): Read {
         if (closed) return Read.Aborted
         val task = runCatching {
             io.submit<Int> {
@@ -177,6 +206,7 @@ internal class GlassesProviderReader(
                     close()
                     return Read.Stalled
                 }
+                whilePending()
                 continue
             } catch (_: InterruptedException) {
                 close()

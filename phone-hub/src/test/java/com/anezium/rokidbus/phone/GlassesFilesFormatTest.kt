@@ -64,6 +64,8 @@ class GlassesFilesFormatTest {
         assertEquals("about a minute", GlassesFilesFormat.estimate(14_000_000))
         assertEquals("about 2 minutes", GlassesFilesFormat.estimate(21_000_000))
         assertEquals("about 6 minutes", GlassesFilesFormat.estimate(60_000_000))
+        assertEquals("a few seconds", GlassesFilesFormat.estimate(21_000_000, overWifi = true))
+        assertEquals("about 40 seconds", GlassesFilesFormat.estimate(300_000_000, overWifi = true))
     }
 
     @Test

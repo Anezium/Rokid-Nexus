@@ -5,6 +5,64 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SelfArmCommandBridgeProtocolTest {
+    @Test fun fileCleanupAuthenticatesExactlyTheFixedNoArgumentCommand() {
+        val command = SelfArmCommandBridgeProtocol.WIFI_CLEANUP_FILES
+        val request = SelfArmCommandBridgeProtocol.request(SECRET, command, NONCE)
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Accepted(command, NONCE),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, emptySet()))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("replay"),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, setOf(NONCE)))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("auth"),
+            SelfArmCommandBridgeProtocol.verify(request.replace(command, "wifi_disable"), SECRET, emptySet()))
+        listOf(listOf("7"), listOf("QQ=="), listOf("7", "8")).forEach {
+            assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("format"),
+                SelfArmCommandBridgeProtocol.verify(
+                    SelfArmCommandBridgeProtocol.request(SECRET, command, NONCE, it), SECRET, emptySet()))
+        }
+    }
+
+    @Test fun fileConnectRequiresAuthenticatedCredentialsAndCannotBeReplayedAsCameraConnect() {
+        val command = SelfArmCommandBridgeProtocol.WIFI_CONNECT_FILES
+        val arguments = listOf("VGVzdA==", "YWJjZGVmZ2gxMjM0", "wpa2")
+        val request = SelfArmCommandBridgeProtocol.request(SECRET, command, NONCE, arguments)
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Accepted(command, NONCE, arguments),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, emptySet()))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("auth"),
+            SelfArmCommandBridgeProtocol.verify(request.replace(command, "wifi_connect"), SECRET, emptySet()))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("replay"),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, setOf(NONCE)))
+        listOf(emptyList(), arguments + "extra", listOf("bad!", arguments[1], "wpa2"),
+            listOf(arguments[0], arguments[1], "future")).forEach { malformed ->
+            assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("format"),
+                SelfArmCommandBridgeProtocol.verify(
+                    SelfArmCommandBridgeProtocol.request(SECRET, command, NONCE, malformed), SECRET, emptySet()))
+        }
+    }
+
+    @Test fun authenticatedForgetRequestBindsExactlyOneSsidArgument() {
+        val arguments = listOf("QW5kcm9pZFNoYXJlXzEyMzQ=")
+        val request = SelfArmCommandBridgeProtocol.request(SECRET, SelfArmCommandBridgeProtocol.WIFI_FORGET, NONCE, arguments)
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Accepted("wifi_forget", NONCE, arguments),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, emptySet()))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("auth"),
+            SelfArmCommandBridgeProtocol.verify(request.replace(arguments[0], "QW5kcm9pZFNoYXJlXzU2Nzg="), SECRET, emptySet()))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("replay"),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, setOf(NONCE)))
+    }
+
+    @Test fun forgetRejectsMissingExtraMalformedAndOversizedArguments() {
+        listOf(emptyList(), listOf(""), listOf("not-base64!"), listOf("A".repeat(45)),
+            listOf("QQ==", "extra")).forEach { arguments ->
+            val request = SelfArmCommandBridgeProtocol.request(SECRET, "wifi_forget", NONCE, arguments)
+            assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("format"),
+                SelfArmCommandBridgeProtocol.verify(request, SECRET, emptySet()))
+        }
+        val maximum = listOf("A".repeat(44))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Accepted("wifi_forget", NONCE, maximum),
+            SelfArmCommandBridgeProtocol.verify(
+                SelfArmCommandBridgeProtocol.request(SECRET, "wifi_forget", NONCE, maximum), SECRET, emptySet()))
+    }
+
     @Test
     fun prefixKeyedSha256MatchesKnownVectorAndVerifies() {
         val token = SelfArmCommandBridgeProtocol.token(SECRET, "wifi_enable", NONCE)

@@ -49,6 +49,10 @@ class GlassesFilesContractTest {
             GlassesFilesRequest.DownloadBegin(id, "DCIM/Camera/img.jpg"),
             GlassesFilesRequest.DownloadProgress(id, 65_536L),
             GlassesFilesRequest.Cancel(id),
+            GlassesFilesRequest.LaneDeclined(id),
+            GlassesFilesRequest.LaneResync(id),
+            GlassesFilesRequest.BusResume(id, 0),
+            GlassesFilesRequest.BusResume(id, GlassesFilesContract.MAX_FILE_BYTES),
         )
         requests.forEach { request ->
             val encoded = GlassesFilesContract.encode(request).put("future", true)
@@ -87,6 +91,9 @@ class GlassesFilesContractTest {
             GlassesFilesResult.DownloadReady(id, 99L, 1_700_000_000_000),
             GlassesFilesResult.DownloadEnd(id, digest),
             GlassesFilesResult.TransferFailed(id, GlassesFilesError.NO_SPACE),
+            GlassesFilesResult.LaneResync(id),
+            GlassesFilesResult.BusResume(id, 0),
+            GlassesFilesResult.BusResume(id, GlassesFilesContract.MAX_FILE_BYTES),
         )
         results.forEach { result ->
             val encoded = GlassesFilesContract.encode(result)
@@ -101,6 +108,31 @@ class GlassesFilesContractTest {
         )
         val parsed = GlassesFilesContract.parseResult(encoded) as GlassesFilesResult.Operation
         assertEquals(GlassesFilesError.INTERNAL, parsed.error)
+    }
+
+    @Test
+    fun `resync messages reject malformed identities offsets and envelopes`() {
+        val request = GlassesFilesContract.encode(GlassesFilesRequest.BusResume(id, 42))
+        val result = GlassesFilesContract.encode(GlassesFilesResult.BusResume(id, 42))
+        listOf(-1L, GlassesFilesContract.MAX_FILE_BYTES + 1, "42", 1.5, true, JSONObject.NULL).forEach { bad ->
+            assertNull(GlassesFilesContract.parseRequest(JSONObject(request.toString()).put("staged", bad)))
+            assertNull(GlassesFilesContract.parseResult(JSONObject(result.toString()).put("staged", bad)))
+        }
+        assertNull(GlassesFilesContract.parseRequest(JSONObject(request.toString()).apply { remove("staged") }))
+        assertNull(GlassesFilesContract.parseResult(JSONObject(result.toString()).apply { remove("staged") }))
+        listOf("lane_resync", "bus_resume").forEach { type ->
+            val message = JSONObject(request.toString()).put("type", type)
+            assertNull(GlassesFilesContract.parseRequest(JSONObject(message.toString()).put("transferId", "bad")))
+            assertNull(GlassesFilesContract.parseResult(JSONObject(message.toString()).put("transferId", 12)))
+            assertNull(GlassesFilesContract.parseRequest(JSONObject(message.toString()).put("version", "1")))
+            assertNull(GlassesFilesContract.parseResult(JSONObject(message.toString()).put("version", 2)))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            GlassesFilesContract.encode(GlassesFilesRequest.BusResume(id, -1))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            GlassesFilesContract.encode(GlassesFilesResult.BusResume(id, GlassesFilesContract.MAX_FILE_BYTES + 1))
+        }
     }
 
     @Test
@@ -152,6 +184,16 @@ class GlassesFilesContractTest {
                 ByteArray(10),
             ),
         )
+    }
+
+    @Test
+    fun `chunk bus epochs distinguish resumed bytes and reject malformed values`() {
+        val resumed = GlassesFilesChunk(id, 32_768L, busEpoch = 1)
+        val meta = GlassesFilesContract.chunkMeta(resumed)
+        assertEquals(resumed, GlassesFilesContract.parseChunk(meta, byteArrayOf(1)))
+        for (value in listOf(-1, 2, "1", 1.5, true, JSONObject.NULL)) {
+            assertNull(GlassesFilesContract.parseChunk(JSONObject(meta.toString()).put("busEpoch", value), byteArrayOf(1)))
+        }
     }
 
     @Test
