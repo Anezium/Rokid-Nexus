@@ -2897,6 +2897,27 @@ v1 bus behavior. These messages use the unreleased bit 14 lane contract and add
 no capability or plugin route. The phone drops its Wi-Fi tag and resets its time
 estimate as soon as resync starts.
 
+##### Lane states on the wire
+
+Each side of a transfer is in exactly one of these states; what it admits is all
+the peer can observe.
+
+| State | Entered by | Admits | Left by |
+|---|---|---|---|
+| Bus | every transfer starts here; a declined or unproven lane keeps it here | bus chunks with `busEpoch` 0 | a completed sealed handshake that is activated (shared lane connect, or the `lane_switch` / `lane_resume` upgrade) |
+| Lane | handshake completed and activated | lane frames only; bus chunks are ignored | lane EOF or error, an idle lane, camera takeover, the hotspot budget, or the peer's `lane_resync` / `bus_resume` |
+| Resync pending | `lane_resync` sent or received, including for a proven lane that broke before activation | nothing | the receiver's `bus_resume` snapshot; 30 s without it ends the transfer |
+| Resync offered | the receiver froze its offset | bus chunks with `busEpoch` 1 | the sender's `bus_resume` echo, within the same 30 s |
+| Resync confirmed | the echo matched the snapshot | bus chunks with `busEpoch` 1 | the terminator, cancel, link loss or the idle timeout |
+
+Only a side holding proof of the handshake may start a resync: its own completed
+handshake, or the peer's authenticated `lane_resync` / `bus_resume`, which can only
+follow one. A lane that never proved itself leaves the transfer on the bus with
+nothing to resend. Terminators are decided by size and SHA-256 alone: an
+`upload_end` or `download_end` that arrives in any resync state is verified against
+the staged bytes, because the sender only sends it after a full acknowledgement and
+a resync cannot change what was written.
+
 ##### Phone hotspot lane
 
 Both hubs announce `GLASSES_FILES_HOTSPOT` (`1 << 15`). Only peers with this
