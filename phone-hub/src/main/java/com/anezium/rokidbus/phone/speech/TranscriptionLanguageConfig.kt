@@ -6,7 +6,7 @@ import java.util.Locale
  * Forced transcription language. Provider-specific codes are kept because script and dialect
  * selection differ: Cantonese uses ElevenLabs `yue`, Azure `zh-HK`, and an OpenAI prompt.
  * Android tag chains stay available for per-session overrides, but the Android recognizer runs on
- * Auto — like Relay it auto-detects, so the settings screen locks the grid instead of rewriting
+ * Auto — leaving language selection to the engine, so the settings screen locks the grid instead of rewriting
  * the stored choice.
  */
 enum class TranscriptionLanguage(
@@ -90,6 +90,15 @@ enum class TranscriptionLanguage(
         elevenLabsCode = "pl",
         azureLocale = "pl-PL",
         androidTag = "pl-PL",
+    ),
+    RUSSIAN(
+        id = "ru",
+        label = "Русский",
+        summaryName = "Russian",
+        openAiCode = "ru",
+        elevenLabsCode = "ru",
+        azureLocale = "ru-RU",
+        androidTag = "ru-RU",
     ),
     JAPANESE(
         id = "ja",

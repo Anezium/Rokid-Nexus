@@ -267,4 +267,22 @@
     <string name="native_apps_back">Go back</string>
     <string name="native_apps_patcher_hint">YouTube and Reddit setup and updates live in Patcher.</string>
     <string name="glasses_files_fast_permission">ALLOW NEARBY WI-FI FOR FASTER TRANSFERS</string>
+    <string name="voice_title">VOICE</string>
+    <string name="voice_intro">Answers use your phone\'s voice and play through your glasses or earbuds. If neither can play them, nothing is spoken — never the phone\'s own speaker.</string>
+    <string name="voice_language">Speech language</string>
+    <string name="voice_follow_phone">Follow phone language</string>
+    <string name="voice_independent_language">Independent of phone and recognition language</string>
+    <string name="voice_speed">Speed</string>
+    <string name="voice_section">Voice</string>
+    <string name="voice_default">Default</string>
+    <string name="voice_hear_sample">Hear it</string>
+    <string name="voice_engine_not_ready">Start the hub and wait for its speech engine to be ready to choose a voice.</string>
+    <string name="voice_no_data">No voices are available for %1$s in your current speech engine. Install voice data or choose another engine in Android text-to-speech settings.</string>
+    <string name="voice_download_required">Voice data missing — download in Android text-to-speech settings</string>
+    <string name="voice_needs_network">Needs network</string>
+    <string name="voice_on_device">On device</string>
+    <string name="voice_sample_unavailable">Cannot play the preview. Check that the hub is ready, the voice data is available, and your glasses or earbuds are connected; speech may also be busy.</string>
+    <string name="voice_sample_ru" translatable="false">Вот как я буду читать ваши ответы.</string>
+    <string name="voice_sample_fr" translatable="false">Voilà comment je vais lire vos réponses.</string>
+    <string name="voice_sample_en" translatable="false">This is how I will read your answers.</string>
 </resources>

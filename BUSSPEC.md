@@ -3189,7 +3189,7 @@ Pending until the user re-approves it.
 ## TTS protocol v1
 
 Text-to-speech is a separate capability whose renderer is the phone's own
-speech engine: the hub synthesizes every utterance with the voice and speed
+speech engine: the hub synthesizes every utterance with the language, voice and speed
 the wearer picked in Settings → Voice, and the sound reaches the wearer over
 the Bluetooth audio route — the glasses' link, or earbuds if any are in. The
 phone's own loudspeaker never plays speech; when no external ear is available
@@ -3197,6 +3197,11 @@ the hub waits a few seconds for the audio link to wake, then drops the
 utterance with an `UNAVAILABLE` done event rather than talking into the room.
 A plugin requests `tts` and may receive `/tts/started` and `/tts/done`; both
 command paths require an approved `tts` grant.
+
+The speech language defaults to the wearer's Settings → Voice choice, independently
+of the phone UI and recognition language. Following the phone language remains the
+default. An explicit `lang` in a speech request takes precedence; a saved voice in
+another language cannot override it.
 
 The plugin sends JSON with no binary attachment:
 

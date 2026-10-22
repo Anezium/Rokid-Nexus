@@ -7,6 +7,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.util.Locale
 
 @RunWith(RobolectricTestRunner::class)
 class PhoneTtsSettingsStoreTest {
@@ -39,6 +40,42 @@ class PhoneTtsSettingsStoreTest {
     }
 
     @Test
+    fun `speech language persists independently and returning to phone clears the voice`() {
+        clearPreferences()
+        val store = PhoneTtsSettingsStore(context)
+        assertEquals(Locale.FRANCE, store.speechLocale(Locale.FRANCE))
+        store.setVoiceName("french.voice")
+
+        store.setLanguageTag("ru-ru")
+
+        val restored = PhoneTtsSettingsStore(context)
+        assertEquals("ru-RU", restored.languageTag())
+        assertEquals(Locale.forLanguageTag("ru-RU"), restored.speechLocale(Locale.FRANCE))
+        assertNull(restored.voiceName())
+        restored.setVoiceName("russian.voice")
+        restored.setLanguageTag("ru-RU")
+        assertEquals("russian.voice", restored.voiceName())
+
+        restored.setLanguageTag(null)
+
+        assertNull(store.languageTag())
+        assertNull(store.voiceName())
+        assertEquals(Locale.FRANCE, store.speechLocale(Locale.FRANCE))
+    }
+
+    @Test
+    fun `invalid or undefined stored language falls back to phone`() {
+        clearPreferences()
+        val store = PhoneTtsSettingsStore(context)
+        listOf("", "und", "ru_RU", "not a language").forEach { tag ->
+            context.getSharedPreferences(NexusPhoneState.PREFS, Context.MODE_PRIVATE)
+                .edit().putString(PhoneTtsSettingsStore.KEY_LANGUAGE_TAG, tag).commit()
+            assertNull(store.languageTag())
+            assertEquals(Locale.FRANCE, store.speechLocale(Locale.FRANCE))
+        }
+    }
+
+    @Test
     fun `stored glasses only mode is ignored`() {
         clearPreferences()
         context.getSharedPreferences(NexusPhoneState.PREFS, Context.MODE_PRIVATE)
@@ -58,6 +95,7 @@ class PhoneTtsSettingsStoreTest {
             .edit()
             .remove(PhoneTtsSettingsStore.KEY_SPEECH_RATE)
             .remove(PhoneTtsSettingsStore.KEY_VOICE_NAME)
+            .remove(PhoneTtsSettingsStore.KEY_LANGUAGE_TAG)
             .remove(LEGACY_OUTPUT_MODE_KEY)
             .commit()
     }

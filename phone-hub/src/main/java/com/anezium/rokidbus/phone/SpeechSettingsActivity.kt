@@ -276,7 +276,7 @@ class SpeechSettingsActivity : Activity() {
         languageGridHost.addView(languageGrid(effective, autoDetected), NexusUi.block())
         languageNoteHost.removeAllViews()
         val note = if (autoDetected) {
-            "The Android engine picks the language up on its own. Choose a cloud engine to force one."
+            "Android uses its speech engine's language settings. Automatic language detection depends on the engine. Choose a cloud engine to force a language here."
         } else {
             effective.uiNote
         }

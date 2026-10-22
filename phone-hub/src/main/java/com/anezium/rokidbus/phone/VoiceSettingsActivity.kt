@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
@@ -26,6 +27,7 @@ class VoiceSettingsActivity : Activity() {
     private lateinit var introCard: TextView
     private lateinit var headerMeta: TextView
     private lateinit var speedHost: LinearLayout
+    private lateinit var languageHost: LinearLayout
     private lateinit var voiceListHost: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,16 +50,26 @@ class VoiceSettingsActivity : Activity() {
         introCard = NexusUi.cardBody(this, "")
         headerMeta = NexusUi.metaLabel(this, "", NexusUi.GREEN_DIM)
         speedHost = host()
+        languageHost = host()
         voiceListHost = host()
 
         val phoneSettingsHost = host().apply {
-            addView(sectionHeaderRow("Speed", headerMeta), NexusUi.block())
+            addView(
+                sectionHeaderRow(getString(R.string.voice_language), NexusUi.metaLabel(this@VoiceSettingsActivity, "", NexusUi.INK4)),
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@VoiceSettingsActivity, 12))
+            addView(NexusUi.card(this@VoiceSettingsActivity).apply {
+                addView(languageHost, NexusUi.block())
+            }, NexusUi.block())
+            addView(BusTheme.gap(this@VoiceSettingsActivity, 26))
+            addView(sectionHeaderRow(getString(R.string.voice_speed), headerMeta), NexusUi.block())
             addView(BusTheme.gap(this@VoiceSettingsActivity, 12))
             addView(speedHost, NexusUi.block())
             addView(BusTheme.gap(this@VoiceSettingsActivity, 26))
             addView(
                 sectionHeaderRow(
-                    "Voice",
+                    getString(R.string.voice_section),
                     NexusUi.metaLabel(this@VoiceSettingsActivity, "", NexusUi.INK4),
                 ),
                 NexusUi.block(),
@@ -71,7 +83,7 @@ class VoiceSettingsActivity : Activity() {
             )
             addView(BusTheme.gap(this@VoiceSettingsActivity, 14))
             addView(
-                NexusUi.textButton(this@VoiceSettingsActivity, "Hear it").apply {
+                NexusUi.textButton(this@VoiceSettingsActivity, getString(R.string.voice_hear_sample)).apply {
                     setOnClickListener { hearSample() }
                 },
                 NexusUi.block(),
@@ -99,7 +111,7 @@ class VoiceSettingsActivity : Activity() {
 
         setContentView(
             NexusUi.fixedRoot(this).apply {
-                addView(titleHeader("VOICE"), NexusUi.block())
+                addView(titleHeader(getString(R.string.voice_title)), NexusUi.block())
                 addView(
                     scroll,
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f),
@@ -175,9 +187,19 @@ class VoiceSettingsActivity : Activity() {
         }
 
     private fun render() {
-        introCard.text =
-            "Answers use your phone's voice and play through your glasses or earbuds. " +
-                "If neither can play them, nothing is spoken — never the phone's own speaker."
+        introCard.text = getString(R.string.voice_intro)
+
+        val locale = voiceSettings.speechLocale()
+        languageHost.removeAllViews()
+        languageHost.addView(
+            selectableRow(
+                locale.getDisplayName(locale),
+                getString(if (voiceSettings.languageTag() == null) R.string.voice_follow_phone else R.string.voice_independent_language),
+                selected = true,
+                onClick = ::chooseLanguage,
+            ),
+            NexusUi.block(),
+        )
 
         val rate = voiceSettings.speechRate()
         headerMeta.text = formatRate(rate)
@@ -195,38 +217,73 @@ class VoiceSettingsActivity : Activity() {
         )
 
         voiceListHost.removeAllViews()
-        val voices = PhoneTtsUiApi.availableVoices(Locale.getDefault())
-        if (voices.isEmpty()) {
-            // An empty list means the hub is not running, not that the phone has no voices.
+        val voices = PhoneTtsUiApi.availableVoices(locale)
+        if (!PhoneTtsUiApi.isReady) {
             voiceListHost.addView(
-                NexusUi.metaLabel(this, "START THE HUB TO CHOOSE A VOICE", NexusUi.INK4),
+                NexusUi.cardBody(this, getString(R.string.voice_engine_not_ready)),
+                NexusUi.block(),
+            )
+            return
+        }
+        if (voices.isEmpty()) {
+            voiceListHost.addView(
+                NexusUi.cardBody(this, getString(R.string.voice_no_data, locale.getDisplayName(locale))),
                 NexusUi.block(),
             )
             return
         }
         val selected = voiceSettings.voiceName()
         voiceListHost.addView(
-            selectableRow("Default", null, selected == null) {
+            selectableRow(getString(R.string.voice_default), null, selected == null) {
                 voiceSettings.setVoiceName(null)
                 render()
                 hearSample()
             },
             NexusUi.block(),
         )
-        voices.forEachIndexed { index, option ->
+        voices.forEach { option ->
             voiceListHost.addView(
                 selectableRow(
-                    "Voice ${index + 1}",
-                    if (option.needsNetwork) "needs network" else "on device",
+                    "${option.locale.getDisplayName(option.locale)} · ${option.name}",
+                    getString(when {
+                        !option.isInstalled -> R.string.voice_download_required
+                        option.needsNetwork -> R.string.voice_needs_network
+                        else -> R.string.voice_on_device
+                    }),
                     selected == option.name,
                 ) {
                     voiceSettings.setVoiceName(option.name)
                     render()
                     hearSample()
+                }.apply {
+                    isEnabled = option.isInstalled
+                    isClickable = option.isInstalled
+                    alpha = if (option.isInstalled) 1f else 0.5f
                 },
                 NexusUi.block(),
             )
         }
+    }
+
+    private fun chooseLanguage() {
+        val locales = (PhoneTtsUiApi.availableVoices().map { it.locale } + listOf(
+            Locale.getDefault(),
+            voiceSettings.speechLocale(),
+            Locale.forLanguageTag("ru-RU"),
+        )).filter { it.language.isNotBlank() }
+            .distinctBy { it.toLanguageTag() }
+            .sortedBy { it.getDisplayName(it).lowercase(Locale.ROOT) }
+        val tags = listOf<String?>(null) + locales.map { it.toLanguageTag() }
+        val labels = listOf(getString(R.string.voice_follow_phone)) + locales.map { it.getDisplayName(it) }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.voice_language)
+            .setSingleChoiceItems(labels.toTypedArray(), tags.indexOf(voiceSettings.languageTag())) { dialog, index ->
+                voiceSettings.setLanguageTag(tags[index])
+                render()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun speedChip(rate: Float, current: Float, first: Boolean): TextView =
@@ -289,7 +346,8 @@ class VoiceSettingsActivity : Activity() {
             background = NexusUi.pressed(this@VoiceSettingsActivity, Color.TRANSPARENT, 10)
             isClickable = true
             isFocusable = true
-            contentDescription = label
+            contentDescription = listOfNotNull(label, badge).joinToString(", ")
+            isSelected = selected
             setPadding(
                 0,
                 NexusUi.dp(this@VoiceSettingsActivity, 7),
@@ -300,27 +358,26 @@ class VoiceSettingsActivity : Activity() {
                 onClick()
             }
             addView(
-                NexusUi.rowTitle(this@VoiceSettingsActivity, label).apply {
-                    if (selected) setTextColor(NexusUi.INK)
+                LinearLayout(this@VoiceSettingsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(NexusUi.rowTitle(this@VoiceSettingsActivity, label).apply {
+                        maxLines = 2
+                        if (selected) setTextColor(NexusUi.INK)
+                    }, NexusUi.block())
+                    badge?.let {
+                        addView(NexusUi.rowSub(this@VoiceSettingsActivity, it), NexusUi.block())
+                    }
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
-            badge?.let {
-                addView(
-                    NexusUi.metaLabel(
-                        this@VoiceSettingsActivity,
-                        it.uppercase(),
-                        if (selected) NexusUi.GREEN_DIM else NexusUi.INK4,
-                    ),
-                )
-            }
             addView(dot)
         }
     }
 
     private fun hearSample() {
-        if (!PhoneTtsUiApi.speakSample(sampleText())) {
-            Toast.makeText(this, "Start the hub to hear the voice.", Toast.LENGTH_SHORT).show()
+        val locale = voiceSettings.speechLocale()
+        if (!PhoneTtsUiApi.speakSample(sampleText(locale), locale)) {
+            Toast.makeText(this, getString(R.string.voice_sample_unavailable), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -329,9 +386,11 @@ class VoiceSettingsActivity : Activity() {
      * the wrong thing entirely — a French voice reading English is exactly the mismatch
      * this screen exists to let you avoid.
      */
-    private fun sampleText(): String = when (Locale.getDefault().language) {
-        "fr" -> "Voilà comment je vais lire vos réponses."
-        else -> "This is how I will read your answers."
+    private fun sampleText(locale: Locale): String = when (locale.language) {
+        "ru" -> getString(R.string.voice_sample_ru)
+        "fr" -> getString(R.string.voice_sample_fr)
+        "en" -> getString(R.string.voice_sample_en)
+        else -> locale.getDisplayName(locale)
     }
 
     private fun formatRate(rate: Float): String =

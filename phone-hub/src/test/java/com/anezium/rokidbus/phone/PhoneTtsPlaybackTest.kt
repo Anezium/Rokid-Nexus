@@ -133,6 +133,24 @@ class PhoneTtsPlaybackTest {
     }
 
     @Test
+    fun `default speech language is resolved again for each utterance`() {
+        val output = FakePhoneTtsOutput(ready = true)
+        var selectedLocale = Locale.FRANCE
+        val playback = PhoneTtsPlayback(
+            output = output,
+            defaultLocale = { selectedLocale },
+            emitStarted = { _, _ -> },
+            emitDone = {},
+        )
+        playback.speak(speak("alpha", "u1", "Bonjour"))
+        selectedLocale = Locale.forLanguageTag("ru-RU")
+        playback.speak(speak("alpha", "u2", "Привет"))
+        playback.speak(speak("alpha", "u3", "Hello", "en-US"))
+
+        assertEquals(listOf(Locale.FRANCE, selectedLocale, Locale.US), output.locales)
+    }
+
+    @Test
     fun `external sink speaks immediately with the phone engine`() {
         val output = FakePhoneTtsOutput(ready = true)
         val logs = mutableListOf<String>()
@@ -508,7 +526,7 @@ class PhoneTtsPlaybackTest {
             return ready
         }
 
-        override fun availableVoices(locale: Locale): List<PhoneTtsVoiceOption> = emptyList()
+        override fun availableVoices(locale: Locale?): List<PhoneTtsVoiceOption> = emptyList()
 
         override fun speakSample(text: String, locale: Locale): Boolean {
             sampleCount += 1
