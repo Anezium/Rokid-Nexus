@@ -783,9 +783,11 @@ class BusHubService : Service() {
         val phoneSpeakerRouteProbe = PhoneSpeakerRouteProbe(applicationContext) {
             prefs().getString(PREF_LAST_GLASSES_ADDRESS, null)
         }
+        val phoneTtsSettings = PhoneTtsSettingsStore(applicationContext)
         phoneTtsDispatcher = PhoneTtsDispatcher(
             playback = PhoneTtsPlayback(
                 output = PhoneTtsEngine(applicationContext, ::log),
+                defaultLocale = { phoneTtsSettings.speechLocale() },
                 emitStarted = ::emitPhoneTtsStarted,
                 emitDone = ::emitPhoneTtsDone,
             ),
@@ -5444,7 +5446,13 @@ class BusHubService : Service() {
             }
         }
 
-        internal fun availablePhoneTtsVoices(locale: Locale): List<PhoneTtsVoiceOption> =
+        internal fun isPhoneTtsReady(): Boolean =
+            activeInstance
+                ?.takeIf { it::phoneTtsDispatcher.isInitialized }
+                ?.phoneTtsDispatcher
+                ?.isReady == true
+
+        internal fun availablePhoneTtsVoices(locale: Locale?): List<PhoneTtsVoiceOption> =
             activeInstance
                 ?.takeIf { it::phoneTtsDispatcher.isInitialized }
                 ?.phoneTtsDispatcher

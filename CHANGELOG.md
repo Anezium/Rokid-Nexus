@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.8.1
+
+Update both Nexus hubs together. This release adds speech-language settings for the phone; it does not publish an Assistant or Media Deck plugin update.
+
+### Phone hub
+
+- **Independent speech language.** Settings → Voice can choose a language separately from the phone UI and speech recognition. Follow phone language remains the default. The selection applies to spoken Assistant replies and previews; an explicit language requested by a plugin still takes precedence.
+- **Russian speech.** Russian is now selectable for cloud transcription, and Voice has a Russian preview. Android recognition keeps using its engine's language settings; automatic language detection depends on that engine.
+- Voice choices show their locale and engine identifier, whether they need the network, and when voice data needs downloading in Android text-to-speech settings. Regional voices in the selected language are included.
+- Missing speech-engine readiness and missing voice data have separate messages. Changing speech language clears an incompatible saved voice.
+
+Full Russian UI translation, a separate cloud TTS provider, and local media voice commands remain follow-up work (#56, #57).
+
 ## 1.8.0
 
 Update both Nexus hubs together. Relay 1.3.0 ships alongside; it does not need this hub update.
