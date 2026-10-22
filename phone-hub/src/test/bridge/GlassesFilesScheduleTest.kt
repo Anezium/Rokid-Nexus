@@ -32,11 +32,13 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowContentResolver
 import org.robolectric.shadows.ShadowNetwork
+import org.robolectric.shadows.ShadowSystemClock
 import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.io.InputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -49,7 +51,9 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import java.time.Duration
 
 /**
  * Drives the real phone controller workers and the real glasses streamer, receiver and lane
@@ -57,6 +61,8 @@ import java.util.concurrent.atomic.AtomicReference
  * control event lands at which moment, and whether resync messages repeat. Every schedule must
  * end the way it demands, within a bound far below the idle budget, with exact bytes and digest,
  * and with nothing left open. The lane runs through a loopback proxy that opens every frame.
+ * Time is the paused Robolectric clock shared by both ends: it moves only when a replay schedule
+ * charges the sender's prefix rehash, so every idle budget is crossed on purpose or not at all.
  */
 @RunWith(ParameterizedRobolectricTestRunner::class)
 @Config(sdk = [32], shadows = [GlassesFilesAnswerLossTest.WifiSocketNetwork::class])
@@ -93,6 +99,8 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
         val at: Point? = null,
         val dup: Boolean = false,
         val offerAfterChunk: Int = 1,
+        /** The sender's prefix rehash after each rewind outlasts the peer's idle budget. */
+        val replay: Boolean = false,
     ) {
         override fun toString(): String = buildString {
             append(direction.name.lowercase()).append(' ').append(lane.name.lowercase())
@@ -101,6 +109,7 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
             if (trigger != Trigger.NONE) append(' ').append(trigger.name.lowercase()).append('@').append(at!!.name.lowercase())
             if (dup) append(" dup")
             if (offerAfterChunk != 1) append(" offer@").append(offerAfterChunk)
+            if (replay) append(" replay")
         }
     }
 
@@ -148,6 +157,15 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
                         add(Schedule(direction, lane, cut = Point.LANE_FRAME_1, offerAfterChunk = 5))
                     }
                 }
+                // Every rewind kind with a prefix whose rehash crosses the 30 s idle budget: a
+                // lost shared or hotspot lane, the hotspot upgrade alone, and the upgrade followed
+                // by a lost lane, which rewinds twice.
+                add(Schedule(direction, LaneKind.SHARED, cut = Point.LANE_FRAME_1, replay = true))
+                add(Schedule(direction, LaneKind.SHARED, cut = Point.LANE_FRAME_3, replay = true))
+                add(Schedule(direction, LaneKind.HOTSPOT, cut = Point.LANE_FRAME_1, replay = true))
+                add(Schedule(direction, LaneKind.HOTSPOT, cut = Point.LANE_FRAME_1, dup = true, replay = true))
+                add(Schedule(direction, LaneKind.HOTSPOT, offerAfterChunk = 5, replay = true))
+                add(Schedule(direction, LaneKind.HOTSPOT, cut = Point.LANE_FRAME_1, offerAfterChunk = 5, replay = true))
             }
         }
 
@@ -157,6 +175,12 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
         /** Loopback is not Bluetooth: paced so a lane can be set up while bytes still flow. */
         private const val BUS_CHUNK_MS = 40L
         private const val RELEASE_FALLBACK_MS = 1_500L
+
+        /** A replayed prefix is read in pieces this big, each costing this much clock: a slow source that never stalls. */
+        private const val REPLAY_STEP_BYTES = 16 * 1024
+        private const val REPLAY_STEP_MS = 4_000L
+        private const val REPLAY_STEP_REAL_MS = 50L
+        private const val GLASSES_TICK_MS = 1_000L
     }
 
     private class Harness(private val schedule: Schedule, private val temp: TemporaryFolder) {
@@ -176,6 +200,8 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
         private val downloadFinished = CountDownLatch(1)
         private val servers = CopyOnWriteArrayList<GlassesFilesLaneServer>()
         private val triggered = AtomicBoolean(false)
+        /** The highest snapshot either receiver froze: the sender rehashes everything below it. */
+        private val replayBelow = AtomicLong(0)
         @Volatile private var proxy: LaneProxy? = null
         @Volatile private var storeRoot: File? = null
         @Volatile private var upload: GlassesFilesUpload? = null
@@ -197,7 +223,7 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
                 attachInfo(context, ProviderInfo().apply { authority = "media" })
             }
             ShadowContentResolver.registerProviderInternal("media", provider)
-            controller = GlassesFilesController(context, ::fromPhone, openUpload = { _, _ -> sourceFile.inputStream() })
+            controller = GlassesFilesController(context, ::fromPhone, openUpload = { _, _ -> openSource(sourceFile) })
             controller.onLinkStateChanged(controlUp = true, dataUp = true)
             controller.onCapabilities(glassesFilesSupported = true, laneSupported = true)
             val isUpload = schedule.direction == Direction.UPLOAD
@@ -216,7 +242,9 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
                     throw error
                 }
             }
+            val startedAt = SystemClock.elapsedRealtime()
             Thread(worker, "schedule-phone").apply { isDaemon = true; start() }
+            timers.scheduleWithFixedDelay({ control.execute { checked(::tick) } }, GLASSES_TICK_MS, GLASSES_TICK_MS, TimeUnit.MILLISECONDS)
             try {
                 val outcome = checkNotNull(worker.get(12, TimeUnit.SECONDS))
                 failure.get()?.let { throw it }
@@ -255,6 +283,13 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
                 }
                 assertFalse(results.toString(), results.any { it is GlassesFilesResult.TransferFailed && it.error == GlassesFilesError.TIMEOUT })
                 assertFalse(results.toString(), results.any { it is GlassesFilesResult.TransferFailed && it.error == GlassesFilesError.INVALID_REQUEST })
+                if (schedule.replay) {
+                    // The rehash really outlasted the idle budget, and the sender's echo repeated through it.
+                    assertTrue("the clock crossed the idle budget", SystemClock.elapsedRealtime() - startedAt > GlassesFilesContract.IDLE_TIMEOUT_MS)
+                    val echoes = if (isUpload) requests.count { it is GlassesFilesRequest.BusResume || it is GlassesFilesRequest.LaneResume }
+                        else results.count { it is GlassesFilesResult.BusResume || it is GlassesFilesResult.LaneResume }
+                    assertTrue("the sender repeated its echo: $requests $results", echoes >= 3)
+                }
                 // The receiver freezes one snapshot per transfer; repeats must carry the same offset.
                 val snapshots = if (isUpload) results.filterIsInstance<GlassesFilesResult.BusResume>().map { it.stagedBytes }
                     else requests.filterIsInstance<GlassesFilesRequest.BusResume>().map { it.stagedBytes }
@@ -295,6 +330,11 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
             }
             val request = GlassesFilesContract.parseRequest(envelope.payload) ?: return null
             requests += request
+            when (request) {
+                is GlassesFilesRequest.BusResume -> snapshot(request.stagedBytes)
+                is GlassesFilesRequest.LaneResume -> snapshot(request.stagedBytes)
+                else -> Unit
+            }
             val twice = schedule.dup && (request is GlassesFilesRequest.LaneResync || request is GlassesFilesRequest.BusResume)
             repeat(if (twice) 2 else 1) { control.execute { checked { onRequest(request) } } }
             return null
@@ -327,7 +367,7 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
                             onBusChunk(offset)
                         } }
                         true
-                    }, { downloadFinished.countDown() }, SystemClock::elapsedRealtime)
+                    }, { downloadFinished.countDown() }, SystemClock::elapsedRealtime, openSource = ::openSource)
                     download = active
                     io.execute { checked { active.stream() } }
                 }
@@ -336,7 +376,7 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
                     reached(Point.SWITCH_ASKED)
                 }
                 is GlassesFilesRequest.LaneResume -> {
-                    upload?.let { if (!it.onLaneResume(request.stagedBytes)) failUpload(it, GlassesFilesError.INVALID_REQUEST) }
+                    upload?.let { if (!it.onLaneResume(request.stagedBytes, now)) failUpload(it, GlassesFilesError.INVALID_REQUEST) }
                     download?.upgradeToLane(request.transferId, request.stagedBytes)
                     reached(if (schedule.direction == Direction.UPLOAD) Point.SWITCH_ECHOED else Point.SWITCH_ASKED)
                 }
@@ -413,6 +453,39 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
             deliver(GlassesFilesResult.TransferFailed(active.transferId, error))
         }
 
+        /** The service's maintenance tick: every clock step runs it, and real time once a second. */
+        private fun tick() {
+            val active = upload ?: return
+            when (val tick = active.onTick(SystemClock.elapsedRealtime())) {
+                GlassesFilesUpload.Tick.Idle -> Unit
+                is GlassesFilesUpload.Tick.Resume -> signal(tick.signal)
+                GlassesFilesUpload.Tick.Expired -> failUpload(active, GlassesFilesError.TIMEOUT)
+            }
+        }
+
+        // ---- the sources and the clock -----------------------------------------------------
+
+        private fun snapshot(staged: Long) {
+            replayBelow.updateAndGet { maxOf(it, staged) }
+        }
+
+        /**
+         * A replay schedule charges every piece of a rehashed prefix to the shared clock, then
+         * lets both peers look at it: the glasses' tick and the phone's wait run before the next
+         * piece, as a slow provider would let them.
+         */
+        private fun openSource(file: File): InputStream {
+            val plain = file.inputStream()
+            if (!schedule.replay) return plain
+            return SlowPrefix(plain, replayBelow::get, REPLAY_STEP_BYTES) {
+                ShadowSystemClock.advanceBy(Duration.ofMillis(REPLAY_STEP_MS))
+                control.execute { checked(::tick) }
+                val signal = field(active, "signal")!!
+                synchronized(signal) { (signal as Object).notifyAll() }
+                Thread.sleep(REPLAY_STEP_REAL_MS)
+            }
+        }
+
         private fun serveUploadLane(active: GlassesFilesUpload, lane: GlassesFilesLaneServer, upgrade: Boolean) {
             if (!lane.accept()) {
                 lane.close()
@@ -466,6 +539,11 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
 
         private fun deliver(result: GlassesFilesResult): Boolean {
             results += result
+            when (result) {
+                is GlassesFilesResult.BusResume -> snapshot(result.stagedBytes)
+                is GlassesFilesResult.LaneResume -> snapshot(result.stagedBytes)
+                else -> Unit
+            }
             val resync = result is GlassesFilesResult.LaneResync || result is GlassesFilesResult.BusResume
             val twice = schedule.dup && resync
             repeat(if (twice) 2 else 1) {
@@ -545,6 +623,31 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
         private fun checked(action: () -> Unit) {
             try { action() } catch (error: Throwable) { failure.compareAndSet(null, error) }
         }
+    }
+
+    /** Reads below [below] come in [step] byte pieces and each costs [onStep]; the rest pass through. */
+    private class SlowPrefix(
+        private val delegate: InputStream,
+        private val below: () -> Long,
+        private val step: Int,
+        private val onStep: () -> Unit,
+    ) : InputStream() {
+        private var position = 0L
+
+        override fun read(): Int = delegate.read().also { if (it >= 0) position += 1 }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val slow = below() - position
+            if (slow <= 0) return delegate.read(b, off, len).also { if (it > 0) position += it }
+            val count = delegate.read(b, off, minOf(len.toLong(), step.toLong(), slow).toInt())
+            if (count > 0) {
+                position += count
+                onStep()
+            }
+            return count
+        }
+
+        override fun close() = delegate.close()
     }
 
     sealed interface LaneEvent {
