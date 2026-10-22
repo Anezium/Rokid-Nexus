@@ -21,9 +21,11 @@ import java.io.InputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 class GlassesFilesFallbackTest {
@@ -599,6 +601,99 @@ class GlassesFilesFallbackTest {
     }
 
     @Test
+    fun `the download echo repeats while a source read is pending and until resumed bytes go out`() {
+        val held = HeldReads(8, 9, 10)
+        val (transfer, results, clock, worker) = resumedDownload(held)
+        try {
+            // Read 8 completes the 256 KiB prefix; the phone has heard the echo once, at 1 s.
+            assertTrue(held.entered(8).await(5, TimeUnit.SECONDS))
+            assertEquals(0, results.size)
+            clock.addAndGet(12_000)
+            assertEquals(GlassesFilesResult.BusResume(id, 262_144), results.poll(5, TimeUnit.SECONDS))
+            assertEquals(1L, held.holding(8).count)
+            clock.addAndGet(12_000)
+            assertEquals(GlassesFilesResult.BusResume(id, 262_144), results.poll(5, TimeUnit.SECONDS))
+            held.release(8)
+            // The replay is over; the first resumed read hangs and still owes the echo.
+            assertTrue(held.entered(9).await(5, TimeUnit.SECONDS))
+            assertNull(results.poll(300, TimeUnit.MILLISECONDS))
+            clock.addAndGet(12_000)
+            assertEquals(GlassesFilesResult.BusResume(id, 262_144), results.poll(5, TimeUnit.SECONDS))
+            held.release(9)
+            // Resumed bytes went out; a later slow read after them is covered the same way.
+            assertTrue(held.entered(10).await(5, TimeUnit.SECONDS))
+            assertNull(results.poll(300, TimeUnit.MILLISECONDS))
+            clock.addAndGet(12_000)
+            assertEquals(GlassesFilesResult.BusResume(id, 262_144), results.poll(5, TimeUnit.SECONDS))
+            held.release(10)
+            assertNull(results.poll(300, TimeUnit.MILLISECONDS)?.takeIf { it !is GlassesFilesResult.DownloadEnd })
+        } finally {
+            held.releaseAll()
+            transfer.cancelAll()
+        }
+        worker.get(5, TimeUnit.SECONDS)
+        assertFalse(results.toString(), results.any { it is GlassesFilesResult.TransferFailed })
+    }
+
+    @Test
+    fun `a source read that stalls past the deadline fails the download instead of echoing forever`() {
+        val held = HeldReads(8)
+        val (transfer, results, clock, worker) = resumedDownload(held)
+        try {
+            assertTrue(held.entered(8).await(5, TimeUnit.SECONDS))
+            clock.addAndGet(12_000)
+            assertEquals(GlassesFilesResult.BusResume(id, 262_144), results.poll(5, TimeUnit.SECONDS))
+            clock.addAndGet(12_000)
+            assertEquals(GlassesFilesResult.BusResume(id, 262_144), results.poll(5, TimeUnit.SECONDS))
+            // Thirty seconds into one read the source has stalled: the worker gives the file up
+            // rather than keep the phone waiting, and the held read is abandoned, not awaited.
+            clock.addAndGet(6_000)
+            assertEquals(GlassesFilesResult.TransferFailed(id, GlassesFilesError.IO_ERROR), results.poll(5, TimeUnit.SECONDS))
+            worker.get(5, TimeUnit.SECONDS)
+            clock.addAndGet(12_000)
+            assertNull(results.poll(500, TimeUnit.MILLISECONDS))
+        } finally {
+            held.releaseAll()
+            transfer.cancelAll()
+        }
+    }
+
+    private data class Resumed(
+        val transfer: GlassesFilesDownload,
+        val results: LinkedBlockingQueue<GlassesFilesResult>,
+        val clock: AtomicLong,
+        val worker: java.util.concurrent.Future<*>,
+    )
+
+    /**
+     * The real stream worker, cut on its lane after one 256 KiB frame and rewound to that offset by
+     * the phone's snapshot at clock 1 s; the reopened source is [held] read by read. The echo sent
+     * with the snapshot is consumed, so what the test sees next is only what the replay sends.
+     */
+    private fun resumedDownload(held: HeldReads): Resumed {
+        val source = ByteArray(300_003) { (it * 7).toByte() }
+        val file = temp.newFile().apply { writeBytes(source) }
+        val key = GlassesFilesLane.newKey()
+        val lane = lane(key)
+        val clock = AtomicLong(1_000)
+        val results = LinkedBlockingQueue<GlassesFilesResult>()
+        val opens = AtomicInteger()
+        val transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { _, _, _ -> true }, {}, clock::get,
+            openSource = { if (opens.incrementAndGet() == 1) it.inputStream() else held.wrap(it.inputStream()) })
+        val worker = io.submit { transfer.stream() }
+        assertTrue(results.poll(5, TimeUnit.SECONDS) is GlassesFilesResult.DownloadReady)
+        connect(lane, key).use { phone ->
+            assertTrue(phone.read() is GlassesFilesLane.Frame.Data)
+            assertTrue(phone.read() is GlassesFilesLane.Frame.Data)
+            phone.ack(GlassesFilesLane.CHUNK_BYTES.toLong())
+        }
+        assertTrue(results.poll(5, TimeUnit.SECONDS) is GlassesFilesResult.LaneResync)
+        transfer.onResume(id, GlassesFilesLane.CHUNK_BYTES.toLong())
+        assertEquals(GlassesFilesResult.BusResume(id, GlassesFilesLane.CHUNK_BYTES.toLong()), results.poll(5, TimeUnit.SECONDS))
+        return Resumed(transfer, results, clock, worker)
+    }
+
+    @Test
     fun `an upload lane switch on a lane that is gone resumes on the bus`() {
         val upload = GlassesFileStore(temp.newFolder(), JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
             .beginUpload("", "switch.bin", 100_000, id).getOrThrow()
@@ -659,6 +754,29 @@ class GlassesFilesFallbackTest {
 
     private fun sha(bytes: ByteArray) = GlassesFilesContract.hex(GlassesFilesContract.newDigest().apply { update(bytes) })
     private fun now() = System.nanoTime() / 1_000_000
+
+    /** Counts a stream's reads from its open and holds the numbered ones until the test lets go. */
+    private class HeldReads(vararg reads: Int) {
+        private val holds = reads.associateWith { CountDownLatch(1) }
+        private val entries = reads.associateWith { CountDownLatch(1) }
+
+        fun entered(read: Int): CountDownLatch = entries.getValue(read)
+        fun holding(read: Int): CountDownLatch = holds.getValue(read)
+        fun release(read: Int) = holds.getValue(read).countDown()
+        fun releaseAll() = holds.values.forEach { it.countDown() }
+
+        fun wrap(delegate: InputStream): InputStream = object : InputStream() {
+            private var reads = 0
+            override fun read(): Int = delegate.read()
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                reads += 1
+                entries[reads]?.countDown()
+                holds[reads]?.await()
+                return delegate.read(b, off, len)
+            }
+            override fun close() = delegate.close()
+        }
+    }
 
     /** Reads below [below] come in [step] byte pieces and each costs [onStep]; the rest pass through. */
     private class SlowPrefix(

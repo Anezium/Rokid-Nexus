@@ -168,11 +168,20 @@ object GlassesFilesContract {
     const val IDLE_TIMEOUT_MS = 30_000L
 
     /**
-     * While a sender rehashes its source prefix after a rewind it has nothing to send; it repeats
-     * its resume echo this often so the receiver's idle budget, checked on a 5 s tick, keeps a
-     * progressing replay alive however long the prefix is.
+     * From a rewind on, a sender repeats its resume echo whenever the receiver has heard nothing
+     * from it for this long: through the prefix rehash, through a pending source read, and after
+     * the return to data. The receiver sees at most this interval, one read poll and the bus
+     * latency between two signs of life, well inside [IDLE_TIMEOUT_MS], whatever the source does.
      */
     const val REPLAY_HEARTBEAT_MS = 10_000L
+
+    /**
+     * A single source read that returns nothing for this long has stalled: the sender gives up
+     * rather than keep its peer alive with echoes for a source that is not coming back. Before a
+     * rewind there is no echo to repeat, so a read the sender tolerates has to fit the peer's
+     * idle budget by itself; the two bounds are the same for that reason.
+     */
+    const val SOURCE_STALL_MS = IDLE_TIMEOUT_MS
 
     const val MAX_PAGE_ENTRIES = 200
     const val MAX_MESSAGE_BYTES = 128 * 1024

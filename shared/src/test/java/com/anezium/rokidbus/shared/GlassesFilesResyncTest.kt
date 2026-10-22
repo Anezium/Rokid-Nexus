@@ -74,9 +74,11 @@ class GlassesFilesResyncTest {
     }
 
     @Test
-    fun `the replay heartbeat is due once per interval and only while the prefix is replaying`() {
+    fun `the heartbeat is due whenever the peer has heard nothing since a rewind until resumed bytes go out`() {
         val sender = GlassesFilesSendDigest()
         sender.record(ByteArray(65_536), 65_536)
+        sender.sent(50_000)
+        // Before a rewind there is no echo to repeat.
         assertFalse(sender.heartbeatDue(100_000))
         sender.rewind(65_536, now = 1_000)
         assertFalse(sender.heartbeatDue(1_000 + GlassesFilesContract.REPLAY_HEARTBEAT_MS - 1))
@@ -88,6 +90,12 @@ class GlassesFilesResyncTest {
         assertTrue(sender.heartbeatDue(1_000 + 3 * GlassesFilesContract.REPLAY_HEARTBEAT_MS))
         sender.record(ByteArray(32_768), 32_768)
         assertFalse(sender.replaying)
-        assertFalse(sender.heartbeatDue(1_000 + 10 * GlassesFilesContract.REPLAY_HEARTBEAT_MS))
+        // The replay is over but nothing has gone out yet: a pending suffix read still owes the echo.
+        assertFalse(sender.heartbeatDue(1_000 + 3 * GlassesFilesContract.REPLAY_HEARTBEAT_MS + 5_000))
+        assertTrue(sender.heartbeatDue(1_000 + 4 * GlassesFilesContract.REPLAY_HEARTBEAT_MS))
+        // Resumed bytes on the wire count like the echo; the next one waits a full interval from them.
+        sender.sent(1_000 + 4 * GlassesFilesContract.REPLAY_HEARTBEAT_MS + 7_000)
+        assertFalse(sender.heartbeatDue(1_000 + 5 * GlassesFilesContract.REPLAY_HEARTBEAT_MS + 6_999))
+        assertTrue(sender.heartbeatDue(1_000 + 5 * GlassesFilesContract.REPLAY_HEARTBEAT_MS + 7_000))
     }
 }

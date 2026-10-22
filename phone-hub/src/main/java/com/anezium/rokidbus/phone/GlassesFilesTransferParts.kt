@@ -155,6 +155,8 @@ internal class GlassesFilesDownloadReceiver(
  * neither responds reliably to interruption. Each read is handed to [io] and awaited in short
  * polls; a cancel, a dropped link or [stallMillis] without progress abandons it, closes what can
  * be closed, and returns control to the worker. An abandoned I/O thread finishes on its own time.
+ * The worker gets a word in on every poll a read stays pending, so what it owes its peer meanwhile
+ * does not wait for the provider.
  */
 internal class GlassesProviderReader(
     private val io: ExecutorService,
@@ -178,7 +180,7 @@ internal class GlassesProviderReader(
     // its descriptor closed, so late registrations run on the spot.
     private val hooks = CancelHooks()
 
-    fun read(buffer: ByteArray, shouldAbort: () -> Boolean): Read {
+    fun read(buffer: ByteArray, shouldAbort: () -> Boolean, whilePending: () -> Unit = {}): Read {
         if (closed) return Read.Aborted
         val task = runCatching {
             io.submit<Int> {
@@ -204,6 +206,7 @@ internal class GlassesProviderReader(
                     close()
                     return Read.Stalled
                 }
+                whilePending()
                 continue
             } catch (_: InterruptedException) {
                 close()

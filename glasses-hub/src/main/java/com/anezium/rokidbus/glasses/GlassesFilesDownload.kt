@@ -8,9 +8,15 @@ import com.anezium.rokidbus.shared.GlassesFilesResult
 import com.anezium.rokidbus.shared.GlassesFilesSendDigest
 import com.anezium.rokidbus.shared.MediaSyncWindowPolicy
 import com.anezium.rokidbus.shared.GlassesFilesLaneUpgrade
+import java.io.Closeable
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.Executor
+import java.util.concurrent.Future
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /** The download worker owns the source; bus callbacks only update its acknowledged window. */
 internal class GlassesFilesDownload(
@@ -157,7 +163,7 @@ internal class GlassesFilesDownload(
     }
 
     fun stream() {
-        var input: InputStream? = null
+        var source: Source? = null
         try {
             if (!send(GlassesFilesResult.DownloadReady(transferId, size, file.lastModified().coerceAtLeast(0), offeredLane?.endpoint))) {
                 finish(GlassesFilesError.LINK_LOST)
@@ -178,12 +184,12 @@ internal class GlassesFilesDownload(
             }
             val digest = GlassesFilesSendDigest()
             var echo: GlassesFilesResult? = null
-            input = openSource(file)
+            source = Source()
             while (true) {
                 val resume = synchronized(lock) { resumePending.also { resumePending = null } }
                 if (resume != null) {
-                    input?.close()
-                    input = openSource(file)
+                    source?.close()
+                    source = Source()
                     digest.rewind(resume.offset, now())
                     echo = if (resume.viaLane) GlassesFilesResult.LaneResume(transferId, resume.offset)
                         else GlassesFilesResult.BusResume(transferId, resume.offset)
@@ -196,8 +202,19 @@ internal class GlassesFilesDownload(
                 val viaLane = synchronized(lock) { resync.laneOpened && !resync.switched }
                 val chunkSize = if (viaLane) GlassesFilesLane.CHUNK_BYTES else GlassesFilesContract.CHUNK_BYTES
                 val buffer = ByteArray(digest.readLimit(chunkSize))
-                val count = checkNotNull(input).read(buffer)
-                if (hasResume()) continue
+                // The phone hears nothing of a pending read: the echo goes out from the read's
+                // poll, not after the file answers. A rewind or cancel abandons the read; the
+                // loop reopens or ends before the stream is touched again.
+                var heard = true
+                val count = checkNotNull(source).read(buffer) {
+                    heard = heard && heartbeat(digest, echo)
+                    heard && !hasResume() && !synchronized(lock) { cancelled }
+                }
+                if (!heard) {
+                    finish(if (synchronized(lock) { cancelled }) null else GlassesFilesError.LINK_LOST)
+                    return
+                }
+                if (count == null || hasResume()) continue
                 if (count <= 0) {
                     if (digest.position != size) {
                         finish(GlassesFilesError.CHANGED)
@@ -223,7 +240,7 @@ internal class GlassesFilesDownload(
                 if (digest.replaying) {
                     digest.record(buffer, count)
                     // The phone sees nothing of the rehash; the repeated echo keeps its idle budget alive.
-                    if (digest.heartbeatDue(now()) && !send(checkNotNull(echo))) {
+                    if (!heartbeat(digest, echo)) {
                         finish(if (synchronized(lock) { cancelled }) null else GlassesFilesError.LINK_LOST)
                         return
                     }
@@ -246,13 +263,59 @@ internal class GlassesFilesDownload(
                     return
                 }
                 digest.record(buffer, count)
+                digest.sent(now())
             }
         } catch (_: Exception) {
             finish(GlassesFilesError.IO_ERROR)
         } finally {
-            runCatching { input?.close() }
+            runCatching { source?.close() }
             offeredLane?.close()
             hotspotLane?.close()
+        }
+    }
+
+    /** True while the phone can still hear this sender: a due echo went out, or none was due. */
+    private fun heartbeat(digest: GlassesFilesSendDigest, echo: GlassesFilesResult?): Boolean =
+        !digest.heartbeatDue(now()) || send(checkNotNull(echo))
+
+    /**
+     * The file, opened and read on [laneIo] so the worker can keep the phone informed while a read
+     * is pending. A read that returns nothing for [GlassesFilesContract.SOURCE_STALL_MS] has
+     * stalled and fails the download; the heartbeat never outlives it. An abandoned read finishes
+     * on its own time against a closed stream.
+     */
+    private inner class Source : Closeable {
+        private var stream: InputStream? = null
+        @Volatile private var pending: Future<Int>? = null
+        @Volatile private var closed = false
+
+        /** Bytes read, -1 at the end, or null once [keepWaiting] says the worker has somewhere else to be. */
+        fun read(buffer: ByteArray, keepWaiting: () -> Boolean): Int? {
+            val task = FutureTask<Int> {
+                if (closed) throw IOException("closed")
+                val input = stream ?: openSource(file).also { opened ->
+                    stream = opened
+                    if (closed) runCatching { opened.close() }
+                }
+                input.read(buffer)
+            }
+            pending = task
+            laneIo.execute(task)
+            val deadline = now() + GlassesFilesContract.SOURCE_STALL_MS
+            while (true) {
+                try {
+                    return task.get(POLL_MS, TimeUnit.MILLISECONDS).also { pending = null }
+                } catch (_: TimeoutException) {
+                    if (now() >= deadline) throw IOException("source stalled")
+                    if (!keepWaiting()) return null
+                }
+            }
+        }
+
+        override fun close() {
+            closed = true
+            runCatching { stream?.close() }
+            pending?.cancel(true)
         }
     }
 
@@ -325,5 +388,9 @@ internal class GlassesFilesDownload(
             summary("files download done size=$size")
         }
         finished(this)
+    }
+
+    private companion object {
+        const val POLL_MS = 250L
     }
 }

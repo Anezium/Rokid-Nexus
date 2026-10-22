@@ -89,8 +89,8 @@ class GlassesFilesTransferPartsTest {
     fun `reader returns bytes then end`() {
         val reader = GlassesProviderReader(io, stallMillis = 5_000, open = { ByteArrayInputStream(byteArrayOf(1, 2, 3)) })
         val buffer = ByteArray(8)
-        assertEquals(GlassesProviderReader.Read.Bytes(3), reader.read(buffer) { false })
-        assertEquals(GlassesProviderReader.Read.End, reader.read(buffer) { false })
+        assertEquals(GlassesProviderReader.Read.Bytes(3), reader.read(buffer, shouldAbort = { false }))
+        assertEquals(GlassesProviderReader.Read.End, reader.read(buffer, shouldAbort = { false }))
     }
 
     @Test
@@ -98,7 +98,7 @@ class GlassesFilesTransferPartsTest {
         val stream = BlockingStream(firstChunk = 4)
         val reader = GlassesProviderReader(io, stallMillis = 60_000, open = { stream }, pollMillis = 20)
         val buffer = ByteArray(8)
-        assertEquals(GlassesProviderReader.Read.Bytes(4), reader.read(buffer) { false })
+        assertEquals(GlassesProviderReader.Read.Bytes(4), reader.read(buffer, shouldAbort = { false }))
 
         val cancelled = AtomicBoolean(false)
         io.execute {
@@ -106,7 +106,7 @@ class GlassesFilesTransferPartsTest {
             cancelled.set(true)
         }
         val started = System.nanoTime()
-        assertEquals(GlassesProviderReader.Read.Aborted, reader.read(buffer) { cancelled.get() })
+        assertEquals(GlassesProviderReader.Read.Aborted, reader.read(buffer, shouldAbort = { cancelled.get() }))
 
         assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 2_000)
         assertTrue(stream.closed.await(2, TimeUnit.SECONDS))
@@ -117,7 +117,23 @@ class GlassesFilesTransferPartsTest {
         val stream = BlockingStream(firstChunk = 0)
         val reader = GlassesProviderReader(io, stallMillis = 150, open = { stream }, pollMillis = 20)
 
-        assertEquals(GlassesProviderReader.Read.Stalled, reader.read(ByteArray(8)) { false })
+        assertEquals(GlassesProviderReader.Read.Stalled, reader.read(ByteArray(8), shouldAbort = { false }))
+        assertTrue(stream.closed.await(2, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun `the worker gets a word in on every poll a read stays pending and the stall still ends it`() {
+        val stream = BlockingStream(firstChunk = 4)
+        val reader = GlassesProviderReader(io, stallMillis = 300, open = { stream }, pollMillis = 20)
+        val buffer = ByteArray(8)
+        var polls = 0
+        assertEquals(GlassesProviderReader.Read.Bytes(4), reader.read(buffer, { false }, whilePending = { polls += 1 }))
+        val quick = polls
+
+        // The provider now holds the read: the worker hears from the reader every poll until the
+        // stall budget ends the read, and the stall is decided before the worker is asked again.
+        assertEquals(GlassesProviderReader.Read.Stalled, reader.read(buffer, { false }, whilePending = { polls += 1 }))
+        assertTrue("polls while pending: ${polls - quick}", polls - quick in 5..20)
         assertTrue(stream.closed.await(2, TimeUnit.SECONDS))
     }
 
@@ -143,7 +159,7 @@ class GlassesFilesTransferPartsTest {
             cancelled.set(true)
         }
 
-        assertEquals(GlassesProviderReader.Read.Aborted, reader.read(ByteArray(8)) { cancelled.get() })
+        assertEquals(GlassesProviderReader.Read.Aborted, reader.read(ByteArray(8), shouldAbort = { cancelled.get() }))
         assertTrue(hookRan.await(2, TimeUnit.SECONDS))
     }
 
@@ -177,7 +193,7 @@ class GlassesFilesTransferPartsTest {
             cancelled.set(true)
         }
 
-        assertEquals(GlassesProviderReader.Read.Aborted, reader.read(ByteArray(8)) { cancelled.get() })
+        assertEquals(GlassesProviderReader.Read.Aborted, reader.read(ByteArray(8), shouldAbort = { cancelled.get() }))
         resume.countDown()
         assertTrue(hookRan.await(2, TimeUnit.SECONDS))
     }

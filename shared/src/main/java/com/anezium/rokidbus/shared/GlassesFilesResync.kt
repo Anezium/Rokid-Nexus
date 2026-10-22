@@ -59,15 +59,19 @@ class GlassesFilesResync {
 }
 
 /**
- * The sender reopens at zero on rewind and hashes the prefix without sending it again. The peer
- * sees nothing of that replay, so the sender repeats its echo while it lasts ([heartbeatDue]).
+ * The sender reopens at zero on rewind and hashes the prefix without sending it again. From the
+ * rewind on, the peer counts only resumed bytes and the repeated echo as activity, so the sender
+ * repeats its echo whenever the peer has heard nothing from it for
+ * [GlassesFilesContract.REPLAY_HEARTBEAT_MS] ([heartbeatDue]): through the rehash, through a
+ * pending source read, and after the return to data ([sent]).
  */
 class GlassesFilesSendDigest {
     private var digest = GlassesFilesContract.newDigest()
     var position = 0L
         private set
     private var resumeAt = 0L
-    private var echoedAt = 0L
+    /** When the peer last heard from this sender; null before any rewind, when there is no echo to repeat. */
+    private var heardAt: Long? = null
     val replaying: Boolean get() = position < resumeAt
 
     fun rewind(offset: Long, now: Long) {
@@ -75,14 +79,20 @@ class GlassesFilesSendDigest {
         digest = GlassesFilesContract.newDigest()
         position = 0L
         resumeAt = offset
-        echoedAt = now
+        heardAt = now
     }
 
-    /** True once per [GlassesFilesContract.REPLAY_HEARTBEAT_MS] of replay; the caller then repeats its echo. */
+    /** True once the peer has heard nothing for the interval; the caller then repeats its echo. */
     fun heartbeatDue(now: Long): Boolean {
-        if (!replaying || now - echoedAt < GlassesFilesContract.REPLAY_HEARTBEAT_MS) return false
-        echoedAt = now
+        val heard = heardAt ?: return false
+        if (now - heard < GlassesFilesContract.REPLAY_HEARTBEAT_MS) return false
+        heardAt = now
         return true
+    }
+
+    /** Resumed bytes reached the peer, which counts them as activity like the echo. */
+    fun sent(now: Long) {
+        if (heardAt != null) heardAt = now
     }
 
     fun readLimit(chunkBytes: Int): Int =

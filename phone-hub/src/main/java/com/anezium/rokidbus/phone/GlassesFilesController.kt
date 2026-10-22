@@ -1105,7 +1105,10 @@ internal class GlassesFilesController(
                         val viaLane = synchronized(signal) { resync.laneOpened && !resync.switched }
                         val chunkSize = if (viaLane) GlassesFilesLane.CHUNK_BYTES else GlassesFilesContract.CHUNK_BYTES
                         val buffer = ByteArray(digest.readLimit(chunkSize))
-                        val count = when (val read = reader.read(buffer) { isAborting() || needsResume() }) {
+                        // The glasses hear nothing of a pending read: the echo goes out from the
+                        // read's poll, not after the provider answers.
+                        val count = when (val read = reader.read(buffer, { isAborting() || needsResume() },
+                            whilePending = { if (!heartbeat(digest, echo)) fail(GlassesTransferStop.LINK_LOST) })) {
                             is GlassesProviderReader.Read.Bytes -> read.count
                             GlassesProviderReader.Read.End -> -1
                             GlassesProviderReader.Read.Aborted -> {
@@ -1131,9 +1134,7 @@ internal class GlassesFilesController(
                             digest.record(buffer, count)
                             // The glasses see nothing of the rehash: the repeated echo keeps their
                             // idle budget alive, and ours restarts once there is something to ack.
-                            if (digest.heartbeatDue(SystemClock.elapsedRealtime()) && send(checkNotNull(echo)) != null) {
-                                return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
-                            }
+                            if (!heartbeat(digest, echo)) return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
                             if (!digest.replaying) touch()
                             continue
                         }
@@ -1153,6 +1154,7 @@ internal class GlassesFilesController(
                             return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
                         }
                         digest.record(buffer, count)
+                        digest.sent(SystemClock.elapsedRealtime())
                         progress(item.id, synchronized(signal) { acked }, size, rate)
                     }
                 } finally {
@@ -1180,9 +1182,13 @@ internal class GlassesFilesController(
         private fun hasResume(): Boolean = synchronized(signal) { resumePending != null }
         private fun needsResume(): Boolean = synchronized(signal) { upgradePending || resync.switched && !resync.confirmed || resumePending != null }
 
+        /** True while the glasses can still hear this sender: a due echo went out, or none was due. */
+        private fun heartbeat(digest: GlassesFilesSendDigest, echo: GlassesFilesRequest?): Boolean =
+            !digest.heartbeatDue(SystemClock.elapsedRealtime()) || send(checkNotNull(echo)) == null
+
         /** Reads the private copy when there is one, the provider otherwise, abandonably either way. */
         private fun openReader(uri: Uri, staged: File?): GlassesProviderReader =
-            GlassesProviderReader(providerIo, GlassesFilesContract.IDLE_TIMEOUT_MS, open = { registerCancel ->
+            GlassesProviderReader(providerIo, GlassesFilesContract.SOURCE_STALL_MS, open = { registerCancel ->
                 if (staged != null) {
                     staged.inputStream()
                 } else {
