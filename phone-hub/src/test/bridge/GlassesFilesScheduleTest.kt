@@ -62,7 +62,7 @@ import java.time.Duration
  * end the way it demands, within a bound far below the idle budget, with exact bytes and digest,
  * and with nothing left open. The lane runs through a loopback proxy that opens every frame.
  * Time is the paused Robolectric clock shared by both ends: it moves only when a replay schedule
- * charges the sender's prefix rehash, so every idle budget is crossed on purpose or not at all.
+ * charges the sender's source reads, so every idle budget is crossed on purpose or not at all.
  */
 @RunWith(ParameterizedRobolectricTestRunner::class)
 @Config(sdk = [32], shadows = [GlassesFilesAnswerLossTest.WifiSocketNetwork::class])
@@ -78,6 +78,19 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
     /** Which end observes the cut first; the proxy holds the other end until the first bus signal has crossed. */
     enum class Detector { PHONE_FIRST, GLASSES_FIRST, BOTH }
     enum class Trigger { NONE, CAMERA, DEADLINE, CANCEL, LINK_DOWN }
+
+    /**
+     * How the sender's source behaves after a rewind, in clock time; every variant keeps each read
+     * under the 30 s stall deadline and leaves the peer over 30 s without data.
+     */
+    enum class Replay {
+        /** Every 16 KiB piece of the rehashed prefix costs 4 s and returns: a slow provider that never stalls. */
+        PREFIX,
+        /** Quick prefix reads, then the read completing the prefix and the first read after it hang 20 s each. */
+        TAIL,
+        /** The first read after the rewind returns after 8 s, the second hangs 24 s. */
+        IN_READ,
+    }
 
     /**
      * Moments of a transfer. As a cut, a lane frame point drops that frame and everything after
@@ -99,8 +112,8 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
         val at: Point? = null,
         val dup: Boolean = false,
         val offerAfterChunk: Int = 1,
-        /** The sender's prefix rehash after each rewind outlasts the peer's idle budget. */
-        val replay: Boolean = false,
+        /** The sender's source after each rewind leaves the peer without data past its idle budget. */
+        val replay: Replay? = null,
     ) {
         override fun toString(): String = buildString {
             append(direction.name.lowercase()).append(' ').append(lane.name.lowercase())
@@ -109,7 +122,7 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
             if (trigger != Trigger.NONE) append(' ').append(trigger.name.lowercase()).append('@').append(at!!.name.lowercase())
             if (dup) append(" dup")
             if (offerAfterChunk != 1) append(" offer@").append(offerAfterChunk)
-            if (replay) append(" replay")
+            if (replay != null) append(" replay-").append(replay.name.lowercase().replace('_', '-'))
         }
     }
 
@@ -160,12 +173,20 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
                 // Every rewind kind with a prefix whose rehash crosses the 30 s idle budget: a
                 // lost shared or hotspot lane, the hotspot upgrade alone, and the upgrade followed
                 // by a lost lane, which rewinds twice.
-                add(Schedule(direction, LaneKind.SHARED, cut = Point.LANE_FRAME_1, replay = true))
-                add(Schedule(direction, LaneKind.SHARED, cut = Point.LANE_FRAME_3, replay = true))
-                add(Schedule(direction, LaneKind.HOTSPOT, cut = Point.LANE_FRAME_1, replay = true))
-                add(Schedule(direction, LaneKind.HOTSPOT, cut = Point.LANE_FRAME_1, dup = true, replay = true))
-                add(Schedule(direction, LaneKind.HOTSPOT, offerAfterChunk = 5, replay = true))
-                add(Schedule(direction, LaneKind.HOTSPOT, cut = Point.LANE_FRAME_1, offerAfterChunk = 5, replay = true))
+                add(Schedule(direction, LaneKind.SHARED, cut = Point.LANE_FRAME_1, replay = Replay.PREFIX))
+                add(Schedule(direction, LaneKind.SHARED, cut = Point.LANE_FRAME_3, replay = Replay.PREFIX))
+                add(Schedule(direction, LaneKind.HOTSPOT, cut = Point.LANE_FRAME_1, replay = Replay.PREFIX))
+                add(Schedule(direction, LaneKind.HOTSPOT, cut = Point.LANE_FRAME_1, dup = true, replay = Replay.PREFIX))
+                add(Schedule(direction, LaneKind.HOTSPOT, offerAfterChunk = 5, replay = Replay.PREFIX))
+                add(Schedule(direction, LaneKind.HOTSPOT, cut = Point.LANE_FRAME_1, offerAfterChunk = 5, replay = Replay.PREFIX))
+                // The same rewinds with reads that hang: across the end of the rehash and into the
+                // first resumed read, and inside one long prefix read after a short one.
+                for (replay in listOf(Replay.TAIL, Replay.IN_READ)) {
+                    add(Schedule(direction, LaneKind.SHARED, cut = Point.LANE_FRAME_1, replay = replay))
+                    add(Schedule(direction, LaneKind.HOTSPOT, cut = Point.LANE_FRAME_1, replay = replay))
+                    add(Schedule(direction, LaneKind.HOTSPOT, offerAfterChunk = 5, replay = replay))
+                    add(Schedule(direction, LaneKind.HOTSPOT, cut = Point.LANE_FRAME_1, offerAfterChunk = 5, replay = replay))
+                }
             }
         }
 
@@ -180,6 +201,11 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
         private const val REPLAY_STEP_BYTES = 16 * 1024
         private const val REPLAY_STEP_MS = 4_000L
         private const val REPLAY_STEP_REAL_MS = 50L
+        /** A read that hangs can only be heartbeated from the sender's 250 ms poll: each clock step gives it one. */
+        private const val PENDING_STEP_REAL_MS = 300L
+        private const val TAIL_READ_MS = 20_000L
+        private const val IN_READ_FIRST_MS = 8_000L
+        private const val IN_READ_SECOND_MS = 24_000L
         private const val GLASSES_TICK_MS = 1_000L
     }
 
@@ -285,8 +311,8 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
                 }
                 assertFalse(results.toString(), results.any { it is GlassesFilesResult.TransferFailed && it.error == GlassesFilesError.TIMEOUT })
                 assertFalse(results.toString(), results.any { it is GlassesFilesResult.TransferFailed && it.error == GlassesFilesError.INVALID_REQUEST })
-                if (schedule.replay) {
-                    // The rehash really outlasted the idle budget, and the sender's echo repeated through it.
+                if (schedule.replay != null) {
+                    // The source really left the peer without data past the idle budget, and the sender's echo repeated through it.
                     assertTrue("the clock crossed the idle budget", SystemClock.elapsedRealtime() - startedAt > GlassesFilesContract.IDLE_TIMEOUT_MS)
                     val echoes = if (isUpload) requests.count { it is GlassesFilesRequest.BusResume || it is GlassesFilesRequest.LaneResume }
                         else results.count { it is GlassesFilesResult.BusResume || it is GlassesFilesResult.LaneResume }
@@ -471,20 +497,25 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
             replayBelow.updateAndGet { maxOf(it, staged) }
         }
 
-        /**
-         * A replay schedule charges every piece of a rehashed prefix to the shared clock, then
-         * lets both peers look at it: the glasses' tick and the phone's wait run before the next
-         * piece, as a slow provider would let them.
-         */
         private fun openSource(file: File): InputStream {
             val plain = file.inputStream()
-            if (!schedule.replay) return plain
-            return SlowPrefix(plain, replayBelow::get, REPLAY_STEP_BYTES) {
+            val replay = schedule.replay ?: return plain
+            return SlowSource(plain, replayBelow::get, replay, ::charge)
+        }
+
+        /**
+         * A replay schedule charges the sender's source reads to the shared clock in 4 s steps and
+         * lets both peers look at each: the glasses' tick and the phone's wait run before the next
+         * step, as a slow provider would let them. A step of a read that hangs also lasts long
+         * enough in real time for the sender's read poll to see it.
+         */
+        private fun charge(millis: Long, pending: Boolean) {
+            repeat((millis / REPLAY_STEP_MS).toInt()) {
                 ShadowSystemClock.advanceBy(Duration.ofMillis(REPLAY_STEP_MS))
                 control.execute { checked(::tick) }
                 val signal = field(active, "signal")!!
                 synchronized(signal) { (signal as Object).notifyAll() }
-                Thread.sleep(REPLAY_STEP_REAL_MS)
+                Thread.sleep(if (pending) PENDING_STEP_REAL_MS else REPLAY_STEP_REAL_MS)
             }
         }
 
@@ -627,27 +658,52 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
         }
     }
 
-    /** Reads below [below] come in [step] byte pieces and each costs [onStep]; the rest pass through. */
-    private class SlowPrefix(
+    /**
+     * A sender's source after a rewind: once a snapshot sits above the stream's position ([below]),
+     * its reads cost clock time through [charge] the way [mode] says, inside the read so the peers
+     * see every step. A stream opened before any snapshot passes through.
+     */
+    private class SlowSource(
         private val delegate: InputStream,
         private val below: () -> Long,
-        private val step: Int,
-        private val onStep: () -> Unit,
+        private val mode: Replay,
+        private val charge: (millis: Long, pending: Boolean) -> Unit,
     ) : InputStream() {
         private var position = 0L
+        private var reads = 0
+        private var suffixReads = 0
 
         override fun read(): Int = delegate.read().also { if (it >= 0) position += 1 }
 
         override fun read(b: ByteArray, off: Int, len: Int): Int {
-            val slow = below() - position
-            if (slow <= 0) return delegate.read(b, off, len).also { if (it > 0) position += it }
-            val count = delegate.read(b, off, minOf(len.toLong(), step.toLong(), slow).toInt())
-            if (count > 0) {
-                position += count
-                onStep()
+            val snapshot = below()
+            if (snapshot <= 0) return pass(b, off, len)
+            val prefixLeft = snapshot - position
+            reads += 1
+            when (mode) {
+                Replay.PREFIX -> {
+                    if (prefixLeft <= 0) return pass(b, off, len)
+                    val count = delegate.read(b, off, minOf(len.toLong(), REPLAY_STEP_BYTES.toLong(), prefixLeft).toInt())
+                    if (count > 0) {
+                        position += count
+                        charge(REPLAY_STEP_MS, false)
+                    }
+                    return count
+                }
+                Replay.TAIL -> {
+                    val completesPrefix = prefixLeft in 1..len.toLong()
+                    val firstSuffix = prefixLeft <= 0 && suffixReads++ == 0
+                    if (completesPrefix || firstSuffix) charge(TAIL_READ_MS, true)
+                }
+                Replay.IN_READ -> when (reads) {
+                    1 -> charge(IN_READ_FIRST_MS, true)
+                    2 -> charge(IN_READ_SECOND_MS, true)
+                }
             }
-            return count
+            return pass(b, off, len)
         }
+
+        private fun pass(b: ByteArray, off: Int, len: Int): Int = delegate.read(b, off, len).also { if (it > 0) position += it }
 
         override fun close() = delegate.close()
     }
