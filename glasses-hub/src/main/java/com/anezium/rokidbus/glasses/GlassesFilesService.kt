@@ -85,7 +85,7 @@ internal object GlassesFilesService {
                 download?.upgradeToLane(request.transferId, request.stagedBytes)
                 control.execute {
                     val active = upload?.takeIf { it.transferId == request.transferId } ?: return@execute
-                    if (!active.onLaneResume(request.stagedBytes)) failUpload(active, GlassesFilesError.INVALID_REQUEST)
+                    if (!active.onLaneResume(request.stagedBytes, SystemClock.elapsedRealtime())) failUpload(active, GlassesFilesError.INVALID_REQUEST)
                 }
             }
             is GlassesFilesRequest.DownloadProgress -> download?.onAck(request.transferId, request.stagedBytes)

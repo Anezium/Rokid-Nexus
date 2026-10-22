@@ -2885,9 +2885,13 @@ Offsets are strict integers from zero through the transfer size; the sender also
 rejects an offset beyond the bytes it attempted to send. Ordinary progress acks
 cannot substitute for the receiver's explicit resume offset. The sender rebuilds
 its SHA-256 from the source prefix before sending the remaining bytes, so the
-final digest still covers every file byte exactly once. A digest mismatch fails
-as before. A lane EOF after the final ack remains harmless; a sender missing
-that ack can still request the receiver's fully staged offset.
+final digest still covers every file byte exactly once. That rehash sends
+nothing, so while it lasts the sender repeats its `bus_resume` echo, same
+offset, at least every 10 s, and the receiver counts an agreeing repeat as
+activity for its idle budget; the repeat neither restarts the resync budget
+nor rewinds anything, and a disagreeing one is invalid as before. A digest
+mismatch fails as before. A lane EOF after the final ack remains harmless; a
+sender missing that ack can still request the receiver's fully staged offset.
 
 Both the offset exchange and its confirmation have the existing 30 s idle
 budget, measured from the first resync signal without extension by duplicates
@@ -2908,7 +2912,7 @@ the peer can observe.
 | Lane | handshake completed and activated | lane frames only; bus chunks are ignored | lane EOF or error, an idle lane, camera takeover, the hotspot budget, or the peer's `lane_resync` / `bus_resume` |
 | Resync pending | `lane_resync` sent or received, including for a proven lane that broke before activation | nothing | the receiver's `bus_resume` snapshot; 30 s without it ends the transfer |
 | Resync offered | the receiver froze its offset | bus chunks with `busEpoch` 1 | the sender's `bus_resume` echo, within the same 30 s |
-| Resync confirmed | the echo matched the snapshot | bus chunks with `busEpoch` 1 | the terminator, cancel, link loss or the idle timeout |
+| Resync confirmed | the echo matched the snapshot | bus chunks with `busEpoch` 1 | the terminator, cancel, link loss or the idle timeout; the sender's repeated echo during its prefix rehash keeps the idle timeout from ending a progressing rewind |
 
 Only a side holding proof of the handshake may start a resync: its own completed
 handshake, or the peer's authenticated `lane_resync` / `bus_resume`, which can only
@@ -2985,8 +2989,10 @@ request `lane_resume`; the glasses sender echoes result `lane_resume` and
 rewinds. Offsets are strict integers within the file and attempted-send bounds.
 The receiver rejects late bus chunks after its snapshot; lane frames may
 overtake the confirmation. The sender rehashes its source prefix exactly as
-for bus resync. A lost proven lane uses the existing irreversible lane-to-bus
-resync; it never attempts another upgrade in that transfer.
+for bus resync, repeating its `lane_resume` echo at least every 10 s while it
+does, which the receiver counts as activity. A lost proven lane uses the
+existing irreversible lane-to-bus resync; it never attempts another upgrade in
+that transfer.
 
 One reservation and `batchId` serve a batch, with fresh lanes per transfer.
 After 35 s idle, request `hotspot_release` `{batchId}` releases the glasses

@@ -17,6 +17,7 @@ import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.io.InputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -139,7 +140,7 @@ class GlassesFilesFallbackTest {
         assertEquals(staged.toLong(), upload.stagedBytes)
         assertEquals(staged.toLong(), active.beginResync(2_000))
         assertTrue(active.resync.confirm(staged.toLong()))
-        sender.rewind(staged.toLong())
+        sender.rewind(staged.toLong(), now = 0)
         while (sender.position < source.size) {
             val count = minOf(sender.readLimit(GlassesFilesContract.CHUNK_BYTES), source.size - sender.position.toInt())
             val bytes = source.copyOfRange(sender.position.toInt(), sender.position.toInt() + count)
@@ -169,7 +170,7 @@ class GlassesFilesFallbackTest {
         assertTrue(active.confirmLane(staged.toLong()))
         val sender = GlassesFilesSendDigest()
         sender.record(source, staged + 100)
-        sender.rewind(staged.toLong())
+        sender.rewind(staged.toLong(), now = 0)
         while (sender.position < source.size) {
             val count = minOf(sender.readLimit(GlassesFilesLane.CHUNK_BYTES), source.size - sender.position.toInt())
             val bytes = source.copyOfRange(sender.position.toInt(), sender.position.toInt() + count)
@@ -540,6 +541,64 @@ class GlassesFilesFallbackTest {
     }
 
     @Test
+    fun `a repeated lane resume echo counts as upload activity while the phone rehashes`() {
+        val upload = GlassesFileStore(temp.newFolder(), JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
+            .beginUpload("", "upgrade.bin", 1_000_000, id).getOrThrow()
+        val key = GlassesFilesLane.newKey()
+        val lane = lane(key)
+        val active = GlassesFilesUpload(id, upload, lane, 0)
+        assertNull(active.write(0, ByteArray(65_536), viaLane = false))
+        val accept = io.submit<Boolean> { lane.accept() }
+        connect(lane, key).use { phone ->
+            assertTrue(accept.get(5, TimeUnit.SECONDS))
+            assertEquals(GlassesFilesUpload.Signal.LaneResume(65_536), active.onLaneSwitch(1_000))
+            // The phone echoes, then rehashes the prefix; it repeats the echo every 10 s meanwhile.
+            assertTrue(active.onLaneResume(65_536, 2_000))
+            assertTrue(active.onLaneResume(65_536, 12_000))
+            assertTrue(active.onLaneResume(65_536, 22_000))
+            assertTrue(active.onLaneResume(65_536, 32_000))
+            assertEquals(GlassesFilesUpload.Tick.Idle, active.onTick(45_000))
+            assertTrue(lane.isConnected())
+            assertFalse(active.onLaneResume(65_537, 46_000))
+            // Thirty seconds after the last echo the idle lane resyncs as before.
+            assertTrue(active.onTick(62_000) is GlassesFilesUpload.Tick.Resume)
+            phone.close()
+        }
+    }
+
+    @Test
+    fun `a progressing download prefix replay repeats the bus resume echo`() {
+        val source = ByteArray(300_003) { (it * 7).toByte() }
+        val file = temp.newFile().apply { writeBytes(source) }
+        val key = GlassesFilesLane.newKey()
+        val lane = lane(key)
+        val clock = AtomicLong(1_000)
+        val replayBelow = AtomicLong(0)
+        val results = LinkedBlockingQueue<GlassesFilesResult>()
+        // Every 16 KiB of the rehashed prefix costs 4 s of clock: a slow provider that never stalls.
+        val transfer = GlassesFilesDownload(id, file, lane, io, { results.add(it); true }, { _, _, _ -> true }, {}, clock::get,
+            openSource = { SlowPrefix(it.inputStream(), replayBelow::get, 16_384) { clock.addAndGet(4_000) } })
+        val worker = io.submit { transfer.stream() }
+        assertTrue(results.poll(5, TimeUnit.SECONDS) is GlassesFilesResult.DownloadReady)
+        connect(lane, key).use { phone ->
+            assertTrue(phone.read() is GlassesFilesLane.Frame.Data)
+            assertTrue(phone.read() is GlassesFilesLane.Frame.Data)
+            phone.ack(GlassesFilesLane.CHUNK_BYTES.toLong())
+        }
+        assertTrue(results.poll(5, TimeUnit.SECONDS) is GlassesFilesResult.LaneResync)
+        replayBelow.set(GlassesFilesLane.CHUNK_BYTES.toLong())
+        transfer.onResume(id, GlassesFilesLane.CHUNK_BYTES.toLong())
+        // The 256 KiB prefix takes 64 s of clock: the echo, then a repeat at 12, 24, 36, 48 and 60 s.
+        val echoes = generateSequence { results.poll(5, TimeUnit.SECONDS) }
+            .takeWhile { it !is GlassesFilesResult.TransferFailed }
+            .filterIsInstance<GlassesFilesResult.BusResume>()
+            .take(6).toList()
+        assertEquals(List(6) { GlassesFilesResult.BusResume(id, GlassesFilesLane.CHUNK_BYTES.toLong()) }, echoes)
+        transfer.cancelAll()
+        worker.get(5, TimeUnit.SECONDS)
+    }
+
+    @Test
     fun `an upload lane switch on a lane that is gone resumes on the bus`() {
         val upload = GlassesFileStore(temp.newFolder(), JvmFsPrimitives()) { Long.MAX_VALUE / 4 }
             .beginUpload("", "switch.bin", 100_000, id).getOrThrow()
@@ -600,4 +659,29 @@ class GlassesFilesFallbackTest {
 
     private fun sha(bytes: ByteArray) = GlassesFilesContract.hex(GlassesFilesContract.newDigest().apply { update(bytes) })
     private fun now() = System.nanoTime() / 1_000_000
+
+    /** Reads below [below] come in [step] byte pieces and each costs [onStep]; the rest pass through. */
+    private class SlowPrefix(
+        private val delegate: InputStream,
+        private val below: () -> Long,
+        private val step: Int,
+        private val onStep: () -> Unit,
+    ) : InputStream() {
+        private var position = 0L
+
+        override fun read(): Int = delegate.read().also { if (it >= 0) position += 1 }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val slow = below() - position
+            if (slow <= 0) return delegate.read(b, off, len).also { if (it > 0) position += it }
+            val count = delegate.read(b, off, minOf(len.toLong(), step.toLong(), slow).toInt())
+            if (count > 0) {
+                position += count
+                onStep()
+            }
+            return count
+        }
+
+        override fun close() = delegate.close()
+    }
 }

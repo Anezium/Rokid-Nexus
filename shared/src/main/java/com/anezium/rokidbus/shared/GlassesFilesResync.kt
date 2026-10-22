@@ -58,19 +58,31 @@ class GlassesFilesResync {
         now - startedAt >= GlassesFilesContract.IDLE_TIMEOUT_MS
 }
 
-/** The sender reopens at zero on rewind and hashes the prefix without sending it again. */
+/**
+ * The sender reopens at zero on rewind and hashes the prefix without sending it again. The peer
+ * sees nothing of that replay, so the sender repeats its echo while it lasts ([heartbeatDue]).
+ */
 class GlassesFilesSendDigest {
     private var digest = GlassesFilesContract.newDigest()
     var position = 0L
         private set
     private var resumeAt = 0L
+    private var echoedAt = 0L
     val replaying: Boolean get() = position < resumeAt
 
-    fun rewind(offset: Long) {
+    fun rewind(offset: Long, now: Long) {
         require(offset >= 0)
         digest = GlassesFilesContract.newDigest()
         position = 0L
         resumeAt = offset
+        echoedAt = now
+    }
+
+    /** True once per [GlassesFilesContract.REPLAY_HEARTBEAT_MS] of replay; the caller then repeats its echo. */
+    fun heartbeatDue(now: Long): Boolean {
+        if (!replaying || now - echoedAt < GlassesFilesContract.REPLAY_HEARTBEAT_MS) return false
+        echoedAt = now
+        return true
     }
 
     fun readLimit(chunkBytes: Int): Int =

@@ -61,7 +61,7 @@ class GlassesFilesResyncTest {
         val source = ByteArray(300_001) { (it * 31).toByte() }
         val sender = GlassesFilesSendDigest()
         sender.record(source, 256_000)
-        sender.rewind(123_457)
+        sender.rewind(123_457, now = 0)
         var resent = 0L
         while (sender.position < source.size) {
             val limit = minOf(sender.readLimit(32_768), source.size - sender.position.toInt())
@@ -71,5 +71,23 @@ class GlassesFilesResyncTest {
         }
         assertEquals(source.size.toLong() - 123_457, resent)
         assertEquals(GlassesFilesContract.hex(GlassesFilesContract.newDigest().apply { update(source) }), sender.finish())
+    }
+
+    @Test
+    fun `the replay heartbeat is due once per interval and only while the prefix is replaying`() {
+        val sender = GlassesFilesSendDigest()
+        sender.record(ByteArray(65_536), 65_536)
+        assertFalse(sender.heartbeatDue(100_000))
+        sender.rewind(65_536, now = 1_000)
+        assertFalse(sender.heartbeatDue(1_000 + GlassesFilesContract.REPLAY_HEARTBEAT_MS - 1))
+        assertTrue(sender.heartbeatDue(1_000 + GlassesFilesContract.REPLAY_HEARTBEAT_MS))
+        assertFalse(sender.heartbeatDue(1_000 + GlassesFilesContract.REPLAY_HEARTBEAT_MS + 1))
+        assertTrue(sender.heartbeatDue(1_000 + 2 * GlassesFilesContract.REPLAY_HEARTBEAT_MS))
+        sender.record(ByteArray(32_768), 32_768)
+        assertTrue(sender.replaying)
+        assertTrue(sender.heartbeatDue(1_000 + 3 * GlassesFilesContract.REPLAY_HEARTBEAT_MS))
+        sender.record(ByteArray(32_768), 32_768)
+        assertFalse(sender.replaying)
+        assertFalse(sender.heartbeatDue(1_000 + 10 * GlassesFilesContract.REPLAY_HEARTBEAT_MS))
     }
 }

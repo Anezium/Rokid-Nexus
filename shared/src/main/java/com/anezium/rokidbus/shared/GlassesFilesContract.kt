@@ -167,6 +167,13 @@ object GlassesFilesContract {
     /** A transfer with no progress in either direction for this long is abandoned by both hubs. */
     const val IDLE_TIMEOUT_MS = 30_000L
 
+    /**
+     * While a sender rehashes its source prefix after a rewind it has nothing to send; it repeats
+     * its resume echo this often so the receiver's idle budget, checked on a 5 s tick, keeps a
+     * progressing replay alive however long the prefix is.
+     */
+    const val REPLAY_HEARTBEAT_MS = 10_000L
+
     const val MAX_PAGE_ENTRIES = 200
     const val MAX_MESSAGE_BYTES = 128 * 1024
     const val MAX_PATH_CHARS = 1024

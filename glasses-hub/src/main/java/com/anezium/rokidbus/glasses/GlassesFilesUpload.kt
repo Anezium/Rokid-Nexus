@@ -71,7 +71,12 @@ internal class GlassesFilesUpload(
         return upgradeToLane()?.let { Signal.LaneResume(it) }
     }
 
-    fun onLaneResume(staged: Long): Boolean = confirmLane(staged)
+    /** The phone's echo, repeated while it rehashes the prefix, is activity like the bus echo. */
+    fun onLaneResume(staged: Long, now: Long): Boolean {
+        if (!confirmLane(staged)) return false
+        lastActivity = now
+        return true
+    }
 
     fun onLaneDeclined() {
         lane?.decline()
@@ -86,7 +91,10 @@ internal class GlassesFilesUpload(
 
     fun onResyncRequest(now: Long): Signal.BusResume? = resume(now)
 
-    /** The phone's echo is activity: its source rewind and prefix rehash follow before any byte. */
+    /**
+     * The phone's echo is activity: its source rewind and prefix rehash follow before any byte,
+     * and it repeats the echo while that rehash lasts.
+     */
     fun onBusResume(staged: Long, now: Long): Boolean {
         if (!resync.switched) return true
         if (!resync.confirm(staged)) return false

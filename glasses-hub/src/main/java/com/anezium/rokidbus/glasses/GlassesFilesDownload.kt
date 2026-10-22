@@ -23,6 +23,7 @@ internal class GlassesFilesDownload(
     private val finished: (GlassesFilesDownload) -> Unit,
     private val now: () -> Long,
     private val summary: (String) -> Unit = {},
+    private val openSource: (File) -> InputStream = { it.inputStream() },
 ) {
     private val lock = Object()
     private val resync = GlassesFilesResync()
@@ -62,7 +63,7 @@ internal class GlassesFilesDownload(
                 resync.opened()
                 lane = connected
                 acked = staged
-                resumePending = staged
+                resumePending = Resume(staged, viaLane = true)
                 lock.notifyAll()
             }
             true
@@ -74,9 +75,12 @@ internal class GlassesFilesDownload(
         }
         send(GlassesFilesResult.LaneResume(transferId, staged))
     }
+    /** A rewind the worker still has to take, and which echo it repeats while rehashing the prefix. */
+    private class Resume(val offset: Long, val viaLane: Boolean)
+
     private var acked = 0L
     private var attempted = 0L
-    private var resumePending: Long? = null
+    private var resumePending: Resume? = null
     private var cancelled = false
     private val size = file.length()
 
@@ -137,7 +141,7 @@ internal class GlassesFilesDownload(
             if (!resync.confirmed) {
                 summary("files download bus resume staged=$staged")
                 acked = staged
-                resumePending = staged
+                resumePending = Resume(staged, viaLane = false)
                 resync.confirm(staged)
                 lock.notifyAll()
             }
@@ -173,13 +177,16 @@ internal class GlassesFilesDownload(
                 }
             }
             val digest = GlassesFilesSendDigest()
-            input = file.inputStream()
+            var echo: GlassesFilesResult? = null
+            input = openSource(file)
             while (true) {
                 val resume = synchronized(lock) { resumePending.also { resumePending = null } }
                 if (resume != null) {
                     input?.close()
-                    input = file.inputStream()
-                    digest.rewind(resume)
+                    input = openSource(file)
+                    digest.rewind(resume.offset, now())
+                    echo = if (resume.viaLane) GlassesFilesResult.LaneResume(transferId, resume.offset)
+                        else GlassesFilesResult.BusResume(transferId, resume.offset)
                 }
                 if (!awaitAck { !resync.switched || resync.confirmed }) {
                     finish(waitFailure())
@@ -204,7 +211,7 @@ internal class GlassesFilesDownload(
                     // A snapshot below the full size means the receiver lost acknowledged bytes
                     // after all; one at the full size, or a resync still waiting for its snapshot,
                     // has nothing left to resend and the size-and-digest terminator decides.
-                    if (synchronized(lock) { !MediaSyncWindowPolicy.mayFinish(acked, size) || resumePending?.let { it != size } == true }) continue
+                    if (synchronized(lock) { !MediaSyncWindowPolicy.mayFinish(acked, size) || resumePending?.let { it.offset != size } == true }) continue
                     send(GlassesFilesResult.DownloadEnd(transferId, digest.finish()))
                     finish(null)
                     return
@@ -215,6 +222,11 @@ internal class GlassesFilesDownload(
                 }
                 if (digest.replaying) {
                     digest.record(buffer, count)
+                    // The phone sees nothing of the rehash; the repeated echo keeps its idle budget alive.
+                    if (digest.heartbeatDue(now()) && !send(checkNotNull(echo))) {
+                        finish(if (synchronized(lock) { cancelled }) null else GlassesFilesError.LINK_LOST)
+                        return
+                    }
                     continue
                 }
                 val window = if (viaLane) GlassesFilesLane.WINDOW_BYTES else GlassesFilesContract.ACK_WINDOW_BYTES

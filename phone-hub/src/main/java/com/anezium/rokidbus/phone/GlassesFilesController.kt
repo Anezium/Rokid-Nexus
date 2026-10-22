@@ -1081,6 +1081,7 @@ internal class GlassesFilesController(
                 ready!!.lane?.let { offer -> openLane(offer, ::onLaneFrame) }
                 if (!resync.laneOpened) maybeHotspot()
                 val digest = GlassesFilesSendDigest()
+                var echo: GlassesFilesRequest? = null
                 var reader = openReader(uri, staged)
                 try {
                     while (true) {
@@ -1089,8 +1090,9 @@ internal class GlassesFilesController(
                             reader.close()
                             reader = openReader(uri, staged)
                             if (resume.toLane && synchronized(signal) { resync.switched }) continue
-                            digest.rewind(resume.offset)
-                            if (send(if (resume.toLane) GlassesFilesRequest.LaneResume(wireId, resume.offset) else GlassesFilesRequest.BusResume(wireId, resume.offset)) != null) {
+                            digest.rewind(resume.offset, SystemClock.elapsedRealtime())
+                            echo = if (resume.toLane) GlassesFilesRequest.LaneResume(wireId, resume.offset) else GlassesFilesRequest.BusResume(wireId, resume.offset)
+                            if (send(echo) != null) {
                                 return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
                             }
                             if (!resume.toLane) synchronized(signal) { resync.confirm(resume.offset) }
@@ -1127,6 +1129,12 @@ internal class GlassesFilesController(
                         if (digest.position + count > size) return Outcome.Stopped(GlassesTransferStop.CHANGED)
                         if (digest.replaying) {
                             digest.record(buffer, count)
+                            // The glasses see nothing of the rehash: the repeated echo keeps their
+                            // idle budget alive, and ours restarts once there is something to ack.
+                            if (digest.heartbeatDue(SystemClock.elapsedRealtime()) && send(checkNotNull(echo)) != null) {
+                                return Outcome.Stopped(GlassesTransferStop.LINK_LOST)
+                            }
+                            if (!digest.replaying) touch()
                             continue
                         }
                         val window = if (viaLane) GlassesFilesLane.WINDOW_BYTES else GlassesFilesContract.ACK_WINDOW_BYTES
