@@ -248,14 +248,16 @@ class GlassesFilesScheduleTest(private val schedule: Schedule) {
             try {
                 val outcome = checkNotNull(worker.get(12, TimeUnit.SECONDS))
                 failure.get()?.let { throw it }
+                // A glasses failure reaches the phone as a stop reason; name it when the outcome is wrong.
+                val ended = "$outcome ${results.filterIsInstance<GlassesFilesResult.TransferFailed>()}"
                 when (schedule.trigger) {
-                    Trigger.CANCEL -> assertEquals(outcome.toString(), "Cancelled", outcome.javaClass.simpleName)
+                    Trigger.CANCEL -> assertEquals(ended, "Cancelled", outcome.javaClass.simpleName)
                     Trigger.LINK_DOWN -> {
-                        assertEquals(outcome.toString(), "Stopped", outcome.javaClass.simpleName)
+                        assertEquals(ended, "Stopped", outcome.javaClass.simpleName)
                         assertEquals(GlassesTransferStop.LINK_LOST, field(outcome, "reason"))
                     }
                     else -> {
-                        assertEquals(outcome.toString(), "Done", outcome.javaClass.simpleName)
+                        assertEquals(ended, "Done", outcome.javaClass.simpleName)
                         assertFalse(results.toString(), results.any { it is GlassesFilesResult.TransferFailed })
                         val received = if (isUpload) {
                             val files = storeRoot!!.walkTopDown().filter { it.isFile }.toList()
