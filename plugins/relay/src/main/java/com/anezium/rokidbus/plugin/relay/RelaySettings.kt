@@ -118,7 +118,28 @@ internal class RelaySettings(context: Context) {
         prefs.edit().putBoolean(KEY_REPLY_BY_TYPING, enabled).apply()
     }
 
-    fun admits(): Boolean = NotificationAdmission.appIsAdmitted(enabled())
+    fun appPolicy(packageName: String): RelayAppPolicy =
+        RelayAppPolicy.fromStored(prefs.getString(APP_POLICY_PREFIX + packageName, null))
+
+    fun setAppPolicy(packageName: String, policy: RelayAppPolicy) {
+        val editor = prefs.edit()
+        if (policy == RelayAppPolicy.MESSAGES) editor.remove(APP_POLICY_PREFIX + packageName)
+        else editor.putString(APP_POLICY_PREFIX + packageName, policy.name)
+        editor.apply()
+    }
+
+    fun configuredPackages(): Set<String> = prefs.all.keys
+        .filter { it.startsWith(APP_POLICY_PREFIX) }
+        .mapTo(linkedSetOf()) { it.removePrefix(APP_POLICY_PREFIX) }
+
+    fun resetAppPolicies() {
+        val editor = prefs.edit()
+        configuredPackages().forEach { editor.remove(APP_POLICY_PREFIX + it) }
+        editor.apply()
+    }
+
+    fun admits(packageName: String, repliable: Boolean, ongoing: Boolean = false, groupSummary: Boolean = false): Boolean =
+        enabled() && appPolicy(packageName).admits(repliable, ongoing, groupSummary)
 
     data class LegacyDisplayTime(val seconds: Int, val scalesWithLength: Boolean)
 
@@ -156,6 +177,7 @@ internal class RelaySettings(context: Context) {
             }
 
         private const val PREFS = "relay_settings"
+        private const val APP_POLICY_PREFIX = "app_policy:"
         private const val KEY_ENABLED = "enabled"
         private const val KEY_IMAGE_PREVIEWS = "image_previews"
         private const val KEY_MESSAGES_PER_THREAD = "messages_per_thread"

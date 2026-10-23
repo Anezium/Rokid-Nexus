@@ -56,6 +56,7 @@ import com.anezium.rokidbus.shared.MediaArtworkContract
 import com.anezium.rokidbus.shared.QuickActionFamily
 import com.anezium.rokidbus.shared.QuickActionPolicy
 import com.anezium.rokidbus.shared.QuickActionPolicyContract
+import com.anezium.rokidbus.shared.GlassesFilesContract
 import com.anezium.rokidbus.shared.NativeAppContract
 import com.anezium.rokidbus.shared.PhoneHubCapabilities
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
@@ -507,6 +508,7 @@ class BusHubService : Service() {
     private lateinit var pluginGuardianCoordinator: PluginGuardianCoordinator
     private lateinit var mediaSyncCoordinator: MediaSyncCoordinator
     private lateinit var coreRemoteBridge: PhoneCoreRemoteBridge
+    private lateinit var glassesFiles: GlassesFilesController
     private lateinit var youtubeSetup: YoutubeSetupController
     private lateinit var redditSetup: YoutubeSetupController
     @Volatile private var youtubeUploadId: Long? = null
@@ -940,12 +942,24 @@ class BusHubService : Service() {
             },
             isNativePointerAvailable = ::isCxrUp,
         ).also(PhoneCoreRemoteBridge::start)
+        glassesFiles = GlassesFilesController(applicationContext, ::sendRemote,
+            cameraActive = { ::cameraCompanionController.isInitialized && cameraCompanionController.activeSessionId() != null },
+        ).also {
+            val state = linkState()
+            it.onLinkStateChanged(
+                controlUp = state and LinkStateBits.CXR_CONTROL_UP != 0,
+                dataUp = state and LinkStateBits.SPP_DATA_UP != 0,
+            )
+            GlassesFilesHub.controller = it
+        }
         val phoneSpeakerRouteProbe = PhoneSpeakerRouteProbe(applicationContext) {
             prefs().getString(PREF_LAST_GLASSES_ADDRESS, null)
         }
+        val phoneTtsSettings = PhoneTtsSettingsStore(applicationContext)
         phoneTtsDispatcher = PhoneTtsDispatcher(
             playback = PhoneTtsPlayback(
                 output = PhoneTtsEngine(applicationContext, ::log),
+                defaultLocale = { phoneTtsSettings.speechLocale() },
                 emitStarted = ::emitPhoneTtsStarted,
                 emitDone = ::emitPhoneTtsDone,
             ),
@@ -1346,6 +1360,10 @@ class BusHubService : Service() {
         snapshotCaptureScope.cancel()
         if (::phoneTtsDispatcher.isInitialized) phoneTtsDispatcher.shutdown()
         if (::coreRemoteBridge.isInitialized) coreRemoteBridge.close()
+        if (::glassesFiles.isInitialized) {
+            if (GlassesFilesHub.controller === glassesFiles) GlassesFilesHub.controller = null
+            glassesFiles.close()
+        }
         runCatching { cxrLink?.disconnect() }
         closeSocket()
         PhoneClientSupervisor.detach(applicationContext, this)
@@ -1384,6 +1402,12 @@ class BusHubService : Service() {
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
         val sender = resolveSender(senderUid)
+        if (GlassesFilesContract.isFilesPath(envelope.path)) {
+            // The explorer talks to the glasses directly; no local caller, debug or not, may.
+            recordLocalRoute(envelope, senderUid, sender, PluginBusJournal.Verdict.REJECTED, "TRUSTED_LOCAL_ONLY")
+            deliverError(sender.replyBinder, envelope.id, "TRUSTED_LOCAL_ONLY")
+            return
+        }
         if (isPagePath(envelope.path)) {
             routeLocalPage(envelope, senderUid, sender)
             return
@@ -1704,6 +1728,15 @@ class BusHubService : Service() {
         // Skills are phone-local: nothing arriving over CXR or SPP may enter that family.
         if (PathRules.matchesPrefix(envelope.path, SKILLS_ROOT)) {
             recordRemoteRoute(envelope, PluginBusJournal.Verdict.REJECTED)
+            return
+        }
+        if (PathRules.matchesPrefix(envelope.path, GLASSES_FILES_ROOT)) {
+            // Deliberately inline on the reader thread: the controller's serial inbox is what keeps
+            // a copy's chunks in wire order, and handing them to the cached pool would not.
+            val handled = ::glassesFiles.isInitialized && glassesFiles.handleRemote(envelope)
+            if (envelope.path != GlassesFilesContract.DATA_PATH) {
+                recordRemoteRoute(envelope, if (handled) PluginBusJournal.Verdict.OK else PluginBusJournal.Verdict.REJECTED)
+            }
             return
         }
         if (envelope.path == "/hub/probe") {
@@ -5350,6 +5383,12 @@ class BusHubService : Service() {
                 nativePointerAvailable = state and LinkStateBits.CXR_CONTROL_UP != 0,
             )
         }
+        if (::glassesFiles.isInitialized) {
+            glassesFiles.onLinkStateChanged(
+                controlUp = state and LinkStateBits.CXR_CONTROL_UP != 0,
+                dataUp = state and LinkStateBits.SPP_DATA_UP != 0,
+            )
+        }
         if (::pluginGuardianCoordinator.isInitialized) {
             pluginGuardianCoordinator.onLinkStateChanged(state and transportBits != 0)
         }
@@ -5416,7 +5455,8 @@ class BusHubService : Service() {
     private fun announcePhoneCapabilities() {
         val hudPosition = PhoneHudPositionStore(this)
         val announced = PhoneHubCapabilitiesContract.create(
-            features = PhoneAssistedSetupCapabilityPolicy.advertised(phoneCameraCapabilities()) or BusCapabilityBits.RENDERED_MAP,
+            features = PhoneAssistedSetupCapabilityPolicy.advertised(phoneCameraCapabilities()) or
+                BusCapabilityBits.GLASSES_FILES_HOTSPOT or BusCapabilityBits.RENDERED_MAP,
             cameraConsumerName = cameraConsumerReadiness.resolveApproved()?.descriptor?.displayName,
             activityAlwaysExpanded =
                 PhoneActivityPresentationSettings(this).isAlwaysExpanded(),
@@ -5561,6 +5601,14 @@ class BusHubService : Service() {
         remoteInkSurfaceVersion = acceptedInkVersion
         remoteEditableSurfaceVersion = if (editableSupported) EditableSurfaceContract.VERSION else 0
         remoteMaxImageBytes = if (imageSupported) advertised.maxImageBytes else 0
+        if (::glassesFiles.isInitialized) {
+            val current = advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION
+            glassesFiles.onCapabilities(
+                glassesFilesSupported = current && advertised.features and BusCapabilityBits.GLASSES_FILES != 0,
+                laneSupported = current && advertised.features and BusCapabilityBits.GLASSES_FILES_LANE != 0,
+                hotspotSupported = current && advertised.features and BusCapabilityBits.GLASSES_FILES_HOTSPOT != 0,
+            )
+        }
         updateRemoteGlassesAppState(
             advertised.versionName,
             advertised.setupComplete,
@@ -5904,6 +5952,7 @@ class BusHubService : Service() {
         }
 
         private const val SKILLS_ROOT = "/skills"
+        private const val GLASSES_FILES_ROOT = "/core/files"
         private const val SKILL_TOKEN_ALPHABET =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
@@ -5945,7 +5994,13 @@ class BusHubService : Service() {
             }
         }
 
-        internal fun availablePhoneTtsVoices(locale: Locale): List<PhoneTtsVoiceOption> =
+        internal fun isPhoneTtsReady(): Boolean =
+            activeInstance
+                ?.takeIf { it::phoneTtsDispatcher.isInitialized }
+                ?.phoneTtsDispatcher
+                ?.isReady == true
+
+        internal fun availablePhoneTtsVoices(locale: Locale?): List<PhoneTtsVoiceOption> =
             activeInstance
                 ?.takeIf { it::phoneTtsDispatcher.isInitialized }
                 ?.phoneTtsDispatcher

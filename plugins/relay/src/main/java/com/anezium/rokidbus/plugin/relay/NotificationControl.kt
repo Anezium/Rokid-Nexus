@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.relay
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 
@@ -108,8 +109,14 @@ internal object NotificationControl {
     @Volatile
     var pageListener: (() -> Unit)? = null
 
-    fun refreshFromSettings() {
-        main.post { listener?.refreshFromSettings() }
+    /** Applies changed settings: per-app policy prunes what it no longer admits, everywhere it shows. */
+    fun refreshFromSettings(context: Context) {
+        ReplyRepository.prune(RelaySettings(context))
+        main.post {
+            listener?.refreshFromSettings()
+            inbox?.onSettingsChanged()
+            pageListener?.invoke()
+        }
     }
 
     fun cancelAfterReply(notificationKey: String) {

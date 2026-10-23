@@ -1,0 +1,25 @@
+// Run from the repository root:
+// .\gradlew.bat -I phone-hub/src/test/bridge/files_answer_loss.init.gradle :phone-hub:testDebugUnitTest --tests '*GlassesFilesAnswerLossTest'
+// Compile the actual glasses streamers into this test only; neither app gains a dependency.
+gradle.beforeProject { project ->
+    if (project.path == ':phone-hub') {
+        project.plugins.withId('com.android.application') {
+            def sources = project.layout.buildDirectory.dir('generated/files-answer-loss-test')
+            def prepare = project.tasks.register('prepareFilesAnswerLossTest', Sync) {
+                into(sources)
+                from(project.file('src/test/bridge')) { include '*.kt' }
+                from(project.rootProject.file('glasses-hub/src/main/java/com/anezium/rokidbus/glasses')) {
+                    include 'GlassesFilesLaneServer.kt', 'GlassesFilesDownload.kt', 'GlassesFilesUpload.kt',
+                            'GlassesFileStore.kt', 'GlassesFsPrimitives.kt'
+                }
+                from(project.rootProject.file('glasses-hub/src/test/java/com/anezium/rokidbus/glasses')) {
+                    include 'JvmFsPrimitives.kt'
+                }
+            }
+            project.android.sourceSets.getByName('test').kotlin.srcDir(sources.get().asFile)
+            project.tasks.matching { it.name == 'compileDebugUnitTestKotlin' }.configureEach {
+                dependsOn(prepare)
+            }
+        }
+    }
+}

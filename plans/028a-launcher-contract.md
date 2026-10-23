@@ -14,8 +14,8 @@ root membership, retained-body unavailable states, no replay) are never relaxed.
 ## 0. Global decisions
 
 D0.1 Negotiation. One additive launcher bundle, never a bump of an existing version:
-- `BusCapabilityBits.LAUNCHER_INTERACTIVE = 1 shl 14`. Bit `1 shl 13` stays unallocated on
-  purpose (an unshipped dev branch used it); document it as reserved.
+- `BusCapabilityBits.LAUNCHER_INTERACTIVE = 1 shl 16` (amended 2026-10-23: bits 13–15 shipped first in Nexus 1.8 as the
+  `/core/files` explorer, lane and hotspot bits; rendered maps moved to `1 shl 17`).
 - `launcherInteractiveVersion: Int` (absent = 0) in both `GlassesHubCapabilities` and
   `PhoneHubCapabilities`; current value 1. Negotiated version = `min(local, remote)` when both
   are >= 1, else 0. Unlike the older exact-match fields, every future version must be a

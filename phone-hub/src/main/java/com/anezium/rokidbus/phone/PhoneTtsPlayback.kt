@@ -40,7 +40,7 @@ internal class PhoneTtsPlayback(
         output.prewarm()
     }
 
-    fun availableVoices(locale: Locale): List<PhoneTtsVoiceOption> =
+    fun availableVoices(locale: Locale?): List<PhoneTtsVoiceOption> =
         output.availableVoices(locale)
 
     fun speakSample(text: String, locale: Locale): Boolean = synchronized(lock) {
@@ -170,9 +170,12 @@ internal class PhoneTtsDispatcher(
 
     fun initialize() = synchronized(dispatchLock) { playback.initialize() }
 
+    val isReady: Boolean
+        get() = playback.isReady
+
     fun prewarm(): Boolean = synchronized(dispatchLock) { playback.prewarm() }
 
-    fun availableVoices(locale: Locale): List<PhoneTtsVoiceOption> =
+    fun availableVoices(locale: Locale?): List<PhoneTtsVoiceOption> =
         synchronized(dispatchLock) { playback.availableVoices(locale) }
 
     fun speakSample(text: String, locale: Locale): Boolean = synchronized(dispatchLock) {

@@ -43,9 +43,12 @@ internal sealed interface ReplySendResult {
 }
 
 internal object ReplyRepository {
+    private data class AnsweredNotification(val packageName: String, val contentDigest: String)
+
     private data class ReadableReply(
         val snapshot: RelayInboxSnapshot,
         val content: VisibleNotificationContent,
+        val originallyRepliable: Boolean,
     )
 
     data class CaptureResult(
@@ -60,11 +63,14 @@ internal object ReplyRepository {
         val notificationKey: String,
         val content: VisibleNotificationContent,
         val footer: String,
-        val actionIntent: PendingIntent,
+        val actionIntent: PendingIntent?,
         val remoteInputs: Array<RemoteInput>,
         val capturedAtMs: Long,
         val imagePreview: NotificationImagePreview?,
-    )
+    ) {
+        val canReply: Boolean
+            get() = actionIntent != null && remoteInputs.any { it.allowFreeFormInput }
+    }
 
     private val pending = linkedMapOf<String, PendingReply>()
     private val recent = linkedMapOf<String, ReadableReply>()
@@ -77,6 +83,12 @@ internal object ReplyRepository {
      * posts the thread again; the launcher's thread pages keep reading them with their handoff.
      */
     private val answered = mutableSetOf<String>()
+
+    /**
+     * What each thread showed when it was answered: a source app that drops Reply and reposts the
+     * same content is echoing our reply, not raising a new read-only alert.
+     */
+    private val answeredEchoes = linkedMapOf<String, AnsweredNotification>()
     private var nextHandoffSerial = 0L
     private val lastCaptureAtMs = AtomicLong(0L)
 
@@ -84,12 +96,18 @@ internal object ReplyRepository {
     fun capture(
         context: Context,
         sbn: StatusBarNotification,
-        action: Notification.Action,
+        action: Notification.Action?,
     ): CaptureResult? {
-        val remoteInputs = action.remoteInputs ?: return null
-        if (remoteInputs.isEmpty()) return null
+        val repliable = action?.actionIntent != null && action.remoteInputs.orEmpty().any { it.allowFreeFormInput }
+        val remoteInputs = if (repliable) action?.remoteInputs.orEmpty().toList().toTypedArray() else emptyArray()
 
         val settings = RelaySettings(context)
+        if (!settings.admits(
+                sbn.packageName,
+                repliable = repliable,
+                ongoing = sbn.isOngoing || sbn.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0,
+                groupSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0,
+            )) return null
         val extras = sbn.notification.extras
         val appLabel = appLabel(context, sbn.packageName)
         val sourceTitle = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
@@ -100,6 +118,7 @@ internal object ReplyRepository {
             settings.messagesPerThread(),
         )
         val extractedText = extracted.rendered
+        if (!repliable && sourceTitle.isBlank() && extractedText.isBlank()) return null
         val redacted = AndroidSensitiveNotificationDetector.isRedacted(sourceTitle, extractedText)
         val renderedText = if (redacted) {
             SensitiveNotificationDetector.HIDDEN_BODY
@@ -112,14 +131,19 @@ internal object ReplyRepository {
         } else {
             extracted.messages
         }
-        val footer = appLabel.trim().take(NoticeSurfaceContract.MAX_FOOTER_CHARS)
-        val imagePreview = if (settings.imagePreviewsEnabled()) {
+        val footer = if (repliable) {
+            appLabel.trim().take(NoticeSurfaceContract.MAX_FOOTER_CHARS)
+        } else {
+            appLabel.trim().take(NoticeSurfaceContract.MAX_FOOTER_CHARS - " · read only".length) + " · read only"
+        }
+        // What Android hid stays hidden, pictures included.
+        val imagePreview = if (!redacted && settings.imagePreviewsEnabled()) {
             NotificationImageExtractor.extract(context, sbn.notification)
         } else {
             null
         }
-        val revision = notificationRevision(sbn, extras, imagePreview)
-        if (hasRemoteInputHistory(extras) && settings.clearAfterReply()) {
+        val revision = notificationRevision(sbn, extras, imagePreview, repliable)
+        if (repliable && hasRemoteInputHistory(extras) && settings.clearAfterReply()) {
             NotificationControl.cancelAfterReply(sbn.key)
         }
 
@@ -132,6 +156,8 @@ internal object ReplyRepository {
             revision = revision,
             imageId = imagePreview?.id,
         )
+        if (!repliable && answeredEchoes[id]?.contentDigest == contentDigest(content)) return null
+        answeredEchoes.remove(id)
         val previous = pending[id]
         val previousContent = previous?.content ?: recent[id]?.content
         val contentChanged = previousContent == null || !previousContent.hasSameVisibleContent(content)
@@ -145,7 +171,7 @@ internal object ReplyRepository {
             notificationKey = sbn.key,
             content = content,
             footer = footer,
-            actionIntent = action.actionIntent,
+            actionIntent = action?.actionIntent.takeIf { repliable },
             remoteInputs = remoteInputs,
             capturedAtMs = capturedAtMs,
             imagePreview = imagePreview,
@@ -159,9 +185,11 @@ internal object ReplyRepository {
                 appLabel = content.appLabel,
                 renderedText = content.renderedText,
                 capturedAtMs = capturedAtMs,
+                sourcePackage = sbn.packageName,
                 messages = messages,
             ),
             content = content,
+            originallyRepliable = repliable,
         )
         handoffs[id]?.let { log ->
             val gone = RelayTranscript.superseded(messages, log)
@@ -178,6 +206,7 @@ internal object ReplyRepository {
 
     fun sendReply(context: Context, notificationId: String, text: String): ReplySendResult {
         val reply = synchronized(this) { pending[notificationId] } ?: return ReplySendResult.Missing
+        val actionIntent = reply.actionIntent ?: return ReplySendResult.Missing
         if (text.isBlank()) return ReplySendResult.Blank
         val intent = Intent()
         val results = Bundle()
@@ -188,10 +217,12 @@ internal object ReplyRepository {
 
         RemoteInput.addResultsToIntent(reply.remoteInputs, intent, results)
         RemoteInput.setResultsSource(intent, RemoteInput.SOURCE_FREE_FORM_INPUT)
-        val failure = runCatching {
-            reply.actionIntent.send(context, 0, intent)
-        }.exceptionOrNull()
         val settings = RelaySettings(context)
+        // The app may have been turned Off since the capture; the final boundary decides.
+        if (!settings.admits(reply.content.packageName, repliable = true)) return ReplySendResult.Missing
+        val failure = runCatching {
+            actionIntent.send(context, 0, intent)
+        }.exceptionOrNull()
         if (failure is PendingIntent.CanceledException) {
             // The app withdrew the reply action: nothing went out, and nothing can through it.
             synchronized(this) { if (pending[notificationId] === reply) pending.remove(notificationId) }
@@ -210,7 +241,12 @@ internal object ReplyRepository {
         // The thread stays: the reply reads in it as ours, handed to the app, until a later
         // capture shows the app's own copy of it. Nothing here claims it was delivered or read.
         recordHandoff(notificationId, text, RelayHandoffStatus.HANDED_OFF, settings.messagesPerThread())
-        synchronized(this) { answered += notificationId }
+        synchronized(this) {
+            answered += notificationId
+            // A source app may drop Reply before removing the notification we just answered.
+            answeredEchoes[notificationId] = AnsweredNotification(reply.content.packageName, contentDigest(reply.content))
+            while (answeredEchoes.size > RelayInboxCatalog.MAX_ENTRIES) answeredEchoes.remove(answeredEchoes.keys.first())
+        }
         NotificationControl.notifyInboxChanged()
         return ReplySendResult.Sent
     }
@@ -237,6 +273,7 @@ internal object ReplyRepository {
         val id = stableId(sbn.key)
         val known = id in pending || id in recent
         pending.remove(id)
+        answeredEchoes.remove(id)
         return known
     }
 
@@ -246,7 +283,12 @@ internal object ReplyRepository {
      * readable thread stays. Returns whether an authority was dropped.
      */
     @Synchronized
-    fun dropAuthority(sbn: StatusBarNotification): Boolean = pending.remove(stableId(sbn.key)) != null
+    fun dropAuthority(sbn: StatusBarNotification): Boolean {
+        val id = stableId(sbn.key)
+        if (pending[id]?.canReply != true) return false
+        pending.remove(id)
+        return true
+    }
 
     /**
      * The just-in-time check before a send: the thread still has a live reply action under the
@@ -255,8 +297,7 @@ internal object ReplyRepository {
     @Synchronized
     fun hasReplyAuthority(notificationId: String): Boolean {
         val reply = pending[notificationId] ?: return false
-        return stableId(reply.notificationKey) == notificationId &&
-            reply.remoteInputs.any { it.allowFreeFormInput }
+        return stableId(reply.notificationKey) == notificationId && reply.canReply
     }
 
     /** The thread a `relay:thread:` page id names, readable or still replyable, or null. */
@@ -276,7 +317,7 @@ internal object ReplyRepository {
         snapshots = recent.values.filter { include(it.snapshot.id) }.map { readable ->
             handoffs[readable.snapshot.id]?.let { readable.snapshot.copy(handoffs = it) } ?: readable.snapshot
         },
-        liveReplyIds = pending.keys.filter(include).toSet(),
+        liveReplyIds = pending.values.filter { it.canReply && include(it.id) }.mapTo(hashSetOf(), PendingReply::id),
     )
 
     /** Keeps readable text in memory while dropping every process-bound reply object. */
@@ -291,10 +332,32 @@ internal object ReplyRepository {
         recent.clear()
         handoffs.clear()
         answered.clear()
+        answeredEchoes.clear()
     }
 
     @Synchronized
-    fun contains(notificationId: String): Boolean = notificationId in pending
+    fun contains(notificationId: String): Boolean = pending[notificationId]?.canReply == true
+
+    /** Whether the notification is still on the phone, replyable or read only. */
+    @Synchronized
+    fun isActive(notificationId: String): Boolean = notificationId in pending
+
+    /**
+     * Drops everything the per-app policy no longer admits: its readable threads with their
+     * handoffs, live notification objects and echo markers. Returns the threads removed.
+     */
+    @Synchronized
+    fun prune(settings: RelaySettings): Set<String> {
+        val removed = recent.filterValues { !settings.admits(it.content.packageName, it.originallyRepliable) }.keys.toSet()
+        removed.forEach { id ->
+            pending.remove(id)
+            recent.remove(id)
+            handoffs.remove(id)
+            answered.remove(id)
+        }
+        answeredEchoes.entries.removeAll { !settings.admits(it.value.packageName, repliable = true) }
+        return removed
+    }
 
     @Synchronized
     private fun isMostRecent(notificationId: String): Boolean =
@@ -311,6 +374,7 @@ internal object ReplyRepository {
                 ?.id
                 ?: return
             recent.remove(oldestId)
+            pending.remove(oldestId)
             handoffs.remove(oldestId)
             answered.remove(oldestId)
         }
@@ -320,6 +384,7 @@ internal object ReplyRepository {
         sbn: StatusBarNotification,
         extras: Bundle,
         imagePreview: NotificationImagePreview?,
+        repliable: Boolean,
     ): String {
         val imageRevision = imagePreview?.let { preview ->
             ":img:${preview.id}:${preview.width}x${preview.height}:${preview.bytes.size}"
@@ -328,8 +393,13 @@ internal object ReplyRepository {
         if (messages.isNotEmpty()) {
             return "msg:${messages.size}:${messages.first().timestamp}:${messages.last().timestamp}$imageRevision"
         }
-        return "plain:${sbn.notification.`when`}$imageRevision"
+        return if (repliable) "plain:${sbn.notification.`when`}$imageRevision" else "plain$imageRevision"
     }
+
+    private fun contentDigest(content: VisibleNotificationContent): String = stableId(
+        listOf(content.packageName, content.appLabel, content.title, content.renderedText, content.imageId.orEmpty())
+            .joinToString("") { "${it.length}:$it" },
+    )
 
     private fun hasRemoteInputHistory(extras: Bundle): Boolean =
         extras.getCharSequenceArray(Notification.EXTRA_REMOTE_INPUT_HISTORY)

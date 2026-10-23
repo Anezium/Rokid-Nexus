@@ -43,10 +43,25 @@ class NotificationAdmissionTest {
     }
 
     @Test
-    fun `admission is the plugin switch and nothing else`() {
-        // Everything repliable is relayed; there is no per-app list to be on.
-        assertFalse(NotificationAdmission.appIsAdmitted(enabled = false))
-        assertTrue(NotificationAdmission.appIsAdmitted(enabled = true))
+    fun `the default admits repliable notifications without requiring prior discovery`() {
+        val policy = RelayAppPolicy.fromStored(null)
+        assertTrue(policy.admits(repliable = true))
+        assertFalse(policy.admits(repliable = false))
+    }
+
+    @Test
+    fun `all notifications is explicit and suppresses ongoing and group summaries`() {
+        assertTrue(RelayAppPolicy.ALL.admits(repliable = false))
+        assertFalse(RelayAppPolicy.ALL.admits(repliable = false, ongoing = true))
+        assertFalse(RelayAppPolicy.ALL.admits(repliable = false, groupSummary = true))
+        assertTrue(RelayAppPolicy.ALL.admits(repliable = true, ongoing = true))
+    }
+
+    @Test
+    fun `off blocks both kinds and invalid stored policies never enable read only`() {
+        assertFalse(RelayAppPolicy.OFF.admits(repliable = true))
+        assertFalse(RelayAppPolicy.OFF.admits(repliable = false))
+        assertFalse(RelayAppPolicy.fromStored("unknown").admits(repliable = false))
     }
 
     private fun action(hasActionIntent: Boolean, allowsFreeForm: Boolean) =

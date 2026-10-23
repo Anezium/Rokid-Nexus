@@ -31,7 +31,7 @@ trees.
 
 | Feature | Implementation | Tests | State |
 |---|---|---|---|
-| Launcher bundle negotiation (`launcherInteractiveVersion`, `LAUNCHER_INTERACTIVE` bit 14, min-rule) | `S/LauncherInteractiveContract.kt`, `S/PhoneHubCapabilitiesContract.kt`, `S/GlassesHubCapabilitiesContract.kt`, `G/GlassesHub.kt` | `LauncherInteractiveContractTest` (shared) | Done |
+| Launcher bundle negotiation (`launcherInteractiveVersion`, `LAUNCHER_INTERACTIVE` bit 16, min-rule) | `S/LauncherInteractiveContract.kt`, `S/PhoneHubCapabilitiesContract.kt`, `S/GlassesHubCapabilitiesContract.kt`, `G/GlassesHub.kt` | `LauncherInteractiveContractTest` (shared) | Done |
 | Owner-scoped destination (declared page + bounded params) and explicit first activation (`destination` / `commands` / summary) | `S/ActivitySurfaceContract.kt` (`destination`, `activation`, `defaultActionId`, `destinationAllowed`), `B/InteractiveModels.kt`, `B/NexusPluginClient.kt`; glasses `G/session/SessionReducer.kt` `activate()` | `ActivityInteractiveContractTest`, `NexusLauncherInteractiveTest`, `LauncherInteractiveTest`, `RouteNavigationTest` | Done |
 | Destination-first card opens the plugin page inside the session (no detail/menu/immersion) | `G/session/SessionReducer.kt` (`activate`, `openFrame`), `G/session/RootStops.kt` | `LauncherInteractiveTest`, `TodoActivityTest` (sample), host `LauncherHostLinkLossTest` | Done |
 | Quick-command card: first tap focuses Play/Pause, one swipe axis prev/play-pause/next, tap executes, Back exits | `G/session/LauncherInteractive.kt` (`ActivityCommands`, focus), `G/page/LauncherControls.kt` | `LauncherInteractiveTest`, `LauncherRenderingTest` | Done |

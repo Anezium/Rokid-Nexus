@@ -16,7 +16,12 @@ data class PhoneTtsVoiceOption(
     val locale: Locale,
     val quality: Int,
     val needsNetwork: Boolean,
+    val isInstalled: Boolean = true,
 )
+
+internal fun matchesTtsLanguage(voiceLocale: Locale, requested: Locale): Boolean =
+    voiceLocale.language == requested.language &&
+        (voiceLocale.script.isBlank() || requested.script.isBlank() || voiceLocale.script == requested.script)
 
 internal fun phoneTtsAudioAttributes(): AudioAttributes {
     val usage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -50,7 +55,7 @@ internal interface PhoneTtsOutput {
     fun initialize()
     fun speak(utteranceId: String, text: String, locale: Locale): PhoneTtsSpeakResult
     fun prewarm(): Boolean
-    fun availableVoices(locale: Locale): List<PhoneTtsVoiceOption>
+    fun availableVoices(locale: Locale?): List<PhoneTtsVoiceOption>
     fun speakSample(text: String, locale: Locale): Boolean
     fun stop()
     fun shutdown()
@@ -249,20 +254,21 @@ internal class PhoneTtsEngine private constructor(
         true
     }
 
-    override fun availableVoices(locale: Locale): List<PhoneTtsVoiceOption> {
+    override fun availableVoices(locale: Locale?): List<PhoneTtsVoiceOption> {
         val current = synchronized(lock) {
             engine.takeIf { state == State.READY }
         } ?: return emptyList()
         return runCatching {
             current.voices.orEmpty()
                 .asSequence()
-                .filter { it.locale == locale }
+                .filter { locale == null || matchesTtsLanguage(it.locale, locale) }
                 .map {
                     PhoneTtsVoiceOption(
                         name = it.name,
                         locale = it.locale,
                         quality = it.quality,
                         needsNetwork = it.isNetworkConnectionRequired,
+                        isInstalled = TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED !in it.features.orEmpty(),
                     )
                 }
                 .toList()
@@ -327,7 +333,14 @@ internal class PhoneTtsEngine private constructor(
     ): PhoneTtsSpeakResult {
         val storedVoiceName = runCatching(settings::voiceName).getOrNull()
         val selectedVoice = storedVoiceName?.let { name ->
-            runCatching { current.voices.orEmpty().firstOrNull { it.name == name } }.getOrNull()
+            runCatching {
+                current.voices.orEmpty().firstOrNull {
+                    it.name == name && matchesTtsLanguage(it.locale, locale)
+                }
+            }.getOrNull()
+        }
+        if (selectedVoice != null && TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED in selectedVoice.features.orEmpty()) {
+            return PhoneTtsSpeakResult.LANGUAGE_UNAVAILABLE
         }
         if (selectedVoice == null) {
             runCatching { current.defaultVoice }

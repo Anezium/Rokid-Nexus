@@ -28,6 +28,9 @@ internal object SelfArmSessionCommand {
         return buildString {
             appendCommonVariables()
             appendLine("pm grant \"\$PKG\" android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1 || true")
+            // Best effort: the glasses file explorer works without it, just limited to what scoped
+            // storage shows an ordinary app.
+            appendLine("appops set \"\$PKG\" MANAGE_EXTERNAL_STORAGE allow >/dev/null 2>&1 || true")
             appendAccessibilityRepair()
             appendLine("printf '%s' '$encodedWatchdog' | base64 -d > \"\$WATCHDOG\"")
             appendLine("chmod 700 \"\$WATCHDOG\"")

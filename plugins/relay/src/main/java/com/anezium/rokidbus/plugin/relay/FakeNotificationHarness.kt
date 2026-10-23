@@ -40,6 +40,23 @@ internal object FakeNotificationHarness {
         return post(context)
     }
 
+    fun postReadOnly(context: Context): Boolean {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return false
+        manager.createNotificationChannel(
+            NotificationChannel(FAKE_CHANNEL_ID, "Relay test thread", NotificationManager.IMPORTANCE_HIGH),
+        )
+        val posted = runCatching {
+            manager.notify("relay_fake_read_only", 17_003,
+                Notification.Builder(context, FAKE_CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("Parcel update")
+                    .setContentText("Your parcel is ready to collect. This alert has no reply action.")
+                    .build())
+        }.isSuccess
+        notifyChanged()
+        return posted
+    }
+
     /**
      * A code-shaped thread — which does NOT reproduce Android's redaction.
      *

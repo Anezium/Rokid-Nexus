@@ -5,6 +5,7 @@ import android.media.AudioAttributes
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
+import com.anezium.rokidbus.shared.TtsSpeakRequest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -25,6 +26,7 @@ class PhoneTtsEngineTest {
             .edit()
             .remove(PhoneTtsSettingsStore.KEY_SPEECH_RATE)
             .remove(PhoneTtsSettingsStore.KEY_VOICE_NAME)
+            .remove(PhoneTtsSettingsStore.KEY_LANGUAGE_TAG)
             .commit()
     }
 
@@ -115,6 +117,72 @@ class PhoneTtsEngineTest {
     }
 
     @Test
+    fun `voice from another language cannot override an explicit request locale`() {
+        val russian = voice("russian.voice", Locale.forLanguageTag("ru-RU"))
+        PhoneTtsSettingsStore(context).setVoiceName(russian.name)
+        val backend = FakePhoneTtsBackend(voices = linkedSetOf(russian))
+        val engine = PhoneTtsEngine(context, backend)
+
+        assertEquals(PhoneTtsSpeakResult.ACCEPTED, engine.speak("plugin-id", "Hello", Locale.US))
+
+        assertTrue(backend.selectedVoices.isEmpty())
+        assertEquals(listOf(Locale.US), backend.languages)
+    }
+
+    @Test
+    fun `voices include regional variants and report missing downloads`() {
+        val russian = voice("russian.voice", Locale.forLanguageTag("ru-RU"))
+        val missing = Voice("missing.voice", Locale.forLanguageTag("ru-RU"), Voice.QUALITY_NORMAL,
+            Voice.LATENCY_NORMAL, false, setOf(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED))
+        val english = voice("english.voice", Locale.US)
+        val backend = FakePhoneTtsBackend(voices = linkedSetOf(russian, missing, english))
+        val engine = PhoneTtsEngine(context, backend)
+
+        val voices = engine.availableVoices(Locale.forLanguageTag("ru"))
+
+        assertEquals(listOf("russian.voice", "missing.voice"), voices.map { it.name })
+        assertEquals(listOf(true, false), voices.map { it.isInstalled })
+        assertEquals(3, engine.availableVoices(null).size)
+        PhoneTtsSettingsStore(context).setVoiceName(missing.name)
+        assertEquals(PhoneTtsSpeakResult.LANGUAGE_UNAVAILABLE,
+            engine.speak("plugin-id", "Привет", Locale.forLanguageTag("ru-RU")))
+        assertTrue(backend.spokenUtterances.isEmpty())
+    }
+
+    @Test
+    fun `a missing language is reported without speaking in another language`() {
+        val backend = FakePhoneTtsBackend(languageResult = TextToSpeech.LANG_MISSING_DATA)
+        val engine = PhoneTtsEngine(context, backend)
+
+        assertEquals(PhoneTtsSpeakResult.LANGUAGE_UNAVAILABLE,
+            engine.speak("plugin-id", "Привет", Locale.forLanguageTag("ru-RU")))
+
+        assertTrue(backend.spokenUtterances.isEmpty())
+    }
+
+    @Test
+    fun `Russian preference is used by plugin speech and preview on an English phone`() {
+        val russian = Locale.forLanguageTag("ru-RU")
+        val settings = PhoneTtsSettingsStore(context)
+        settings.setLanguageTag("ru-RU")
+        val backend = FakePhoneTtsBackend(voices = linkedSetOf(voice("russian.voice", russian)))
+        val engine = PhoneTtsEngine(context, backend)
+        val playback = PhoneTtsPlayback(
+            output = engine,
+            defaultLocale = { settings.speechLocale(Locale.US) },
+            engineId = { "engine-id" },
+            emitStarted = { _, _ -> },
+            emitDone = {},
+        )
+
+        playback.speak(TtsSpeakRequest("plugin-id", "Привет", ownerPluginId = "assistant"))
+        backend.done("engine-id")
+        assertTrue(playback.speakSample("Вот как я буду читать ваши ответы.", settings.speechLocale(Locale.US)))
+
+        assertEquals(listOf(russian, russian), backend.languages)
+    }
+
+    @Test
     fun `available voices is empty until ready and maps matching locale without sorting`() {
         val unready = PhoneTtsEngine(context) {}
         assertTrue(unready.availableVoices(Locale.US).isEmpty())
@@ -177,14 +245,19 @@ class PhoneTtsEngineTest {
     private class FakePhoneTtsBackend(
         override val voices: Set<Voice>? = emptySet(),
         override val defaultVoice: Voice? = null,
+        private val languageResult: Int = TextToSpeech.LANG_AVAILABLE,
     ) : PhoneTtsBackend {
         private lateinit var listener: UtteranceProgressListener
         val speechRates = mutableListOf<Float>()
+        val languages = mutableListOf<Locale>()
         val selectedVoices = mutableListOf<Voice>()
         val spokenUtterances = mutableListOf<SpokenUtterance>()
         val silentUtterances = mutableListOf<SilentUtterance>()
 
-        override fun setLanguage(locale: Locale): Int = TextToSpeech.LANG_AVAILABLE
+        override fun setLanguage(locale: Locale): Int {
+            languages += locale
+            return languageResult
+        }
 
         override fun setSpeechRate(rate: Float): Int {
             speechRates += rate

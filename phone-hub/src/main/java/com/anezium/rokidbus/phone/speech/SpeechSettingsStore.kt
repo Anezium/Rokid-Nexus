@@ -53,7 +53,7 @@ class SpeechSettingsStore(context: Context) {
 
     /**
      * Cloud engines cover the whole language set through provider codes or prompts. The Android
-     * recognizer only auto-detects, so it runs on [TranscriptionLanguage.AUTO] whatever is stored.
+     * recognizer runs on [TranscriptionLanguage.AUTO], leaving language selection to its engine.
      * Pure on purpose: the stored preference stays untouched so switching back to a cloud engine
      * restores the user's language. The settings screen disables the language grid instead.
      */

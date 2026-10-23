@@ -274,6 +274,20 @@ class MainActivity : Activity() {
                 },
                 NexusUi.block(),
             )
+            previousCard = true
+        }
+        if (glassesControlsVisibility.isFilesVisible()) {
+            if (previousCard) section.addView(BusTheme.gap(this, 9))
+            section.addView(
+                NexusUi.navCard(
+                    this,
+                    "Glasses files",
+                    "Send books and files to the glasses, and copy theirs back.",
+                ) {
+                    startActivity(Intent(this, GlassesFilesActivity::class.java))
+                },
+                NexusUi.block(),
+            )
         }
         section.addView(BusTheme.gap(this, 22))
     }

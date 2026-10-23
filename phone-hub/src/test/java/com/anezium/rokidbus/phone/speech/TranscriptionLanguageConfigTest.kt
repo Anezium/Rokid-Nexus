@@ -9,6 +9,17 @@ import org.junit.Test
 
 class TranscriptionLanguageConfigTest {
     @Test
+    fun russianUsesProviderCodesAndAnAndroidLocaleTag() {
+        val language = TranscriptionLanguage.fromId("ru")
+
+        assertSame(TranscriptionLanguage.RUSSIAN, language)
+        assertEquals("ru", language.openAiCode)
+        assertEquals("ru", language.elevenLabsCode)
+        assertEquals("ru-RU", language.azureLocale)
+        assertEquals(listOf("ru-RU"), language.androidTagChain())
+    }
+
+    @Test
     fun unknownLanguageFallsBackToAutoAndKnownIdsRoundTrip() {
         assertSame(TranscriptionLanguage.AUTO, TranscriptionLanguage.fromId(null))
         assertSame(TranscriptionLanguage.AUTO, TranscriptionLanguage.fromId("unknown"))

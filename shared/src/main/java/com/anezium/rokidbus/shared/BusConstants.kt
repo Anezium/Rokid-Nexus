@@ -291,18 +291,24 @@ object BusCapabilityBits {
     const val EDITABLE_SURFACE = 1 shl 11
     const val ACTIVITY_EXTRAS = 1 shl 12
 
-    // 1 shl 13 is deliberately left unallocated: an unshipped development build used it for an
-    // activity map widget, and a glasses build from that branch must never have its bit misread.
+    /** Glasses only: the hub serves the private `/core/files` explorer routes. */
+    const val GLASSES_FILES = 1 shl 13
+
+    /** Glasses only: the explorer can move a transfer's bytes over a Wi-Fi lane. */
+    const val GLASSES_FILES_LANE = 1 shl 14
+
+    /** Phone-hosted fast file lanes when no shared Wi-Fi lane is available. */
+    const val GLASSES_FILES_HOTSPOT = 1 shl 15
 
     /**
      * The launcher bundle of [LauncherInteractiveContract]: interactive activities, typed and quick
      * actions, the conversation, media and route page bodies, notice destinations and withdrawal.
      * Exposed to plugins only when both hubs negotiated it, like [ACTIVITY_EXTRAS].
      */
-    const val LAUNCHER_INTERACTIVE = 1 shl 14
+    const val LAUNCHER_INTERACTIVE = 1 shl 16
 
     /** Rendered map feedback v1 AND in-map attribution, negotiated through both hubs. */
-    const val RENDERED_MAP = 1 shl 15
+    const val RENDERED_MAP = 1 shl 17
 }
 
 object LinkStateBits {

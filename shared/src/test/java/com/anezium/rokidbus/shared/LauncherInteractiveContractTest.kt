@@ -10,12 +10,16 @@ import org.junit.Test
 
 class LauncherInteractiveContractTest {
     @Test
-    fun `the bundle takes bit 14 and leaves bit 13 unallocated`() {
-        assertEquals(1 shl 14, BusCapabilityBits.LAUNCHER_INTERACTIVE)
+    fun `the bundle and rendered maps sit above the released files bits`() {
+        assertEquals(1 shl 16, BusCapabilityBits.LAUNCHER_INTERACTIVE)
+        assertEquals(1 shl 17, BusCapabilityBits.RENDERED_MAP)
+        // Released 1.8 hubs already announce these; a peer must never read them as launcher bits.
+        assertEquals(1 shl 13, BusCapabilityBits.GLASSES_FILES)
+        assertEquals(1 shl 14, BusCapabilityBits.GLASSES_FILES_LANE)
+        assertEquals(1 shl 15, BusCapabilityBits.GLASSES_FILES_HOTSPOT)
         val bits = BusCapabilityBits::class.java.declaredFields
             .filter { Modifier.isStatic(it.modifiers) && it.type == Int::class.javaPrimitiveType }
             .map { it.isAccessible = true; it.getInt(null) }
-        assertFalse("1 shl 13 is reserved for the unshipped widget branch", (1 shl 13) in bits)
         assertEquals("every feature bit is distinct", bits.size, bits.toSet().size)
     }
 

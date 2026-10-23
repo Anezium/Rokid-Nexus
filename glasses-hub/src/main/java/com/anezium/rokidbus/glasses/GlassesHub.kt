@@ -6,11 +6,14 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.Process
+import android.os.SystemClock
 import android.provider.Settings
 import com.anezium.rokidbus.client.IBusCallback
 import com.anezium.rokidbus.client.IBusService
@@ -38,6 +41,7 @@ import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.ink.InkWire
 import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.GlassesFilesContract
 import com.anezium.rokidbus.shared.NativeAppContract
 import com.anezium.rokidbus.shared.PhoneHubCapabilities
 import com.anezium.rokidbus.shared.PhoneHubCapabilitiesContract
@@ -56,8 +60,11 @@ import com.anezium.rokidbus.shared.WirelessAdbContract
 import com.anezium.rokidbus.shared.WirelessAdbReply
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.plugin.PathRules
+import com.anezium.rokidbus.shared.GlassesFilesHotspotPolicy
+import com.anezium.rokidbus.shared.GlassesFilesRequest
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.Inet4Address
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
@@ -103,6 +110,11 @@ object GlassesHub {
     private val registrations = CopyOnWriteArrayList<Registration>()
     private val launcherListeners = CopyOnWriteArrayList<(List<LauncherEntry>) -> Unit>()
     private val pluginGlyphCache = PluginGlyphCache()
+    @Volatile private var filesHotspotBatch: String? = null
+    private var filesHotspotLease: GlassesFilesHotspotJoin.Lease? = null
+    private val filesHotspotCleanup = GlassesFilesHotspotCleanup()
+    @Volatile private var filesHotspotTouchedAt = 0L
+    @Volatile private var phoneFilesHotspotSupported = false
     @Volatile private var wifiOwnership: GlassesWifiOwnership? = null
     // A lambda, not a method reference: the :camera process also loads this object, and a
     // reference would drag MediaSyncEngine's class init (and its executor thread) in with it.
@@ -112,6 +124,8 @@ object GlassesHub {
             wifiRequestExecutor.execute {
                 if (active) {
                     cancelPendingWifiDisable("camera_session_opened")
+                    GlassesFilesService.onCameraStarted()
+                    filesHotspotBatch?.let { endFilesHotspot(context, it) }
                 } else {
                     reconcileWifiOwnership(
                         context = context,
@@ -130,6 +144,9 @@ object GlassesHub {
     }
     private val setupCapabilitiesExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "RokidNexusSetupCapabilities").apply { isDaemon = true }
+    }
+    private val filesHotspotCleanupExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "RokidNexusFilesCleanup").apply { isDaemon = true }
     }
     private val wirelessAdbExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "RokidNexusWirelessAdb").apply { isDaemon = true }
@@ -227,7 +244,11 @@ object GlassesHub {
             // launcher's boot auto-open — making this the reliable re-arm hook.
             AccessibilityRearmWatcher.start(context.applicationContext, "hub_start")
             MediaSyncEngine.start(context.applicationContext)
+            GlassesFilesService.start(context.applicationContext)
             requestWifiOwnershipReconciliation(applicationContext, "hub_start")
+            filesHotspotCleanupExecutor.execute {
+                SelfArmCommandBridgeClient.cleanupFilesNetworks(applicationContext)
+            }
         }
     }
 
@@ -288,7 +309,15 @@ object GlassesHub {
 
     fun onRemoteEnvelope(envelope: BusEnvelope) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
-        log("remote RX ${envelope.path} id=${envelope.id}")
+        // File chunks arrive dozens per second; the SPP reader already logs each frame.
+        if (envelope.path != GlassesFilesContract.DATA_PATH) log("remote RX ${envelope.path} id=${envelope.id}")
+        if (GlassesFilesContract.isFilesPath(envelope.path)) {
+            // A user-driven transfer is foreign traffic to photo sync, which backs off around it.
+            MediaSyncEngine.trafficMonitor.note(envelope.path)
+            // Anything else in the subtree is dropped here, never handed to local subscribers.
+            if (!GlassesFilesService.handle(envelope)) log("files route dropped path=${envelope.path}")
+            return
+        }
         // Page answers go to the session alone, before any generic route; no plugin subscribes to them.
         if (PathRules.isPagePath(envelope.path)) {
             if (envelope.binary == null) {
@@ -769,6 +798,9 @@ object GlassesHub {
                 BusCapabilityBits.ACTIVITY_EXTRAS or
                 BusCapabilityBits.INK_SURFACE or
                 BusCapabilityBits.EDITABLE_SURFACE or
+                BusCapabilityBits.GLASSES_FILES or
+                BusCapabilityBits.GLASSES_FILES_LANE or
+                BusCapabilityBits.GLASSES_FILES_HOTSPOT or
                 BusCapabilityBits.LAUNCHER_INTERACTIVE or
                 BusCapabilityBits.RENDERED_MAP or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
@@ -819,6 +851,11 @@ object GlassesHub {
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
+        if (GlassesFilesContract.isFilesPath(envelope.path)) {
+            // Explorer traffic only ever comes from the phone hub over the transport.
+            log("blocked local file explorer send uid=$senderUid")
+            return
+        }
         val allowed = senderUid == Process.myUid() ||
             (isDebuggableBuild() && registrations.any { it.uid == senderUid })
         if (!allowed) {
@@ -1360,6 +1397,8 @@ object GlassesHub {
         // CXR is enough for control JSON, but every photo session needs the SPP data plane. Using
         // the aggregate CXR-or-SPP state loses the rising edge when SPP returns while CXR stayed up.
         MediaSyncEngine.onLinkStateChanged(MediaSyncLinkPolicy.isDataPlaneUp(state))
+        GlassesFilesService.onLinkStateChanged(MediaSyncLinkPolicy.isDataPlaneUp(state))
+        if (state == 0) filesHotspotBatch?.let(::releaseFilesHotspot)
         registrations.forEach { registration ->
             runCatching { registration.callback.onLinkState(state) }
                 .onFailure { removeRegistration(registration) }
@@ -1473,6 +1512,7 @@ object GlassesHub {
         val released = launcherBundleHeldThroughLoss()
         val advertised = PhoneHubCapabilitiesContract.parse(payload)
         remoteRenderedMaps = RenderedMapContract.negotiated(advertised.features, BusCapabilityBits.RENDERED_MAP)
+        phoneFilesHotspotSupported = advertised.features and BusCapabilityBits.GLASSES_FILES_HOTSPOT != 0
         val next = PhoneHubCapabilitiesContract.create(
             features = supportedPhoneCapabilities(advertised.features),
             cameraConsumerName = advertised.cameraConsumerName,
@@ -1550,6 +1590,7 @@ object GlassesHub {
 
     private fun clearRemotePhoneCapabilities() {
         val previous = remotePhoneCapabilities
+        phoneFilesHotspotSupported = false
         remotePhoneCapabilities = PhoneHubCapabilities(0, null)
         if (cameraLauncherEntry(previous) != null) notifyLauncherEntries()
         if (previous.launcherInteractiveVersion != 0) onLauncherNegotiation(linkLost = true)
@@ -1574,6 +1615,136 @@ object GlassesHub {
         val context = appContext ?: return false
         return context.packageManager.checkSignatures(uid, Process.myUid()) ==
             PackageManager.SIGNATURE_MATCH
+    }
+
+    internal fun joinFilesHotspot(
+        offer: GlassesFilesRequest.HotspotOffer,
+        joined: (java.net.InetAddress?, String?) -> Unit,
+    ) {
+        val context = appContext ?: return joined(null, null)
+        wifiRequestExecutor.execute {
+            if (!phoneFilesHotspotSupported || cameraSessionTracker.isActive()) {
+                joined(null, null)
+                return@execute
+            }
+            val credentials = offer.credentials
+            val security = WifiConnectSecurity.fromCommandKeyword(credentials.security)
+            if (!credentials.isValid() || security == null) {
+                joined(null, null)
+                return@execute
+            }
+            val previousLease = filesWifiLease(context)
+            val previousAddress = previousLease?.address
+            if (previousAddress != null && offer.clientNetwork?.contains(previousAddress.hostAddress.orEmpty()) == true) {
+                joined(null, null)
+                return@execute
+            }
+            val retainedLease = filesHotspotLease.takeIf { filesHotspotBatch == offer.batchId }
+            filesHotspotBatch?.takeIf { it != offer.batchId }?.let { endFilesHotspot(context, it) }
+            if (filesHotspotBatch != offer.batchId) filesHotspotLease = null
+            filesHotspotBatch = offer.batchId
+            touchFilesHotspot()
+            cancelPendingWifiDisable("files_hotspot")
+            wifiEnableReleasePending.set(false)
+            val joinDeadline = SystemClock.elapsedRealtime() + 20_000L
+            handleGlassesWifiRequest(context, offer.batchId, allowAccessibilityFallback = false)
+            var lastAttempt: Long? = null
+            var targetConfirmed = retainedLease != null
+            var address: java.net.InetAddress? = null
+            var gatewayAddress: String? = null
+            while (!cameraSessionTracker.isActive() && SystemClock.elapsedRealtime() < joinDeadline) {
+                val lease = filesWifiLease(context)
+                if (GlassesFilesHotspotJoin.isJoined(targetConfirmed, previousAddress, lease, offer.clientNetwork, retainedLease)) {
+                    filesHotspotLease = lease
+                    address = lease?.address
+                    gatewayAddress = lease?.gateway?.hostAddress
+                    break
+                }
+                val now = SystemClock.elapsedRealtime()
+                if (GlassesFilesHotspotJoin.shouldConnect(now, joinDeadline, lastAttempt)) {
+                    lastAttempt = now
+                    targetConfirmed = runCatching {
+                        SelfArmCommandBridgeClient.connectWifiNetwork(context, credentials.ssid,
+                            credentials.passphrase, security,
+                            timeoutMs = joinDeadline - now,
+                            joined = {
+                                cameraSessionTracker.isActive() || GlassesFilesHotspotJoin.isJoined(
+                                    true, previousAddress, filesWifiLease(context), offer.clientNetwork, retainedLease)
+                            },
+                            onSubmitted = { filesHotspotCleanup.onConnectSubmitted(offer.batchId) },
+                            requireTargetConfirmation = true)
+                    }.getOrDefault(false)
+                    continue
+                }
+                Thread.sleep(100L)
+            }
+            joined(address, gatewayAddress)
+            wifiRequestExecutor.schedule({ expireFilesHotspot(offer.batchId) },
+                GlassesFilesHotspotPolicy.IDLE_MS, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    private fun filesWifiLease(context: Context): GlassesFilesHotspotJoin.Lease? = runCatching {
+        val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return null
+        @Suppress("DEPRECATION")
+        val network = connectivity.allNetworks.firstOrNull { candidate ->
+            connectivity.getNetworkCapabilities(candidate)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        } ?: return null
+        val properties = connectivity.getLinkProperties(network) ?: return null
+        val address = properties.linkAddresses.map { it.address }.filterIsInstance<Inet4Address>()
+            .firstOrNull { !it.isAnyLocalAddress && !it.isLoopbackAddress && !it.isLinkLocalAddress } ?: return null
+        val gateway = properties.routes.firstOrNull { it.isDefaultRoute && it.gateway is Inet4Address }?.gateway as? Inet4Address
+        GlassesFilesHotspotJoin.Lease(address, gateway)
+    }.getOrNull()
+
+    internal fun touchFilesHotspot() {
+        filesHotspotTouchedAt = SystemClock.elapsedRealtime()
+    }
+
+    private fun expireFilesHotspot(batchId: String) {
+        if (filesHotspotBatch != batchId) return
+        val remaining = GlassesFilesHotspotPolicy.IDLE_MS -
+            (SystemClock.elapsedRealtime() - filesHotspotTouchedAt)
+        if (remaining > 0) {
+            wifiRequestExecutor.schedule({ expireFilesHotspot(batchId) }, remaining, TimeUnit.MILLISECONDS)
+        } else {
+            releaseFilesHotspot(batchId)
+        }
+    }
+
+    internal fun releaseFilesHotspot(batchId: String) {
+        val context = appContext ?: return
+        wifiRequestExecutor.execute { endFilesHotspot(context, batchId) }
+    }
+
+    private fun endFilesHotspot(context: Context, batchId: String) {
+        if (filesHotspotBatch != batchId) return
+        val lease = filesHotspotLease
+        filesHotspotBatch = null
+        filesHotspotLease = null
+        filesHotspotCleanup.finish(batchId, reconcile = {
+            // The batch already spent its idle grace; the shared owner still protects camera/setup.
+            reconcileWifiOwnership(context, "files_hotspot_release", cameraGraceRequested = false,
+                cameraGraceSatisfied = true)
+        }, forget = {
+            val deadline = SystemClock.elapsedRealtime() + GlassesFilesHotspotCleanup.WAIT_MS
+            filesHotspotCleanupExecutor.schedule({ forgetFilesHotspot(context, lease, deadline) },
+                2_000L, TimeUnit.MILLISECONDS)
+        })
+        filesHotspotCleanupExecutor.execute { SelfArmCommandBridgeClient.cleanupFilesNetworks(context) }
+    }
+
+    private fun forgetFilesHotspot(context: Context, lease: GlassesFilesHotspotJoin.Lease?, deadline: Long) {
+        val radioOff = runCatching { !context.getSystemService(WifiManager::class.java).isWifiEnabled }.getOrDefault(false)
+        if (!radioOff && lease != null && filesWifiLease(context) == lease) {
+            if (SystemClock.elapsedRealtime() < deadline) {
+                filesHotspotCleanupExecutor.schedule({ forgetFilesHotspot(context, lease, deadline) },
+                    500L, TimeUnit.MILLISECONDS)
+            } else log("files hotspot forget applied=false")
+            return
+        }
+        val applied = runCatching { SelfArmCommandBridgeClient.cleanupFilesNetworks(context) }.getOrDefault(false)
+        log("files hotspot forget applied=$applied")
     }
 
     private fun scheduleGlassesWifiDisable(context: Context, trigger: String) {
@@ -1603,7 +1774,7 @@ object GlassesHub {
         if (cancelled) log("glassesWifiGrace cancelled trigger=$trigger")
     }
 
-    private fun handleGlassesWifiRequest(context: Context, sessionId: String) {
+    private fun handleGlassesWifiRequest(context: Context, sessionId: String, allowAccessibilityFallback: Boolean = true) {
         SelfArmBootRepairCoordinator.revokeWifiObligation("camera_request")
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         if (wifiManager == null) {
@@ -1627,7 +1798,7 @@ object GlassesHub {
                     .getOrDefault(false)
                 // Camera-owned Wi-Fi acquisition must not start the onboarding-only
                 // wireless-debugging bootstrap; it gets only the Wi-Fi toggle mode.
-                applied || attemptWifiAccessibilityEnable(context)
+                applied || (allowAccessibilityFallback && attemptWifiAccessibilityEnable(context))
             },
         )
         log("glassesWifiRequest enabled=true hubOwned=${result.hubOwned} applied=${result.applied}")
@@ -1712,6 +1883,7 @@ object GlassesHub {
         cameraGraceSatisfied: Boolean = false,
     ) {
         val ownership = wifiOwnership ?: return
+        if (filesHotspotBatch != null) return
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         val wifiEnabled = wifiManager?.let { manager ->
             runCatching { manager.isWifiEnabled }

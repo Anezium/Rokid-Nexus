@@ -157,7 +157,7 @@ class RelayPagesAccessTest {
 
         // What the settings switch does.
         RelaySettings(app).setEnabled(false)
-        NotificationControl.refreshFromSettings()
+        NotificationControl.refreshFromSettings(app)
         RelayHubFixture.idleFor(1_000)
 
         assertEquals(0, rows(answersFor(RelayPages.MAIN).last()))

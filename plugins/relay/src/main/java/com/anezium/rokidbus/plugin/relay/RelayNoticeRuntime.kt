@@ -66,6 +66,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private var pendingShowWasBlocked = false
     private var currentReply: ReplyRepository.PendingReply? = null
     private var currentTranscript: String? = null
+    private var replyHandedOff = false
     private var activeNotice = false
     private var showGeneration = 0
     private var speechGeneration = 0
@@ -108,6 +109,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private var withdrawalWindowGeneration = 0
 
     fun show(reply: ReplyRepository.PendingReply) = onMain {
+        if (!ReplyRepository.isActive(reply.id) || !settings.admits(reply.content.packageName, reply.canReply)) return@onMain
         // The inbox owns the bus while it is open, and it is already showing
         // this conversation — the capture reached the repository before us.
         if (NotificationControl.inboxOpen) {
@@ -146,6 +148,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         currentTranscript = null
         authorityLost = false
         countdownUnseen = false
+        replyHandedOff = false
         pendingShow = reply
         pendingShowStartedAtMs = nowMs
         pendingShowWasBlocked = false
@@ -192,6 +195,9 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             if (pendingShow?.id == id) closeClient()
             return@onMain
         }
+        // Apps commonly remove their notification as soon as a reply is handed off; the band
+        // finishes saying so instead of turning into "reply unavailable".
+        if (replyHandedOff) return@onMain
         authorityLost = true
         cancelSendCountdown()
         when {
@@ -208,10 +214,26 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
      * countdown stops for good and kept words say they cannot be sent from here.
      */
     fun onReplyAuthorityLost(id: String) = onMain {
-        if (currentReply?.id != id || !activeNotice) return@onMain
+        if (currentReply?.id != id || !activeNotice || replyHandedOff) return@onMain
         authorityLost = true
         cancelSendCountdown()
         if (!currentTranscript.isNullOrBlank()) queueReplyUnavailable()
+    }
+
+    private fun finishInvalidatedNotice() {
+        val deferred = deferredShow
+        shutdown()
+        if (deferred != null) show(deferred)
+    }
+
+    /** A source app turned Off, or its read-only alerts no longer admitted, ends its band. */
+    fun onSettingsChanged() = onMain {
+        fun allowed(reply: ReplyRepository.PendingReply): Boolean =
+            ReplyRepository.isActive(reply.id) && settings.admits(reply.content.packageName, reply.canReply)
+        if (deferredShow?.let { !allowed(it) } == true) deferredShow = null
+        if (currentReply?.let {
+                !settings.admits(it.content.packageName, it.canReply) || (!replyHandedOff && !allowed(it))
+            } == true) finishInvalidatedNotice()
     }
 
     override fun onOpen() = Unit
@@ -358,6 +380,10 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
 
     private fun tryShowPending() {
         val reply = pendingShow ?: return
+        if (!ReplyRepository.isActive(reply.id) || !settings.admits(reply.content.packageName, reply.canReply)) {
+            closeClient()
+            return
+        }
         val nowMs = SystemClock.elapsedRealtime()
         if (isReplayWindowExpired(pendingShowStartedAtMs, nowMs)) {
             abandonPendingShow(nowMs)
@@ -406,14 +432,15 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             // for the same reason the character trim drops from the top.
             lines = lines,
             footer = reply.footer.takeIf(String::isNotBlank),
-            actions = if (hidden) HIDDEN_ACTIONS else INITIAL_ACTIONS,
+            actions = arrivalActions(hidden, ReplyRepository.contains(reply.id)),
             image = image?.takeIf { currentClient.supportsImageSurface },
             wakeDisplay = true,
             backdrop = settings.noticeBackdrop(),
             ttlMs = noticeTtlMs(settings.noticeDisplaySeconds(), settings.noticeScalesWithLength(), shownCharacterCount),
             destination = if (launcher) NexusPageDestination(RelayPages.threadPageId(reply.id)) else null,
             eventKey = if (launcher) reply.id else null,
-            conversation = launcher,
+            // A read-only alert still opens its thread page, but it is not a message awaiting reply.
+            conversation = launcher && reply.canReply,
         )
         val result = if (notice.image != null && preview != null) {
             currentClient.showNotice(notice, preview.bytes)
@@ -523,7 +550,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
 
     private fun startListening() {
         val currentClient = client ?: return
-        if (!activeNotice || currentReply == null) return
+        if (!activeNotice || currentReply?.id?.let(ReplyRepository::contains) != true) return
         invalidateSpeech()
         hideTypingSurface()
         currentTranscript = null
@@ -642,7 +669,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
      */
     private fun startTyping() {
         val currentClient = client ?: return
-        if (!activeNotice || currentReply == null) return
+        if (!activeNotice || currentReply?.id?.let(ReplyRepository::contains) != true) return
         if (!currentClient.supportsEditableSurface) {
             // An older glasses hub shows the card fine but silently ignores the
             // `editable` field on it — there would be nothing wrong-looking to
@@ -767,6 +794,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         when (val result = ReplyRepository.sendReply(appContext, reply.id, transcript)) {
             ReplySendResult.Sent -> {
                 currentTranscript = null
+                replyHandedOff = true
                 // Confirm it, then take it away. The exchange is over: the band has
                 // nothing left to say and nothing left to ask, and an answered band
                 // that lingers claims no input while it sits there, so every tap the
@@ -966,10 +994,12 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         // An update restarts the band's TTL, so the wearer gets the full reading
         // time after tapping Show. Images are not revealed by Show — updates
         // cannot carry image bytes — so a hidden image stays hidden.
+        // Show has already spent the answer. A read-only reveal must leave both
+        // interaction fields absent so the hub keeps the chip hidden.
         queueEssential(
             NexusNoticeUpdate(
                 lines = messageLines(reply.content.renderedText),
-                actions = INITIAL_ACTIONS,
+                actions = arrivalActions(hidden = false, canReply = ReplyRepository.contains(reply.id)),
                 ttlMs = noticeTtlMs(
                     settings.noticeDisplaySeconds(),
                     settings.noticeScalesWithLength(),
@@ -1114,6 +1144,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         currentTranscript = null
         authorityLost = false
         countdownUnseen = false
+        replyHandedOff = false
         activeNotice = false
         // Only the band's own hold: an inbox or a page on the same client keeps it.
         RelayBus.releaseNotice()
@@ -1287,12 +1318,11 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         val INITIAL_ACTIONS = listOf(
             NexusNoticeAction(ACTION_REPLY, "reply", "Reply"),
         )
-        // Hiding the text must not turn the band into a dead end: Show is the
-        // wearer saying "now is fine", and Reply stays one tap away either way.
-        val HIDDEN_ACTIONS = listOf(
-            NexusNoticeAction(ACTION_SHOW, "show", "Show"),
-            NexusNoticeAction(ACTION_REPLY, "reply", "Reply"),
-        )
+
+        fun arrivalActions(hidden: Boolean, canReply: Boolean): List<NexusNoticeAction> = buildList {
+            if (hidden) add(NexusNoticeAction(ACTION_SHOW, "show", "Show"))
+            if (canReply) addAll(INITIAL_ACTIONS)
+        }
         /**
          * The same two answers the inbox offers, for the same reasons.
          *

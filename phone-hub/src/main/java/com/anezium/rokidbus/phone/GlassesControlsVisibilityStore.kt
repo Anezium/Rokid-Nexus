@@ -30,11 +30,18 @@ class GlassesControlsVisibilityStore private constructor(
         preferences.edit().putBoolean(KEY_NATIVE_APPS, visible).apply()
     }
 
+    fun isFilesVisible(): Boolean = preferences.getBoolean(KEY_FILES, true)
+
+    fun setFilesVisible(visible: Boolean) {
+        preferences.edit().putBoolean(KEY_FILES, visible).apply()
+    }
+
     /** The section header and its trailing gap only earn their space if a card follows. */
-    fun isSectionVisible(): Boolean = isRemoteVisible() || isNativeAppsVisible()
+    fun isSectionVisible(): Boolean = isRemoteVisible() || isNativeAppsVisible() || isFilesVisible()
 
     companion object {
         private const val KEY_REMOTE = "glasses_controls_remote_visible"
         private const val KEY_NATIVE_APPS = "glasses_controls_native_apps_visible"
+        private const val KEY_FILES = "glasses_controls_files_visible"
     }
 }

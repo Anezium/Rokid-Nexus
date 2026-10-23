@@ -16,6 +16,7 @@ internal data class RelayInboxSnapshot(
     val appLabel: String,
     val renderedText: String,
     val capturedAtMs: Long,
+    val sourcePackage: String = "",
     val messages: List<RelayMessage> = emptyList(),
     val handoffs: List<RelayHandoff> = emptyList(),
 )
