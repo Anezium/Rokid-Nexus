@@ -1,6 +1,8 @@
 # Changelog — Sample
 
-## Unreleased
+## 1.0.6
+
+The todo activity and its pages need Nexus hubs 1.9.0.
 
 - A todo example for the launcher bundle, through the public SDK only: the
   `hello:main` and `hello:todo` pages, a checklist whose rows carry `checked`

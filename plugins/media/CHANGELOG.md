@@ -1,6 +1,8 @@
 # Changelog — Media Deck
 
-## Unreleased
+## 1.0.4
+
+The activity and its page need Nexus hubs 1.9.0; with older hubs Media Deck behaves like 1.0.3.
 
 - A "Which player?" choice made through Assistant reaches only that player for that call
   and leaves the surface, the activity and the page as they were.

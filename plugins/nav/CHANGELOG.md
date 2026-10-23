@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+Street maps and render feedback need Nexus hubs 1.9.0; older hubs keep route-only guidance.
 
 - Street map. A walking route's maps now draw the real streets around it,
   from OpenStreetMap vector tiles the phone downloads only for the maps on

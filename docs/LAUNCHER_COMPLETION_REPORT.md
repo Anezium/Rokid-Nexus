@@ -19,6 +19,31 @@ Authorities: `plans/028-launcher-completion.md` (scope), `docs/LAUNCHER_INTERACT
 (product decisions), `plans/028a-launcher-contract.md` (frozen implementation contract),
 `BUSSPEC.md` (wire), `docs/PLUGIN_SDK.md` (typed API), r17 mockup (`docs/mockups/glasses-home/`).
 
+## Current status (2026-10-23)
+
+This section supersedes the status paragraphs above, which are kept as history.
+
+- **Integrated with main.** `origin/main` at `a66f55e1` (Nexus 1.8.1, Relay 1.3.0, the
+  `/core/files` explorer, independent speech languages) is merged into `dev/launcher-rework`. The
+  launcher bundle moved to feature bit 16 and rendered maps to bit 17, because bits 13-15 shipped
+  first in 1.8 as the files, lane and hotspot bits. Relay was merged by meaning: per-app policies,
+  read-only alerts, echo suppression, the final-send policy check, pending eviction and the redacted
+  image gate sit beside thread pages, handoffs and withdrawals.
+- **Fixed after three fresh independent reviews** (GPT-6.1 Sol, GPT-6 Astra, Claude Fable 5.1, all
+  on `d005b069`): the 24-hour display bound now holds on frozen roots, covered roots, aggregates,
+  named notice pages and after a wake; explicit LEGACY no longer selects guidance islands from live
+  geometry; a newer revision of unchanged route geometry rebinds its rendered-map context; a withdraw
+  can ask the glasses to forget an event, which Relay sends when an app is turned Off, Relay is
+  switched off or its notification access is revoked; foreground window walks are coalesced per
+  burst; the owner's station and stop names were removed from device notes and fixtures.
+- **Versions prepared, not released.** Hubs 1.9.0 (10900), Relay 1.4.0 (15), Navigation 0.3.0 (4),
+  Media Deck 1.0.4 (5), Sample 1.0.6 (7); SDK notes for 0.24.0 are in `CHANGELOG.md`. The SDK
+  dependency pins in `README.md` and the SDK guide stay on `sdk-v0.23.0` until that tag exists.
+  This replaces release gate F3 below.
+- **Still open.** Hardware acceptance beyond the bounded 2026-10-18 smoke and the 2026-10-23 device
+  pass (see the device reports); the review nits A6-A12; withdrawals queued on a phone that dies are
+  still lost (purges are durable).
+
 Paths below are abbreviated: `G/` = `glasses-hub/src/main/java/com/anezium/rokidbus/glasses/`,
 `P/` = `phone-hub/src/main/java/com/anezium/rokidbus/phone/`, `S/` =
 `shared/src/main/java/com/anezium/rokidbus/shared/`, `B/` =

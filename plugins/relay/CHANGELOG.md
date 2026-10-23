@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.4.0
+
+Needs Nexus hubs 1.9.0 for the launcher pages; with older hubs Relay 1.4.0
+behaves like 1.3.0.
+
+- Read-only alerts from apps set to All open as a conversation page without
+  Send, never as a message awaiting your reply.
+- Turning an app Off, switching Relay off or revoking its notification access
+  also clears what the glasses' notification history showed of it.
 
 - Pages for the glasses' Nexus session, on hubs that support them: the inbox's
   conversations as a list, and each conversation as a document with who said
