@@ -55,8 +55,8 @@ internal object NativeSceneTakeover {
             is JSONObject -> {
                 val keys = report.keys().asSequence().toList()
                 val shown = keys.filter { SHAPE_KEY.matches(it) }.sorted().take(SHAPE_MAX_KEYS)
-                val more = if (keys.size > shown.size) ",+${keys.size - shown.size}" else ""
-                "object{${shown.joinToString(",")}$more}"
+                val more = if (keys.size > shown.size) "+${keys.size - shown.size}" else null
+                "object{${(shown + listOfNotNull(more)).joinToString(",")}}"
             }
             null -> "empty"
             else -> "other"

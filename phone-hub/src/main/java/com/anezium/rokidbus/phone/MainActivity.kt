@@ -89,6 +89,13 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // The "tap to reconnect" notification brings a live task forward without onCreate.
+        if (BusHubService.isCxrClosedByServer() &&
+            savedToken().isNotBlank() &&
+            BusHubService.isEnabled(this)
+        ) {
+            BusHubService.start(this)
+        }
         resumeRecoveredNexusUpdateInstall()
         resumeRecoveredPluginInstall()
         if (::coreControlsSection.isInitialized) rebuildCoreControlsSection()

@@ -5544,6 +5544,8 @@ class BusHubService : Service() {
             }
         }
 
+        internal fun isCxrClosedByServer(): Boolean = activeInstance?.cxrClosedByServer == true
+
         internal fun isPhoneTtsReady(): Boolean =
             activeInstance
                 ?.takeIf { it::phoneTtsDispatcher.isInitialized }

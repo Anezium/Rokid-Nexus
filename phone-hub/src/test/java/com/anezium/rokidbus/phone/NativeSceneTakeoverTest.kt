@@ -57,6 +57,7 @@ class NativeSceneTakeoverTest {
             NativeSceneTakeover.shape("""{"scene":"Navigating to 12 Rue X","phoneCallRunning":true}"""),
         )
         assertEquals("object{a,+1}", NativeSceneTakeover.shape("""{"a":1,"has space":2}"""))
+        assertEquals("object{+1}", NativeSceneTakeover.shape("""{"has space":2}"""))
         assertEquals("other", NativeSceneTakeover.shape("otaRunning"))
         assertEquals("other", NativeSceneTakeover.shape("""{"broken":"""))
     }
