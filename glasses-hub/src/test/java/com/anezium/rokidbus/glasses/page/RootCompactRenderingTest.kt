@@ -80,7 +80,7 @@ class RootCompactRenderingTest {
 
     private val nav = ActivityStop(
         "nav:local", "nav:main", "Waiting GPS", pinned = true, ownerPluginId = "nav", ownerLabel = "Navigation",
-        detail = "Gare de Goussainville…", measure = "1.8 km", updatedAtWallMs = 1, icon = IconRef.Plugin("nav", "map"),
+        detail = "Gare de Fontainebleau…", measure = "1.8 km", updatedAtWallMs = 1, icon = IconRef.Plugin("nav", "map"),
     )
     private val relay = ActivityStop(
         "relay:local", "nexus:activity:relay", "Mika", ownerPluginId = "relay", ownerLabel = "Relay",

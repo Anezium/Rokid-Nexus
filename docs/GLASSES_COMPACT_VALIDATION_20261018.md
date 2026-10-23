@@ -91,9 +91,9 @@ refusal of another GPS test is respected.
 ## Owner-requested Navigation recapture
 
 The owner explicitly requested recapturing the installed Navigation UI. Started a
-new real walking journey to the previously supplied public destination, Gare de
-Goussainville, from the visible phone UI. Precise location was allowed once for
-this bounded test. The phone obtained a sufficient fix and planned a 1.8 km route.
+new real walking journey to a public station chosen by the owner, from the
+visible phone UI. Precise location was allowed once for
+this bounded test. The phone obtained a sufficient fix and planned a short walking route.
 
 Fresh screenshots from the current installed releases now show:
 

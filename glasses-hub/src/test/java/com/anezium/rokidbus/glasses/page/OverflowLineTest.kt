@@ -30,7 +30,7 @@ import java.time.Duration
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class OverflowLineTest {
     private val context = RuntimeEnvironment.getApplication()
-    private val long = "Gare de Goussainville, Val-d'Oise, Île-de-France"
+    private val long = "Gare de Fontainebleau, Essonne-Sud, Île-de-France"
 
     @Test
     fun `the timing holds, travels at a reading pace, holds at the end, then starts again`() {

@@ -119,7 +119,7 @@ internal object NavText {
 
     /**
      * At most [max] characters, cut at a word where one is close, with an ellipsis. A separator
-     * the cut leaves at the end ("Gare de Goussainville,") goes too: it announced a part that is
+     * the cut leaves at the end ("Gare de Fontainebleau,") goes too: it announced a part that is
      * no longer there.
      */
     fun fit(value: String, max: Int): String {

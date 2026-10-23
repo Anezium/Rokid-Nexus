@@ -18,7 +18,7 @@ class NavTextFitTest {
 
     @Test
     fun `a long name is cut at a word and loses the separator the cut leaves`() {
-        assertEquals("Gare de Goussainville…", NavText.fit("Gare de Goussainville, Val-d'Oise", 28))
+        assertEquals("Gare de Fontainebleau…", NavText.fit("Gare de Fontainebleau, Essonne-Sud", 28))
         assertEquals("Place de la République…", NavText.fit("Place de la République - Métro 3", 28))
         assertEquals("Châtelet…", NavText.fit("Châtelet (Les Halles) RER A B D", 12))
     }

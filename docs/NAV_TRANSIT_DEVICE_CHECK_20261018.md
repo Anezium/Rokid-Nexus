@@ -7,8 +7,8 @@ under correction; this is not final acceptance of external transit detail pages.
 
 ## Route-page street map
 
-Started another bounded real walking journey to the owner's public destination,
-Gare de Goussainville. Opened the Navigation activity from the Nexus root and
+Started another bounded real walking journey to a public station chosen
+by the owner. Opened the Navigation activity from the Nexus root and
 waited six seconds on its route page. The actual glasses screenshot
 `build/smoke/shots/nav-current-route-page-streets-verified.png` shows OSM streets,
 the route and position, scale and attribution inside that page.
@@ -25,7 +25,7 @@ established by this test.
 
 Navigation's integrated planner currently requests walking routes. To test its
 existing external transit adapter, opened Google Maps in transit mode toward the
-same station. Selected a bus 1611 itinerary with an initial walk to its stop and
+same station. Selected a local bus itinerary with an initial walk to its stop and
 started Maps' glanceable guidance from its visible Start control. No ticket,
 saved journey, account, clock, mock location or provider setting was changed.
 
@@ -131,7 +131,7 @@ frozen candidate hash and established release certificate again, then installed
 that glasses APK in place with `-r`: Success. Navigation's APK was unchanged; its
 installed SHA-256 still matches the accepted `555122c8...` release.
 
-A new real Maps bus 1611 guidance session posted valid ongoing navigation
+A new real Maps local-bus guidance session posted valid ongoing navigation
 instructions, but Navigation no longer ingested them. Its Android notification
 access remained allowed and its source switches on, while NMS's 19 live listener
 records contained no Navigation listener. An ActivityManager service record alone
@@ -209,9 +209,8 @@ proxy for user 0, and the settings access label is Allowed. This establishes
 connection after replacement installation and foreground entry; it does not
 isolate whether package replacement or requestRebind caused the recovery.
 
-Selected the real Maps transit itinerary to Gare de Goussainville: initial
-four-minute/240-metre walk to Ampere - Chartrel, then bus 1611, scheduled 23:08,
-arrival 23:13. Started glanceable guidance and backgrounded Maps. Unlike the
+Selected a real Maps transit itinerary to that station: a short initial walk
+to a bus stop, then one local bus. Started glanceable guidance and backgrounded Maps. Unlike the
 earlier successful initial-leg test, this attempt retained only an ongoing
 category=status notification with empty title/text. Returning to Maps showed
 its own explicit No GPS signal banner. One further foreground/background check

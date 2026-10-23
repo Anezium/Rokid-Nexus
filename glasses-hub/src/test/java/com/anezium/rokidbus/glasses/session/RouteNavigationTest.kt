@@ -346,7 +346,7 @@ class RouteNavigationTest {
         // and numbers, no geometry, no position. Nothing here was ever a GPS fix.
         val walkToStop = PageBody.Route(
             position = RoutePositionQuality.NONE,
-            maneuver = RouteManeuver("walk", "3 min", street = "Ampère - Chartrel", eta = "22:33"),
+            maneuver = RouteManeuver("walk", "3 min", street = "Place d'Italie", eta = "22:33"),
             facts = listOf(
                 PageFact("measure", "Also", "250 m"),
                 PageFact("detail", "Detail", "Départ à 22:08"),
@@ -359,7 +359,7 @@ class RouteNavigationTest {
         val maneuver = screen.blocks.filterIsInstance<ScreenBlock.Maneuver>().single()
         assertEquals("walk", maneuver.glyph)
         assertEquals("3 min", maneuver.distance)
-        assertEquals("Ampère - Chartrel", maneuver.street)
+        assertEquals("Place d'Italie", maneuver.street)
         assertFalse(maneuver.approximate)
         assertTrue(screen.blocks.none { it is ScreenBlock.Map })
         assertTrue(screen.blocks.filterIsInstance<ScreenBlock.Text>().none { it.key == "gps" })

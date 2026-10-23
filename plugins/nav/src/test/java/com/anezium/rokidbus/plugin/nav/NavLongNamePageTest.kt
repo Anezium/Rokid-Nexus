@@ -18,8 +18,8 @@ import org.junit.Test
  */
 class NavLongNamePageTest {
     private val text = NavPageText(noAccess = "Allow access", off = "Switched off", idle = "Start navigating")
-    private val name = "Gare de Goussainville, Val-d'Oise"
-    private val longer = "Gare de Goussainville, Val-d'Oise, Île-de-France, terminus RER D direction Creil"
+    private val name = "Gare de Fontainebleau, Essonne-Sud"
+    private val longer = "Gare de Fontainebleau, Essonne-Sud, Île-de-France, terminus ligne R direction Montereau"
 
     private fun page(guidance: NavGuidance): PageBody.Route {
         val state = NavPageState(guidance, listenerConnected = true, enabled = true, updatedAt = "12:24", extended = true)
@@ -41,7 +41,7 @@ class NavLongNamePageTest {
             packageName = "com.mapswithme.maps.pro", channelId = "ActiveNavigationChannel", category = "navigation",
             ongoing = true, title = "100 m", text = name,
         ))!!
-        assertEquals("Gare de Goussainville…", guidance.secondary)
+        assertEquals("Gare de Fontainebleau…", guidance.secondary)
         assertBoundedLineAndWholeName(guidance, name)
         assertEquals(name, page(guidance).maneuver!!.street)
     }
@@ -104,6 +104,6 @@ class NavLongNamePageTest {
             secondary = NavText.fit(name, ActivitySurfaceContract.MAX_SECONDARY_CHARS), eta = "12:41", stepKey = "step-1",
         )
         assertNull(guidance.street)
-        assertEquals("Gare de Goussainville…", page(guidance).maneuver!!.street)
+        assertEquals("Gare de Fontainebleau…", page(guidance).maneuver!!.street)
     }
 }

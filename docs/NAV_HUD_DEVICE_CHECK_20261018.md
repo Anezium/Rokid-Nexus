@@ -79,7 +79,7 @@ they may reveal private location or device information.
 ## Owner-requested current Navigation recapture
 
 After the compact release update, the owner explicitly requested a new capture.
-A real 1.8 km route to Gare de Goussainville was started and the current Nexus
+A real short walking route to a public station was started and the current Nexus
 root, text island, OSM minimap, OSM panel and route page were captured. See
 `docs/GLASSES_COMPACT_VALIDATION_20261018.md` for scope, screenshots and cleanup.
 The current minimap/panel have streets, route/position, attribution and clear
