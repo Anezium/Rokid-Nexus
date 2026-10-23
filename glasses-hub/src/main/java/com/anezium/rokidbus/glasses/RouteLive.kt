@@ -82,12 +82,16 @@ internal class RouteLiveState {
     private val headings = mutableMapOf<String, LiveHeading>()
     private var liveOwners = emptySet<String>()
 
-    /** True when [update] replaced what is drawn for [owner]; an older or equal revision is dropped. */
+    /**
+     * True when [update] is accepted for [owner]; an older or equal revision is dropped. A newer
+     * revision of the same geometry counts too: the drawn map must acknowledge the revision the
+     * phone now expects, or its rendered-view lease lapses.
+     */
     fun onGeometry(owner: String, update: ActivityGeometryUpdate): Boolean {
         val current = geometries[owner]
         if (current != null && update.revision <= current.revision) return false
         geometries[owner] = LiveGeometry(update.revision, update.geometry)
-        return current?.geometry != update.geometry
+        return true
     }
 
     /**

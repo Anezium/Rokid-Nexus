@@ -53,6 +53,15 @@ class RouteLiveTest {
     }
 
     @Test
+    fun `a newer revision of the same geometry is accepted so its map acknowledges it`() {
+        val state = RouteLiveState()
+        assertTrue(state.onGeometry("maps", ActivityGeometryUpdate(1, geometry(1))))
+        assertTrue(state.onGeometry("maps", ActivityGeometryUpdate(2, geometry(1))))
+        assertEquals(2L, state.geometryRevision("maps"))
+        assertFalse(state.onGeometry("maps", ActivityGeometryUpdate(2, geometry(1))))
+    }
+
+    @Test
     fun `small heading moves are kept but not redrawn, and a stale heading reads absent`() {
         val state = RouteLiveState()
         assertTrue(state.onHeading("maps", ActivityHeading(100.0, atWallMs = 1), nowMs = 1_000))
