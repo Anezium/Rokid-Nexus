@@ -324,6 +324,21 @@ class ComposerSessionTest {
     }
 
     @Test
+    fun `losing the data plane ends a capture like a link loss, keeping the earlier draft`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        startCapture(CaptureKind.DICTATE, at = 6_000, steps = 1)
+        val id = model.capture!!.captureId
+        compose(ComposeInbound.Partial(ComposeDictatePartial(id, "said while the phone hub died")))
+
+        send(SessionEvent.DataPlaneLost)
+        assertNull(model.capture)
+        assertTrue(effects.any { it is SendCompose })
+        assertEquals("see you", model.draft?.text)
+        assertTrue(effects.none { it is SendAction })
+    }
+
+    @Test
     fun `a withdrawn thread loses its draft's authority until a new notice for it reopens Type`() {
         openThread("t1", at = 1_000)
         dictate("see you", at = 3_000)

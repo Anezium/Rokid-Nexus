@@ -81,7 +81,7 @@ internal class SessionReducer(
             is SessionEvent.SurfaceShown -> onSurfaceShown(model, event)
             is SessionEvent.ProviderInvalidated -> invalidateOwner(model, event.ownerPluginId)
             // Small pages keep working over CXR; nothing is asked again when SPP returns.
-            SessionEvent.DataPlaneLost -> inertProviderFrames(model, UNAVAILABLE_DATA_PLANE) { it.dataPlane }
+            SessionEvent.DataPlaneLost -> endCapture(inertProviderFrames(model, UNAVAILABLE_DATA_PLANE) { it.dataPlane })
             // Unsupported negotiation leaves every provider page inert, with no replay.
             SessionEvent.PageSupportLost -> inertProviderFrames(model, PageSurfaceContract.ERROR_PAGE_UNAVAILABLE) { true }
             SessionEvent.Abort -> abort(model)
@@ -980,6 +980,18 @@ internal class SessionReducer(
     }
 
     /** The provider frames [which] selects keep their snapshots, inert, under a page or a pending launch. */
+    /**
+     * The phone's half of a capture lives in its hub process, and losing SPP while CXR stays is
+     * also what that process dying looks like: the capture ends like on a link loss, cancelled at
+     * the phone with the earlier draft kept, instead of saying "typing" for a field that is gone.
+     */
+    private fun endCapture(transition: SessionTransition): SessionTransition {
+        val capture = transition.model.capture ?: return transition
+        val after = transition.model.copy(capture = null)
+        val effects = (transition.effects - SessionEffect.None) + SessionEffect.SendCompose(ComposeClient.cancel(capture))
+        return SessionTransition(after, effects + listOfNotNull(showEffect(after.state)).filterNot { it in effects })
+    }
+
     private fun inertProviderFrames(model: SessionModel, reason: String, which: (Frame) -> Boolean): SessionTransition {
         fun inert(page: SessionState.InPage): SessionState.InPage = page.copy(
             frames = page.frames.map { frame ->
