@@ -114,6 +114,21 @@ class PhoneNoticeLauncherTest {
     }
 
     @Test
+    fun `a forget withdraw reaches the glasses as one, and a later plain one never weakens it`() {
+        sink.linkUp = false
+        router.handleLocal(withdraw("relay", "9f2c", forget = true), hudSender("relay"))
+        router.handleLocal(withdraw("relay", "9f2c"), hudSender("relay"))
+
+        sink.linkUp = true
+        router.onGlassesAnnounced()
+
+        val sent = sink.remote.single()
+        assertEquals("9f2c", sent.payload.getString("eventKey"))
+        assertTrue(sent.payload.getBoolean("forget"))
+        assertEquals(setOf("ownerPluginId", "eventKey", "forget"), sent.payload.keys().asSequence().toSet())
+    }
+
+    @Test
     fun `withdraw passes the local gate only with a valid key and no binary`() {
         // The gate runs on the plugin's own envelope, before the hub stamps the owner.
         val fromSdk = BusEnvelope(path = BusPaths.NOTICE_WITHDRAW, payload = NoticeSurfaceContract.withdrawPayload("9f2c"))
@@ -373,8 +388,8 @@ class PhoneNoticeLauncherTest {
     )
 
     /** A withdraw as the hub stamps it for [pluginId]; the router itself trusts only the sender. */
-    private fun withdraw(pluginId: String, eventKey: String) = BusEnvelope(
+    private fun withdraw(pluginId: String, eventKey: String, forget: Boolean = false) = BusEnvelope(
         path = BusPaths.NOTICE_WITHDRAW,
-        payload = PluginRoutePolicy.injectSurfaceOwner(pluginId, NoticeSurfaceContract.withdrawPayload(eventKey))!!,
+        payload = PluginRoutePolicy.injectSurfaceOwner(pluginId, NoticeSurfaceContract.withdrawPayload(eventKey, forget))!!,
     )
 }

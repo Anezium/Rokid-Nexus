@@ -608,13 +608,16 @@ class NexusPluginClient internal constructor(
      * Says that the event this plugin announced with [eventKey] is no longer on the phone (its
      * notification was removed). The glasses mark the matching history entries removed and stop
      * offering a reply for them. It is not a read or delivery receipt.
+     *
+     * With [forget], the glasses drop those entries and every copy of their text instead, as when
+     * the user told this plugin to stop keeping that content. Only this plugin's own events.
      */
-    fun withdrawNotice(eventKey: String): NexusSdkResult {
+    fun withdrawNotice(eventKey: String, forget: Boolean = false): NexusSdkResult {
         if (!isApproved) return NexusSdkResult.NOT_REGISTERED
         if (!hasCapability(PluginCapability.SURFACES)) return NexusSdkResult.CAPABILITY_NOT_GRANTED
         if (!supportsLauncherInteractive()) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
         if (!NoticeSurfaceContract.isValidEventKey(eventKey)) return NexusSdkResult.INVALID_PAYLOAD
-        return if (send(BusPaths.NOTICE_WITHDRAW, UUID.randomUUID().toString(), NoticeSurfaceContract.withdrawPayload(eventKey))) {
+        return if (send(BusPaths.NOTICE_WITHDRAW, UUID.randomUUID().toString(), NoticeSurfaceContract.withdrawPayload(eventKey, forget))) {
             NexusSdkResult.SENT
         } else {
             NexusSdkResult.NOT_REGISTERED

@@ -189,13 +189,24 @@ internal class SessionReducer(
 
     /** The event left the phone: its entries say so, and a draft for its thread can no longer be sent. */
     private fun onNoticeWithdrawn(model: SessionModel, event: SessionEvent.NoticeWithdrawn): SessionTransition {
-        val history = model.history.withdraw(event.ownerPluginId, event.eventKey)
+        val forgotten = if (event.forget) {
+            model.history.entries
+                .filter { it.notice.ownerPluginId == event.ownerPluginId && it.notice.eventKey == event.eventKey }
+                .mapTo(hashSetOf(), HistoryEntry::id)
+        } else {
+            emptySet()
+        }
+        val history = if (event.forget) {
+            model.history.forget(event.ownerPluginId, event.eventKey)
+        } else {
+            model.history.withdraw(event.ownerPluginId, event.eventKey)
+        }
         val updated = model.copy(
             history = history,
             draft = DraftStore.authorityLost(
                 model.draft, event.ownerPluginId, event.eventKey, threadRevision(model, event.ownerPluginId, event.eventKey),
             ),
-            state = model.state.mapRootStops { RootStops.withHistory(it, history, wallClock()) },
+            state = model.state.mapRootStops { RootStops.withForgotten(it, forgotten, history, wallClock()) },
         )
         return withComposerRedraw(model, rootBookkeeping(model, updated))
     }

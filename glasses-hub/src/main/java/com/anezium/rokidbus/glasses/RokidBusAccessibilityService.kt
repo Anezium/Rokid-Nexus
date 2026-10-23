@@ -1632,7 +1632,7 @@ internal object NexusSession {
                 log("notice withdraw dropped reason=MALFORMED")
                 return@runOnMain
             }
-            runner.dispatch(SessionEvent.NoticeWithdrawn(withdrawal.ownerPluginId, withdrawal.eventKey))
+            runner.dispatch(SessionEvent.NoticeWithdrawn(withdrawal.ownerPluginId, withdrawal.eventKey, withdrawal.forget))
         }
     }
 

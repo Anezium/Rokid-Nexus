@@ -33,7 +33,8 @@ internal sealed interface SessionEvent {
     data class NoticeArrived(val preview: NoticePreview, val entry: NoticeEntry? = null) : SessionEvent
 
     /** `/notice/withdraw` as the phone forwarded it: the event is no longer on the phone. */
-    data class NoticeWithdrawn(val ownerPluginId: String, val eventKey: String) : SessionEvent
+    /** [forget]: the owner asked for the event's entries and copies to go, not just to be marked removed. */
+    data class NoticeWithdrawn(val ownerPluginId: String, val eventKey: String, val forget: Boolean = false) : SessionEvent
 
     /** `/core/notice/purge`: every history entry of [ownerPluginId] goes. */
     data class NoticePurged(val ownerPluginId: String) : SessionEvent

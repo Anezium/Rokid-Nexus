@@ -198,7 +198,7 @@ internal class PhoneNoticeRouter(
             reject(envelope, sender, NoticeSurfaceContract.ERROR_NOTICE_RATE_LIMITED)
             return
         }
-        val withdrawal = NoticeWithdrawal(pluginId, eventKey)
+        val withdrawal = NoticeWithdrawal(pluginId, eventKey, NoticeSurfaceContract.parseWithdrawForget(envelope.payload))
         val outgoing = BusEnvelope(
             path = BusPaths.NOTICE_WITHDRAW,
             id = envelope.id,
@@ -212,7 +212,10 @@ internal class PhoneNoticeRouter(
     }
 
     private fun queueWithdrawal(withdrawal: NoticeWithdrawal) {
-        pendingWithdrawals.remove(withdrawal)
+        val same = pendingWithdrawals.filter { it.ownerPluginId == withdrawal.ownerPluginId && it.eventKey == withdrawal.eventKey }
+        // A queued forget already covers a later plain withdrawal of the same event.
+        if (!withdrawal.forget && same.any { it.forget }) return
+        pendingWithdrawals.removeAll(same.toSet())
         pendingWithdrawals.add(withdrawal)
         while (pendingWithdrawals.size > NoticeSurfaceContract.MAX_HISTORY_ENTRIES) {
             pendingWithdrawals.remove(pendingWithdrawals.first())

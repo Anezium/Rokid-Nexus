@@ -1294,6 +1294,11 @@ bundle, and the SDK drops them itself when the bundle is not negotiated.
 stamps the owner and forwards `{ownerPluginId, eventKey}` to the glasses, which
 mark the matching history entries withdrawn and withdraw reply authority for
 that thread. It is not proof that anything was read or delivered.
+An optional `forget: true` (only the literal boolean) says the user told the
+owner to stop keeping that content: the phone forwards it, and the glasses drop
+the owner's matching entries outright, leaving any root card that named one as
+the same content-free placeholder as a purge. It reaches only the stamped
+owner's events; a queued `forget` is never weakened by a later plain withdraw.
 `/core/notice/purge` `{ownerPluginId}` (phone to glasses only) removes every
 history entry of that owner on revoke, disable, uninstall or a signer change.
 The phone keeps, by owner id only, the owners whose notices reached a history

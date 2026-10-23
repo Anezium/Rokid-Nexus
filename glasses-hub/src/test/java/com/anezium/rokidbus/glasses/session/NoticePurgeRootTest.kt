@@ -100,6 +100,27 @@ class NoticePurgeRootTest {
     }
 
     @Test
+    fun `a forgotten event leaves no entry and no words, its card keeping its place`() {
+        arrive(NoticeEntry("todo", "Todo", "Milk", null, atWallMs = wallNow))
+        arrive(conversation("t1", "Mika", "le code est 4417"))
+        openRoot()
+        val order = stopOrder()
+
+        send(SessionEvent.NoticeWithdrawn("relay", "t1", forget = true))
+        assertGone("Mika", "le code est 4417")
+        assertEquals(order, stopOrder())
+        assertTrue(model.history.entries.none { it.notice.eventKey == "t1" })
+        assertEquals(1, model.history.entries.size)
+    }
+
+    @Test
+    fun `another owner's event with the same key is never forgotten`() {
+        arrive(conversation("t1", "Mika", "le code est 4417"))
+        send(SessionEvent.NoticeWithdrawn("assistant", "t1", forget = true))
+        assertEquals(1, model.history.entries.size)
+    }
+
+    @Test
     fun `a withdrawal keeps the card readable, said as removed`() {
         arrive(conversation("t1", "Mika", "le code est 4417"))
         openRoot()

@@ -193,6 +193,15 @@ internal object RootStops {
             }
         }
 
+    /**
+     * Some entries were forgotten at their owner's request: after the usual refresh, a card that
+     * named one of them keeps its place as the same content-free placeholder as a purge.
+     */
+    fun withForgotten(stops: List<RootStop>, forgotten: Set<String>, history: NotificationHistory, nowWallMs: Long): List<RootStop> =
+        withHistory(stops, history, nowWallMs).map {
+            if (it.kind == RootStopKind.NOTICE_PREVIEW && it.notice?.entryId?.let(forgotten::contains) == true) placeholderNotice(it, PURGED_TEXT) else it
+        }
+
     /** The stop keeps its place and selection; nothing it copied from the history stays. */
     fun placeholderNotice(stop: RootStop, text: String): RootStop = stop.copy(
         pageId = NOTIFICATIONS_PAGE_ID,

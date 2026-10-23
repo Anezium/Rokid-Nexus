@@ -59,6 +59,10 @@ class RelayNotificationListener : NotificationListenerService() {
      */
     override fun onListenerDisconnected() {
         RelayDiagnostics.recordListenerDisconnected(this)
+        val component = ComponentName(this, RelayNotificationListener::class.java)
+        val accessGranted = accessGranted(component)
+        // Access revoked: the glasses forget what they were shown, too. A mere rebind keeps it.
+        if (!accessGranted) runtime.onForgotten(null)
         ReplyRepository.clear()
         NotificationControl.notifyInboxChanged()
         NotificationControl.detach(this)
@@ -66,16 +70,15 @@ class RelayNotificationListener : NotificationListenerService() {
         Log.w(TAG, "notification listener disconnected")
         super.onListenerDisconnected()
         if (!RelayGuardianService.requestImmediateHealthEvaluation()) {
-            val component = ComponentName(this, RelayNotificationListener::class.java)
-            val manager = getSystemService(NotificationManager::class.java)
-            val accessGranted = try {
-                manager?.isNotificationListenerAccessGranted(component) == true
-            } catch (_: RuntimeException) {
-                false
-            }
             RelayDiagnostics.recordAccessState(this, accessGranted)
             if (accessGranted) requestRebind(component)
         }
+    }
+
+    private fun accessGranted(component: ComponentName): Boolean = try {
+        getSystemService(NotificationManager::class.java)?.isNotificationListenerAccessGranted(component) == true
+    } catch (_: RuntimeException) {
+        false
     }
 
     override fun onDestroy() {
@@ -94,6 +97,8 @@ class RelayNotificationListener : NotificationListenerService() {
 
     internal fun refreshFromSettings() {
         if (!RelaySettings(this).enabled()) {
+            // Switched off means kept nowhere: what the glasses were shown goes too.
+            runtime.onForgotten(null)
             ReplyRepository.clear()
             NotificationControl.notifyInboxChanged()
             runtime.shutdown()

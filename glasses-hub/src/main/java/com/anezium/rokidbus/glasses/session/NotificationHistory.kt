@@ -106,6 +106,10 @@ internal data class NotificationHistory(
         if (it.notice.ownerPluginId == ownerPluginId && it.notice.eventKey == eventKey) it.copy(state = HistoryState.WITHDRAWN) else it
     }
 
+    /** The owner asked for this event's entries to be forgotten: they go, not just their authority. */
+    fun forget(ownerPluginId: String, eventKey: String): NotificationHistory =
+        copy(entries = entries.filterNot { it.notice.ownerPluginId == ownerPluginId && it.notice.eventKey == eventKey })
+
     /** Revoke, disable, uninstall or a new signer: every entry of the owner goes. */
     fun purge(ownerPluginId: String): NotificationHistory =
         copy(entries = entries.filterNot { it.notice.ownerPluginId == ownerPluginId })

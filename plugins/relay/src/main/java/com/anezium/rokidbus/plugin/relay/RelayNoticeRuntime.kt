@@ -106,6 +106,9 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
 
     /** Withdrawals still owed to the hub, oldest first; a thread captured again is dropped from it. */
     private val pendingWithdrawals = LinkedHashSet<String>()
+
+    /** The owed withdrawals that ask the glasses to forget the event, not just mark it removed. */
+    private val forgetKeys = HashSet<String>()
     private var withdrawalWindowGeneration = 0
 
     fun show(reply: ReplyRepository.PendingReply) = onMain {
@@ -206,6 +209,25 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             speech != null || typingOpenedAtShowGeneration != null -> Unit
             else -> dismissNotice()
         }
+    }
+
+    /**
+     * The user told Relay to stop keeping these threads: their app turned Off, Relay switched off,
+     * or notification access revoked. The glasses forget what they were shown of them instead of
+     * keeping it readable as removed. Null names every thread announced by this process.
+     */
+    fun onForgotten(ids: Collection<String>?) = onMain {
+        val keys = (ids ?: (announcedEventKeys + pendingWithdrawals))
+            .filter { it in announcedEventKeys || it in pendingWithdrawals }
+        if (keys.isEmpty()) return@onMain
+        keys.forEach { key ->
+            announcedEventKeys.remove(key)
+            pendingWithdrawals.remove(key)
+            pendingWithdrawals.add(key)
+            forgetKeys.add(key)
+        }
+        while (pendingWithdrawals.size > MAX_EVENT_KEYS) pendingWithdrawals.remove(pendingWithdrawals.first())
+        flushWithdrawals(holdIfUnbound = true)
     }
 
     /**
@@ -917,6 +939,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
 
     private fun rememberAnnounced(eventKey: String) {
         pendingWithdrawals.remove(eventKey)
+        forgetKeys.remove(eventKey)
         announcedEventKeys.remove(eventKey)
         announcedEventKeys.add(eventKey)
         while (announcedEventKeys.size > MAX_EVENT_KEYS) announcedEventKeys.remove(announcedEventKeys.first())
@@ -928,18 +951,24 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
      * captured again since is live, so its withdrawal is dropped rather than sent.
      */
     private fun flushWithdrawals(holdIfUnbound: Boolean = false) {
-        pendingWithdrawals.removeAll { ReplyRepository.contains(it) }
+        pendingWithdrawals.removeAll { it !in forgetKeys && ReplyRepository.contains(it) }
+        forgetKeys.retainAll(pendingWithdrawals)
         if (pendingWithdrawals.isEmpty()) return releaseWithdrawalHold()
         val currentClient = client ?: if (holdIfUnbound) holdForWithdrawals() else null
         if (currentClient == null || !currentClient.isApproved) return
         val iterator = pendingWithdrawals.iterator()
         while (iterator.hasNext()) {
-            val result = currentClient.withdrawNotice(iterator.next())
-            Log.i(TAG, "notice withdraw result=$result")
+            val key = iterator.next()
+            val forget = key in forgetKeys
+            val result = currentClient.withdrawNotice(key, forget)
+            Log.i(TAG, "notice withdraw result=$result forget=$forget")
             when (result) {
                 NexusSdkResult.SENT,
                 NexusSdkResult.INVALID_PAYLOAD,
-                -> iterator.remove()
+                -> {
+                    iterator.remove()
+                    forgetKeys.remove(key)
+                }
                 // Not yet: registration, grants or the link are still on their way.
                 else -> return
             }

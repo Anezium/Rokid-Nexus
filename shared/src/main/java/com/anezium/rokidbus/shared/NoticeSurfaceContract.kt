@@ -137,8 +137,11 @@ sealed interface NoticeSurfacePatchResult {
     data class Invalid(val reason: String) : NoticeSurfacePatchResult
 }
 
-/** A withdrawn event as the glasses receive it: the owner the phone authenticated, and its key. */
-data class NoticeWithdrawal(val ownerPluginId: String, val eventKey: String)
+/**
+ * A withdrawn event as the glasses receive it: the owner the phone authenticated, and its key.
+ * [forget] asks the glasses to drop the event's entries outright instead of marking them removed.
+ */
+data class NoticeWithdrawal(val ownerPluginId: String, val eventKey: String, val forget: Boolean = false)
 
 /** Pure notice-surface validation and normalization with no Android dependencies. */
 object NoticeSurfaceContract {
@@ -242,6 +245,9 @@ object NoticeSurfaceContract {
     const val FIELD_EVENT_KEY = "eventKey"
     const val FIELD_CONVERSATION = "conversation"
 
+    /** `/notice/withdraw` only: drop the event's entries instead of marking them removed. */
+    const val FIELD_FORGET = "forget"
+
     /** Glasses notification history: entries kept in memory, newest first. */
     const val MAX_HISTORY_ENTRIES = 30
 
@@ -265,24 +271,29 @@ object NoticeSurfaceContract {
      * `/notice/withdraw` as a plugin sends it. The local `surfaceId` lets the phone stamp the
      * owner exactly as it does for a show; the event key is all the plugin says.
      */
-    fun withdrawPayload(eventKey: String): JSONObject {
+    fun withdrawPayload(eventKey: String, forget: Boolean = false): JSONObject {
         require(isValidEventKey(eventKey)) { "Invalid event key" }
         return JSONObject().put("surfaceId", LOCAL_SURFACE_ID).put(FIELD_EVENT_KEY, eventKey)
+            .apply { if (forget) put(FIELD_FORGET, true) }
     }
 
     /** The event key of a plugin's withdraw, or null when it is malformed. */
     fun parseWithdraw(payload: JSONObject): String? =
         (payload.opt(FIELD_EVENT_KEY) as? String)?.takeIf(::isValidEventKey)
 
+    /** Whether a withdraw asks for its entries to be forgotten: only a literal `true` does. */
+    fun parseWithdrawForget(payload: JSONObject): Boolean = payload.opt(FIELD_FORGET) == true
+
     /** `/notice/withdraw` as the phone forwards it to the glasses, with the owner it authenticated. */
     fun glassesWithdrawPayload(withdrawal: NoticeWithdrawal): JSONObject = JSONObject()
         .put("ownerPluginId", withdrawal.ownerPluginId)
         .put(FIELD_EVENT_KEY, withdrawal.eventKey)
+        .apply { if (withdrawal.forget) put(FIELD_FORGET, true) }
 
     fun parseGlassesWithdraw(payload: JSONObject): NoticeWithdrawal? {
         val owner = (payload.opt("ownerPluginId") as? String)?.takeIf(PluginDescriptor::isValidId) ?: return null
         val eventKey = parseWithdraw(payload) ?: return null
-        return NoticeWithdrawal(owner, eventKey)
+        return NoticeWithdrawal(owner, eventKey, parseWithdrawForget(payload))
     }
 
     /** `/core/notice/purge`: the phone tells the glasses to forget every entry of one owner. */

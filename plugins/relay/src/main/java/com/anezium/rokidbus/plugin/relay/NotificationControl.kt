@@ -111,8 +111,9 @@ internal object NotificationControl {
 
     /** Applies changed settings: per-app policy prunes what it no longer admits, everywhere it shows. */
     fun refreshFromSettings(context: Context) {
-        ReplyRepository.prune(RelaySettings(context))
+        val removed = ReplyRepository.prune(RelaySettings(context))
         main.post {
+            if (removed.isNotEmpty()) listener?.noticeCallbacks?.onForgotten(removed)
             listener?.refreshFromSettings()
             inbox?.onSettingsChanged()
             pageListener?.invoke()
