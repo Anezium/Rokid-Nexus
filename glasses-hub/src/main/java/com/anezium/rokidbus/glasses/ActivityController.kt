@@ -910,7 +910,7 @@ internal object ActivityController {
      * backend. The classic launcher and an older phone keep the islands of the hub before the
      * bundle: no foreground policy, no saved size, an app in front treated as the home.
      */
-    private fun launcherAmbient(): Boolean =
+    internal fun launcherAmbient(): Boolean =
         (GlassesHub.launcherInteractiveActive() || GlassesHub.launcherBundleHeldThroughLoss()) &&
             NexusInput.backend == LauncherBackend.SESSION
 

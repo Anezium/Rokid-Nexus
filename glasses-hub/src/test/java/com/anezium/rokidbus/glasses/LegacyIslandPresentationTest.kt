@@ -19,7 +19,9 @@ import com.anezium.rokidbus.shared.PhoneHubCapabilitiesContract
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -111,6 +113,7 @@ class LegacyIslandPresentationTest {
     fun `the new launcher over a negotiated pair applies the app's ambient mode`() {
         announce(phone(bundle = true))
         assertEquals(LauncherBackend.SESSION, NexusInput.backend)
+        assertTrue(ActivityController.launcherAmbient())
         startActivity()
         AmbientForeground.onWindowsChanged(listOf(ForegroundWindow(APP, isApplication = true)))
         idle()
@@ -120,6 +123,8 @@ class LegacyIslandPresentationTest {
 
     /** Before the bundle, an app in front was the residents' own context: panel, then chip after the collapse. */
     private fun assertClassicIslandsOverAnApp() {
+        // Live route geometry cannot bring the new guidance islands back either.
+        assertFalse(ActivityController.launcherAmbient())
         startActivity()
         AmbientForeground.onWindowsChanged(listOf(ForegroundWindow(APP, isApplication = true)))
         idle()

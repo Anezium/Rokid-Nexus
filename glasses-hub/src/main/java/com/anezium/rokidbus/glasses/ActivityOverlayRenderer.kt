@@ -196,6 +196,7 @@ internal object ActivityOverlayRenderer {
             sourceLabel = GlassesHub.launcherDisplayName(owner),
             crowded = residents >= 3,
             geometryRevision = RouteLive.geometryRevision(owner),
+            launcherAmbient = ActivityController.launcherAmbient(),
         )
     }
 

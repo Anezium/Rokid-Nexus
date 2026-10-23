@@ -49,8 +49,13 @@ internal object GuidanceIslands {
         crowded: Boolean = false,
         clock: (Long) -> String = ::clockOf,
         geometryRevision: Long? = null,
+        /**
+         * The new launcher's ambient presentation is in force. Without it (the classic launcher, an
+         * older phone) live geometry never selects these islands: the panel and chip stay.
+         */
+        launcherAmbient: Boolean = true,
     ): GuidanceIsland? {
-        if (item.presentation == ActivityPresentation.HIDDEN) return null
+        if (item.presentation == ActivityPresentation.HIDDEN || !launcherAmbient) return null
         val size = item.size.takeIf {
             com.anezium.rokidbus.shared.AmbientPreferencesContract.hasSizeChoice(item.activity.ownerPluginId)
         }

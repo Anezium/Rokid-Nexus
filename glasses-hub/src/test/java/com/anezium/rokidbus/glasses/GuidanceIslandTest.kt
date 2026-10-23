@@ -32,6 +32,15 @@ class GuidanceIslandTest {
     }
 
     @Test
+    fun `live geometry never selects a guidance island under the classic launcher`() {
+        val map = geometry(RoutePositionQuality.LIVE)
+        val panel = item(ActivityPresentation.PANEL, null)
+        assertTrue(GuidanceIslands.of(panel, map, null, launcherAmbient = true) != null)
+        assertNull(GuidanceIslands.of(panel, map, null, launcherAmbient = false))
+        assertNull(GuidanceIslands.of(item(ActivityPresentation.CHIP, null), map, null, launcherAmbient = false))
+    }
+
+    @Test
     fun `a lost map keeps distance in the header and GPS status only in the foot`() {
         val original = item(ActivityPresentation.PANEL, AmbientSize.PANEL, measure = "1.2 km")
         val lost = original.copy(activity = original.activity.copy(content = original.activity.content.copy(
