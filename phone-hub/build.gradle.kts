@@ -56,7 +56,7 @@ dependencies {
     implementation(project(":ink-engine"))
     implementation("androidx.activity:activity:1.10.1")
     implementation("androidx.exifinterface:exifinterface:1.4.2")
-    implementation("com.example.cxrglobal:lib:0.2.0")
+    implementation("com.example.cxrglobal:lib:0.3.0")
     implementation(project(":kadb-compat"))
     implementation("com.android.tools.build:apksig:9.2.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

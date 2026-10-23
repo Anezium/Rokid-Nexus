@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Phone hub
+
+- Builds against CXR-L client 1.1.2 through CxrGlobal 0.3.0, and tells Hi Rokid which client version it speaks.
+- If Hi Rokid ends the glasses session itself, the hub now reports the link down right away instead of believing it is still up, and the status notification says "Hi Rokid ended the glasses session; tap to reconnect". It does not reconnect on its own.
+- The assist button is left to Rokid while Hi Rokid reports a native scene such as a call, a recording, navigation, a payment, translation, an update or the camera on the glasses, so a press over that scene no longer triggers the takeover and its exit burst; a scene reported in the middle of a takeover stops the remaining exit shots. Only explicit reports count; anything Nexus cannot read keeps the button with Nexus as before.
+
 ## 1.8.1
 
 Update both Nexus hubs together. This release adds speech-language settings for the phone; it does not publish an Assistant or Media Deck plugin update.
