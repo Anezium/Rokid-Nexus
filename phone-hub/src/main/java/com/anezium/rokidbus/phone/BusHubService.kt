@@ -163,6 +163,7 @@ private const val AUDIO_LEASE_REVOKED = "/audio/lease/revoked"
 private const val PLUGIN_AI_ASSIST_PATH = "/system/plugin/ai-assist"
 private const val PLUGIN_AI_ASSIST_OPEN_TYPE = PluginOpenTypes.AI_ASSIST
 private val NATIVE_ASSISTANT_EXIT_BURST_DELAYS_MILLIS = longArrayOf(0L, 50L, 150L, 300L)
+private const val NATIVE_SCENES_LOG_LIMIT = 512
 private const val SNAPSHOT_JPEG_QUALITY = 80
 private const val SNAPSHOT_ERROR_BUSY = "BUSY"
 private const val SNAPSHOT_ERROR_LINK_DOWN = "LINK_DOWN"
@@ -226,6 +227,7 @@ class BusHubService : Service() {
     private val activityHandler = Handler(Looper.getMainLooper())
     private val activityExpiryTick: Runnable = Runnable { activityRouter.expireCanonical() }
     private val assistantExitHandler = Handler(Looper.getMainLooper())
+    private val assistSessionHandler = Handler(Looper.getMainLooper())
     private val updateCheckHandler = Handler(Looper.getMainLooper())
     @Volatile private var updateCheckLoopStopped = true
     private val updateCheckTick = object : Runnable {
@@ -238,7 +240,8 @@ class BusHubService : Service() {
         }
     }
     private val registrations = CopyOnWriteArrayList<Registration>()
-    private val glassAiAssistActive = AtomicBoolean(false)
+    private val assistSession = GlassesAssistSession()
+    @Volatile private var cxrClosedByServer = false
     private val snapshotCaptureScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val snapshotCapture = CxrSnapshotCapture()
     private val snapshotInFlight = AtomicBoolean(false)
@@ -592,7 +595,12 @@ class BusHubService : Service() {
         override fun onCXRLConnected(connected: Boolean) {
             cxrConnected = connected
             sppCxrIdentity.onConnectionChanged(isCxrUp())
-            if (!connected) glassesWorn = false
+            if (connected) {
+                cxrClosedByServer = false
+            } else {
+                glassesWorn = false
+                clearGlassesSessionState()
+            }
             log("CXR-L connected=$connected")
             notifyLinkState()
             if (!connected) failActiveGlassesAppOperation("Connection to the glasses was lost.")
@@ -602,10 +610,23 @@ class BusHubService : Service() {
             }
         }
 
+        override fun onCXRLDisconnectedByServer() {
+            // Hi Rokid closed the session on its side. The wrapper unbinds and reports the link
+            // down next if it had been reported up; no automatic rebind, which would fight
+            // whatever made Hi Rokid close it. The status notification says so, also for a
+            // session closed during setup; tapping it opens Nexus, which reconnects.
+            cxrClosedByServer = true
+            log("CXR-L session closed by Hi Rokid")
+            notifyLinkState()
+        }
+
         override fun onGlassBtConnected(connected: Boolean) {
             glassBtConnected = connected
             sppCxrIdentity.onConnectionChanged(isCxrUp())
-            if (!connected) glassesWorn = false
+            if (!connected) {
+                glassesWorn = false
+                clearGlassesSessionState()
+            }
             log("Hi Rokid glass BT connected=$connected")
             notifyLinkState()
             if (!connected) failActiveGlassesAppOperation("Connection to the glasses was lost.")
@@ -625,57 +646,48 @@ class BusHubService : Service() {
             notifyLinkState()
         }
 
-        override fun onGlassAiAssistStart() {
-            if (!glassAiAssistActive.compareAndSet(false, true)) return
-            // Paused from the glasses or the phone: the native scene the ROM just opened is
-            // exactly what the wearer asked for, so there is nothing to dismiss and nobody to wake.
-            if (::assistantTakeoverStore.isInitialized && !assistantTakeoverStore.isEnabled()) {
-                log("assistant gesture left to Rokid: takeover paused")
-                return
+        override fun onGlassCurrentScenesNotify(scenesJson: String?) {
+            // The report's format is still unknown: release logs carry its structure, debug logs
+            // the report itself, so the first device capture can settle what it means.
+            if (isDebuggableBuild()) {
+                log("Hi Rokid scenes raw=${scenesJson.orEmpty().take(NATIVE_SCENES_LOG_LIMIT)}")
             }
-            val assistant = approvedAssistantPrincipal() ?: return
-            val gestureId = UUID.randomUUID().toString()
-            val alreadyActive = externalPluginController.activeId() == assistant.descriptor.id
-            val captureSignaled = if (alreadyActive) {
-                notifyGlassesAiButton(active = true)
-                true
-            } else {
-                externalPluginController.open(
-                    assistant,
-                    ExternalPluginOpenRequest(
-                        type = PLUGIN_AI_ASSIST_OPEN_TYPE,
-                        followUp = ExternalPluginOpenFollowUp(
-                            path = PLUGIN_AI_ASSIST_PATH,
-                            type = PLUGIN_AI_ASSIST_OPEN_TYPE,
-                            extra = {
-                                JSONObject()
-                                    .put("gestureId", gestureId)
-                                    .put("buttonActive", glassAiAssistActive.get())
-                                    .put("source", "glass_ai_assist_start")
-                            },
-                        ),
-                    ),
-                )
-            }
-            if (!captureSignaled) {
-                log("assistant gesture wake failed plugin=${assistant.descriptor.id}")
-                return
-            }
-            sendNativeAssistantExitBurst(gestureId)
-            val error = sendRemote(
-                BusEnvelope(
-                    path = BusPaths.GLASSES_ASSISTANT_DISMISS,
-                    payload = JSONObject()
-                        .put("version", 1)
-                        .put("gestureId", gestureId)
-                        .put("source", "glass_ai_assist_start"),
-                ),
-            )
+            if (!assistSession.onScenesReport(scenesJson)) return
             log(
-                "assistant gesture plugin=${assistant.descriptor.id} active=$alreadyActive " +
-                    "gestureId=$gestureId; native dismiss " +
-                    "sent=${error == null} result=${error ?: "OK"}",
+                "Hi Rokid native scenes shape=${assistSession.scenesShape} " +
+                    "running=${assistSession.scenes.joinToString(",").ifEmpty { "none" }}",
             )
+        }
+
+        override fun onGlassAiAssistStart() {
+            val takeoverEnabled =
+                !::assistantTakeoverStore.isInitialized || assistantTakeoverStore.isEnabled()
+            when (assistSession.onPressStart(isCxrUp(), takeoverEnabled)) {
+                GlassesAssistSession.Press.LINK_DOWN -> {
+                    log("assistant gesture ignored: CXR link down")
+                    return
+                }
+                // Paused from the glasses or the phone: the native scene the ROM just opened is
+                // exactly what the wearer asked for, so there is nothing to dismiss and nobody to wake.
+                GlassesAssistSession.Press.TAKEOVER_PAUSED -> {
+                    log("assistant gesture left to Rokid: takeover paused")
+                    return
+                }
+                GlassesAssistSession.Press.NATIVE_SCENE -> {
+                    log(
+                        "assistant gesture left to Rokid: native " +
+                            "${assistSession.scenes.joinToString(",")} running",
+                    )
+                    return
+                }
+                GlassesAssistSession.Press.ALREADY_HELD -> return
+                GlassesAssistSession.Press.TAKE_OVER -> Unit
+            }
+            // Waking the plugin can hide the previous one's surfaces and the dismiss can fall back
+            // to an SPP write; neither belongs on the main thread this press arrived on.
+            val session = assistSession.generation
+            val press = assistSession.press
+            executor.execute { takeOverAssistGesture(session, press) }
         }
 
         override fun onGlassAiAssistStop() {
@@ -683,19 +695,96 @@ class BusHubService : Service() {
             // scene closing reports onAiExit). Must stay side-effect-free
             // beyond flag/notify: capture stop belongs to the plugin's VAD,
             // and anything stronger here would let the burst cancel it.
-            glassAiAssistActive.set(false)
+            assistSession.onPressStop()
             notifyGlassesAiButton(active = false)
         }
+    }
+
+    private fun takeOverAssistGesture(session: Int, press: Int) {
+        if (!assistSession.isCurrent(session)) return
+        val assistant = approvedAssistantPrincipal() ?: return
+        val gestureId = UUID.randomUUID().toString()
+        val alreadyActive = externalPluginController.activeId() == assistant.descriptor.id
+        val captureSignaled = if (alreadyActive) {
+            assistSessionHandler.post { signalWarmPress(session, press) }
+            true
+        } else {
+            externalPluginController.open(
+                assistant,
+                ExternalPluginOpenRequest(
+                    type = PLUGIN_AI_ASSIST_OPEN_TYPE,
+                    followUp = ExternalPluginOpenFollowUp(
+                        path = PLUGIN_AI_ASSIST_PATH,
+                        type = PLUGIN_AI_ASSIST_OPEN_TYPE,
+                        extra = {
+                            JSONObject()
+                                .put("gestureId", gestureId)
+                                .put("buttonActive", assistSession.isHeld)
+                                .put("source", "glass_ai_assist_start")
+                        },
+                    ),
+                ),
+            )
+        }
+        if (!captureSignaled) {
+            log("assistant gesture wake failed plugin=${assistant.descriptor.id}")
+            return
+        }
+        if (!assistSession.isCurrent(session)) return
+        sendNativeAssistantExitBurst(gestureId, session)
+        val error = sendRemote(
+            BusEnvelope(
+                path = BusPaths.GLASSES_ASSISTANT_DISMISS,
+                payload = JSONObject()
+                    .put("version", 1)
+                    .put("gestureId", gestureId)
+                    .put("source", "glass_ai_assist_start"),
+            ),
+        )
+        log(
+            "assistant gesture plugin=${assistant.descriptor.id} active=$alreadyActive " +
+                "gestureId=$gestureId; native dismiss " +
+                "sent=${error == null} result=${error ?: "OK"}",
+        )
+    }
+
+    // An already-active assistant hears of the press on main, in order with the release handled
+    // there. A press released by then is delivered whole, so the plugin's own button gate is not
+    // left held with no release to follow.
+    private fun signalWarmPress(session: Int, press: Int) {
+        if (!assistSession.isCurrent(session)) return
+        notifyGlassesAiButton(active = true)
+        if (!assistSession.isHeld(press)) notifyGlassesAiButton(active = false)
+    }
+
+    // Glasses BT down arrives on a binder thread; the session ends on main, after any scene report
+    // or press already queued there.
+    private fun clearGlassesSessionState() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            assistSessionHandler.post { clearGlassesSessionState() }
+            return
+        }
+        if (assistSession.clear()) notifyGlassesAiButton(active = false)
     }
 
     // Phone-side kill of the native assistant popup, complementing the
     // glasses-side BACK burst: Hi Rokid's exported service forwards sendExit
     // to the scene the gesture just opened. A single shot can lose the race
     // against the scene's opening animation, hence the spaced repeats.
-    private fun sendNativeAssistantExitBurst(gestureId: String) {
+    private fun sendNativeAssistantExitBurst(gestureId: String, session: Int) {
         val link = cxrLink ?: return
         for (delayMs in NATIVE_ASSISTANT_EXIT_BURST_DELAYS_MILLIS) {
             assistantExitHandler.postDelayed({
+                // A shot outlives neither the session that took the press nor a native scene
+                // reported since: the link object is reused by the next session.
+                if (!assistSession.isCurrent(session)) return@postDelayed
+                if (assistSession.nativeSceneRunning()) {
+                    log(
+                        "assistant native exit burst delay=${delayMs}ms skipped: " +
+                            "native scene gestureId=$gestureId",
+                    )
+                    return@postDelayed
+                }
                 val sent = link.sendExit(false)
                 log("assistant native exit burst delay=${delayMs}ms sent=$sent gestureId=$gestureId")
             }, delayMs)
@@ -1112,8 +1201,10 @@ class BusHubService : Service() {
         cxrLink = null
         cxrConnected = false
         glassBtConnected = false
+        cxrClosedByServer = false
         sppCxrIdentity.onConnectionChanged(false)
         glassesWorn = false
+        clearGlassesSessionState()
         closeSocket()
         notifyLinkState()
         log("Hub stopped; SPP socket and CXR-L session released")
@@ -3849,6 +3940,11 @@ class BusHubService : Service() {
             setCXRCustomCmdCbk(customCmdCallback)
         }.also { cxrLink = it }
         val bound = runCatching { link.connect(token) }.getOrDefault(false)
+        // After connect: it may first finish a bind Hi Rokid had just closed, setting the flag.
+        if (bound && cxrClosedByServer) {
+            cxrClosedByServer = false
+            updateStatusNotification(linkState())
+        }
         log("CXR-L connect requested bound=$bound")
         if (!bound) {
             cxrConnected = false
@@ -4892,6 +4988,8 @@ class BusHubService : Service() {
             "Recovering glasses pairing key"
         sppKeyStatus == PhoneSppPairing.KeyStatus.RECOVERED ->
             "Glasses pairing key recovered; reconnecting"
+        cxrClosedByServer && state and LinkStateBits.CXR_CONTROL_UP == 0 ->
+            "Hi Rokid ended the glasses session; tap to reconnect"
         state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0 -> {
             val livePlugin = if (::externalPluginController.isInitialized) {
                 externalPluginController.activeDisplayName()
