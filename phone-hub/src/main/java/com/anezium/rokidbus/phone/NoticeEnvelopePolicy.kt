@@ -25,6 +25,7 @@ internal fun isValidLocalNoticeEnvelope(envelope: BusEnvelope): Boolean {
         BusPaths.NOTICE_HIDE -> envelope.binary == null
         BusPaths.NOTICE_WITHDRAW ->
             envelope.binary == null && NoticeSurfaceContract.parseWithdraw(envelope.payload) != null
+        BusPaths.NOTICE_FORGET -> envelope.binary == null
         else -> false
     }
 }

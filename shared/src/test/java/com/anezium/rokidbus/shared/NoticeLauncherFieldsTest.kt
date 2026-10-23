@@ -88,16 +88,13 @@ class NoticeLauncherFieldsTest {
     }
 
     @Test
-    fun `a forget withdraw keeps its flag end to end and only a literal true asks for it`() {
-        val fromPlugin = NoticeSurfaceContract.withdrawPayload("9f2c-1", forget = true)
-        assertTrue(NoticeSurfaceContract.parseWithdrawForget(fromPlugin))
-        assertFalse(NoticeSurfaceContract.parseWithdrawForget(NoticeSurfaceContract.withdrawPayload("9f2c-1")))
-        assertFalse(NoticeSurfaceContract.parseWithdrawForget(JSONObject(fromPlugin.toString()).put("forget", "true")))
-
-        val toGlasses = NoticeSurfaceContract.glassesWithdrawPayload(NoticeWithdrawal("relay", "9f2c-1", forget = true))
-        assertEquals(NoticeWithdrawal("relay", "9f2c-1", forget = true), NoticeSurfaceContract.parseGlassesWithdraw(toGlasses))
-        // A plain withdrawal says nothing about forgetting, so an older hub reads it unchanged.
-        assertFalse(NoticeSurfaceContract.glassesWithdrawPayload(NoticeWithdrawal("relay", "9f2c-1")).has("forget"))
+    fun `forget carries no owner and needs the surfaces grant like a withdraw`() {
+        assertEquals(setOf("surfaceId"), NoticeSurfaceContract.forgetPayload().keys().asSequence().toSet())
+        assertEquals(
+            com.anezium.rokidbus.shared.plugin.PluginCapability.SURFACES,
+            com.anezium.rokidbus.shared.plugin.PathRules.requiredCapability(BusPaths.NOTICE_FORGET),
+        )
+        assertTrue(com.anezium.rokidbus.shared.plugin.PathRules.isLauncherOwnerPath(BusPaths.NOTICE_FORGET))
     }
 
     private fun valid(payload: JSONObject): NoticeSurfaceContent {

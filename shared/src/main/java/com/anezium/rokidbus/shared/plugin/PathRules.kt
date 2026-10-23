@@ -128,6 +128,7 @@ object PathRules {
         BusPaths.ACTIVITY_GEOMETRY,
         BusPaths.ACTIVITY_HEADING,
         BusPaths.NOTICE_WITHDRAW,
+        BusPaths.NOTICE_FORGET,
     )
 
     fun requiredCapability(path: String): PluginCapability? = when (normalizeAbsolute(path)) {
@@ -136,7 +137,7 @@ object PathRules {
         BusPaths.NOTICE_SHOW, BusPaths.NOTICE_UPDATE, BusPaths.NOTICE_HIDE,
         BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_UPDATE, BusPaths.ACTIVITY_END,
         BusPaths.ACTIVITY_RESULT, BusPaths.ACTIVITY_GEOMETRY, BusPaths.ACTIVITY_HEADING,
-        BusPaths.NOTICE_WITHDRAW,
+        BusPaths.NOTICE_WITHDRAW, BusPaths.NOTICE_FORGET,
         -> PluginCapability.SURFACES
         BusPaths.INK_SHOW, BusPaths.INK_UPDATE, BusPaths.INK_HIDE ->
             PluginCapability.INK_SURFACE

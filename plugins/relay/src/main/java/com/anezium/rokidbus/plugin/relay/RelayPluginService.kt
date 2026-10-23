@@ -111,6 +111,7 @@ class RelayPluginService : NexusPluginService() {
     override fun onCreate() {
         super.onCreate()
         nexusClient?.let(RelayBus::serviceCreated)
+        RelayHistoryForget.flush(this)
         NotificationControl.pageListener = { main.post { pages.inboxChanged() } }
     }
 
@@ -147,11 +148,13 @@ class RelayPluginService : NexusPluginService() {
     // The band's callbacks arrive on this, Relay's only client, and belong to the band.
     override fun onNexusRegistrationState(result: Int) {
         if (result != PluginRegistrationResult.APPROVED) pages.forget()
+        if (result == PluginRegistrationResult.APPROVED) RelayHistoryForget.flush(this)
         NotificationControl.noticeCallbacks()?.onRegistrationState(result)
     }
 
     override fun onNexusLinkState(state: Int) {
         if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) pages.forget()
+        RelayHistoryForget.flush(this)
         NotificationControl.noticeCallbacks()?.onLinkState(state)
     }
 

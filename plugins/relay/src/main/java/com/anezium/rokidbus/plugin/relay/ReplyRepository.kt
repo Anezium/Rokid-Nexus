@@ -291,6 +291,14 @@ internal object ReplyRepository {
     }
 
     /**
+     * The app's latest post of this notification is no longer admitted (an ongoing repost, a group
+     * summary, a policy change): it stops being active, read-only alerts included, so nothing
+     * deferred can still announce it. The readable thread stays. Returns whether it was active.
+     */
+    @Synchronized
+    fun dropActive(sbn: StatusBarNotification): Boolean = pending.remove(stableId(sbn.key)) != null
+
+    /**
      * The just-in-time check before a send: the thread still has a live reply action under the
      * notification it was captured from, and that action still takes free-form text.
      */

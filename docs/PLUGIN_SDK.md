@@ -1201,11 +1201,14 @@ bundle:
 When the event leaves the phone (its notification was removed), call
 `withdrawNotice(eventKey)`: the glasses mark it removed and stop offering a
 reply for that thread. It is not a read or delivery receipt, and it is refused
-with `CAPABILITY_NOT_AVAILABLE` without the bundle. When the user tells your plugin to
-stop keeping that content (they turned the source off, or switched the plugin
-off), call `withdrawNotice(eventKey, forget = true)`: the glasses drop those
-entries and every copy of their text instead of keeping them readable as
-removed. It reaches only your own events.
+with `CAPABILITY_NOT_AVAILABLE` without the bundle.
+
+When the user tells your plugin to stop keeping what it showed (they turned a
+source off, switched the plugin off, or revoked an access it depends on), call
+`forgetNotices()`: the glasses forget every notification your plugin showed,
+history entries and every copy of their text. The phone keeps the request until
+the glasses take it, across a link loss or its own restart, so one call is
+enough; keep it owed on your side only until it returns `SENT`.
 
 ```kotlin
 nexusClient?.showNotice(

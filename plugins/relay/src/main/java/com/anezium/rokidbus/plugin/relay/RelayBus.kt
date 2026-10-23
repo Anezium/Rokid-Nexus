@@ -61,13 +61,28 @@ internal class RelayClientOwner<C : Any>(
         releaseIfUnheld()
     }
 
+    /** Held while the glasses still owe forgetting Relay's notifications. */
+    var forgetHeld = false
+        private set
+
+    fun holdForForget(): C? {
+        if (!forgetHeld) forgetHeld = hold()
+        return client
+    }
+
+    fun releaseForget() {
+        if (!forgetHeld) return
+        forgetHeld = false
+        releaseIfUnheld()
+    }
+
     private fun hold(): Boolean {
         if (!bound) bound = bind()
         return bound
     }
 
     private fun releaseIfUnheld() {
-        if (!bound || noticeHeld || withdrawalHeld) return
+        if (!bound || noticeHeld || withdrawalHeld || forgetHeld) return
         bound = false
         unbind()
     }
@@ -114,6 +129,13 @@ internal object RelayBus {
     }
 
     fun releaseWithdrawal() = owner.releaseWithdrawal()
+
+    fun holdForForget(context: Context): NexusPluginClient? {
+        this.context = context.applicationContext
+        return owner.holdForForget()
+    }
+
+    fun releaseForget() = owner.releaseForget()
 
     fun serviceCreated(client: NexusPluginClient) = owner.serviceCreated(client)
 

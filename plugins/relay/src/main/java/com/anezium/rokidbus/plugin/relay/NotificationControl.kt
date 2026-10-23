@@ -111,9 +111,9 @@ internal object NotificationControl {
 
     /** Applies changed settings: per-app policy prunes what it no longer admits, everywhere it shows. */
     fun refreshFromSettings(context: Context) {
-        val removed = ReplyRepository.prune(RelaySettings(context))
+        // What the policy no longer admits leaves the glasses too, listener attached or not.
+        if (ReplyRepository.prune(RelaySettings(context)).isNotEmpty()) RelayHistoryForget.request(context)
         main.post {
-            if (removed.isNotEmpty()) listener?.noticeCallbacks?.onForgotten(removed)
             listener?.refreshFromSettings()
             inbox?.onSettingsChanged()
             pageListener?.invoke()

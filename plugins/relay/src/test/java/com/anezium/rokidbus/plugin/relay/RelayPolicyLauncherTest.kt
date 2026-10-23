@@ -59,6 +59,7 @@ class RelayPolicyLauncherTest {
         if (::service.isInitialized) service.destroy()
         if (::listener.isInitialized) listener.destroy()
         ReplyRepository.clear()
+        app.getSharedPreferences("relay_history", 0).edit().clear().commit()
         settings.resetAppPolicies()
         settings.setEnabled(true)
         settings.setClearAfterReply(RelaySettings.DEFAULT_CLEAR_AFTER_REPLY)
@@ -119,41 +120,92 @@ class RelayPolicyLauncherTest {
             .forEach { assertFalse(it.optBoolean(NoticeSurfaceContract.FIELD_CONVERSATION)) }
     }
 
+    private fun forgets() = hub.sentTo(BusPaths.NOTICE_FORGET)
+
     @Test
-    fun `turning an app Off empties its open page and asks the glasses to forget its events`() {
+    fun `turning an app Off empties its open page and asks the glasses to forget Relay's notifications`() {
         start()
         val thread = openThread(idOf(chat))
         assertTrue(answersFor(thread).last().toString().contains("on est devant"))
-        assertEquals(idOf(chat), hub.sentTo(BusPaths.NOTICE_SHOW).single().getString(NoticeSurfaceContract.FIELD_EVENT_KEY))
 
         settings.setAppPolicy(chat.packageName, RelayAppPolicy.OFF)
         NotificationControl.refreshFromSettings(app)
         RelayHubFixture.idleFor(1_000)
 
         assertFalse(answersFor(thread).last().toString().contains("on est devant"))
-        val withdraw = withdrawals().single()
-        assertEquals(idOf(chat), withdraw.getString(NoticeSurfaceContract.FIELD_EVENT_KEY))
-        assertTrue(withdraw.getBoolean(NoticeSurfaceContract.FIELD_FORGET))
+        assertEquals(1, forgets().size)
     }
 
     @Test
-    fun `switching Relay off asks the glasses to forget every event it announced`() {
-        start()
-        settings.setEnabled(false)
-        NotificationControl.refreshFromSettings(app)
-        RelayHubFixture.idleFor(1_000)
-
-        val withdraw = withdrawals().single()
-        assertEquals(idOf(chat), withdraw.getString(NoticeSurfaceContract.FIELD_EVENT_KEY))
-        assertTrue(withdraw.getBoolean(NoticeSurfaceContract.FIELD_FORGET))
-    }
-
-    @Test
-    fun `an ordinary removal still only withdraws, keeping the text readable`() {
+    fun `an event already withdrawn is still forgotten when its app is turned Off`() {
         start()
         listener.get().onNotificationRemoved(chat)
         RelayHubFixture.idleFor(1_000)
-        assertFalse(withdrawals().single().has(NoticeSurfaceContract.FIELD_FORGET))
+        assertEquals(1, withdrawals().size)
+
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.OFF)
+        NotificationControl.refreshFromSettings(app)
+        RelayHubFixture.idleFor(1_000)
+        assertEquals(1, forgets().size)
+    }
+
+    @Test
+    fun `many announced events need one forget, not one each`() {
+        start()
+        for (id in 20..27) listener.get().onNotificationPosted(RelayHubFixture.chat(app, id = id, sender = "S$id"))
+        RelayHubFixture.idleFor(2_000)
+        settings.setEnabled(false)
+        listener.get().refreshFromSettings()
+        NotificationControl.refreshFromSettings(app)
+        RelayHubFixture.idleFor(1_000)
+        assertTrue(forgets().size in 1..2)
+        assertTrue(withdrawals().isEmpty())
+    }
+
+    @Test
+    fun `an app turned Off while the listener is detached is still forgotten`() {
+        start()
+        listener.destroy()
+        RelayHubFixture.idle()
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.OFF)
+        NotificationControl.refreshFromSettings(app)
+        RelayHubFixture.idleFor(1_000)
+        assertEquals(1, forgets().size)
+    }
+
+    @Test
+    fun `switching Relay off asks the glasses to forget Relay's notifications`() {
+        start()
+        settings.setEnabled(false)
+        listener.get().refreshFromSettings()
+        RelayHubFixture.idleFor(1_000)
+        assertTrue(forgets().isNotEmpty())
+    }
+
+    @Test
+    fun `an ordinary removal only withdraws, keeping the text readable`() {
+        start()
+        listener.get().onNotificationRemoved(chat)
+        RelayHubFixture.idleFor(1_000)
+        assertEquals(idOf(chat), withdrawals().single().getString(NoticeSurfaceContract.FIELD_EVENT_KEY))
+        assertTrue(forgets().isEmpty())
+    }
+
+    @Test
+    fun `a read-only alert reposted as ongoing stops being active and is never announced late`() {
+        start()
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.ALL)
+        val alert = alert(11, "Build 412 passed")
+        listener.get().onNotificationPosted(alert)
+        RelayHubFixture.idle()
+        assertTrue(ReplyRepository.isActive(idOf(alert)))
+        val ongoing = Notification.Builder(app, "chat").setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Build").setContentText("Build 412 passed").setOngoing(true).build()
+        listener.get().onNotificationPosted(
+            StatusBarNotification(chat.packageName, chat.opPkg, 11, null, chat.uid, 0, 0, ongoing, chat.user, System.currentTimeMillis()),
+        )
+        RelayHubFixture.idle()
+        assertFalse(ReplyRepository.isActive(idOf(alert)))
     }
 
     @Test

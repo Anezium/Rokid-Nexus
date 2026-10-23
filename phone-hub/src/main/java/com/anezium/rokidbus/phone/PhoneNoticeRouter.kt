@@ -60,7 +60,8 @@ internal class PhoneNoticeRouter(
         path == BusPaths.NOTICE_SHOW ||
             path == BusPaths.NOTICE_UPDATE ||
             path == BusPaths.NOTICE_HIDE ||
-            path == BusPaths.NOTICE_WITHDRAW
+            path == BusPaths.NOTICE_WITHDRAW ||
+            path == BusPaths.NOTICE_FORGET
 
     private fun bundleNegotiated(): Boolean = LauncherInteractiveContract.isActive(launcherVersion() ?: 0)
 
@@ -90,6 +91,15 @@ internal class PhoneNoticeRouter(
         // Not gated on the link like a show: the history it corrects outlives a link loss.
         if (envelope.path == BusPaths.NOTICE_WITHDRAW) {
             handleWithdraw(envelope, sender, pluginId)
+            return
+        }
+        if (envelope.path == BusPaths.NOTICE_FORGET) {
+            sink.recordLocalRoute(envelope, sender.uid, pluginId, PluginBusJournal.Verdict.OK)
+            // The same durable, coalesced obligation as a revoked owner's: one per owner, kept
+            // across a link loss and a restart of this hub. Past the notice budget it is still
+            // kept, only sent with the next announce instead of now, so nothing floods the link
+            // and nothing is lost.
+            if (state.admitWithdraw(pluginId)) purgeOwner(pluginId, "owner_forget") else queuePurge(pluginId)
             return
         }
         if (sink.capabilities() and BusCapabilityBits.NOTICE_SURFACE == 0) {
@@ -198,7 +208,7 @@ internal class PhoneNoticeRouter(
             reject(envelope, sender, NoticeSurfaceContract.ERROR_NOTICE_RATE_LIMITED)
             return
         }
-        val withdrawal = NoticeWithdrawal(pluginId, eventKey, NoticeSurfaceContract.parseWithdrawForget(envelope.payload))
+        val withdrawal = NoticeWithdrawal(pluginId, eventKey)
         val outgoing = BusEnvelope(
             path = BusPaths.NOTICE_WITHDRAW,
             id = envelope.id,
@@ -212,10 +222,7 @@ internal class PhoneNoticeRouter(
     }
 
     private fun queueWithdrawal(withdrawal: NoticeWithdrawal) {
-        val same = pendingWithdrawals.filter { it.ownerPluginId == withdrawal.ownerPluginId && it.eventKey == withdrawal.eventKey }
-        // A queued forget already covers a later plain withdrawal of the same event.
-        if (!withdrawal.forget && same.any { it.forget }) return
-        pendingWithdrawals.removeAll(same.toSet())
+        pendingWithdrawals.remove(withdrawal)
         pendingWithdrawals.add(withdrawal)
         while (pendingWithdrawals.size > NoticeSurfaceContract.MAX_HISTORY_ENTRIES) {
             pendingWithdrawals.remove(pendingWithdrawals.first())
@@ -247,6 +254,14 @@ internal class PhoneNoticeRouter(
             persist()
         }
         sink.log("notice history purge queued owner=$pluginId reason=$reason")
+    }
+
+    private fun queuePurge(pluginId: String) {
+        synchronized(historyLock) {
+            pendingPurges.add(pluginId)
+            persist()
+        }
+        sink.log("notice history purge queued owner=$pluginId reason=owner_forget_budget")
     }
 
     /**

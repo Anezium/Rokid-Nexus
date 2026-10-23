@@ -608,16 +608,29 @@ class NexusPluginClient internal constructor(
      * Says that the event this plugin announced with [eventKey] is no longer on the phone (its
      * notification was removed). The glasses mark the matching history entries removed and stop
      * offering a reply for them. It is not a read or delivery receipt.
-     *
-     * With [forget], the glasses drop those entries and every copy of their text instead, as when
-     * the user told this plugin to stop keeping that content. Only this plugin's own events.
      */
-    fun withdrawNotice(eventKey: String, forget: Boolean = false): NexusSdkResult {
+    fun withdrawNotice(eventKey: String): NexusSdkResult {
         if (!isApproved) return NexusSdkResult.NOT_REGISTERED
         if (!hasCapability(PluginCapability.SURFACES)) return NexusSdkResult.CAPABILITY_NOT_GRANTED
         if (!supportsLauncherInteractive()) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
         if (!NoticeSurfaceContract.isValidEventKey(eventKey)) return NexusSdkResult.INVALID_PAYLOAD
-        return if (send(BusPaths.NOTICE_WITHDRAW, UUID.randomUUID().toString(), NoticeSurfaceContract.withdrawPayload(eventKey, forget))) {
+        return if (send(BusPaths.NOTICE_WITHDRAW, UUID.randomUUID().toString(), NoticeSurfaceContract.withdrawPayload(eventKey))) {
+            NexusSdkResult.SENT
+        } else {
+            NexusSdkResult.NOT_REGISTERED
+        }
+    }
+
+    /**
+     * Asks the glasses to forget every notification this plugin showed: the history entries and
+     * every copy of their text, as when the user told the plugin to stop keeping that content.
+     * The phone keeps the request until the glasses take it, across a link loss or its own
+     * restart, so one call is enough. A plugin cannot name anyone else's notifications.
+     */
+    fun forgetNotices(): NexusSdkResult {
+        if (!isApproved) return NexusSdkResult.NOT_REGISTERED
+        if (!hasCapability(PluginCapability.SURFACES)) return NexusSdkResult.CAPABILITY_NOT_GRANTED
+        return if (send(BusPaths.NOTICE_FORGET, UUID.randomUUID().toString(), NoticeSurfaceContract.forgetPayload())) {
             NexusSdkResult.SENT
         } else {
             NexusSdkResult.NOT_REGISTERED

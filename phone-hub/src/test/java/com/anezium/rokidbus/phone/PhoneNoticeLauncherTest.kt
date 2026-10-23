@@ -114,21 +114,6 @@ class PhoneNoticeLauncherTest {
     }
 
     @Test
-    fun `a forget withdraw reaches the glasses as one, and a later plain one never weakens it`() {
-        sink.linkUp = false
-        router.handleLocal(withdraw("relay", "9f2c", forget = true), hudSender("relay"))
-        router.handleLocal(withdraw("relay", "9f2c"), hudSender("relay"))
-
-        sink.linkUp = true
-        router.onGlassesAnnounced()
-
-        val sent = sink.remote.single()
-        assertEquals("9f2c", sent.payload.getString("eventKey"))
-        assertTrue(sent.payload.getBoolean("forget"))
-        assertEquals(setOf("ownerPluginId", "eventKey", "forget"), sent.payload.keys().asSequence().toSet())
-    }
-
-    @Test
     fun `withdraw passes the local gate only with a valid key and no binary`() {
         // The gate runs on the plugin's own envelope, before the hub stamps the owner.
         val fromSdk = BusEnvelope(path = BusPaths.NOTICE_WITHDRAW, payload = NoticeSurfaceContract.withdrawPayload("9f2c"))
@@ -193,6 +178,39 @@ class PhoneNoticeLauncherTest {
 
         assertEquals(NoticeSurfaceContract.MAX_MESSAGES_PER_SECOND, sink.remote.size)
         assertEquals(NoticeSurfaceContract.ERROR_NOTICE_RATE_LIMITED, sink.errors.single().second)
+    }
+
+    @Test
+    fun `a plugin's forget purges only its own history, whatever the payload claims`() {
+        router.handleLocal(forget("relay").also { it.payload.put("ownerPluginId", "assistant") }, hudSender("relay"))
+
+        val purge = sink.remote.single()
+        assertEquals(BusPaths.CORE_NOTICE_PURGE, purge.path)
+        assertEquals("relay", NoticeSurfaceContract.parsePurge(purge.payload))
+        assertTrue(sink.errors.isEmpty())
+    }
+
+    @Test
+    fun `a forget past the notice budget is kept and sent with the next announce`() {
+        repeat(NoticeSurfaceContract.MAX_MESSAGES_PER_SECOND) { index ->
+            router.handleLocal(withdraw("relay", "key-$index"), hudSender("relay"))
+        }
+        router.handleLocal(forget("relay"), hudSender("relay"))
+        assertTrue(sink.remote.none { it.path == BusPaths.CORE_NOTICE_PURGE })
+
+        router.onGlassesAnnounced()
+        assertEquals("relay", NoticeSurfaceContract.parsePurge(sink.remote.single { it.path == BusPaths.CORE_NOTICE_PURGE }.payload))
+    }
+
+    @Test
+    fun `a forget while the glasses are away is kept for them`() {
+        sink.linkUp = false
+        router.handleLocal(forget("relay"), hudSender("relay"))
+        assertTrue(sink.remote.isEmpty())
+
+        sink.linkUp = true
+        router.onGlassesAnnounced()
+        assertEquals(BusPaths.CORE_NOTICE_PURGE, sink.remote.single().path)
     }
 
     @Test
@@ -388,8 +406,13 @@ class PhoneNoticeLauncherTest {
     )
 
     /** A withdraw as the hub stamps it for [pluginId]; the router itself trusts only the sender. */
-    private fun withdraw(pluginId: String, eventKey: String, forget: Boolean = false) = BusEnvelope(
+    private fun forget(pluginId: String) = BusEnvelope(
+        path = BusPaths.NOTICE_FORGET,
+        payload = PluginRoutePolicy.injectSurfaceOwner(pluginId, NoticeSurfaceContract.forgetPayload())!!,
+    )
+
+    private fun withdraw(pluginId: String, eventKey: String) = BusEnvelope(
         path = BusPaths.NOTICE_WITHDRAW,
-        payload = PluginRoutePolicy.injectSurfaceOwner(pluginId, NoticeSurfaceContract.withdrawPayload(eventKey, forget))!!,
+        payload = PluginRoutePolicy.injectSurfaceOwner(pluginId, NoticeSurfaceContract.withdrawPayload(eventKey))!!,
     )
 }

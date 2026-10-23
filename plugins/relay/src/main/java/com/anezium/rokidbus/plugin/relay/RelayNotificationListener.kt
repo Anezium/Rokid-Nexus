@@ -62,7 +62,7 @@ class RelayNotificationListener : NotificationListenerService() {
         val component = ComponentName(this, RelayNotificationListener::class.java)
         val accessGranted = accessGranted(component)
         // Access revoked: the glasses forget what they were shown, too. A mere rebind keeps it.
-        if (!accessGranted) runtime.onForgotten(null)
+        if (!accessGranted) RelayHistoryForget.request(this)
         ReplyRepository.clear()
         NotificationControl.notifyInboxChanged()
         NotificationControl.detach(this)
@@ -98,7 +98,7 @@ class RelayNotificationListener : NotificationListenerService() {
     internal fun refreshFromSettings() {
         if (!RelaySettings(this).enabled()) {
             // Switched off means kept nowhere: what the glasses were shown goes too.
-            runtime.onForgotten(null)
+            RelayHistoryForget.request(this)
             ReplyRepository.clear()
             NotificationControl.notifyInboxChanged()
             runtime.shutdown()
@@ -154,8 +154,9 @@ class RelayNotificationListener : NotificationListenerService() {
                 ongoing = sbn.isOngoing || sbn.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0,
                 groupSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0,
             )) {
-            if (ReplyRepository.dropAuthority(sbn)) {
-                runtime.onReplyAuthorityLost(notificationId)
+            val replyable = ReplyRepository.contains(notificationId)
+            if (ReplyRepository.dropActive(sbn)) {
+                if (replyable) runtime.onReplyAuthorityLost(notificationId)
                 NotificationControl.notifyCaptured(notificationId)
             }
             return finish(if (action == null) "no_action" else "filtered", accepted = false)

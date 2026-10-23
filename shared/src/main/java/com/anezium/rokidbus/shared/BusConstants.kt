@@ -88,6 +88,9 @@ object BusPaths {
      * with the owner it authenticated.
      */
     const val NOTICE_WITHDRAW = "/notice/withdraw"
+
+    /** Launcher bundle, plugin to phone: forget every notification of the sender on the glasses. */
+    const val NOTICE_FORGET = "/notice/forget"
     // Reserved page v1 paths; no running hub dispatches them yet.
     const val PAGE_REQUEST = "/page/request"
     const val PAGE_RESPONSE = "/page/response"

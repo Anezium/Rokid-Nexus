@@ -32,10 +32,14 @@ This section supersedes the status paragraphs above, which are kept as history.
 - **Fixed after three fresh independent reviews** (GPT-6.1 Sol, GPT-6 Astra, Claude Fable 5.1, all
   on `d005b069`): the 24-hour display bound now holds on frozen roots, covered roots, aggregates,
   named notice pages and after a wake; explicit LEGACY no longer selects guidance islands from live
-  geometry; a newer revision of unchanged route geometry rebinds its rendered-map context; a withdraw
-  can ask the glasses to forget an event, which Relay sends when an app is turned Off, Relay is
-  switched off or its notification access is revoked; foreground window walks are coalesced per
-  burst; the owner's station and stop names were removed from device notes and fixtures.
+  geometry; a newer revision of unchanged route geometry rebinds its rendered-map context;
+  foreground window walks are coalesced per burst; a plugin can ask the glasses to forget every
+  notification it showed (`/notice/forget`, a durable owner purge), which Relay does when an app is
+  turned Off, Relay is switched off or its notification access is revoked; the owner's station and stop names were removed from device notes and fixtures.
+- **Fixed after the second round** (Sol and Astra on `48c3f7fb`): notice pages and the
+  Notifications list already open follow the 24-hour bound too, resolved aggregates keep only the
+  names still within it, the per-event forget was replaced by the owner-scoped durable one above,
+  and a read-only alert reposted as excluded stops being active.
 - **Versions prepared, not released.** Hubs 1.9.0 (10900), Relay 1.4.0 (15), Navigation 0.3.0 (4),
   Media Deck 1.0.4 (5), Sample 1.0.6 (7); SDK notes for 0.24.0 are in `CHANGELOG.md`. The SDK
   dependency pins in `README.md` and the SDK guide stay on `sdk-v0.23.0` until that tag exists.
