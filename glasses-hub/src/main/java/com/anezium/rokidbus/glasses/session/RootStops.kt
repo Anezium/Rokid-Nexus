@@ -107,6 +107,9 @@ internal object RootStops {
 
     /** What a purged owner's notification stop says: that one was removed, and nothing of it. */
     const val PURGED_TEXT = "Notification removed"
+
+    /** What a notification stop says once everything it showed is older than the display bound. */
+    const val EXPIRED_TEXT = "No recent notification"
     const val APPLICATIONS_PAGE_ID = "nexus:applications"
 
     /** The local page of one history entry (its params name it), opened from a preview or a row. */
@@ -184,15 +187,16 @@ internal object RootStops {
         withHistory(stops, history, nowWallMs).map {
             val owner = it.notice?.ownerPluginId
             if (it.kind == RootStopKind.NOTICE_PREVIEW && (owner == null || owner == ownerPluginId)) {
-                purgedNotice(it)
+                placeholderNotice(it, PURGED_TEXT)
             } else {
                 it
             }
         }
 
-    private fun purgedNotice(stop: RootStop): RootStop = stop.copy(
+    /** The stop keeps its place and selection; nothing it copied from the history stays. */
+    fun placeholderNotice(stop: RootStop, text: String): RootStop = stop.copy(
         pageId = NOTIFICATIONS_PAGE_ID,
-        text = PURGED_TEXT,
+        text = text,
         count = null,
         label = null,
         detail = null,
@@ -203,18 +207,26 @@ internal object RootStops {
         notice = NoticeCard(NoticeCardKind.GENERIC, entryId = null, ownerPluginId = null, state = HistoryState.WITHDRAWN),
     )
 
+    /**
+     * Copied text never outlives the display bound: a card whose entries all passed it becomes a
+     * content-free placeholder in place, even on a frozen root or beneath a page.
+     */
     private fun refreshNotice(stop: RootStop, history: NotificationHistory, nowWallMs: Long): RootStop {
         val card = stop.notice
         if (card != null && card.kind == NoticeCardKind.CONVERSATION) {
+            val entry = card.entryId?.let(history::entry)
+            if (entry != null && history.visibleEntry(entry.id, nowWallMs) == null) return placeholderNotice(stop, EXPIRED_TEXT)
             // A purged entry is gone from the phone as surely as a withdrawn one.
-            val state = card.entryId?.let(history::entry)?.state ?: HistoryState.WITHDRAWN
-            return stop.copy(notice = card.copy(state = state))
+            return stop.copy(notice = card.copy(state = entry?.state ?: HistoryState.WITHDRAWN))
         }
         if (card != null && card.kind == NoticeCardKind.AGGREGATE) {
-            return history.aggregateFor(card.ownerPluginId, nowWallMs)?.let { applyPreview(stop, it) } ?: stop
+            history.aggregateFor(card.ownerPluginId, nowWallMs)?.let { return applyPreview(stop, it) }
+            val ownerShows = history.visible(nowWallMs).any { it.notice.ownerPluginId == card.ownerPluginId }
+            return if (ownerShows) stop else placeholderNotice(stop, EXPIRED_TEXT)
         }
         return history.visible(nowWallMs).firstOrNull()?.let { applyPreview(stop, history.generic(it)) }
-            ?: stop.copy(notice = card?.copy(state = HistoryState.WITHDRAWN))
+            // Nothing left to show: an undated stop (a placeholder already) stays as it is.
+            ?: if (stop.atWallMs == null && card?.entryId == null) stop else placeholderNotice(stop, EXPIRED_TEXT)
     }
 
     private fun applyPreview(stop: RootStop, preview: NoticePreview): RootStop = stop.copy(

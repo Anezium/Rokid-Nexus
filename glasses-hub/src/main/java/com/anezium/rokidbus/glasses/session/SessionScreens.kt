@@ -390,7 +390,12 @@ internal class SessionScreens(
      * from the phone with nothing proven. An aggregate counts its owner's threads; anything else is
      * the generic preview of the newest entry.
      */
-    private fun noticeCard(stop: RootStop, selected: Boolean): ScreenBlock.Card {
+    private fun stale(stop: RootStop): Boolean =
+        stop.atWallMs?.let { wallClock() - it >= NoticeSurfaceContract.MAX_HISTORY_AGE_MS } == true
+
+    private fun noticeCard(shown: RootStop, selected: Boolean): ScreenBlock.Card {
+        // Drawn after a wake or late tick, a stop past the display bound still says nothing of it.
+        val stop = shown.takeUnless { stale(it) } ?: RootStops.placeholderNotice(shown, RootStops.EXPIRED_TEXT)
         val card = stop.notice
         val removed = card?.state == HistoryState.WITHDRAWN
         val generic = ScreenBlock.Card(

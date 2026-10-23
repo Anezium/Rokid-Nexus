@@ -311,10 +311,13 @@ internal data class SessionModel(
      * to the ambient size preference (plan 028a §5.5).
      */
     val mapViews: Map<String, MapView> = emptyMap(),
+    /** When the next notification shown leaves the 24-hour display bound, on the session clock. */
+    val historyExpiryAtMs: Long? = null,
 ) {
     /**
      * The one time the runner's timer is set for: the state's own deadline and, while a session
-     * is open, the expiry of a cancelled open or of a pending command. Never anything while closed.
+     * is open, the expiry of a cancelled open, of a pending command or of a notification shown.
+     * Never anything while closed.
      */
     fun nextDeadlineMs(): Long? {
         if (state == SessionState.Closed) return null
@@ -323,6 +326,7 @@ internal data class SessionModel(
             cancelledOpen.values.minOrNull(),
             pendingCommands.values.minOfOrNull(PendingCommand::deadlineMs),
             capture?.deadlineMs,
+            historyExpiryAtMs,
         ).minOrNull()
     }
 }

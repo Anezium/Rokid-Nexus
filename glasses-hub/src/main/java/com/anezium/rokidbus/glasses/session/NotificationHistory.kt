@@ -87,10 +87,19 @@ internal data class NotificationHistory(
     )
 
     /** What may be shown now: younger than the display bound (an entry from a later clock stays). */
-    fun visible(nowWallMs: Long): List<HistoryEntry> =
-        entries.filter { nowWallMs - it.notice.atWallMs < NoticeSurfaceContract.MAX_HISTORY_AGE_MS }
+    fun visible(nowWallMs: Long): List<HistoryEntry> = entries.filter { isVisible(it, nowWallMs) }
+
+    private fun isVisible(entry: HistoryEntry, nowWallMs: Long): Boolean =
+        nowWallMs - entry.notice.atWallMs < NoticeSurfaceContract.MAX_HISTORY_AGE_MS
 
     fun entry(id: String): HistoryEntry? = entries.firstOrNull { it.id == id }
+
+    /** [entry], but only while it is still within the display bound. */
+    fun visibleEntry(id: String, nowWallMs: Long): HistoryEntry? = entry(id)?.takeIf { isVisible(it, nowWallMs) }
+
+    /** When the next entry shown now leaves the display bound, in wall time; null when none shows. */
+    fun nextExpiryWallMs(nowWallMs: Long): Long? =
+        visible(nowWallMs).minOfOrNull { it.notice.atWallMs }?.plus(NoticeSurfaceContract.MAX_HISTORY_AGE_MS)
 
     /** The event is no longer on the phone. Not proof of read or delivery, so nothing else changes. */
     fun withdraw(ownerPluginId: String, eventKey: String): NotificationHistory = map {

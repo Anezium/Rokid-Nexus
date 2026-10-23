@@ -17,6 +17,7 @@ import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.ComposeDictateStart
 import com.anezium.rokidbus.shared.ComposeDictationReason
 import com.anezium.rokidbus.shared.ComposeTypeStart
+import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageCorrelation
 import com.anezium.rokidbus.shared.PageDestination
@@ -48,7 +49,8 @@ import org.json.JSONObject
  * behaviour exactly.
  *
  * [wallClock] dates the notification history only: its entries are displayed for 24 hours of wall
- * time, which the session clock cannot measure across a deep sleep.
+ * time, which the session clock cannot measure across a deep sleep. [sessionClock], when given,
+ * is the runner's clock: an open session then also wakes when a shown notification expires.
  */
 internal class SessionReducer(
     private val itemResolver: PageItemResolver = DefaultPageItems,
@@ -62,6 +64,7 @@ internal class SessionReducer(
      * Applications catalog; null for any other owner.
      */
     private val ownerApp: (String) -> OpenApp? = { null },
+    private val sessionClock: (() -> Long)? = null,
 ) {
     fun reduce(model: SessionModel, event: SessionEvent): SessionTransition {
         val reduced = when (event) {
@@ -87,7 +90,9 @@ internal class SessionReducer(
             SessionEvent.LauncherFactsChanged -> redraw(model, model.copy(factsEpoch = model.factsEpoch + 1))
             else -> {
                 // Rule 17: a cancelled open is remembered only until its own deadline.
-                val ticked = (event as? SessionEvent.Tick)?.let { model.expireCancelledOpens(it.nowMs).expireCommands(it.nowMs) }
+                val expired = (event as? SessionEvent.Tick)?.let { model.expireCancelledOpens(it.nowMs).expireCommands(it.nowMs) }
+                // A notification shown past its display bound leaves every copy, root or beneath a page.
+                val ticked = expired?.let { it.copy(state = it.state.mapRootStops { stops -> RootStops.withHistory(stops, it.history, wallClock()) }) }
                 val current = ticked ?: model
                 val transition = when (val state = current.state) {
                     SessionState.Closed -> onClosed(current, event)
@@ -98,7 +103,7 @@ internal class SessionReducer(
                         absorbGateClassification(current, event) ?: onLaunching(current, state, event)
                 }
                 // A command that expired on this tick is now shown as unconfirmed.
-                if (ticked != null && ticked.commandOutcomes != model.commandOutcomes) {
+                if (ticked != null && (ticked.commandOutcomes != model.commandOutcomes || ticked.state != expired.state)) {
                     transition.copy(effects = (transition.effects + listOfNotNull(showEffect(transition.model.state))).distinct())
                 } else {
                     transition
@@ -109,9 +114,18 @@ internal class SessionReducer(
         // An acknowledgement holds only while its target stays on screen: once something else is
         // focused, coming back to the same target needs a new one.
         val after = transition.model
-        val settled = after.shownFocus?.takeIf { it.token != SessionFocus.tokenOf(after) }
+        val focused = after.shownFocus?.takeIf { it.token != SessionFocus.tokenOf(after) }
             ?.let { after.copy(shownFocus = null) } ?: after
+        val settled = focused.copy(historyExpiryAtMs = historyExpiry(focused))
         return SessionTransition(settled, transition.effects.ifEmpty { listOf(SessionEffect.None) })
+    }
+
+    private fun historyExpiry(model: SessionModel): Long? {
+        val clock = sessionClock ?: return null
+        if (model.state == SessionState.Closed) return null
+        val now = wallClock()
+        val expiry = model.history.nextExpiryWallMs(now) ?: return null
+        return clock() + (expiry - now).coerceIn(0, NoticeSurfaceContract.MAX_HISTORY_AGE_MS) + 1
     }
 
     /** Only an acknowledgement of the target on screen now counts, and only its first one. */

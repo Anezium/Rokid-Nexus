@@ -1498,6 +1498,7 @@ internal object NexusSession {
             launcherActive = GlassesHub::launcherInteractiveActive,
             wallClock = System::currentTimeMillis,
             ownerApp = { owner -> if (ownerLaunchable(owner)) OpenApp(owner, pluginLabel(owner) ?: owner) else null },
+            sessionClock = SystemClock::uptimeMillis,
         ),
         clock = SystemClock::uptimeMillis,
         timer = HandlerSessionTimer(main),
