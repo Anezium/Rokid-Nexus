@@ -111,8 +111,23 @@ internal object AmbientForeground {
         return { listeners.remove(listener) }
     }
 
-    /** Accessibility overlays can emit state changes while the application underneath stays put. */
+    private var walkPending = false
+
+    /**
+     * Accessibility overlays can emit state changes while the application underneath stays put.
+     * Nexus's own overlays raise bursts of window events; one walk per main-loop turn answers them
+     * all, since each walk fetches every application window's root over IPC.
+     */
     fun onWindowsChanged(service: AccessibilityService) {
+        if (walkPending) return
+        walkPending = true
+        main.post {
+            walkPending = false
+            if (resolver != null) walkWindows(service)
+        }
+    }
+
+    private fun walkWindows(service: AccessibilityService) {
         val windows = service.windows.orEmpty().mapNotNull { window ->
             if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@mapNotNull null
             val root = window.root

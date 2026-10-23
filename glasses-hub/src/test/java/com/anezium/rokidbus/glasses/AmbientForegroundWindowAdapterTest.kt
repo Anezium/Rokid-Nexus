@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
 import android.content.pm.ResolveInfo
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -102,10 +103,26 @@ class AmbientForegroundWindowAdapterTest {
         assertEquals(ForegroundAmbientMode.RESIDENTS, AmbientForeground.mode())
     }
 
+    @Test
+    fun `a burst of window events is answered by one walk of the windows as they are then`() {
+        val reader = window(READER)
+        shadowOf(service).setWindows(listOf(reader))
+        AmbientForeground.onWindowsChanged(service)
+        val home = window(HOME, focused = true)
+        shadowOf(service).setWindows(listOf(home))
+        AmbientForeground.onWindowsChanged(service)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(Foreground.Home, AmbientForeground.current)
+        shadowOf(service).setWindows(emptyList())
+        reader.recycle()
+        home.recycle()
+    }
+
     private fun sample(vararg windows: AccessibilityWindowInfo) {
         shadowOf(service).setWindows(windows.toList())
         try {
             AmbientForeground.onWindowsChanged(service)
+            shadowOf(Looper.getMainLooper()).idle()
         } finally {
             shadowOf(service).setWindows(emptyList())
             windows.forEach { it.recycle() }
