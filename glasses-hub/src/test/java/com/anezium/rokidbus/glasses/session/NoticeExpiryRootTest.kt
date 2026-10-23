@@ -90,6 +90,35 @@ class NoticeExpiryRootTest {
     }
 
     @Test
+    fun `a resolved aggregate drops a name once that thread passes the bound`() {
+        arrive(conversation("t1", "Mika", "on est devant"))
+        val firstAt = wallNow
+        arrive(conversation("t2", "Alan", "moi aussi"))
+        openRoot()
+        send(SessionEvent.NoticeWithdrawn("relay", "t1"))
+        send(SessionEvent.NoticeWithdrawn("relay", "t2"))
+        assertTrue(drawn().any { "Mika" in it })
+
+        wallNow = firstAt + NoticeSurfaceContract.MAX_HISTORY_AGE_MS
+        sessionNow = model.historyExpiryAtMs ?: error("no expiry scheduled")
+        send(SessionEvent.Tick(sessionNow))
+        assertGone("Mika")
+        assertTrue(drawn().any { "Alan" in it })
+    }
+
+    @Test
+    fun `a notice page and a Notifications row drawn past the bound say nothing of their entry`() {
+        arrive(NoticeEntry("todo", "Todo", "Buy the surprise gift", null, atWallMs = wallNow))
+        openRoot()
+        send(SessionEvent.Enter(2_000))
+        send(SessionEvent.PageResponse(local.answer(requestOf()), 2_100))
+        assertTrue(topScreen().contains("surprise gift"))
+        wallNow += NoticeSurfaceContract.MAX_HISTORY_AGE_MS
+        assertFalse(topScreen().contains("surprise gift"))
+        assertTrue(topScreen().contains(SessionScreens.NO_NOTICE))
+    }
+
+    @Test
     fun `a root covered by a page during expiry comes back clean`() {
         arrive(conversation("t1", "Mika", "le code est 4417"))
         openRoot()
@@ -212,6 +241,9 @@ class NoticeExpiryRootTest {
         shadowOf(Looper.getMainLooper()).idle()
         return texts(view)
     }
+
+    /** What the session window is given to draw for the page on top, as it is now. */
+    private fun topScreen(): String = screens.screen(model.state, null, model.generation, CommandFacts.of(model)).toString()
 
     private fun texts(root: View): List<String> = when (root) {
         is TextView -> listOf(root.text.toString())

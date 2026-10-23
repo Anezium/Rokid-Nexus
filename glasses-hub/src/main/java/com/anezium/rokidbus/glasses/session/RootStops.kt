@@ -230,8 +230,9 @@ internal object RootStops {
         }
         if (card != null && card.kind == NoticeCardKind.AGGREGATE) {
             history.aggregateFor(card.ownerPluginId, nowWallMs)?.let { return applyPreview(stop, it) }
-            val ownerShows = history.visible(nowWallMs).any { it.notice.ownerPluginId == card.ownerPluginId }
-            return if (ownerShows) stop else placeholderNotice(stop, EXPIRED_TEXT)
+            // Resolved threads keep their names only while each is still within the bound.
+            return history.resolvedAggregateFor(card.ownerPluginId, nowWallMs)?.let { applyPreview(stop, it) }
+                ?: placeholderNotice(stop, EXPIRED_TEXT)
         }
         return history.visible(nowWallMs).firstOrNull()?.let { applyPreview(stop, history.generic(it)) }
             // Nothing left to show: an undated stop (a placeholder already) stays as it is.

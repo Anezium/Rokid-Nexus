@@ -152,6 +152,17 @@ internal data class NotificationHistory(
         return if (threads.isEmpty() || ownerPluginId == null) null else aggregate(ownerPluginId, threads)
     }
 
+    /**
+     * The aggregate for [ownerPluginId] once none of its threads is live: only the threads still
+     * within the display bound, answered or removed; null when none is.
+     */
+    fun resolvedAggregateFor(ownerPluginId: String?, nowWallMs: Long): NoticePreview? {
+        val threads = visible(nowWallMs)
+            .filter { it.notice.ownerPluginId == ownerPluginId && it.notice.threadKey != null }
+            .distinctBy { it.notice.threadKey }
+        return if (threads.isEmpty() || ownerPluginId == null) null else aggregate(ownerPluginId, threads)
+    }
+
     /** The generic preview of one entry: its text, opening the hub's notice page on it. */
     fun generic(entry: HistoryEntry): NoticePreview = NoticePreview(
         pageId = entry.notice.pageId,

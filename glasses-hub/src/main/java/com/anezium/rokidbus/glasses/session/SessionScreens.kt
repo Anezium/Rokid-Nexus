@@ -390,6 +390,12 @@ internal class SessionScreens(
      * from the phone with nothing proven. An aggregate counts its owner's threads; anything else is
      * the generic preview of the newest entry.
      */
+    private fun noticeExpired(frame: Frame, facts: CommandFacts): Boolean {
+        val now = wallClock()
+        val named = NotificationHistory.entryOf(frame.paramsJson)
+        return if (named != null) facts.history.visibleEntry(named, now) == null else facts.history.visible(now).isEmpty()
+    }
+
     private fun stale(stop: RootStop): Boolean =
         stop.atWallMs?.let { wallClock() - it >= NoticeSurfaceContract.MAX_HISTORY_AGE_MS } == true
 
@@ -634,6 +640,16 @@ internal class SessionScreens(
         statusText: String?,
         facts: CommandFacts,
     ): SessionScreen {
+        // A notice page left open past the display bound shows nothing of it, even before its refresh.
+        if (frame.pageId == RootStops.NOTICE_PAGE_ID && noticeExpired(frame, facts)) {
+            return SessionScreen(
+                ScreenHeader(title.uppercase(), null, pageIcon(frame.pageId)),
+                listOf(ScreenBlock.Text("empty", NO_NOTICE, TextRole.CAPTION, centered = true)),
+                ScreenHint(null, back),
+                statusText,
+                "empty",
+            )
+        }
         val page = status.snapshot.page
         val body = items.body(page)
         val header = title.uppercase()
@@ -678,8 +694,13 @@ internal class SessionScreens(
         val rowBlocks: MutableList<ScreenBlock> = rows.mapIndexed { index, row ->
             val selected = showsSelection && frame.tombstone == null && index == frame.selected
             val activity = (row.item as? PageItem.Activity)?.let { facts.activity(it.ownerPluginId) }
-            val entry = (row.item as? PageItem.Notification)?.let { facts.history.entry(it.entryId) }
+            val notification = row.item as? PageItem.Notification
+            val entry = notification?.let { facts.history.visibleEntry(it.entryId, wallClock()) }
             when {
+                // Past the display bound its row keeps its place and none of its words.
+                notification != null && entry == null -> ScreenBlock.Row(
+                    "row:${row.key}", NOTICE_EXPIRED_ROW, null, enabled = false, selected = selected,
+                )
                 activity != null ->
                     activityCard("row:${row.key}", activity, selected, commandFocus?.takeIf { it.stopId == activity.id }, facts)
                 // A Notifications row: its source's icon, its state tag and its age.
@@ -1206,6 +1227,10 @@ internal class SessionScreens(
         const val TAG_SEEN = "SEEN IN NEXUS"
         const val TAG_HANDED_OFF = "HANDED OFF"
         const val TAG_REMOVED = "REMOVED"
+
+        /** A notice page or Notifications row whose entry passed the 24-hour display bound. */
+        const val NO_NOTICE = "No notification to show."
+        const val NOTICE_EXPIRED_ROW = "Older than 24 hours"
         const val NOTIFICATIONS_HINT = "swipe next · tap open the collection"
         val NOTIFICATIONS_FOOTNOTE =
             "“Seen in Nexus” is local to Nexus: the phone is not told. The history is bounded: " +

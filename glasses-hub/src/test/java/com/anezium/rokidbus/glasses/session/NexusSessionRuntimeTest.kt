@@ -8,6 +8,7 @@ import com.anezium.rokidbus.glasses.GlassesHub
 import com.anezium.rokidbus.glasses.NexusSession
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageCorrelation
 import com.anezium.rokidbus.shared.PageSurfaceContract
@@ -17,6 +18,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -94,6 +96,43 @@ class NexusSessionRuntimeTest {
         val page = (frame.status as FrameStatus.Shown).snapshot.page
         return (PageTemplateContract.decode(page, null) as PageSurfaceValidationResult.Valid).value
     }
+
+    @Test
+    fun `an open notice page and list empty themselves when their entry passes the display bound`() {
+        val owner = "expiry-probe"
+        val entry = NoticeEntry(
+            owner, "Probe", "Buy the surprise gift", null,
+            atWallMs = System.currentTimeMillis() - NoticeSurfaceContract.MAX_HISTORY_AGE_MS + 1_000,
+        )
+        try {
+            send(SessionEvent.NoticeArrived(NoticePreview(RootStops.NOTICE_PAGE_ID, entry.text), entry))
+            openRoot()
+            val stops = (NexusSession.state as SessionState.Root).stops
+            val preview = stops.indexOfFirst { it.kind == RootStopKind.NOTICE_PREVIEW }
+            assertTrue("$stops", preview >= 0)
+            repeat(preview) { send(SessionEvent.Step(1, now())) }
+            send(SessionEvent.Enter(now()))
+            assertEquals("${NexusSession.state}", RootStops.NOTICE_PAGE_ID, top().pageId)
+            assertTrue(page(top()).contains("surprise gift"))
+
+            // No arrival or withdrawal: only the clock crosses the bound, and the open page follows.
+            // The history is dated by the real wall clock, so real time has to pass too.
+            Thread.sleep(1_500)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(3_000))
+            assertFalse(page(top()).contains("surprise gift"))
+
+            send(SessionEvent.Back(now()))
+            val notifications = (NexusSession.state as SessionState.Root).stops.indexOfFirst { it.kind == RootStopKind.NOTIFICATIONS }
+            repeat(notifications) { send(SessionEvent.Step(1, now())) }
+            send(SessionEvent.Enter(now()))
+            assertEquals(RootStops.NOTIFICATIONS_PAGE_ID, top().pageId)
+            assertFalse(page(top()).contains("surprise gift"))
+        } finally {
+            send(SessionEvent.NoticePurged(owner))
+        }
+    }
+
+    private fun page(frame: Frame): String = (frame.status as FrameStatus.Shown).snapshot.page.toString()
 
     @Test
     fun `local pages answer in-process without a phone`() {

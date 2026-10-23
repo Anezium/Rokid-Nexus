@@ -25,6 +25,7 @@ import com.anezium.rokidbus.glasses.input.LauncherBackend
 import com.anezium.rokidbus.glasses.input.LauncherBackendSelection
 import com.anezium.rokidbus.glasses.input.RawKeyEvent
 import com.anezium.rokidbus.glasses.input.RoutedIntent
+import com.anezium.rokidbus.glasses.session.HistoryEntry
 import com.anezium.rokidbus.glasses.session.HostScreen
 import com.anezium.rokidbus.glasses.page.SessionScreenView
 import com.anezium.rokidbus.glasses.session.ActivityFeed
@@ -1435,6 +1436,8 @@ internal object NexusSession {
 
     /** The history the open local page was last answered from, so a change refreshes it. */
     private var renderedHistory: NotificationHistory? = null
+    private var renderedVisible: List<String> = emptyList()
+    private var renderedTop: Pair<Int, String>? = null
     private val timeFormat = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
 
     /** The user's quick-action approvals as the phone last sent them; none until it does. */
@@ -1956,9 +1959,14 @@ internal object NexusSession {
             val display = ((model.state as? SessionState.InPage)?.frames?.lastOrNull()?.panel as? FramePanel.Display)
                 ?.takeIf { it.moved }
             AmbientPreferences.preview(display?.let { it.ownerPluginId to it.size })
-            // The hub's notification pages follow the history live: arrivals, seen, withdrawn.
-            if (model.history != renderedHistory) {
+            // The hub's notification pages follow the history live: arrivals, seen, withdrawn, an
+            // entry passing the 24-hour display bound, and a page coming back on top after Back.
+            val top = (model.state as? SessionState.InPage)?.frames?.let { it.size to it.last().pageId }
+            val visible = model.history.visible(System.currentTimeMillis()).map(HistoryEntry::id)
+            if (model.history != renderedHistory || visible != renderedVisible || top != renderedTop) {
                 renderedHistory = model.history
+                renderedVisible = visible
+                renderedTop = top
                 refreshLocalPage { it == RootStops.NOTICE_PAGE_ID || it == RootStops.NOTIFICATIONS_PAGE_ID }
             }
         }
