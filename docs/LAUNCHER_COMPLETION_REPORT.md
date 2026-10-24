@@ -19,7 +19,7 @@ Authorities: `plans/028-launcher-completion.md` (scope), `docs/LAUNCHER_INTERACT
 (product decisions), `plans/028a-launcher-contract.md` (frozen implementation contract),
 `BUSSPEC.md` (wire), `docs/PLUGIN_SDK.md` (typed API), r17 mockup (`docs/mockups/glasses-home/`).
 
-## Current status (2026-10-23)
+## Current status (2026-10-24)
 
 This section supersedes the status paragraphs above, which are kept as history.
 
@@ -29,6 +29,9 @@ This section supersedes the status paragraphs above, which are kept as history.
   first in 1.8 as the files, lane and hotspot bits. Relay was merged by meaning: per-app policies,
   read-only alerts, echo suppression, the final-send policy check, pending eviction and the redacted
   image gate sit beside thread pages, handoffs and withdrawals.
+- **Integrated with main again** at `15cd98ad` (CXR-L 1.1.2 scenes, CxrGlobal 0.3.0): the hub
+  stop path clears the server-closed flag together with the CXR state and the rendered-map
+  negotiation under `sppLock`. Builds need `../CxrGlobal` at `v0.3.0`, as CI checks out.
 - **Fixed after three fresh independent reviews** (GPT-6.1 Sol, GPT-6 Astra, Claude Fable 5.1, all
   on `d005b069`): the 24-hour display bound now holds on frozen roots, covered roots, aggregates,
   named notice pages and after a wake; explicit LEGACY no longer selects guidance islands from live
