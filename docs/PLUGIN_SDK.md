@@ -1205,10 +1205,15 @@ with `CAPABILITY_NOT_AVAILABLE` without the bundle.
 
 When the user tells your plugin to stop keeping what it showed (they turned a
 source off, switched the plugin off, or revoked an access it depends on), call
-`forgetNotices()`: the glasses forget every notification your plugin showed,
-history entries and every copy of their text. The phone keeps the request until
-the glasses take it, across a link loss or its own restart, so one call is
-enough; keep it owed on your side only until it returns `SENT`.
+`forgetNotices(onAccepted)`: the glasses forget every notification your plugin
+showed, history entries and every copy of their text. Decide it from the user's
+setting change, not from what your plugin still remembers having shown. `SENT`
+only means the request left your process: it may sit in the client's reconnect
+queue, which dies with the client. `onAccepted` runs once the phone hub holds the
+request on disk; from there it reaches the glasses across a link loss or a
+restart of either hub. Keep the request owed on your side until then and send it
+again on your next registration; repeating it is harmless. Hubs before Nexus
+1.9.0 keep no notification history, refuse the path and never accept it.
 
 ```kotlin
 nexusClient?.showNotice(

@@ -1301,8 +1301,13 @@ that thread. It is not proof that anything was read or delivered.
 phone handles it exactly like a revoked owner, with `/core/notice/purge` for the
 authenticated owner: the obligation is coalesced per owner and kept in its
 durable purge ledger across a link loss and its own restart. Past the shared
-notice budget it is still kept, only sent with the next glasses announce. A
-plugin can never name another owner, and nothing in it identifies an event.
+notice budget it is still kept and sent once the budget's one-second window has
+passed, and always before any newer `/notice/show` from that owner, so it never
+erases a later event. Once the obligation is on disk the phone answers the
+sender alone with `/notice/forget/accepted` `{pluginId, forId}` (owner-scoped,
+delivered without a receive prefix); only then may the plugin stop keeping the
+request. A plugin can never name another owner, and nothing in it identifies an
+event.
 `/core/notice/purge` `{ownerPluginId}` (phone to glasses only) removes every
 history entry of that owner on revoke, disable, uninstall or a signer change.
 The phone keeps, by owner id only, the owners whose notices reached a history

@@ -24,7 +24,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 
 ### SDK 0.24.0
 
-- The launcher bundle, active only when both hubs negotiate it (`supportsLauncherInteractive()`): page providers and the conversation, media and route page templates; typed page and activity actions with hub-approved quick actions; activity destinations and commands; notice destinations, event keys, conversation events and `withdrawNotice(eventKey)`; `forgetNotices()` asks the glasses to forget every notification the plugin showed, kept by the phone until they do; route geometry and heading for activities.
+- The launcher bundle, active only when both hubs negotiate it (`supportsLauncherInteractive()`): page providers and the conversation, media and route page templates; typed page and activity actions with hub-approved quick actions; activity destinations and commands; notice destinations, event keys, conversation events and `withdrawNotice(eventKey)`; `forgetNotices(onAccepted)` asks the glasses to forget every notification the plugin showed, kept by the phone until they do, with `onAccepted` once the phone holds it; route geometry and heading for activities.
 - Activity actions are no longer deprecated. On a negotiated launcher they are selectable from the activity's card and page; islands themselves stay passive, and older hubs ignore them as before. Plugins still need a full-surface or notice fallback for hubs without the bundle.
 - `supportsRenderedMaps`, `renderedMapViews`, `clearRenderedMapDemand()` and `onRenderedMapsChanged()` expose bounded, expiring hub-issued map demand.
 - `RouteGeometry.attribution` (optional, at most 40 printable characters) credits the source of a geometry's `street` and `major` paths. Older hubs ignore it.

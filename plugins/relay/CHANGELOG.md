@@ -10,7 +10,9 @@ behaves like 1.3.0.
 - Turning an app Off, switching Relay off or revoking its notification access
   also clears Relay's notifications from the glasses' history. All of them go:
   the glasses do not know which app each one came from. Relay's own pages keep
-  showing what is still allowed.
+  showing what is still allowed. It holds even when Android had briefly
+  disconnected Relay, and Relay asks again until the phone confirms it has the
+  request.
 
 - Pages for the glasses' Nexus session, on hubs that support them: the inbox's
   conversations as a list, and each conversation as a document with who said

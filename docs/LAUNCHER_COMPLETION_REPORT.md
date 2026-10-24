@@ -40,6 +40,17 @@ This section supersedes the status paragraphs above, which are kept as history.
   Notifications list already open follow the 24-hour bound too, resolved aggregates keep only the
   names still within it, the per-event forget was replaced by the owner-scoped durable one above,
   and a read-only alert reposted as excluded stops being active.
+- **Fixed after the third round** (Sol, Astra and Fable on `b4ef4623`): Relay decides a forget
+  from the settings change itself (Relay off, or a source moved to a stricter policy), so a
+  listener Android disconnected with access kept, or a restart, no longer hides it; the request
+  stays owed until the phone answers `/notice/forget/accepted`, because `SENT` can mean a
+  reconnect queue that dies with the client. The phone sends a budget-deferred forget one window
+  later on a link that stays up, and before any newer show from the same owner. A frozen
+  conversation evicted from the bounded history keeps its own expiry deadline, and the root is
+  redrawn from the current history at draw time and on screen-on, so a staggered aggregate loses
+  an expired thread after a deep sleep without waiting for a tick. A paused phone no longer skips
+  ending a read-only alert whose repost the policy refuses. Each fix has a regression test that
+  fails without it.
 - **Versions prepared, not released.** Hubs 1.9.0 (10900), Relay 1.4.0 (15), Navigation 0.3.0 (4),
   Media Deck 1.0.4 (5), Sample 1.0.6 (7); SDK notes for 0.24.0 are in `CHANGELOG.md`. The SDK
   dependency pins in `README.md` and the SDK guide stay on `sdk-v0.23.0` until that tag exists.
