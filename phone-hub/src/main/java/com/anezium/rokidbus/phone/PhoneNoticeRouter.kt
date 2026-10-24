@@ -132,6 +132,12 @@ internal class PhoneNoticeRouter(
                 // A forget the owner asked for earlier goes first, or it would land after this
                 // newer event and erase it. One that cannot go now holds the show back: the
                 // plugin hears so, as for a link that is down.
+                // A show the budget refuses anyway leaves a deferred forget to its drain, so a
+                // stream of refused shows cannot send purges faster than the budget allows.
+                if (launcherBundle && synchronized(historyLock) { pluginId in pendingPurges } && !state.hasBudget(pluginId)) {
+                    reject(envelope, sender, NoticeSurfaceContract.ERROR_NOTICE_RATE_LIMITED)
+                    return
+                }
                 if (launcherBundle && !purgeIfPending(pluginId, "owner_forget_before_show")) {
                     reject(envelope, sender, NoticeSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE)
                     return

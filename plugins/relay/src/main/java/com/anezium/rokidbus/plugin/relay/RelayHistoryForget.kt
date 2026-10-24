@@ -49,14 +49,22 @@ internal object RelayHistoryForget {
         main.post { send(app, hold = false) }
     }
 
-    /** A fresh registration carries nothing an earlier one was handed. */
-    fun registered(context: Context) {
+    /**
+     * A fresh registration carries nothing an earlier one was handed. Approval is reported twice
+     * for one registration (at once, then with its metadata), so only a new [generation] of the
+     * client counts: the repeated report must not send the same request twice.
+     */
+    fun registered(context: Context, client: Any, generation: Int) {
         val app = context.applicationContext
         main.post {
-            inFlight = null
+            val fresh = lastRegistration?.let { it.first !== client || it.second != generation } ?: true
+            lastRegistration = client to generation
+            if (fresh) inFlight = null
             send(app, hold = false)
         }
     }
+
+    private var lastRegistration: Pair<Any, Int>? = null
 
     /**
      * Whether [settings] admit less than when last looked at: Relay switched off, or a source

@@ -289,6 +289,22 @@ class PhoneNoticeLauncherTest {
     }
 
     @Test
+    fun `refused shows cannot send a deferred forget ahead of its budget`() {
+        repeat(NoticeSurfaceContract.MAX_MESSAGES_PER_SECOND) { index ->
+            router.handleLocal(withdraw("relay", "key-$index"), hudSender("relay"))
+        }
+        repeat(3) {
+            router.handleLocal(forget("relay"), hudSender("relay"))
+            router.handleLocal(conversationShow("relay"), hudSender("relay"))
+        }
+        assertTrue(sink.remote.none { it.path == BusPaths.CORE_NOTICE_PURGE })
+        assertEquals(NoticeSurfaceContract.ERROR_NOTICE_RATE_LIMITED, sink.errors.last().second)
+
+        runScheduled()
+        assertEquals(1, sink.remote.count { it.path == BusPaths.CORE_NOTICE_PURGE })
+    }
+
+    @Test
     fun `the sender hears that this hub holds its forget, sent or deferred`() {
         sink.linkUp = false
         val request = forget("relay")

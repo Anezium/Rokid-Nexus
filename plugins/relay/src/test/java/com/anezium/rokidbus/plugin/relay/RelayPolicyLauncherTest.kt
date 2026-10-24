@@ -258,8 +258,29 @@ class RelayPolicyLauncherTest {
         RelayHubFixture.idleFor(1_000)
         assertEquals(1, forgets().size)
 
-        // The hub restarted before taking it; the same client registers with the new one.
+        // The hub restarted before taking it; the same client registers with the new one, a new
+        // SDK registration generation, as its transport reports after a reconnect.
         hub.acceptsForgets = true
+        val client = checkNotNull(RelayBus.client)
+        val generation = client.registrationGeneration
+        client.onRegistrationState(PluginRegistrationResult.APPROVED)
+        assertEquals(generation + 1, client.registrationGeneration)
+        RelayHubFixture.idleFor(1_000)
+
+        assertEquals(2, forgets().size)
+        assertFalse(owed())
+    }
+
+    @Test
+    fun `the repeated approval report of one registration does not send the same forget twice`() {
+        start()
+        hub.acceptsForgets = false
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.OFF)
+        NotificationControl.refreshFromSettings(app)
+        RelayHubFixture.idleFor(1_000)
+        assertEquals(1, forgets().size)
+
+        // The metadata report of the registration already in place: no new SDK generation.
         hub.deliver(
             BusPaths.PLUGIN_REGISTRATION,
             JSONObject().put("result", PluginRegistrationResult.APPROVED).put("capabilities", FakeHub.CAPABILITIES)
@@ -267,8 +288,8 @@ class RelayPolicyLauncherTest {
         )
         RelayHubFixture.idleFor(1_000)
 
-        assertEquals(2, forgets().size)
-        assertFalse(owed())
+        assertEquals(1, forgets().size)
+        assertTrue(owed())
     }
 
     @Test

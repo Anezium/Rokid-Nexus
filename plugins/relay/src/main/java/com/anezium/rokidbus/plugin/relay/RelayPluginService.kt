@@ -149,7 +149,9 @@ class RelayPluginService : NexusPluginService() {
     // The band's callbacks arrive on this, Relay's only client, and belong to the band.
     override fun onNexusRegistrationState(result: Int) {
         if (result != PluginRegistrationResult.APPROVED) pages.forget()
-        if (result == PluginRegistrationResult.APPROVED) RelayHistoryForget.registered(this)
+        if (result == PluginRegistrationResult.APPROVED) {
+            nexusClient?.let { RelayHistoryForget.registered(this, it, it.registrationGeneration) }
+        }
         NotificationControl.noticeCallbacks()?.onRegistrationState(result)
     }
 

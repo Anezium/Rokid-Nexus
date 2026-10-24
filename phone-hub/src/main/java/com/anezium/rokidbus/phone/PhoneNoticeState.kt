@@ -329,6 +329,14 @@ internal class PhoneNoticeState(
         .put("ownerPluginId", ownerPluginId)
         .put("seq", sequence.incrementAndGet())
 
+    /** Whether the owner's budget would admit one more message now; spends nothing. */
+    @Synchronized
+    fun hasBudget(ownerPluginId: String): Boolean {
+        val window = recentMessagesByPlugin[ownerPluginId] ?: return true
+        val now = nowMs()
+        return window.count { now - it < RATE_WINDOW_MS } < NoticeSurfaceContract.MAX_MESSAGES_PER_SECOND
+    }
+
     /** A withdraw spends the same budget as a show, so it cannot be used to flood the link. */
     @Synchronized
     fun admitWithdraw(ownerPluginId: String): Boolean = admit(ownerPluginId, nowMs())
