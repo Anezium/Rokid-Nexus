@@ -338,6 +338,78 @@ class RelayPolicyLauncherTest {
         assertFalse(ReplyRepository.isActive(idOf(alert)))
     }
 
+    /** The wearer chose Type on the band showing [chat]; the field is open, nothing committed. */
+    private fun openTypingOnTheBand() {
+        val shown = hub.sentTo(BusPaths.NOTICE_SHOW).last()
+        hub.deliver(
+            BusPaths.NOTICE_ACTION,
+            JSONObject()
+                .put("noticeId", "relay:${NoticeSurfaceContract.LOCAL_SURFACE_ID}")
+                .put("id", RelayNoticeRuntime.ACTION_TYPE)
+                .put(NoticeSurfaceContract.FIELD_CLIENT_TOKEN, shown.getString(NoticeSurfaceContract.FIELD_CLIENT_TOKEN)),
+        )
+        RelayHubFixture.idle()
+    }
+
+    private fun showsMentioning(text: String) = hub.sentTo(BusPaths.NOTICE_SHOW).filter { it.toString().contains(text) }
+
+    private fun readOnlyRepost(id: Int, text: String, ongoing: Boolean): StatusBarNotification {
+        val notification = Notification.Builder(app, "chat").setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Build").setContentText(text).setOngoing(ongoing).build()
+        return StatusBarNotification(chat.packageName, chat.opPkg, id, null, chat.uid, 0, 0, notification, chat.user, System.currentTimeMillis())
+    }
+
+    @Test
+    fun `a read-only alert deferred behind a reply, refused while paused, is not announced when the reply ends`() {
+        start()
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.ALL)
+        openTypingOnTheBand()
+
+        // Arrives while the wearer types on the other conversation: held back, not shown.
+        listener.get().onNotificationPosted(readOnlyRepost(13, "Build 414 passed", ongoing = false))
+        RelayHubFixture.idle()
+        assertTrue(showsMentioning("Build 414").isEmpty())
+
+        // The phone is in use with pause on; the app reposts it as an ongoing notification,
+        // which this policy refuses.
+        settings.setPauseWhilePhoneScreenOn(true)
+        val power = shadowOf(app.getSystemService(PowerManager::class.java))
+        power.setIsInteractive(true)
+        listener.get().onNotificationPosted(readOnlyRepost(13, "Build 414 passed", ongoing = true))
+        RelayHubFixture.idle()
+
+        // Back on the glasses: the pause ends, then the wearer cancels the typed reply.
+        power.setIsInteractive(false)
+        settings.setPauseWhilePhoneScreenOn(false)
+        hub.deliver(
+            BusPaths.SURFACE_TEXT_COMMITTED,
+            JSONObject().put("surfaceId", "relay:${RelayNoticeRuntime.TYPING_SURFACE_ID}").put("text", "").put("cancelled", true),
+        )
+        RelayHubFixture.idleFor(2_000)
+        hub.deliver(BusPaths.NOTICE_CLOSED, JSONObject().put("reason", "dismissed"))
+        RelayHubFixture.idleFor(2_000)
+
+        assertTrue(showsMentioning("Build 414").isEmpty())
+    }
+
+    @Test
+    fun `without the refused repost the deferred alert is announced when the reply ends`() {
+        start()
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.ALL)
+        openTypingOnTheBand()
+        listener.get().onNotificationPosted(readOnlyRepost(14, "Build 415 passed", ongoing = false))
+        RelayHubFixture.idle()
+        assertTrue(showsMentioning("Build 415").isEmpty())
+
+        hub.deliver(
+            BusPaths.SURFACE_TEXT_COMMITTED,
+            JSONObject().put("surfaceId", "relay:${RelayNoticeRuntime.TYPING_SURFACE_ID}").put("text", "").put("cancelled", true),
+        )
+        RelayHubFixture.idleFor(2_000)
+
+        assertEquals(1, showsMentioning("Build 415").size)
+    }
+
     @Test
     fun `switching Relay off asks the glasses to forget Relay's notifications`() {
         start()
