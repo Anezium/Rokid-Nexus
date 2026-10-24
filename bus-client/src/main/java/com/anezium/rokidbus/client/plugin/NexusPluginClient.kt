@@ -86,6 +86,7 @@ class NexusPluginClient internal constructor(
     // Correlates a surface request's id to the callback that wants to know if
     // the hub rejects it after accepting the Binder call — see watchForSurfaceError.
     private val pendingSurfaceErrors = mutableMapOf<String, (String) -> Unit>()
+    private val pendingForgets = mutableMapOf<String, () -> Unit>()
     private val audioSessionLock = Any()
     private val speechSessionLock = Any()
     private val ttsSessionLock = Any()
@@ -624,15 +625,27 @@ class NexusPluginClient internal constructor(
     /**
      * Asks the glasses to forget every notification this plugin showed: the history entries and
      * every copy of their text, as when the user told the plugin to stop keeping that content.
-     * The phone keeps the request until the glasses take it, across a link loss or its own
-     * restart, so one call is enough. A plugin cannot name anyone else's notifications.
+     * A plugin cannot name anyone else's notifications.
+     *
+     * [SENT][NexusSdkResult.SENT] only means the request left this process; it may still sit in
+     * the client's reconnect queue, which dies with the client. [onAccepted] runs once the phone
+     * hub holds the request on disk, from where it reaches the glasses across a link loss or a
+     * restart of either hub. Keep the request until then and send it again on the next
+     * registration; repeating it is harmless. Hubs before Nexus 1.9.0 keep no notification
+     * history, refuse the path and never accept it.
      */
-    fun forgetNotices(): NexusSdkResult {
+    fun forgetNotices(onAccepted: (() -> Unit)? = null): NexusSdkResult {
         if (!isApproved) return NexusSdkResult.NOT_REGISTERED
         if (!hasCapability(PluginCapability.SURFACES)) return NexusSdkResult.CAPABILITY_NOT_GRANTED
-        return if (send(BusPaths.NOTICE_FORGET, UUID.randomUUID().toString(), NoticeSurfaceContract.forgetPayload())) {
+        val id = UUID.randomUUID().toString()
+        if (onAccepted != null) {
+            if (pendingForgets.size > 8) pendingForgets.clear()
+            pendingForgets[id] = onAccepted
+        }
+        return if (send(BusPaths.NOTICE_FORGET, id, NoticeSurfaceContract.forgetPayload())) {
             NexusSdkResult.SENT
         } else {
+            pendingForgets.remove(id)
             NexusSdkResult.NOT_REGISTERED
         }
     }
@@ -1055,6 +1068,10 @@ class NexusPluginClient internal constructor(
                     )
                 }
             }
+            return
+        }
+        if (path == BusPaths.NOTICE_FORGET_ACCEPTED) {
+            pendingForgets.remove(payload.optString("forId"))?.invoke()
             return
         }
         if (path == BusPaths.NOTICE_CLOSED) {

@@ -90,6 +90,7 @@ object PathRules {
     fun isDirectReply(path: String): Boolean = when (normalizeAbsolute(path)) {
         RenderedMapContract.PATH -> true
         BusPaths.NOTICE_CLOSED, BusPaths.NOTICE_INPUT, BusPaths.NOTICE_ACTION,
+        BusPaths.NOTICE_FORGET_ACCEPTED,
         BusPaths.ACTIVITY_ACTION, BusPaths.ACTIVITY_CLOSED,
         BusPaths.TTS_STARTED, BusPaths.TTS_DONE,
         BusPaths.CAMERA_SNAPSHOT_RESULT, BusPaths.CAMERA_SNAPSHOT_ERROR,
@@ -105,6 +106,7 @@ object PathRules {
     fun isOwnerScoped(path: String): Boolean = when (normalizeAbsolute(path)) {
         RenderedMapContract.PATH -> true
         BusPaths.NOTICE_CLOSED, BusPaths.NOTICE_INPUT, BusPaths.NOTICE_ACTION,
+        BusPaths.NOTICE_FORGET_ACCEPTED,
         BusPaths.ACTIVITY_ACTION, BusPaths.ACTIVITY_CLOSED,
         BusPaths.TTS_STARTED, BusPaths.TTS_DONE,
         BusPaths.CAMERA_SNAPSHOT_RESULT, BusPaths.CAMERA_SNAPSHOT_ERROR,

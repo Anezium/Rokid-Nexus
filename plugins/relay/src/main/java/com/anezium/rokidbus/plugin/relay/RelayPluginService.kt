@@ -111,6 +111,7 @@ class RelayPluginService : NexusPluginService() {
     override fun onCreate() {
         super.onCreate()
         nexusClient?.let(RelayBus::serviceCreated)
+        RelayHistoryForget.baseline(this)
         RelayHistoryForget.flush(this)
         NotificationControl.pageListener = { main.post { pages.inboxChanged() } }
     }

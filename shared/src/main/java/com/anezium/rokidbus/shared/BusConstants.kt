@@ -91,6 +91,12 @@ object BusPaths {
 
     /** Launcher bundle, plugin to phone: forget every notification of the sender on the glasses. */
     const val NOTICE_FORGET = "/notice/forget"
+
+    /**
+     * Launcher bundle, phone to the plugin that sent `/notice/forget`: the phone hub holds the
+     * request durably now, so the plugin may stop keeping it. Carries `forId`.
+     */
+    const val NOTICE_FORGET_ACCEPTED = "/notice/forget/accepted"
     // Reserved page v1 paths; no running hub dispatches them yet.
     const val PAGE_REQUEST = "/page/request"
     const val PAGE_RESPONSE = "/page/response"

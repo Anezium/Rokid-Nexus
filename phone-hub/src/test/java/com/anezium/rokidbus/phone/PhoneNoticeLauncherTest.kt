@@ -18,11 +18,20 @@ class PhoneNoticeLauncherTest {
     )
     private var launcherVersion: Int? = 1
     private var nowMs = 0L
+    private val scheduled = mutableListOf<Pair<Long, () -> Unit>>()
     private val router = PhoneNoticeRouter(
         state = PhoneNoticeState(nowMs = { nowMs }, initialSequence = 0L),
         sink = sink,
         launcherVersion = { launcherVersion },
+        schedule = { delayMs, block -> scheduled += delayMs to block },
     )
+
+    /** Advances the clock past every scheduled task and runs them, as the hub's handler would. */
+    private fun runScheduled() {
+        val due = scheduled.toList().also { scheduled.clear() }
+        nowMs += due.maxOfOrNull { it.first } ?: 0L
+        due.forEach { it.second() }
+    }
 
     @Test
     fun `negotiated glasses get the destination, event key and conversation flag`() {
@@ -191,15 +200,47 @@ class PhoneNoticeLauncherTest {
     }
 
     @Test
-    fun `a forget past the notice budget is kept and sent with the next announce`() {
+    fun `a forget past the notice budget goes once the window passes, on a link that stays up`() {
         repeat(NoticeSurfaceContract.MAX_MESSAGES_PER_SECOND) { index ->
             router.handleLocal(withdraw("relay", "key-$index"), hudSender("relay"))
         }
         router.handleLocal(forget("relay"), hudSender("relay"))
+        router.handleLocal(forget("relay"), hudSender("relay"))
         assertTrue(sink.remote.none { it.path == BusPaths.CORE_NOTICE_PURGE })
+        assertEquals("one drain per owner, however many forgets", 1, scheduled.size)
 
-        router.onGlassesAnnounced()
+        runScheduled()
+
         assertEquals("relay", NoticeSurfaceContract.parsePurge(sink.remote.single { it.path == BusPaths.CORE_NOTICE_PURGE }.payload))
+        router.onGlassesAnnounced()
+        assertEquals("nothing is owed twice", 1, sink.remote.count { it.path == BusPaths.CORE_NOTICE_PURGE })
+    }
+
+    @Test
+    fun `a deferred forget goes before the owner's next show, never after it`() {
+        repeat(NoticeSurfaceContract.MAX_MESSAGES_PER_SECOND) { index ->
+            router.handleLocal(withdraw("relay", "key-$index"), hudSender("relay"))
+        }
+        router.handleLocal(forget("relay"), hudSender("relay"))
+        nowMs += 1_000L
+
+        router.handleLocal(conversationShow("relay"), hudSender("relay"))
+        runScheduled()
+
+        val paths = sink.remote.map { it.path }.filter { it == BusPaths.CORE_NOTICE_PURGE || it == BusPaths.NOTICE_SHOW }
+        assertEquals(listOf(BusPaths.CORE_NOTICE_PURGE, BusPaths.NOTICE_SHOW), paths)
+    }
+
+    @Test
+    fun `the sender hears that this hub holds its forget, sent or deferred`() {
+        sink.linkUp = false
+        val request = forget("relay")
+        router.handleLocal(request, hudSender("relay"))
+
+        val accepted = sink.local.single()
+        assertEquals(BusPaths.NOTICE_FORGET_ACCEPTED, accepted.path)
+        assertEquals("relay", accepted.payload.getString("pluginId"))
+        assertEquals(request.id, accepted.payload.getString("forId"))
     }
 
     @Test

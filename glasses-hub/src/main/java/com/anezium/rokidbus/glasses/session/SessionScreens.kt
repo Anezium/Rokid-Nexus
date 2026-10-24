@@ -368,7 +368,7 @@ internal class SessionScreens(
                     commands = stop.activity?.takeUnless { stop.ended }
                         ?.let { activity -> state.focus?.takeIf { it.stopId == stop.id }?.let { strip(activity, it) } },
                 )
-                RootStopKind.NOTICE_PREVIEW -> noticeCard(stop, selected)
+                RootStopKind.NOTICE_PREVIEW -> noticeCard(stop, selected, facts)
                 RootStopKind.ACTIVITIES, RootStopKind.NOTIFICATIONS ->
                     ScreenBlock.Row(stop.id, stop.text, trail = (stop.count ?: 0).toString(), selected = selected, icon = stop.icon)
                 RootStopKind.APPLICATIONS -> ScreenBlock.Row(stop.id, stop.text, selected = selected, icon = stop.icon)
@@ -399,8 +399,10 @@ internal class SessionScreens(
     private fun stale(stop: RootStop): Boolean =
         stop.atWallMs?.let { wallClock() - it >= NoticeSurfaceContract.MAX_HISTORY_AGE_MS } == true
 
-    private fun noticeCard(shown: RootStop, selected: Boolean): ScreenBlock.Card {
-        // Drawn after a wake or late tick, a stop past the display bound still says nothing of it.
+    private fun noticeCard(frozen: RootStop, selected: Boolean, facts: CommandFacts): ScreenBlock.Card {
+        // Drawn after a wake or late tick, a stop says nothing that passed the display bound: an
+        // aggregate loses the threads that did, whatever its newest member's time.
+        val shown = RootStops.refreshNotice(frozen, facts.history, wallClock())
         val stop = shown.takeUnless { stale(it) } ?: RootStops.placeholderNotice(shown, RootStops.EXPIRED_TEXT)
         val card = stop.notice
         val removed = card?.state == HistoryState.WITHDRAWN

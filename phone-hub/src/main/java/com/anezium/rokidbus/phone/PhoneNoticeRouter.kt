@@ -23,6 +23,7 @@ internal class PhoneNoticeRouter(
     private val state: PhoneNoticeState,
     private val sink: PhoneHudRouteSink,
     private val launcherVersion: () -> Int? = { 0 },
+    private val schedule: (delayMs: Long, block: () -> Unit) -> Unit = { _, _ -> },
 ) {
     private val historyLock = Any()
 
@@ -30,6 +31,9 @@ internal class PhoneNoticeRouter(
     private val historyOwners = linkedSetOf<String>()
     private val pendingPurges = linkedSetOf<String>()
     private val pendingWithdrawals = linkedSetOf<NoticeWithdrawal>()
+
+    /** Owners whose budget-deferred forget already has a drain scheduled. */
+    private val scheduledDrains = mutableSetOf<String>()
 
     /**
      * Where [historyOwners] and [pendingPurges] outlive this process: the glasses keep their
@@ -97,9 +101,17 @@ internal class PhoneNoticeRouter(
             sink.recordLocalRoute(envelope, sender.uid, pluginId, PluginBusJournal.Verdict.OK)
             // The same durable, coalesced obligation as a revoked owner's: one per owner, kept
             // across a link loss and a restart of this hub. Past the notice budget it is still
-            // kept, only sent with the next announce instead of now, so nothing floods the link
-            // and nothing is lost.
+            // kept, and goes once the budget's window has passed, so nothing floods the link and
+            // nothing waits for a reconnection.
             if (state.admitWithdraw(pluginId)) purgeOwner(pluginId, "owner_forget") else queuePurge(pluginId)
+            // Only now may the plugin stop keeping the request: this hub owns it on disk.
+            sink.deliverLocal(
+                BusEnvelope(
+                    path = BusPaths.NOTICE_FORGET_ACCEPTED,
+                    payload = JSONObject().put("pluginId", pluginId).put("forId", envelope.id),
+                ),
+                sender.replyBinder,
+            )
             return
         }
         if (sink.capabilities() and BusCapabilityBits.NOTICE_SURFACE == 0) {
@@ -128,6 +140,11 @@ internal class PhoneNoticeRouter(
                     is PhoneNoticeShowResult.Rejected ->
                         reject(envelope, sender, result.code)
                     is PhoneNoticeShowResult.Accepted -> {
+                        // A forget the owner asked for earlier goes first, or it would land
+                        // after this newer event and erase it.
+                        if (launcherBundle && synchronized(historyLock) { pluginId in pendingPurges }) {
+                            purgeOwner(pluginId, "owner_forget_before_show")
+                        }
                         if (launcherBundle) {
                             val eventKey = result.notice.payload.optString(NoticeSurfaceContract.FIELD_EVENT_KEY)
                             synchronized(historyLock) {
@@ -257,11 +274,22 @@ internal class PhoneNoticeRouter(
     }
 
     private fun queuePurge(pluginId: String) {
-        synchronized(historyLock) {
+        val drain = synchronized(historyLock) {
             pendingPurges.add(pluginId)
             persist()
+            scheduledDrains.add(pluginId)
         }
         sink.log("notice history purge queued owner=$pluginId reason=owner_forget_budget")
+        if (drain) schedule(PURGE_DRAIN_DELAY_MS) { drainPurge(pluginId) }
+    }
+
+    /** One coalesced purge per owner and window, whatever else the owner sent meanwhile. */
+    private fun drainPurge(pluginId: String) {
+        val owed = synchronized(historyLock) {
+            scheduledDrains.remove(pluginId)
+            pluginId in pendingPurges
+        }
+        if (owed) purgeOwner(pluginId, "owner_forget")
     }
 
     /**
@@ -440,5 +468,10 @@ internal class PhoneNoticeRouter(
         if (sink.pinLinkUp()) {
             sink.sendRemote(BusEnvelope(path = BusPaths.NOTICE_HIDE, payload = result.payload))
         }
+    }
+
+    private companion object {
+        /** The notice budget's window: a deferred forget fits in the next one. */
+        const val PURGE_DRAIN_DELAY_MS = 1_000L
     }
 }

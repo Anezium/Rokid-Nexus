@@ -18,6 +18,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -141,6 +142,62 @@ class NoticeExpiryRootTest {
         // No tick ran (a deep sleep stops the session clock); the copy is still in the model.
         assertTrue(noticeStop().toString().contains("surprise gift"))
         assertFalse(drawn().any { "surprise gift" in it })
+    }
+
+    @Test
+    fun `a staggered aggregate drawn after a wake without its tick drops only the expired thread`() {
+        arrive(conversation("t1", "Mika", "on est devant"))
+        val firstAt = wallNow
+        wallNow += NoticeSurfaceContract.MAX_HISTORY_AGE_MS / 2
+        arrive(conversation("t2", "Alan", "moi aussi"))
+        openRoot()
+        send(SessionEvent.NoticeWithdrawn("relay", "t1"))
+        send(SessionEvent.NoticeWithdrawn("relay", "t2"))
+        assertTrue(drawn().any { "Mika" in it })
+
+        // A deep sleep across Mika's bound: the newest member keeps the stop's own time fresh.
+        wallNow = firstAt + NoticeSurfaceContract.MAX_HISTORY_AGE_MS
+        assertFalse(drawn().any { "Mika" in it })
+        assertTrue(drawn().any { "Alan" in it })
+    }
+
+    @Test
+    fun `a staggered aggregate beneath a page comes back after a wake without Mika, by Back alone`() {
+        arrive(conversation("t1", "Mika", "on est devant"))
+        val firstAt = wallNow
+        wallNow += NoticeSurfaceContract.MAX_HISTORY_AGE_MS / 2
+        arrive(conversation("t2", "Alan", "moi aussi"))
+        openRoot()
+        val applications = root().stops.indexOfFirst { it.kind == RootStopKind.APPLICATIONS }
+        repeat(applications) { send(SessionEvent.Step(1, 2_000L + it)) }
+        send(SessionEvent.Enter(3_000))
+        assertTrue(model.state is SessionState.InPage)
+
+        wallNow = firstAt + NoticeSurfaceContract.MAX_HISTORY_AGE_MS
+        send(SessionEvent.Back(3_100))
+        assertTrue(model.state is SessionState.Root)
+        assertFalse(drawn().any { "Mika" in it })
+        assertTrue(drawn().any { "Alan" in it })
+    }
+
+    @Test
+    fun `a frozen conversation evicted from the history still expires on time`() {
+        arrive(conversation("t1", "Mika", "le code est 4417"))
+        val mikaAt = wallNow
+        openRoot()
+        assertEquals(NoticeCardKind.CONVERSATION, noticeStop().notice?.kind)
+        repeat(NoticeSurfaceContract.MAX_HISTORY_ENTRIES) { index ->
+            arrive(NoticeEntry("todo", "Todo", "Item $index", null, atWallMs = wallNow))
+        }
+        assertNull(model.history.entry(noticeStop().notice?.entryId ?: error("no entry")))
+        assertTrue(drawn().any { "Mika" in it })
+
+        val expected = sessionNow + (mikaAt + NoticeSurfaceContract.MAX_HISTORY_AGE_MS - wallNow) + 1
+        assertEquals("the copy's own bound keeps the timer", expected, model.historyExpiryAtMs)
+        wallNow = mikaAt + NoticeSurfaceContract.MAX_HISTORY_AGE_MS
+        sessionNow = model.historyExpiryAtMs ?: error("no expiry scheduled")
+        send(SessionEvent.Tick(sessionNow))
+        assertGone("Mika", "le code est 4417")
     }
 
     @Test

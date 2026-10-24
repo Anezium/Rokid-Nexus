@@ -42,6 +42,7 @@ class RelaySettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        RelayHistoryForget.baseline(this)
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
         content = NexusUi.contentColumn(this)

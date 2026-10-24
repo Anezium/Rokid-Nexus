@@ -2,6 +2,7 @@ package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.shared.ActivityAction
 import com.anezium.rokidbus.shared.ActivityActivation
+import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PageDestination
 import com.anezium.rokidbus.shared.PageSurfaceContract
 
@@ -208,14 +209,31 @@ internal object RootStops {
     )
 
     /**
-     * Copied text never outlives the display bound: a card whose entries all passed it becomes a
-     * content-free placeholder in place, even on a frozen root or beneath a page.
+     * When the next text copied onto a notification stop leaves the display bound, in wall time.
+     * A frozen card outlives its entry once the bounded history evicts it, so the history's own
+     * deadline does not cover it.
      */
-    private fun refreshNotice(stop: RootStop, history: NotificationHistory, nowWallMs: Long): RootStop {
+    fun copiedExpiryWallMs(stops: List<RootStop>, nowWallMs: Long): Long? = stops
+        .filter { it.kind == RootStopKind.NOTICE_PREVIEW }
+        .mapNotNull { it.atWallMs?.plus(NoticeSurfaceContract.MAX_HISTORY_AGE_MS) }
+        .filter { it > nowWallMs }
+        .minOrNull()
+
+    /**
+     * Copied text never outlives the display bound: a card whose entries all passed it becomes a
+     * content-free placeholder in place, even on a frozen root or beneath a page. The renderer
+     * asks again when it draws, since a wake can come before the next tick.
+     */
+    fun refreshNotice(stop: RootStop, history: NotificationHistory, nowWallMs: Long): RootStop {
         val card = stop.notice
         if (card != null && card.kind == NoticeCardKind.CONVERSATION) {
             val entry = card.entryId?.let(history::entry)
             if (entry != null && history.visibleEntry(entry.id, nowWallMs) == null) return placeholderNotice(stop, EXPIRED_TEXT)
+            // Evicted from the bounded history, the card's own copy still ages out.
+            val copiedAt = stop.atWallMs
+            if (entry == null && copiedAt != null && nowWallMs - copiedAt >= NoticeSurfaceContract.MAX_HISTORY_AGE_MS) {
+                return placeholderNotice(stop, EXPIRED_TEXT)
+            }
             // A purged entry is gone from the phone as surely as a withdrawn one.
             return stop.copy(notice = card.copy(state = entry?.state ?: HistoryState.WITHDRAWN))
         }

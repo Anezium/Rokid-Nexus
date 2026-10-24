@@ -33,8 +33,11 @@ class NexusLauncherInteractiveTest {
             this.listener = listener
         }
 
+        val ids = mutableListOf<String>()
+
         override fun send(path: String, id: String, payload: JSONObject): Boolean {
             sends += path to JSONObject(payload.toString())
+            ids += id
             return true
         }
 
@@ -330,6 +333,21 @@ class NexusLauncherInteractiveTest {
         listOf("destination", "eventKey", "conversation").forEach { assertFalse(it, legacy.has(it)) }
         assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, old.withdrawNotice("9f2c-1"))
         assertThrows(IllegalArgumentException::class.java) { NexusNotice(title = "x", conversation = true) }
+    }
+
+    @Test
+    fun `a forget is settled only by the hub's acceptance of that very request`() {
+        val (client, transport) = client(LegacyCallbacks())
+        var accepted = 0
+        assertEquals(NexusSdkResult.SENT, client.forgetNotices { accepted++ })
+        assertEquals(BusPaths.NOTICE_FORGET, transport.sends.last().first)
+        assertEquals(0, accepted)
+
+        transport.deliver(BusPaths.NOTICE_FORGET_ACCEPTED, JSONObject().put("forId", "another-request"))
+        assertEquals(0, accepted)
+        transport.deliver(BusPaths.NOTICE_FORGET_ACCEPTED, JSONObject().put("forId", transport.ids.last()))
+        transport.deliver(BusPaths.NOTICE_FORGET_ACCEPTED, JSONObject().put("forId", transport.ids.last()))
+        assertEquals(1, accepted)
     }
 
     @Test

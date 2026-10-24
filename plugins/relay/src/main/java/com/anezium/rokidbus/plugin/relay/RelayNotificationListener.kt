@@ -16,6 +16,7 @@ class RelayNotificationListener : NotificationListenerService() {
 
     override fun onCreate() {
         super.onCreate()
+        RelayHistoryForget.baseline(this)
         NotificationControl.instanceCreated(this)
     }
 
@@ -144,10 +145,6 @@ class RelayNotificationListener : NotificationListenerService() {
             NotificationControl.notifyCaptured(notificationId)
         }
         if (!settings.enabled()) return finish("disabled", accepted = false)
-        if (settings.pauseWhilePhoneScreenOn() && interactive) {
-            return finish("paused", accepted = false)
-        }
-
         if (!settings.admits(
                 sbn.packageName,
                 repliable = action != null,
@@ -160,6 +157,11 @@ class RelayNotificationListener : NotificationListenerService() {
                 NotificationControl.notifyCaptured(notificationId)
             }
             return finish(if (action == null) "no_action" else "filtered", accepted = false)
+        }
+        // Paused only holds back what is admitted: a repost the policy now refuses still ends
+        // its earlier version above, or a deferred band could announce it after the pause.
+        if (settings.pauseWhilePhoneScreenOn() && interactive) {
+            return finish("paused", accepted = false)
         }
 
         val capture = ReplyRepository.capture(this, sbn, action)

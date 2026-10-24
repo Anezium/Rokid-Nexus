@@ -46,7 +46,14 @@ internal class FakeHub : IBusService.Stub() {
     override fun unregister(cb: IBusCallback) = Unit
     override fun send(path: String, id: String, payload: ByteArray) {
         sent += path to JSONObject(String(payload, Charsets.UTF_8))
+        // As the phone hub does once the request is on its disk; only the sender knows the id.
+        if (path == BusPaths.NOTICE_FORGET && acceptsForgets) {
+            deliverToEveryClient(BusPaths.NOTICE_FORGET_ACCEPTED) { JSONObject().put("forId", id) }
+        }
     }
+
+    /** False for a hub that never takes a forget, as when the request dies in a reconnect queue. */
+    var acceptsForgets = true
     override fun linkState(): Int = link
     override fun sendBinary(path: String, id: String, meta: ByteArray, data: ByteArray) = Unit
     override fun registerPlugin(packageName: String, pluginId: String, cb: IBusCallback): Int {

@@ -2,6 +2,9 @@ package com.anezium.rokidbus.plugin.relay
 
 import android.app.Application
 import android.app.Notification
+import android.app.NotificationManager
+import android.content.ComponentName
+import android.os.PowerManager
 import android.service.notification.StatusBarNotification
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
@@ -22,6 +25,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
+import org.robolectric.Shadows.shadowOf
 
 /**
  * Relay 1.3's per-app policies and read-only alerts meeting the launcher's thread pages: real
@@ -63,6 +67,7 @@ class RelayPolicyLauncherTest {
         settings.resetAppPolicies()
         settings.setEnabled(true)
         settings.setClearAfterReply(RelaySettings.DEFAULT_CLEAR_AFTER_REPLY)
+        settings.setPauseWhilePhoneScreenOn(RelaySettings.DEFAULT_PAUSE_SCREEN_ON)
         RelayHubFixture.idle()
     }
 
@@ -165,12 +170,103 @@ class RelayPolicyLauncherTest {
     @Test
     fun `an app turned Off while the listener is detached is still forgotten`() {
         start()
+        // Destroyed with its access kept: the teardown itself asks for nothing.
+        shadowOf(app.getSystemService(NotificationManager::class.java))
+            .setNotificationListenerAccessGranted(ComponentName(app, RelayNotificationListener::class.java), true)
         listener.destroy()
         RelayHubFixture.idle()
         settings.setAppPolicy(chat.packageName, RelayAppPolicy.OFF)
         NotificationControl.refreshFromSettings(app)
         RelayHubFixture.idleFor(1_000)
         assertEquals(1, forgets().size)
+    }
+
+    /** The system unbinds the listener while the wearer keeps Relay's notification access. */
+    private fun disconnectKeepingAccess() {
+        shadowOf(app.getSystemService(NotificationManager::class.java))
+            .setNotificationListenerAccessGranted(ComponentName(app, RelayNotificationListener::class.java), true)
+        listener.get().onListenerDisconnected()
+        RelayHubFixture.idleFor(1_000)
+        assertTrue("a mere rebind keeps the glasses' history", forgets().isEmpty())
+    }
+
+    private fun owed() = app.getSharedPreferences("relay_history", 0).getBoolean("forget_owed", false)
+
+    @Test
+    fun `an app turned Off after a real disconnect, with access kept, is still forgotten`() {
+        start()
+        disconnectKeepingAccess()
+
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.OFF)
+        NotificationControl.refreshFromSettings(app)
+        RelayHubFixture.idleFor(1_000)
+
+        assertEquals(1, forgets().size)
+        assertFalse(owed())
+    }
+
+    @Test
+    fun `Relay switched off after a real disconnect, with an empty inbox, is still forgotten`() {
+        start()
+        disconnectKeepingAccess()
+
+        settings.setEnabled(false)
+        NotificationControl.refreshFromSettings(app)
+        RelayHubFixture.idleFor(1_000)
+
+        assertEquals(1, forgets().size)
+    }
+
+    @Test
+    fun `a wider policy forgets nothing`() {
+        start()
+        disconnectKeepingAccess()
+
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.ALL)
+        NotificationControl.refreshFromSettings(app)
+        RelayHubFixture.idleFor(1_000)
+
+        assertTrue(forgets().isEmpty())
+    }
+
+    @Test
+    fun `a forget the hub never took stays owed and goes again with the next client`() {
+        start()
+        hub.acceptsForgets = false
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.OFF)
+        NotificationControl.refreshFromSettings(app)
+        RelayHubFixture.idleFor(1_000)
+        assertEquals(1, forgets().size)
+        assertTrue("sent is not taken", owed())
+
+        hub.acceptsForgets = true
+        service.destroy()
+        service = Robolectric.buildService(RelayPluginService::class.java).create()
+        RelayHubFixture.idleFor(1_000)
+
+        assertTrue(forgets().size >= 2)
+        assertFalse(owed())
+    }
+
+    @Test
+    fun `a filtered repost while paused still ends a read-only alert, so it cannot be announced later`() {
+        start()
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.ALL)
+        val alert = alert(12, "Build 413 passed")
+        listener.get().onNotificationPosted(alert)
+        RelayHubFixture.idle()
+        assertTrue(ReplyRepository.isActive(idOf(alert)))
+
+        settings.setPauseWhilePhoneScreenOn(true)
+        shadowOf(app.getSystemService(PowerManager::class.java)).setIsInteractive(true)
+        val ongoing = Notification.Builder(app, "chat").setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Build").setContentText("Build 413 passed").setOngoing(true).build()
+        listener.get().onNotificationPosted(
+            StatusBarNotification(chat.packageName, chat.opPkg, 12, null, chat.uid, 0, 0, ongoing, chat.user, System.currentTimeMillis()),
+        )
+        RelayHubFixture.idle()
+
+        assertFalse(ReplyRepository.isActive(idOf(alert)))
     }
 
     @Test

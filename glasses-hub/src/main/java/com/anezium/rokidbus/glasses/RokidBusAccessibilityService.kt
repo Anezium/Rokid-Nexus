@@ -2,8 +2,10 @@ package com.anezium.rokidbus.glasses
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.net.ConnectivityManager
 import android.net.Network
@@ -1419,6 +1421,18 @@ internal object NexusSession {
     private var statusFresh = false
     private var renderedState: SessionState? = null
     private var noticeUnsubscribe: (() -> Unit)? = null
+
+    /**
+     * The session's timer runs on the uptime clock, which stands still in a deep sleep, so a
+     * notification can pass its display bound while the screen is off. Waking looks again at
+     * once instead of drawing that copy until the late tick.
+     */
+    private val wakeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_ON) runOnMain { runner.dispatch(SessionEvent.Tick(SystemClock.uptimeMillis())) }
+        }
+    }
+    private var wakeContext: Context? = null
     private var surfaceUnsubscribe: (() -> Unit)? = null
     private var activityUnsubscribe: (() -> Unit)? = null
     private var launcherUnsubscribe: (() -> Unit)? = null
@@ -1538,6 +1552,10 @@ internal object NexusSession {
             routeUnsubscribe = RouteLive.observe { owner -> runOnMain { onRouteLive(owner) } }
             ambientUnsubscribe?.invoke()
             ambientUnsubscribe = AmbientPreferences.observe { runOnMain(::redrawRoutePage) }
+            if (wakeContext == null) {
+                service.registerReceiver(wakeReceiver, IntentFilter(Intent.ACTION_SCREEN_ON))
+                wakeContext = service
+            }
             // Ahead of every observer, so a surface the session closes unseen reaches no renderer;
             // installing it also reconciles the surface already active.
             if (!SurfaceController.setPresentationGate(::onSurfacePresented)) {
@@ -1563,6 +1581,8 @@ internal object NexusSession {
             routeUnsubscribe = null
             ambientUnsubscribe?.invoke()
             ambientUnsubscribe = null
+            wakeContext?.let { context -> runCatching { context.unregisterReceiver(wakeReceiver) } }
+            wakeContext = null
             AmbientPreferences.preview(null)
             SurfaceController.setPresentationGate(null)
             // Whatever is presented while the service is away is reconciled afresh on reconnect.

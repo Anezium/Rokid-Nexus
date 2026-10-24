@@ -124,7 +124,10 @@ internal class SessionReducer(
         val clock = sessionClock ?: return null
         if (model.state == SessionState.Closed) return null
         val now = wallClock()
-        val expiry = model.history.nextExpiryWallMs(now) ?: return null
+        val expiry = listOfNotNull(
+            model.history.nextExpiryWallMs(now),
+            RootStops.copiedExpiryWallMs(model.state.rootStops(), now),
+        ).minOrNull() ?: return null
         return clock() + (expiry - now).coerceIn(0, NoticeSurfaceContract.MAX_HISTORY_AGE_MS) + 1
     }
 
@@ -2147,6 +2150,14 @@ private fun Frame.unconfirmed(invocation: PendingInvocation) = copy(
     invocation = null,
     outcome = ActionOutcome(invocation.actionId, PageSurfaceContract.ERROR_UNCONFIRMED_ACTION),
 )
+
+private fun SessionState.rootStops(): List<RootStop> = when (this) {
+    SessionState.Closed -> emptyList()
+    is SessionState.Opening -> root.stops
+    is SessionState.Root -> stops
+    is SessionState.InPage -> root.stops
+    is SessionState.Launching -> previous.rootStops()
+}
 
 private fun SessionState.mapRootStops(transform: (List<RootStop>) -> List<RootStop>): SessionState = when (this) {
     SessionState.Closed -> this

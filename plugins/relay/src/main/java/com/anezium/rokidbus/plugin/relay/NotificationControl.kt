@@ -111,8 +111,12 @@ internal object NotificationControl {
 
     /** Applies changed settings: per-app policy prunes what it no longer admits, everywhere it shows. */
     fun refreshFromSettings(context: Context) {
-        // What the policy no longer admits leaves the glasses too, listener attached or not.
-        if (ReplyRepository.prune(RelaySettings(context)).isNotEmpty()) RelayHistoryForget.request(context)
+        // What the policy no longer admits leaves the glasses too, listener attached or not. The
+        // user's decision is the trigger; what the inbox still holds only adds to it, since a
+        // detached listener or a restart leaves the glasses' copy behind an empty inbox.
+        val settings = RelaySettings(context)
+        val narrowed = RelayHistoryForget.narrowed(context, settings)
+        if (ReplyRepository.prune(settings).isNotEmpty() || narrowed) RelayHistoryForget.request(context)
         main.post {
             listener?.refreshFromSettings()
             inbox?.onSettingsChanged()

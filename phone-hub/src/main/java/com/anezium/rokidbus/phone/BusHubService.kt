@@ -245,6 +245,7 @@ class BusHubService : Service() {
     private val activityHandler = Handler(Looper.getMainLooper())
     private val activityExpiryTick: Runnable = Runnable { activityRouter.expireCanonical() }
     private val assistantExitHandler = Handler(Looper.getMainLooper())
+    private val noticeDrainHandler = Handler(Looper.getMainLooper())
     private val updateCheckHandler = Handler(Looper.getMainLooper())
     @Volatile private var updateCheckLoopStopped = true
     private val updateCheckTick = object : Runnable {
@@ -288,6 +289,7 @@ class BusHubService : Service() {
         state = PhoneNoticeState(nowMs = { SystemClock.elapsedRealtime() }),
         sink = hudRouteSink,
         launcherVersion = { remoteLauncherInteractiveVersion },
+        schedule = { delayMs, block -> noticeDrainHandler.postDelayed(block, delayMs) },
     )
     private val pinRouter: PhonePinRouter = PhonePinRouter(
         state = PhonePinState(nowMs = { SystemClock.elapsedRealtime() }),
