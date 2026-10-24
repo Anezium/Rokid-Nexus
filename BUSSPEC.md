@@ -1303,7 +1303,8 @@ authenticated owner: the obligation is coalesced per owner and kept in its
 durable purge ledger across a link loss and its own restart. Past the shared
 notice budget it is still kept and sent once the budget's one-second window has
 passed, and always before any newer `/notice/show` from that owner, so it never
-erases a later event. Once the obligation is on disk the phone answers the
+erases a later event: a show whose owner still owes a purge that cannot be sent
+now is refused with `capability_not_available`, as for a link that is down. Once the obligation is on disk the phone answers the
 sender alone with `/notice/forget/accepted` `{pluginId, forId}` (owner-scoped,
 delivered without a receive prefix); only then may the plugin stop keeping the
 request. A plugin can never name another owner, and nothing in it identifies an

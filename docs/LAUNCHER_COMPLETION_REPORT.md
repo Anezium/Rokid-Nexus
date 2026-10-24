@@ -54,6 +54,20 @@ This section supersedes the status paragraphs above, which are kept as history.
   an expired thread after a deep sleep without waiting for a tick. A paused phone no longer skips
   ending a read-only alert whose repost the policy refuses. Each fix has a regression test that
   fails without it.
+- **Fixed after the fourth round** (Sol, Astra and Fable on `cdc260bc`): an unaccepted forget goes
+  again on a fresh registration of the same client, or once the hold window passes; the phone
+  consumes an owed purge in one locked step with its sending, so a drain racing a same-owner show
+  cannot purge after it, and a show whose owner's purge cannot be sent is refused instead of
+  overtaking it.
+- **What the tests prove, and what they do not.** Component tests (reducer, router, Relay with a
+  fake hub) cover each fix above and were each observed to fail with the fix reverted. Production
+  session-runtime tests (real `NexusSession`, real wall clock, the runner's own timer, a real
+  screen-on broadcast) cover open pages and a covered Notifications list crossing the bound, an
+  evicted frozen conversation, and the wake path. Not covered by an automated end-to-end sequence:
+  a deferred read-only band through pause, resume and the end of another exchange (only its
+  invalidation is tested), and the phone hub dying between accepting and persisting a forget.
+  Hardware: the Relay-off forget was observed on the glasses on `cdc260bc`'s build (history
+  emptied, phone log `notice history purged owner=relay reason=owner_forget`).
 - **Versions prepared, not released.** Hubs 1.9.0 (10900), Relay 1.4.0 (15), Navigation 0.3.0 (4),
   Media Deck 1.0.4 (5), Sample 1.0.6 (7); SDK notes for 0.24.0 are in `CHANGELOG.md`. The SDK
   dependency pins in `README.md` and the SDK guide stay on `sdk-v0.23.0` until that tag exists.
