@@ -59,6 +59,11 @@ This section supersedes the status paragraphs above, which are kept as history.
   consumes an owed purge in one locked step with its sending, so a drain racing a same-owner show
   cannot purge after it, and a show whose owner's purge cannot be sent is refused instead of
   overtaking it.
+- **Fixed after the fifth round** (Sol and Astra MERGE-READY on `f79e39ba`): Relay resends an
+  unaccepted forget only on a new SDK registration generation, not on the repeated approval
+  report of the same registration; a show the budget refuses no longer sends a deferred purge
+  early. Added tests: an open Notifications list emptying on the timer alone, and an older
+  acceptance that cannot settle a newer request.
 - **What the tests prove, and what they do not.** Component tests (reducer, router, Relay with a
   fake hub) cover each fix above and were each observed to fail with the fix reverted. Production
   session-runtime tests (real `NexusSession`, real wall clock, the runner's own timer, a real
