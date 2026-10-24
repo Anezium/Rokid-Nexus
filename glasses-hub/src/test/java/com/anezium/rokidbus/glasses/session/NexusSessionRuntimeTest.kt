@@ -185,6 +185,26 @@ class NexusSessionRuntimeTest {
     }
 
     @Test
+    fun `a Notifications list left open empties itself when only the timer runs`() {
+        val owner = "relay"
+        try {
+            arrive(nearlyExpired(owner, "Buy the surprise gift"))
+            openRoot()
+            repeat(rootStop(RootStopKind.NOTIFICATIONS)) { send(SessionEvent.Step(1, now())) }
+            send(SessionEvent.Enter(now()))
+            assertEquals(RootStops.NOTIFICATIONS_PAGE_ID, top().pageId)
+            assertTrue(page(top()).contains("surprise gift"))
+
+            crossBound()
+
+            assertEquals(RootStops.NOTIFICATIONS_PAGE_ID, top().pageId)
+            assertFalse(page(top()).contains("surprise gift"))
+        } finally {
+            send(SessionEvent.NoticePurged(owner))
+        }
+    }
+
+    @Test
     fun `a frozen conversation evicted by younger arrivals still leaves on the production timer`() {
         val owner = "expiry-evicted"
         try {

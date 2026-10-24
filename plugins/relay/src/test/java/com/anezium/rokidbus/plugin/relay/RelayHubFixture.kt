@@ -46,11 +46,17 @@ internal class FakeHub : IBusService.Stub() {
     override fun unregister(cb: IBusCallback) = Unit
     override fun send(path: String, id: String, payload: ByteArray) {
         sent += path to JSONObject(String(payload, Charsets.UTF_8))
+        if (path == BusPaths.NOTICE_FORGET) forgetIds += id
         // As the phone hub does once the request is on its disk; only the sender knows the id.
         if (path == BusPaths.NOTICE_FORGET && acceptsForgets) {
             deliverToEveryClient(BusPaths.NOTICE_FORGET_ACCEPTED) { JSONObject().put("forId", id) }
         }
     }
+
+    /** The request id of every forget sent, in order, for a hub that accepts one later. */
+    val forgetIds: MutableList<String> = Collections.synchronizedList(mutableListOf())
+
+    fun acceptForget(id: String) = deliverToEveryClient(BusPaths.NOTICE_FORGET_ACCEPTED) { JSONObject().put("forId", id) }
 
     /** False for a hub that never takes a forget, as when the request dies in a reconnect queue. */
     var acceptsForgets = true

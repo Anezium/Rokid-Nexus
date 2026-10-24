@@ -272,6 +272,31 @@ class RelayPolicyLauncherTest {
     }
 
     @Test
+    fun `a late acceptance of an older forget does not settle a newer one`() {
+        start()
+        hub.acceptsForgets = false
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.ALL)
+        NotificationControl.refreshFromSettings(app)
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.MESSAGES)
+        NotificationControl.refreshFromSettings(app)
+        RelayHubFixture.idleFor(1_000)
+        val older = hub.forgetIds.single()
+
+        settings.setEnabled(false)
+        NotificationControl.refreshFromSettings(app)
+        RelayHubFixture.idleFor(1_000)
+        val newer = hub.forgetIds.last()
+        assertTrue(newer != older)
+
+        hub.acceptForget(older)
+        RelayHubFixture.idleFor(1_000)
+        assertTrue("the newer request may follow content the older one never covered", owed())
+        hub.acceptForget(newer)
+        RelayHubFixture.idleFor(1_000)
+        assertFalse(owed())
+    }
+
+    @Test
     fun `the repeated approval report of one registration does not send the same forget twice`() {
         start()
         hub.acceptsForgets = false
