@@ -124,7 +124,9 @@ class RenderedMapOriginDispatchTest {
 
     private fun bindCxrFixture(hub: BusHubService) {
         val link = CXRLink(hub)
-        val serviceType = CXRLink::class.java.getDeclaredField("service").type
+        // CxrGlobal 0.3.0 keeps the service on the link's current bind, one per bindService call.
+        val bindType = CXRLink::class.java.declaredClasses.single { it.simpleName == "Bind" }
+        val serviceType = bindType.getDeclaredField("service").type
         val service = Proxy.newProxyInstance(serviceType.classLoader, arrayOf(serviceType)) { _, method, _ ->
             when (method.returnType) {
                 Boolean::class.javaPrimitiveType -> false
@@ -132,8 +134,9 @@ class RenderedMapOriginDispatchTest {
                 else -> null
             }
         }
-        ReflectionHelpers.setField(link, "service", service)
-        ReflectionHelpers.setField(link, "bound", true)
+        val bind = bindType.getDeclaredConstructor(CXRLink::class.java).apply { isAccessible = true }.newInstance(link)
+        ReflectionHelpers.setField(bind, "service", service)
+        ReflectionHelpers.setField(link, "current", bind)
         ReflectionHelpers.setField(hub, "cxrLink", link)
         ReflectionHelpers.setField(hub, "cxrConnected", true)
         ReflectionHelpers.setField(hub, "glassBtConnected", true)
