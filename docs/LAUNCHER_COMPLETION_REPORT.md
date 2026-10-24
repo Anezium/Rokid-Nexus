@@ -68,9 +68,11 @@ This section supersedes the status paragraphs above, which are kept as history.
   fake hub) cover each fix above and were each observed to fail with the fix reverted. Production
   session-runtime tests (real `NexusSession`, real wall clock, the runner's own timer, a real
   screen-on broadcast) cover open pages and a covered Notifications list crossing the bound, an
-  evicted frozen conversation, and the wake path. Not covered by an automated end-to-end sequence:
-  a deferred read-only band through pause, resume and the end of another exchange (only its
-  invalidation is tested), and the phone hub dying between accepting and persisting a forget.
+  evicted frozen conversation, and the wake path. A Relay end-to-end test (real listener, band
+  and plugin service) holds a read-only alert behind a typed reply, refuses its repost while the
+  paused phone is in use, and checks nothing is announced when the reply ends; with the earlier
+  order of the pause check it is announced. Not covered by an automated sequence: the phone hub
+  dying between accepting and persisting a forget.
   Hardware: the Relay-off forget was observed on the glasses on `cdc260bc`'s build (history
   emptied, phone log `notice history purged owner=relay reason=owner_forget`).
 - **Versions prepared, not released.** Hubs 1.9.0 (10900), Relay 1.4.0 (15), Navigation 0.3.0 (4),
