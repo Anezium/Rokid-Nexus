@@ -129,6 +129,13 @@ internal class PhoneNoticeRouter(
         when (envelope.path) {
             BusPaths.NOTICE_SHOW -> {
                 val launcherBundle = bundleNegotiated()
+                // A forget the owner asked for earlier goes first, or it would land after this
+                // newer event and erase it. One that cannot go now holds the show back: the
+                // plugin hears so, as for a link that is down.
+                if (launcherBundle && !purgeIfPending(pluginId, "owner_forget_before_show")) {
+                    reject(envelope, sender, NoticeSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE)
+                    return
+                }
                 when (
                     val result = state.show(
                         pluginId,
@@ -140,9 +147,6 @@ internal class PhoneNoticeRouter(
                     is PhoneNoticeShowResult.Rejected ->
                         reject(envelope, sender, result.code)
                     is PhoneNoticeShowResult.Accepted -> {
-                        // A forget the owner asked for earlier goes first, or it would land
-                        // after this newer event and erase it.
-                        if (launcherBundle) purgeIfPending(pluginId, "owner_forget_before_show")
                         if (launcherBundle) {
                             val eventKey = result.notice.payload.optString(NoticeSurfaceContract.FIELD_EVENT_KEY)
                             synchronized(historyLock) {
@@ -290,13 +294,13 @@ internal class PhoneNoticeRouter(
     /**
      * Consumes [pluginId]'s owed purge, if it still is, in one step with its sending: the drain
      * runs on the main thread and a show on a Binder thread, and whichever comes second must find
-     * nothing owed rather than purge again after the newer show.
+     * nothing owed rather than purge again after the newer show. True when nothing is owed after.
      */
-    private fun purgeIfPending(pluginId: String, reason: String) {
+    private fun purgeIfPending(pluginId: String, reason: String): Boolean =
         synchronized(historyLock) {
             if (pluginId in pendingPurges) purgeOwner(pluginId, reason)
+            pluginId !in pendingPurges
         }
-    }
 
     /**
      * After a grant or package change (revoke, disable, uninstall, a new signer or id), purges

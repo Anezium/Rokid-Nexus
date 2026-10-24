@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.shared.PageDestination
+import android.content.Intent
 import android.accessibilityservice.AccessibilityService
 import android.os.Looper
 import android.os.SystemClock
@@ -134,6 +136,96 @@ class NexusSessionRuntimeTest {
 
     private fun page(frame: Frame): String = (frame.status as FrameStatus.Shown).snapshot.page.toString()
 
+    /**
+     * A notification that passes the 24-hour bound a few seconds from now, by the real wall clock:
+     * enough for a cold first test to reach its page before it does.
+     */
+    private fun nearlyExpired(owner: String, text: String, conversation: Boolean = false) = NoticeEntry(
+        ownerPluginId = owner,
+        sourceLabel = "Probe",
+        title = if (conversation) "Mika" else text,
+        body = if (conversation) text else null,
+        atWallMs = System.currentTimeMillis() - NoticeSurfaceContract.MAX_HISTORY_AGE_MS + MARGIN_MS,
+        destination = if (conversation) PageDestination("$owner:thread", JSONObject().put("t", "1").toString()) else null,
+        eventKey = if (conversation) "t1" else null,
+        conversation = conversation,
+    )
+
+    private fun arrive(entry: NoticeEntry) = send(SessionEvent.NoticeArrived(NoticePreview(RootStops.NOTICE_PAGE_ID, entry.text), entry))
+
+    private fun rootStop(kind: RootStopKind): Int = (NexusSession.state as SessionState.Root).stops.indexOfFirst { it.kind == kind }
+
+    /** Real time passes, then only the production timer runs: no event, no manual tick. */
+    private fun crossBound() {
+        Thread.sleep(MARGIN_MS + 500)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(3_000))
+    }
+
+    @Test
+    fun `a loaded Notifications list covered by its entry comes back without it after the bound`() {
+        val owner = "relay"
+        try {
+            arrive(nearlyExpired(owner, "Buy the surprise gift"))
+            openRoot()
+            repeat(rootStop(RootStopKind.NOTIFICATIONS)) { send(SessionEvent.Step(1, now())) }
+            send(SessionEvent.Enter(now()))
+            assertEquals(RootStops.NOTIFICATIONS_PAGE_ID, top().pageId)
+            assertTrue(page(top()), page(top()).contains("surprise gift"))
+            send(SessionEvent.Enter(now()))
+            assertEquals("${NexusSession.state}", RootStops.NOTICE_PAGE_ID, top().pageId)
+
+            crossBound()
+            send(SessionEvent.Back(now()))
+
+            assertEquals(RootStops.NOTIFICATIONS_PAGE_ID, top().pageId)
+            assertFalse(page(top()).contains("surprise gift"))
+        } finally {
+            send(SessionEvent.NoticePurged(owner))
+        }
+    }
+
+    @Test
+    fun `a frozen conversation evicted by younger arrivals still leaves on the production timer`() {
+        val owner = "expiry-evicted"
+        try {
+            arrive(nearlyExpired(owner, "le code est 4417", conversation = true))
+            openRoot()
+            val card = (NexusSession.state as SessionState.Root).stops[rootStop(RootStopKind.NOTICE_PREVIEW)]
+            assertEquals(NoticeCardKind.CONVERSATION, card.notice?.kind)
+            repeat(NoticeSurfaceContract.MAX_HISTORY_ENTRIES) { index ->
+                arrive(NoticeEntry(owner, "Probe", "Item $index", null, atWallMs = System.currentTimeMillis()))
+            }
+            assertTrue((NexusSession.state as SessionState.Root).stops.toString().contains("4417"))
+
+            crossBound()
+
+            assertFalse((NexusSession.state as SessionState.Root).stops.toString().contains("4417"))
+        } finally {
+            send(SessionEvent.NoticePurged(owner))
+        }
+    }
+
+    @Test
+    fun `waking the screen looks again before the session timer runs`() {
+        val owner = "expiry-wake"
+        try {
+            arrive(nearlyExpired(owner, "Buy the surprise gift"))
+            openRoot()
+            assertTrue((NexusSession.state as SessionState.Root).stops.toString().contains("surprise gift"))
+
+            // A deep sleep stops the uptime clock the timer runs on: real time passes, it does not.
+            Thread.sleep(MARGIN_MS + 500)
+            idle()
+            assertTrue((NexusSession.state as SessionState.Root).stops.toString().contains("surprise gift"))
+            service.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+            idle()
+
+            assertFalse((NexusSession.state as SessionState.Root).stops.toString().contains("surprise gift"))
+        } finally {
+            send(SessionEvent.NoticePurged(owner))
+        }
+    }
+
     @Test
     fun `local pages answer in-process without a phone`() {
         openRoot()
@@ -199,5 +291,9 @@ class NexusSessionRuntimeTest {
         // Retry stays local while the phone is gone; still no launch.
         send(SessionEvent.Enter(now()))
         assertTrue(NexusSession.state is SessionState.InPage)
+    }
+
+    private companion object {
+        const val MARGIN_MS = 3_000L
     }
 }

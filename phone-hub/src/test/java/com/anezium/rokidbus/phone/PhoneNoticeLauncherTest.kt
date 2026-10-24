@@ -267,6 +267,28 @@ class PhoneNoticeLauncherTest {
     }
 
     @Test
+    fun `a show is held back while its owner's earlier forget cannot be sent`() {
+        repeat(NoticeSurfaceContract.MAX_MESSAGES_PER_SECOND) { index ->
+            router.handleLocal(withdraw("relay", "key-$index"), hudSender("relay"))
+        }
+        router.handleLocal(forget("relay"), hudSender("relay"))
+        nowMs += 1_000L
+        sink.sendRemoteError = "SEND_FAILED"
+
+        router.handleLocal(conversationShow("relay"), hudSender("relay"))
+        assertEquals(NoticeSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE, sink.errors.last().second)
+
+        sink.sendRemoteError = null
+        router.handleLocal(conversationShow("relay"), hudSender("relay"))
+        runScheduled()
+        router.onGlassesAnnounced()
+        val paths = sink.remote.map { it.path }
+        val lastShow = paths.lastIndexOf(BusPaths.NOTICE_SHOW)
+        assertTrue("the old forget never follows the show", paths.drop(lastShow + 1).none { it == BusPaths.CORE_NOTICE_PURGE })
+        assertTrue(paths.take(lastShow).contains(BusPaths.CORE_NOTICE_PURGE))
+    }
+
+    @Test
     fun `the sender hears that this hub holds its forget, sent or deferred`() {
         sink.linkUp = false
         val request = forget("relay")
