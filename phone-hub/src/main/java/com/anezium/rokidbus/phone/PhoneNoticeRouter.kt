@@ -142,9 +142,7 @@ internal class PhoneNoticeRouter(
                     is PhoneNoticeShowResult.Accepted -> {
                         // A forget the owner asked for earlier goes first, or it would land
                         // after this newer event and erase it.
-                        if (launcherBundle && synchronized(historyLock) { pluginId in pendingPurges }) {
-                            purgeOwner(pluginId, "owner_forget_before_show")
-                        }
+                        if (launcherBundle) purgeIfPending(pluginId, "owner_forget_before_show")
                         if (launcherBundle) {
                             val eventKey = result.notice.payload.optString(NoticeSurfaceContract.FIELD_EVENT_KEY)
                             synchronized(historyLock) {
@@ -285,11 +283,19 @@ internal class PhoneNoticeRouter(
 
     /** One coalesced purge per owner and window, whatever else the owner sent meanwhile. */
     private fun drainPurge(pluginId: String) {
-        val owed = synchronized(historyLock) {
-            scheduledDrains.remove(pluginId)
-            pluginId in pendingPurges
+        synchronized(historyLock) { scheduledDrains.remove(pluginId) }
+        purgeIfPending(pluginId, "owner_forget")
+    }
+
+    /**
+     * Consumes [pluginId]'s owed purge, if it still is, in one step with its sending: the drain
+     * runs on the main thread and a show on a Binder thread, and whichever comes second must find
+     * nothing owed rather than purge again after the newer show.
+     */
+    private fun purgeIfPending(pluginId: String, reason: String) {
+        synchronized(historyLock) {
+            if (pluginId in pendingPurges) purgeOwner(pluginId, reason)
         }
-        if (owed) purgeOwner(pluginId, "owner_forget")
     }
 
     /**

@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.ComponentName
 import android.os.PowerManager
 import android.service.notification.StatusBarNotification
+import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.LauncherInteractiveContract
@@ -245,6 +246,28 @@ class RelayPolicyLauncherTest {
         RelayHubFixture.idleFor(1_000)
 
         assertTrue(forgets().size >= 2)
+        assertFalse(owed())
+    }
+
+    @Test
+    fun `an unaccepted forget goes again when the same client registers again`() {
+        start()
+        hub.acceptsForgets = false
+        settings.setAppPolicy(chat.packageName, RelayAppPolicy.OFF)
+        NotificationControl.refreshFromSettings(app)
+        RelayHubFixture.idleFor(1_000)
+        assertEquals(1, forgets().size)
+
+        // The hub restarted before taking it; the same client registers with the new one.
+        hub.acceptsForgets = true
+        hub.deliver(
+            BusPaths.PLUGIN_REGISTRATION,
+            JSONObject().put("result", PluginRegistrationResult.APPROVED).put("capabilities", FakeHub.CAPABILITIES)
+                .put("noticeInteractionVersion", 1),
+        )
+        RelayHubFixture.idleFor(1_000)
+
+        assertEquals(2, forgets().size)
         assertFalse(owed())
     }
 

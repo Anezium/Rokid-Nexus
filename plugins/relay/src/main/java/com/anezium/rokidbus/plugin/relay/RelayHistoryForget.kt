@@ -3,6 +3,7 @@ package com.anezium.rokidbus.plugin.relay
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
 
 /**
@@ -23,8 +24,14 @@ internal object RelayHistoryForget {
     private val main = Handler(Looper.getMainLooper())
     private var holdGeneration = 0
 
-    /** The request generation last handed to which client: that client still carries it. */
-    private var inFlight: Pair<Int, Any>? = null
+    /**
+     * The request generation last handed to which client, and when: that client still carries it
+     * until it registers again or the hold window passes, after which an unaccepted request may
+     * have died with a hub process or expired in the client's queue and goes again.
+     */
+    private var inFlight: InFlight? = null
+
+    private data class InFlight(val generation: Int, val client: Any, val atUptimeMs: Long)
 
     fun request(context: Context) {
         val app = context.applicationContext
@@ -40,6 +47,15 @@ internal object RelayHistoryForget {
     fun flush(context: Context) {
         val app = context.applicationContext
         main.post { send(app, hold = false) }
+    }
+
+    /** A fresh registration carries nothing an earlier one was handed. */
+    fun registered(context: Context) {
+        val app = context.applicationContext
+        main.post {
+            inFlight = null
+            send(app, hold = false)
+        }
     }
 
     /**
@@ -82,10 +98,11 @@ internal object RelayHistoryForget {
         val client = if (hold) holdForAWhile(context) else RelayBus.client
         if (client == null || !client.isApproved) return
         val generation = prefs.getInt(KEY_GENERATION, 0)
-        if (inFlight?.first == generation && inFlight?.second === client) return
+        val now = SystemClock.uptimeMillis()
+        inFlight?.let { if (it.generation == generation && it.client === client && now - it.atUptimeMs < HOLD_WINDOW_MS) return }
         // Without the surfaces grant the hub already forgets the owner on its own.
         when (client.forgetNotices { main.post { accepted(context, generation) } }) {
-            NexusSdkResult.SENT -> inFlight = generation to client
+            NexusSdkResult.SENT -> inFlight = InFlight(generation, client, now)
             NexusSdkResult.CAPABILITY_NOT_GRANTED -> accepted(context, generation)
             else -> Unit
         }

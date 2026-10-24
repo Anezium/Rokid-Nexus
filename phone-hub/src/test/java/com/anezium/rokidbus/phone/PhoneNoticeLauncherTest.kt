@@ -232,6 +232,41 @@ class PhoneNoticeLauncherTest {
     }
 
     @Test
+    fun `a drain racing a newer show never purges after it`() {
+        val drainThread = Thread.currentThread()
+        var paused = false
+        lateinit var show: Thread
+        // The drain runs on the main thread, a show on a Binder thread. Pause the drain inside its
+        // purge, where an unserialized drain would already have decided the owner is still owed,
+        // and let the show run meanwhile.
+        val racing = PhoneNoticeRouter(
+            state = PhoneNoticeState(nowMs = { nowMs }, initialSequence = 0L),
+            sink = sink,
+            launcherVersion = {
+                if (Thread.currentThread() === drainThread && scheduled.isEmpty() && !paused && nowMs > 0) {
+                    paused = true
+                    show.start()
+                    show.join(500)
+                }
+                launcherVersion
+            },
+            schedule = { delayMs, block -> scheduled += delayMs to block },
+        )
+        repeat(NoticeSurfaceContract.MAX_MESSAGES_PER_SECOND) { index ->
+            racing.handleLocal(withdraw("relay", "key-$index"), hudSender("relay"))
+        }
+        racing.handleLocal(forget("relay"), hudSender("relay"))
+        show = Thread { racing.handleLocal(conversationShow("relay"), hudSender("relay")) }
+
+        runScheduled()
+        show.join(5_000)
+
+        assertTrue(paused)
+        val paths = sink.remote.map { it.path }.filter { it == BusPaths.CORE_NOTICE_PURGE || it == BusPaths.NOTICE_SHOW }
+        assertEquals(listOf(BusPaths.CORE_NOTICE_PURGE, BusPaths.NOTICE_SHOW), paths)
+    }
+
+    @Test
     fun `the sender hears that this hub holds its forget, sent or deferred`() {
         sink.linkUp = false
         val request = forget("relay")
