@@ -6,13 +6,14 @@ internal class MvtFormatException(message: String) : Exception(message)
 /** What one tile may cost to read. A tile over any of them is refused rather than truncated. */
 internal data class MvtLimits(
     val maxLayers: Int = 64,
-    /** All feature fields across every layer, including empty and unwanted features. */
+    /** Feature readers retained across requested layers, including empty and non-line features. */
     val maxFeatures: Int = 12_000,
     /** Vertices kept across the requested layers. */
     val maxVertices: Int = 300_000,
+    /** Key/value readers retained across requested layers. */
     val maxKeysOrValues: Int = 8_192,
     val maxStringBytes: Int = 4_096,
-    /** All protobuf fields visited, including metadata and skipped feature fields. */
+    /** All protobuf fields visited, including skipped layers and both passes over requested layers. */
     val maxFields: Int = 150_000,
 )
 
@@ -70,35 +71,42 @@ internal object MvtReader {
     }
 
     private fun readLayer(layer: ProtoReader, wanted: Set<String>, limits: MvtLimits, budget: Budget): MvtLayer? {
+        val content = layer.copy()
         var name: String? = null
         var version = 1L
         var extent = DEFAULT_EXTENT
-        val keys = ArrayList<ProtoReader>()
-        val values = ArrayList<ProtoReader>()
-        val features = ArrayList<ProtoReader>()
-        // One pass records where everything is; only a wanted layer is decoded afterwards.
+        // Names may follow features. Identify the layer without retaining anything from its tables or features.
         while (layer.hasMore()) {
             val (field, wire) = layer.key()
             when {
                 field == 15 && wire == ProtoReader.VARINT -> version = layer.varint()
                 field == 1 && wire == ProtoReader.LENGTH -> name = layer.string(limits.maxStringBytes)
-                field == 2 && wire == ProtoReader.LENGTH -> {
-                    if (++budget.features > limits.maxFeatures) fail("too many feature fields")
-                    features += layer.message()
-                }
-                (field == 3 || field == 4) && wire == ProtoReader.LENGTH -> {
-                    if (++budget.tables > limits.maxKeysOrValues) fail("too many tile keys or values")
-                    if (field == 3) keys += layer.message() else values += layer.message()
-                }
                 field == 5 && wire == ProtoReader.VARINT -> extent = layer.varint()
                 else -> layer.skip(wire)
             }
-            if (keys.size > limits.maxKeysOrValues || values.size > limits.maxKeysOrValues) fail("too many keys or values")
         }
         val layerName = name ?: fail("layer without a name")
         if (layerName !in wanted) return null
         if (version != 1L && version != 2L) fail("unsupported layer version $version")
         if (extent !in 1L..MAX_EXTENT) fail("layer extent $extent is out of range")
+        val keys = ArrayList<ProtoReader>()
+        val values = ArrayList<ProtoReader>()
+        val features = ArrayList<ProtoReader>()
+        while (content.hasMore()) {
+            val (field, wire) = content.key()
+            when {
+                field == 2 && wire == ProtoReader.LENGTH -> {
+                    if (++budget.features > limits.maxFeatures) fail("too many feature fields")
+                    features += content.message()
+                }
+                (field == 3 || field == 4) && wire == ProtoReader.LENGTH -> {
+                    if (++budget.tables > limits.maxKeysOrValues) fail("too many tile keys or values")
+                    if (field == 3) keys += content.message() else values += content.message()
+                }
+                else -> content.skip(wire)
+            }
+            if (keys.size > limits.maxKeysOrValues || values.size > limits.maxKeysOrValues) fail("too many keys or values")
+        }
         val keyNames = keys.map { it.remainingString(limits.maxStringBytes) }
         val valueTable = values.map { readValue(it, limits.maxStringBytes) }
         val lines = ArrayList<MvtLine>()
@@ -221,6 +229,8 @@ internal object MvtReader {
 
     /** Protobuf wire reading over [bytes] from [position] to [end], every read checked against [end]. */
     private class ProtoReader(private val bytes: ByteArray, private var position: Int, private val end: Int, private val budget: Budget) {
+        fun copy(): ProtoReader = ProtoReader(bytes, position, end, budget)
+
         fun hasMore(): Boolean = position < end
 
         fun remaining(): Int = end - position

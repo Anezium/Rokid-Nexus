@@ -12,6 +12,39 @@ import org.junit.Test
 /** Shortbread tiles as the map uses them: which streets, clipped to their tile, and the Web Mercator grid. */
 class OsmBasemapTest {
     @Test
+    fun `dense address and POI layers do not crowd streets out of the tile budget`() {
+        val point = MvtFixtures.Proto().apply {
+            varint(3, 1)
+            packed(4, listOf(MvtFixtures.command(1, 1), 0, 0))
+        }.toByteArray()
+        fun unusedLayer(name: String) = MvtFixtures.Proto().apply {
+            repeat(8_000) { bytes(2, point) }
+            string(3, "name")
+            repeat(8_000) { bytes(4, MvtFixtures.Proto().apply { string(1, "Unused $it") }.toByteArray()) }
+            // Legal protobuf ordering must not make unused readers consume the retained budget.
+            string(1, name)
+        }.toByteArray()
+        val streets = MvtFixtures.shortbread(
+            listOf(line(0 to 100, 4096 to 100, tags = mapOf("kind" to "residential"))),
+            listOf(line(0 to 100, 4096 to 100, tags = mapOf("kind" to "residential", "name" to "Test Street"))),
+        )
+        val body = MvtFixtures.Proto().apply {
+            bytes(3, unusedLayer("addresses"))
+            write(streets)
+            bytes(3, unusedLayer("pois"))
+        }.toByteArray()
+        // 16,002 features and over 16,000 table entries, all synthetic; only two features are retained.
+        for (limits in listOf(MvtLimits(), MvtLimits(maxFeatures = 2, maxKeysOrValues = 6))) {
+            for (encoded in listOf(body, MvtFixtures.gzip(body))) {
+                val tile = ShortbreadTiles.decode(TileKey(14, 1, 1), encoded, limits)
+                assertEquals(StreetClass.STREET, tile.streets.single().streetClass)
+                assertArrayEquals(intArrayOf(0, 100, 4096, 100), tile.streets.single().points)
+                assertEquals("Test Street", tile.names.single().name)
+            }
+        }
+    }
+
+    @Test
     fun `walkable streets are kept by class, railways and road tunnels are not`() {
         assertEquals(StreetClass.MAJOR, StreetClass.of("primary"))
         assertEquals(StreetClass.MAJOR, StreetClass.of("tertiary"))

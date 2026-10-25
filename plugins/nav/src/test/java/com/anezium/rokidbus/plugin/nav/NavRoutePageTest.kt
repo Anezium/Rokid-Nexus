@@ -72,8 +72,8 @@ class NavRoutePageTest {
     @Test
     fun `the page says whose streets its maps draw, or that they show the route alone`() {
         fun streets(state: NavPageState) = (content(state).body as PageBody.Route).facts.single { it.id == "streets" }.value
-        assertEquals(NavRoutePage.STREETS_LOADING, streets(journey(tracking(100.0)).copy(basemap = BasemapState.LOADING)))
-        val unavailable = journey(tracking(100.0)).copy(basemap = BasemapState.UNAVAILABLE)
+        assertEquals(NavRoutePage.STREETS_LOADING, streets(journey(tracking(100.0)).copy(basemap = BasemapState.LOADING, renderedMaps = true)))
+        val unavailable = journey(tracking(100.0)).copy(basemap = BasemapState.UNAVAILABLE, renderedMaps = true)
         assertEquals(NavRoutePage.STREETS_UNAVAILABLE, streets(unavailable))
         assertNull((content(unavailable).body as PageBody.Route).follow!!.attribution)
 
@@ -97,10 +97,22 @@ class NavRoutePageTest {
         assertValid(page)
         // A queued page or retained snapshot must also fall back immediately on peer downgrade.
         val unsupported = content(journey(loaded).copy(basemap = BasemapState.READY, renderedMaps = false)).body as PageBody.Route
+        assertEquals(NavRoutePage.STREETS_UNAVAILABLE, unsupported.facts.single { it.id == "streets" }.value)
         for (geometry in listOfNotNull(unsupported.follow, unsupported.overview)) {
             assertNull(geometry.attribution)
             assertTrue(geometry.paths.none { it.role == RoutePathRole.STREET || it.role == RoutePathRole.MAJOR })
         }
+    }
+
+    @Test
+    fun `without rendered-map support no basemap state can leave the page loading`() {
+        for (basemap in BasemapState.entries) {
+            val state = journey(tracking(100.0)).copy(basemap = basemap, renderedMaps = false)
+            val body = content(state).body as PageBody.Route
+            assertEquals(NavRoutePage.STREETS_UNAVAILABLE, body.facts.single { it.id == "streets" }.value)
+        }
+        val waiting = content(journey(tracking(100.0)).copy(renderedMaps = true)).body as PageBody.Route
+        assertEquals(NavRoutePage.STREETS_LOADING, waiting.facts.single { it.id == "streets" }.value)
     }
 
     @Test

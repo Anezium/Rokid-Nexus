@@ -4,6 +4,10 @@
 
 Street maps and render feedback need Nexus hubs 1.9.0; older hubs keep route-only guidance.
 
+- Decode dense city street maps without retaining address, POI or other unused
+  layers. Keep tile-wide scan and street allocation limits; warn once per
+  rejected tile without logging its location. Show route-only availability
+  after a tile failure and when rendered-map support is absent.
 - Keep the route activity and its launcher position through unreadable notification
   rewrites and reroutes for up to ten seconds from the first unreadable post,
   showing the last readable guidance. Recovery updates the same activity;

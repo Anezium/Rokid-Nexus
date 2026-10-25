@@ -8,6 +8,7 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import com.anezium.rokidbus.client.plugin.NexusPluginClient
 import com.anezium.rokidbus.client.plugin.NexusPluginCallbacks
 import com.anezium.rokidbus.client.plugin.NexusPage
@@ -32,6 +33,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
+import org.robolectric.shadows.ShadowLog
 import org.robolectric.util.ReflectionHelpers
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
@@ -72,6 +74,33 @@ class NavJourneyLifecycleTest {
         NavState.guidance = null
         NavState.journeyMessage = null
         NavState.journeyDestination = null
+    }
+
+    @Test
+    fun `basemap rejection logs are warnings with only a reason class once per tile`() {
+        val streets = StreetRecorder()
+        var elapsed = 0L
+        val loader = NavBasemap(OsmShortbreadSource, route().line, null, streets.transport,
+            { android.os.Handler(Looper.getMainLooper()).post(it) }, {}, streets.executor, { elapsed },
+            prepare = { _, _, _ -> throw MvtFormatException("private provider or location data") })
+        try {
+            val keys = listOf(TileKey(14, 1, 1), TileKey(14, 2, 1))
+            repeat(2) {
+                loader.demand(keys)
+                idle(0)
+                elapsed += NavBasemap.MIN_RETRY_MS
+            }
+            assertEquals(4, streets.urls.size)
+            val warnings = ShadowLog.getLogsForTag("NexusNav")
+            assertEquals(2, warnings.size)
+            warnings.forEach {
+                assertEquals(Log.WARN, it.type)
+                assertEquals("basemap rejected cause=MvtFormatException", it.msg)
+                assertNull(it.throwable)
+            }
+        } finally {
+            loader.close()
+        }
     }
 
     @Test

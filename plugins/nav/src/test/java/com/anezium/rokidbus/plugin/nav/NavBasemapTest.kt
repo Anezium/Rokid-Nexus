@@ -33,6 +33,7 @@ class NavBasemapTest {
     private val posted = ArrayDeque<Runnable>()
     private val transport = FakeTransport()
     private var changes = 0
+    private val warnings = mutableListOf<String>()
 
     @Test
     fun `an expired rendered lease cannot start a queued request or apply a late completed tile`() {
@@ -195,6 +196,37 @@ class NavBasemapTest {
         settle()
         assertTrue(basemap.tiles.tiles.isEmpty())
         assertNull(cache.read(OsmShortbreadSource, keys[0]))
+        assertEquals(BasemapState.UNAVAILABLE, basemap.state)
+        assertEquals(1, changes)
+        assertEquals(listOf("basemap rejected cause=MvtFormatException"), warnings)
+    }
+
+    @Test
+    fun `cached and fetched rejections warn once per tile across retries without location or exception text`() {
+        val cache = BasemapCache(folder.root) { wall }
+        keys.take(2).forEach { cache.write(OsmShortbreadSource, it, CachedTile(tile, TileFreshness(wall, 300))) }
+        val basemap = basemap(cache) { _, _, _ -> throw MvtFormatException("private provider or location data") }
+        basemap.demand(keys.take(2))
+        settle()
+        assertEquals(2, transport.urls.size)
+        assertEquals(List(2) { "basemap rejected cause=MvtFormatException" }, warnings)
+        assertEquals(BasemapState.UNAVAILABLE, basemap.state)
+        assertTrue(basemap.tiles.tiles.isEmpty())
+        keys.take(2).forEach { assertNull(cache.read(OsmShortbreadSource, it)) }
+        elapsed += NavBasemap.MIN_RETRY_MS
+        basemap.demand(keys.take(2))
+        settle()
+        assertEquals(4, transport.urls.size)
+        assertEquals(2, warnings.size)
+        assertEquals(BasemapState.UNAVAILABLE, basemap.state)
+    }
+
+    @Test
+    fun `unexpected basemap failures also warn with the class alone`() {
+        val basemap = basemap { _, _, _ -> throw IllegalStateException("private provider or location data") }
+        basemap.demand(listOf(keys[0]))
+        settle()
+        assertEquals(listOf("basemap rejected cause=IllegalStateException"), warnings)
         assertEquals(BasemapState.UNAVAILABLE, basemap.state)
     }
 
@@ -476,6 +508,7 @@ class NavBasemapTest {
         elapsed = { elapsed },
         wallClock = { wall },
         prepare = prepare,
+        warn = warnings::add,
     )
 
     private fun drainPosted() {

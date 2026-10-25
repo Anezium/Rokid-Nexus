@@ -95,7 +95,11 @@ internal object NavRoutePage {
         val overview = NavMapProjection.geometry(snapshot, NavMapView.OVERVIEW)
         // Beside the map, whose streets they are; or, truthfully, that it shows the route alone.
         val streets = (follow.attribution ?: overview.attribution)?.let { "$it contributors" }
-            ?: if (state.basemap == BasemapState.LOADING || state.basemap == BasemapState.NONE) STREETS_LOADING else STREETS_UNAVAILABLE
+            ?: when {
+                !state.renderedMaps -> STREETS_UNAVAILABLE
+                state.basemap == BasemapState.LOADING || state.basemap == BasemapState.NONE -> STREETS_LOADING
+                else -> STREETS_UNAVAILABLE
+            }
         return PageBody.Route(
             position = position,
             maneuver = maneuver,
