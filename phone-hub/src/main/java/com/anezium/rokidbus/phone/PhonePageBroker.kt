@@ -16,6 +16,10 @@ import com.anezium.rokidbus.shared.PageTemplateContract
 import com.anezium.rokidbus.shared.QuickActionFamily
 import com.anezium.rokidbus.shared.QuickActionPolicyContract
 import com.anezium.rokidbus.shared.RenderedMapContract
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics.Gate
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics.Reason
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics.Verdict
 import com.anezium.rokidbus.shared.plugin.PathRules
 import org.json.JSONObject
 
@@ -75,6 +79,7 @@ class PhonePageBroker(
         var bindDeadline: Long? = null,
         var waitingRequest: JSONObject? = null,
         var shownRevision: Long? = null,
+        var shownAtMs: Long? = null,
         var live: Boolean = false,
         /** The shown revision's actions with their kinds and types, so every mode is checked here. */
         var actions: Map<String, PageSurfaceAction> = emptyMap(),
@@ -120,6 +125,7 @@ class PhonePageBroker(
     )
 
     private val lock = Any()
+    private val mapDiagnostics = MapFeedbackDiagnostics(host::nowMs, host::log)
     private val frames = linkedMapOf<FrameKey, Frame>()
 
     /** Counts SPP losses, so a page whose send straddled one can be judged against it. */
@@ -237,23 +243,53 @@ class PhonePageBroker(
     fun holdsProviderBinding(pluginId: String): Boolean = synchronized(lock) { bound.containsKey(pluginId) }
 
     fun onRenderedMap(payload: JSONObject) = mutate {
-        if (!host.renderedMapsSupported() || !RenderedMapContract.validEvent(payload)) return@mutate
-        val context = RenderedMapContract.context(payload) ?: return@mutate
-        if (context.kind != RenderedMapContract.PAGE) return@mutate
-        val frame = frames[FrameKey(context.sessionGeneration, context.frameIndex)] ?: return@mutate
-        val visible = payload.getBoolean("visible")
-        if (frame.pageId != context.id) return@mutate
-        if (visible && (frame.requestId != context.requestId || frame.shownRevision != context.revision ||
-            !frame.routeMap || !frame.actionable || frame.pending || frame.leaseUntil?.let { host.nowMs() < it } != true)) return@mutate
-        val registration = currentRegistration(frame) ?: return@mutate
+        val context = RenderedMapContract.context(payload)
+        val frame = context?.let { frames[FrameKey(it.sessionGeneration, it.frameIndex)] }
+        val visible = payload.optBoolean("visible")
+        val registration = frame?.let(::currentRegistration)
+        val now = host.nowMs()
+        val sample = MapFeedbackDiagnostics.Sample.from(payload).copy(
+            currentRevision = frame?.shownRevision ?: -1,
+            ageMs = frame?.shownAtMs?.let { now - it } ?: -1,
+            leaseRemainingMs = frame?.leaseUntil?.let { (it - now).coerceAtLeast(0) } ?: -1,
+        )
+        val reason = when {
+            !host.renderedMapsSupported() -> Reason.CAPABILITY
+            !RenderedMapContract.validEvent(payload) || context == null -> Reason.MALFORMED
+            context.kind != RenderedMapContract.PAGE -> Reason.KIND_VIEW
+            frame == null -> Reason.FRAME
+            frame.pageId != context.id -> Reason.IDENTITY
+            visible && frame.requestId != context.requestId -> Reason.REQUEST
+            visible && frame.shownRevision != context.revision -> Reason.REVISION
+            visible && (!frame.routeMap || !frame.actionable || frame.pending) -> Reason.NOT_ACTIONABLE
+            visible && frame.leaseUntil?.let { now < it } != true -> Reason.PAGE_LEASE
+            registration == null -> Reason.REGISTRATION
+            else -> null
+        }
+        if (reason != null) {
+            mapDiagnostics.record(Gate.PHONE_PAGE, Verdict.DROP, reason, sample)
+            return@mutate
+        }
+        checkNotNull(frame)
+        checkNotNull(context)
+        checkNotNull(registration)
+        mapDiagnostics.record(Gate.PHONE_PAGE, Verdict.PASS, Reason.CURRENT, sample)
         val outgoing = RenderedMapContract.delivery(payload, frame.owner)
         later {
-            val current = synchronized(lock) {
-                frames[frame.key] === frame && currentRegistration(frame) == registration && (!visible ||
-                    (frame.requestId == context.requestId && frame.shownRevision == context.revision &&
-                        frame.leaseUntil?.let { host.nowMs() < it } == true))
+            val deliveryReason = synchronized(lock) {
+                when {
+                    frames[frame.key] !== frame -> Reason.FRAME
+                    currentRegistration(frame) != registration -> Reason.REGISTRATION
+                    visible && frame.requestId != context.requestId -> Reason.REQUEST
+                    visible && frame.shownRevision != context.revision -> Reason.REVISION
+                    visible && frame.leaseUntil?.let { host.nowMs() < it } != true -> Reason.PAGE_LEASE
+                    else -> null
+                }
             }
-            if (current) host.deliver(registration, RenderedMapContract.PATH, outgoing)
+            val delivered = deliveryReason == null && host.deliver(registration, RenderedMapContract.PATH, outgoing)
+            mapDiagnostics.record(Gate.PHONE_PAGE_DELIVERY, if (delivered) Verdict.PASS else Verdict.DROP,
+                deliveryReason ?: if (delivered) Reason.CURRENT else Reason.DELIVERY_FAILED,
+                sample.copy(ageMs = host.nowMs() - now))
         }
     }
 
@@ -706,6 +742,7 @@ class PhonePageBroker(
 
     private fun commit(frame: Frame, candidate: Candidate) {
         frame.shownRevision = maxOf(frame.shownRevision ?: candidate.revision, candidate.revision)
+        frame.shownAtMs = host.nowMs()
         frame.live = candidate.live
         frame.actions = candidate.actions
         frame.composer = candidate.composer

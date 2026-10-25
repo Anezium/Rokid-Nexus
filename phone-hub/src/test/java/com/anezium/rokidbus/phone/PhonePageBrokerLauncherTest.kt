@@ -27,6 +27,7 @@ class PhonePageBrokerLauncherTest {
         val delivered = mutableListOf<Triple<String, String, JSONObject>>()
         val glasses = mutableListOf<Pair<String, JSONObject>>()
         val quick = mutableMapOf<String, Set<QuickActionFamily>>()
+        val logs = mutableListOf<String>()
 
         override fun nowMs(): Long = now
         override fun pageProvider(pluginId: String): PhonePluginPrincipal? = providers[pluginId]
@@ -45,7 +46,7 @@ class PhonePageBrokerLauncherTest {
         override fun rebind(principal: PhonePluginPrincipal): Boolean = true
         override fun unbind(principal: PhonePluginPrincipal) = Unit
         override fun scheduleTick(atMs: Long?) = Unit
-        override fun log(message: String) = Unit
+        override fun log(message: String) { logs += message }
         override fun quickFamilies(principal: PhonePluginPrincipal): Set<QuickActionFamily> =
             quick[principal.descriptor.id].orEmpty()
     }
@@ -160,6 +161,10 @@ class PhonePageBrokerLauncherTest {
         host.now += PageSurfaceContract.LEASE_MS
         broker.onRenderedMap(event)
         assertEquals(1, host.delivered.count { it.second == com.anezium.rokidbus.shared.RenderedMapContract.PATH })
+        for (reason in listOf("REVISION", "REQUEST", "FRAME", "IDENTITY", "CAPABILITY", "PAGE_LEASE")) {
+            assertTrue(reason, host.logs.any { it.contains("gate=PHONE_PAGE verdict=DROP reason=$reason ") })
+        }
+        assertTrue(host.logs.any { it.contains("gate=PHONE_PAGE_DELIVERY verdict=PASS reason=CURRENT") })
     }
 
     @Test

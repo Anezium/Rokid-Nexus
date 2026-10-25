@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.util.Log
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics
 import com.anezium.rokidbus.client.plugin.NexusPluginClient
 
 /** Which guidance the wearer lets through: everything, per app, or nothing. */
@@ -87,7 +89,7 @@ internal class NavSettings(context: Context) {
  * and notification guidance resumes from what is posted at that moment once the journey ends.
  */
 internal object NavControl {
-    val renderedFrames = NavRenderedFrames()
+    val renderedFrames = NavRenderedFrames(MapFeedbackDiagnostics({ System.nanoTime() / 1_000_000 }) { Log.i("NexusNav", it) })
     @Volatile
     private var listener: NavNotificationListener? = null
 

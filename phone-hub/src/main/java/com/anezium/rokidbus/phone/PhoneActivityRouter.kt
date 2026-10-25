@@ -8,6 +8,10 @@ import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.RenderedMapContract
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics.Gate
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics.Reason
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics.Verdict
 import org.json.JSONObject
 
 /**
@@ -57,6 +61,8 @@ internal class PhoneActivityRouter(
 
     /** Highest route geometry revision forwarded per owner; geometry is latest-wins. */
     private val geometryRevisions = mutableMapOf<String, Long>()
+    private val geometrySentAtMs = mutableMapOf<String, Long>()
+    private val mapDiagnostics = MapFeedbackDiagnostics(nowMs, sink::log)
     private val headingWindows = mutableMapOf<String, ArrayDeque<Long>>()
     private val commandBindings = mutableMapOf<String, String>()
     private var persistedOfflineRevision = state.offlineRevision()
@@ -231,15 +237,35 @@ internal class PhoneActivityRouter(
 
     /** Feedback comes only from the authenticated peer, for a live owner and its current geometry. */
     fun handleRenderedMap(payload: JSONObject): Unit = synchronized(wireLock) {
-        if (!RenderedMapContract.supported(sink.capabilities()) || !launcher.dataPlaneUp() ||
-            !RenderedMapContract.validEvent(payload)) return@synchronized
-        val context = RenderedMapContract.context(payload) ?: return@synchronized
-        if (context.kind != RenderedMapContract.AMBIENT || payload.optString("view") != RenderedMapContract.FOLLOW) return@synchronized
-        val visible = payload.getBoolean("visible")
-        val owner = if (visible) state.ownerForRenderedMap(context.id, context.seq) else state.ownerForActivity(context.id)
-        if (owner == null || launcher.registrationCount(owner) != 1 ||
-            (visible && geometryRevisions[owner] != context.revision)) return@synchronized
-        sink.deliverLocal(BusEnvelope(path = RenderedMapContract.PATH, payload = RenderedMapContract.delivery(payload, owner)))
+        val context = RenderedMapContract.context(payload)
+        val visible = payload.optBoolean("visible")
+        val owner = context?.let { state.ownerForActivity(it.id) }
+        val currentRevision = geometryRevisions[owner] ?: -1
+        val currentSeq = owner?.let(state::activitySequence) ?: -1
+        val sample = MapFeedbackDiagnostics.Sample.from(payload).copy(
+            currentRevision = currentRevision, currentSeq = currentSeq,
+            ageMs = geometrySentAtMs[owner]?.let { nowMs() - it } ?: -1,
+        )
+        val reason = when {
+            !RenderedMapContract.supported(sink.capabilities()) -> Reason.CAPABILITY
+            !launcher.dataPlaneUp() -> Reason.DATA_PLANE
+            !RenderedMapContract.validEvent(payload) || context == null -> Reason.MALFORMED
+            context.kind != RenderedMapContract.AMBIENT || payload.optString("view") != RenderedMapContract.FOLLOW -> Reason.KIND_VIEW
+            owner == null -> Reason.IDENTITY
+            visible && !state.isLive(owner) -> Reason.STALE
+            visible && currentSeq != context.seq -> Reason.SEQUENCE
+            launcher.registrationCount(owner) != 1 -> Reason.REGISTRATION
+            visible && currentRevision != context.revision -> Reason.REVISION
+            else -> null
+        }
+        if (reason != null) {
+            mapDiagnostics.record(Gate.PHONE_AMBIENT, Verdict.DROP, reason, sample)
+            return@synchronized
+        }
+        val delivered = sink.deliverLocal(BusEnvelope(path = RenderedMapContract.PATH,
+            payload = RenderedMapContract.delivery(payload, checkNotNull(owner))))
+        mapDiagnostics.record(Gate.PHONE_AMBIENT, if (delivered) Verdict.PASS else Verdict.DROP,
+            if (delivered) Reason.CURRENT else Reason.DELIVERY_FAILED, sample)
     }
 
     fun expireCanonical(): Unit = synchronized(wireLock) {
@@ -451,6 +477,7 @@ internal class PhoneActivityRouter(
         val error = launcher.sendDataPlane(outgoing)
         if (error == null) {
             geometryRevisions[pluginId] = update.revision
+            geometrySentAtMs[pluginId] = nowMs()
         } else {
             sink.log("activity geometry dropped owner=$pluginId code=$error")
         }
@@ -507,6 +534,7 @@ internal class PhoneActivityRouter(
     /** Geometry and heading belong to one live session; an end or an offline entry drops them. */
     private fun clearTransient(pluginId: String) {
         geometryRevisions.remove(pluginId)
+        geometrySentAtMs.remove(pluginId)
         headingWindows.remove(pluginId)
     }
 

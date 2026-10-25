@@ -41,10 +41,19 @@ internal class NavRuntime(context: Context) {
     private var startedGeneration = NO_GENERATION
     private var lastSentAtMs = 0L
     private val sendDeferred = Runnable { flushDeferred() }
+    private val sendMap = Runnable { if (NavControl.owns(this)) flushMap() }
     private val releaseIdle = Runnable { if (NavControl.owns(this)) NavControl.releaseBus(appContext) }
     private val map = NavMapPublisher(
         supported = { client?.supportsLauncherInteractive() == true },
-        sendGeometry = { revision, geometry -> client?.publishActivityGeometry(revision, geometry) ?: NexusSdkResult.NOT_REGISTERED },
+        sendGeometry = { revision, geometry ->
+            if (NavControl.renderedFrames.awaitingAcknowledgment(client?.renderedMapFrames.orEmpty())) {
+                main.removeCallbacks(sendMap)
+                main.postDelayed(sendMap, client?.renderedMapLeaseRemainingMs ?: 0L)
+                NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+            } else {
+                client?.publishActivityGeometry(revision, geometry) ?: NexusSdkResult.NOT_REGISTERED
+            }
+        },
         sendHeading = { deg, accuracy -> client?.publishActivityHeading(deg, accuracy) ?: NexusSdkResult.NOT_REGISTERED },
         now = SystemClock::elapsedRealtime,
         streetsSupported = { client?.supportsRenderedMaps == true },
@@ -70,6 +79,17 @@ internal class NavRuntime(context: Context) {
         if (!NavControl.owns(this)) return@onMain
         map.update(snapshot, send = false)
         onGuidance(snapshot.guidance())
+        flushMap()
+    }
+
+    fun onRenderedMapsChanged() = onMain {
+        if (NavControl.owns(this)) flushMap()
+    }
+
+    private fun flushMap() {
+        main.removeCallbacks(sendMap)
+        val delay = map.geometryDelayMs()
+        delay?.let { main.postDelayed(sendMap, it) }
         map.flush()
     }
 
@@ -85,6 +105,7 @@ internal class NavRuntime(context: Context) {
         main.removeCallbacks(sendDeferred)
         planner.reset()
         map.clear()
+        main.removeCallbacks(sendMap)
         if (started) {
             log("end result=${client?.endActivity()}")
             started = false
@@ -112,6 +133,7 @@ internal class NavRuntime(context: Context) {
         deferred = null
         planner.reset()
         map.clear()
+        main.removeCallbacks(sendMap)
         started = false
         main.removeCallbacks(releaseIdle)
         main.removeCallbacks(sendDeferred)

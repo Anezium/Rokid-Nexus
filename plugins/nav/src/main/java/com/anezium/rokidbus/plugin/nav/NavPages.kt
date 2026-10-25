@@ -131,6 +131,7 @@ internal class NavPageProvider<R : Any>(
     /** The main page came on screen or left it; its maps need street tiles only while it is there. */
     private val visibilityChanged: (Boolean) -> Unit = {},
     private val publication: (NexusPage.Content, NavPageState) -> Unit = { _, _ -> },
+    private val retryAfterRefusalMs: () -> Long? = { null },
 ) {
     private var revision = 0L
     private val shownJourneys = LinkedHashMap<Long, Long?>()
@@ -171,6 +172,10 @@ internal class NavPageProvider<R : Any>(
         forget()
     }
 
+    fun onRenderedMapsChanged() {
+        if (dirty) guidanceChanged()
+    }
+
     /** The route changed: publish now, or once the half-second since the last revision has passed. */
     fun guidanceChanged() {
         current ?: return
@@ -195,14 +200,15 @@ internal class NavPageProvider<R : Any>(
         val page = if (candidate is NexusPage.Content) candidate.copy(revision = nextRevision(null)) else candidate
         when (publish(request, page)) {
             NexusSdkResult.SENT -> {
+                cancelScheduled()
                 dirty = false
                 lastPublishAt = now()
                 lastContent = page as? NexusPage.Content
                 lastFootprint = footprint
                 lastContent?.let { remember(it.revision); publication(it, currentState) }
             }
-            // Refused: the page is covered, closed or out of lease; the next request answers afresh.
-            else -> Unit
+            // A held publication has no callback when its old rendered acknowledgment expires.
+            else -> retryAfterRefusalMs()?.let { delay -> schedule(delay) { guidanceChanged() } }
         }
     }
 

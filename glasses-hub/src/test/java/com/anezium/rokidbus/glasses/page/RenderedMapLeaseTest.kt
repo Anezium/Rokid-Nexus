@@ -24,6 +24,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
+import org.robolectric.shadows.ShadowLog
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [32], qualifiers = "w480dp-h640dp-mdpi")
@@ -82,6 +83,9 @@ class RenderedMapLeaseTest {
         activity.setContentView(View(activity))
         assertFalse(events.last().getBoolean("visible"))
         controller.pause().stop().destroy()
+        val diagnostics = ShadowLog.getLogsForTag("ROKIDBUS").map { it.msg }
+        assertTrue(diagnostics.any { it.contains("gate=GLASSES_DRAW verdict=PASS reason=CURRENT kind=AMBIENT view=FOLLOW revision=7") })
+        assertTrue(diagnostics.any { it.contains("gate=GLASSES_SEND verdict=PASS reason=HIDDEN") && it.contains("visible=false") })
     }
 
     @Test

@@ -130,7 +130,7 @@ public class RenderedMapJourneyFeedbackTest {
             (page, state) -> {
                 NavControl.INSTANCE.getRenderedFrames().remember(page.getRevision(), state.getJourney(), NavPages.MAIN);
                 return Unit.INSTANCE;
-            });
+            }, () -> null);
         NavControl.INSTANCE.setPageListener(() -> { pages.guidanceChanged(); return Unit.INSTANCE; });
         try {
             accepted[0] = (NexusPage.Content) pages.onRequest(NavPages.MAIN);

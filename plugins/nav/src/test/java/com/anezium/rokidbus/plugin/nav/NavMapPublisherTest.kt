@@ -162,6 +162,47 @@ class NavMapPublisherTest {
     }
 
     @Test
+    fun `acknowledged covers survive unrelated publications in either direction`() {
+        for (pageId in listOf(null, NavPages.MAIN)) {
+            val frames = NavRenderedFrames()
+            val shown = live(100.0)
+            frames.remember(1, shown, pageId)
+            val acknowledged = setOf(NexusRenderedMap(NexusRenderedMapView.FOLLOW, 1, pageId))
+            val cover = NavMapProjection.tiles(shown, NavMapView.FOLLOW, OsmShortbreadSource)
+            assertTrue(cover.isNotEmpty())
+            repeat(120) { index ->
+                frames.remember(index + 2L, live(300.0), if (pageId == null) NavPages.MAIN else null)
+                assertEquals(cover, frames.keys(acknowledged))
+            }
+            // Retention alone is never demand, and an abandoned publication is still bounded.
+            assertTrue(frames.keys(emptySet()).isEmpty())
+            repeat(48) { frames.remember(it + 1_000L, live(300.0), NavPages.MAIN) }
+            assertTrue(frames.keys(acknowledged).isEmpty())
+        }
+    }
+
+    @Test
+    fun `publication pacing is independent per surface and follows a fresh page sequence`() {
+        val frames = NavRenderedFrames()
+        val a = NexusRenderedMap(NexusRenderedMapView.FOLLOW, 100)
+        val p = NexusRenderedMap(NexusRenderedMapView.FOLLOW, 100, NavPages.MAIN)
+        frames.remember(100, live(100.0))
+        frames.remember(100, live(100.0), NavPages.MAIN)
+        assertFalse(frames.awaitingAcknowledgment(setOf(a, p)))
+        assertFalse(frames.awaitingAcknowledgment(setOf(a, p), NavPages.MAIN))
+        frames.remember(101, live(200.0), NavPages.MAIN)
+        assertTrue(frames.awaitingAcknowledgment(setOf(a, p), NavPages.MAIN))
+        assertFalse(frames.awaitingAcknowledgment(setOf(a, p)))
+        assertFalse(frames.awaitingAcknowledgment(setOf(a), NavPages.MAIN))
+        assertFalse(frames.awaitingAcknowledgment(setOf(p.copy(revision = 101)), NavPages.MAIN))
+        // A recreated provider can start a new revision sequence after registration loss.
+        frames.remember(1, live(300.0), NavPages.MAIN)
+        assertFalse(frames.awaitingAcknowledgment(setOf(p.copy(revision = 1)), NavPages.MAIN))
+        frames.clear()
+        assertFalse(frames.awaitingAcknowledgment(setOf(a)))
+    }
+
+    @Test
     fun `stale and missing positions are still drawn, degraded, with no heading`() {
         publisher.update(stale(100.0, bearing = 30), send = false)
         publisher.activityStarted()
