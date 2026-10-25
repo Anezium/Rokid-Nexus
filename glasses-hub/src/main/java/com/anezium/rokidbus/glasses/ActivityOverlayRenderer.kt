@@ -191,16 +191,21 @@ internal object ActivityOverlayRenderer {
 
     private fun guidanceOf(item: ActivityRenderItem): GuidanceIsland? {
         val owner = item.activity.ownerPluginId
-        val residents = latestState.items.count { it.presentation != ActivityPresentation.HIDDEN } +
-            if (PinController.activePin() != null) 1 else 0
         return GuidanceIslands.of(
             item, RouteLive.geometry(owner), RouteLive.heading(owner),
             sourceLabel = GlassesHub.launcherDisplayName(owner),
-            crowded = residents >= 3,
+            crowded = mapCrowded(latestState, pinDrawn = PinController.presentablePin() != null),
             geometryRevision = RouteLive.geometryRevision(owner),
             launcherAmbient = ActivityController.launcherAmbient(),
         )
     }
+
+    /**
+     * Three things on the HUD crowd a map: the drawn islands and the pin. A pin whose owner is
+     * kept off the glasses holds its slot but is not drawn, so it takes no room.
+     */
+    internal fun mapCrowded(state: ActivityRenderState, pinDrawn: Boolean): Boolean =
+        state.items.count { it.presentation != ActivityPresentation.HIDDEN } + (if (pinDrawn) 1 else 0) >= 3
 
     /** A live route moved: its owner's guidance island redraws its map, nothing else does. */
     private fun onRouteLive(owner: String) {

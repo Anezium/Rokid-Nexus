@@ -23,6 +23,7 @@ import com.anezium.rokidbus.shared.PinSurfacePosition
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -137,6 +138,24 @@ class KeptOffGlassesPresentationTest {
         policy(hidden = emptySet())
         assertEquals(PIN_ID, drawnPin?.surfaceId)
         assertEquals(PIN_ID, PinController.visiblePin()?.surfaceId)
+    }
+
+    @Test
+    fun `a pin it may not float leaves room for another owner's map, and takes it back when it may`() {
+        showPin()
+        startActivity(OTHER)
+        startActivity(THIRD)
+        assertNotNull(island(OTHER))
+        assertNotNull(island(THIRD))
+        assertTrue(ActivityOverlayRenderer.mapCrowded(render, PinController.presentablePin() != null))
+
+        policy(hidden = setOf(OWNER))
+        // The pin is still held, only not drawn: the two islands alone leave the map its height.
+        assertEquals(PIN_ID, PinController.activePin()?.surfaceId)
+        assertFalse(ActivityOverlayRenderer.mapCrowded(render, PinController.presentablePin() != null))
+
+        policy(hidden = emptySet())
+        assertTrue(ActivityOverlayRenderer.mapCrowded(render, PinController.presentablePin() != null))
     }
 
     @Test
@@ -264,6 +283,7 @@ class KeptOffGlassesPresentationTest {
         val SEQ = AtomicLong(System.nanoTime())
         const val OWNER = "media"
         const val OTHER = "transit"
+        const val THIRD = "nav"
         const val APP = "com.example.player"
         val PIN_ID = "$OWNER:${PinSurfaceContract.LOCAL_SURFACE_ID}"
     }
