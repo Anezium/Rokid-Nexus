@@ -1,7 +1,11 @@
-# Launcher freeze fix, round 2 — 2026-10-25
+# Launcher freeze fix, rounds 2–3 — 2026-10-25
 
 Verdict: **DONE for implementation and host verification**. The S23 checks below
 are pending with the orchestrator; no device result is claimed.
+
+The [round-3 follow-up](#round-3-follow-up) records the three LOW review fixes,
+their mutation checks, and the final host suites. The round-2 evidence below
+is retained as history.
 
 Contract: `launcher-fix-freeze`, 2026-10-24, with the orchestrator's round-2
 authorization to reuse the SDK session foreground service for pages and commands.
@@ -327,3 +331,155 @@ thaws on the new connection while another hold exists, and whether the updated
 SDK protection eliminates the original 22:12 timeline. The existing surface
 device result in `0404260e` supports the mechanism; it does not substitute for
 testing these new page/command paths. No round-2 device success is claimed.
+
+## Round 3 follow-up
+
+Verdict: **DONE for implementation and host verification**. R2-1, R2-2 and
+R2-3 are fixed. Device verification remains with the orchestrator.
+
+### Changes
+
+1. **R2-1:** after an accepted action rebind, the page broker records the
+   connection even if the earlier page-request and visibility binds were
+   refused. Reconciliation releases it after the result and visible lease end,
+   or at the existing action deadline. Tests cover both release paths.
+2. **R2-2:** foreground refresh runs inline on the main looper and posts the
+   same reconciliation runnable otherwise. Promotion still precedes main-thread
+   callbacks. A worker-thread async-result test observes no foreground transition
+   until the main looper runs, checks the transition thread, and covers a new
+   page arriving before that queued refresh.
+3. **R2-3:** an explicit plugin stop is remembered while page/command demand
+   wins, and re-promotes with session-only types immediately. Internal demand
+   promotion preserves the stop request, so even an open ADOPTED session stops
+   once its last page/command hold ends. A new explicit feature promotion
+   supersedes the request. SDK tests mirror Relay's ADOPTED stop and Transit's
+   location-stop decision, including overlapping page/async-command holds,
+   lease expiry, later pages, type preservation and new ongoing work.
+4. CHANGELOG and PLUGIN_SDK now describe the fresh connection without promising
+   a thaw; verification on the S23 is explicitly pending. The SDK guide also
+   documents deferred explicit stops. No wire, deadline, manifest, grant,
+   plugin source or machine configuration changed.
+
+### Files touched in round 3
+
+- `phone-hub/src/main/java/com/anezium/rokidbus/phone/PhonePageBroker.kt`
+- `phone-hub/src/test/java/com/anezium/rokidbus/phone/PhonePageBrokerTest.kt`
+- `bus-client/src/main/java/com/anezium/rokidbus/client/plugin/NexusPluginService.kt`
+- `bus-client/src/test/java/com/anezium/rokidbus/client/plugin/NexusPluginServiceForegroundTest.kt`
+- Documentation: `CHANGELOG.md`, `docs/PLUGIN_SDK.md`,
+  `docs/LAUNCHER_COMPLETION_REPORT.md`, `docs/LAUNCHER_FREEZE_FIX_20261025.md`.
+
+### Final suites
+
+Commands ran from this worktree with the Windows Gradle wrapper. The focused
+pre-mutation run passed 42 page-broker and 16 foreground-lifecycle tests:
+
+```powershell
+.\gradlew.bat :phone-hub:testDebugUnitTest --tests '*PhonePageBrokerTest' :bus-client:testDebugUnitTest --tests '*NexusPluginServiceForegroundTest' --console=plain
+```
+
+Observed tail (`build/freeze-r3-targeted.log`):
+
+```text
+BUILD SUCCESSFUL in 43s
+106 actionable tasks: 12 executed, 94 up-to-date
+```
+
+All mutations were restored before the final suites below. All seven module
+unit-test tasks executed; the later Sample-only test task was up-to-date.
+Counts come from the resulting JUnit XML: **1,908 tests, zero failures/errors
+or skips**. Gradle emitted existing deprecation warnings.
+
+```powershell
+.\gradlew.bat :phone-hub:testDebugUnitTest :phone-hub:assembleDebug :bus-client:testDebugUnitTest --console=plain
+```
+
+Phone hub **1,047**, bus client **211**. Observed tail
+(`build/freeze-r3-hub-sdk.log`):
+
+```text
+BUILD SUCCESSFUL in 59s
+139 actionable tasks: 11 executed, 5 from cache, 123 up-to-date
+```
+
+```powershell
+.\gradlew.bat -PskipCxrGlobal=true :plugin-media:testDebugUnitTest :plugin-sample:testDebugUnitTest :plugin-relay:testDebugUnitTest :plugin-nav:testDebugUnitTest :plugin-transit:testDebugUnitTest --console=plain
+```
+
+Media **78**, Sample **55**, Relay **169**, Navigation **218**, Transit **130**.
+Observed tail (`build/freeze-r3-plugins.log`):
+
+```text
+BUILD SUCCESSFUL in 28s
+160 actionable tasks: 14 executed, 146 up-to-date
+```
+
+The contract's additional Sample test/build command also passed:
+
+```powershell
+.\gradlew.bat -PskipCxrGlobal=true :plugin-sample:testDebugUnitTest :plugin-sample:assembleDebug --console=plain
+```
+
+Observed tail (`build/freeze-r3-sample.log`):
+
+```text
+BUILD SUCCESSFUL in 3s
+82 actionable tasks: 2 executed, 80 up-to-date
+```
+
+### Round-3 mutation checks
+
+The ignored `build/freeze-r3-mutations.py` removes one fix per run and restores
+the original source bytes in `finally`. Invocation:
+
+```powershell
+$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'
+python build/freeze-r3-mutations.py
+```
+
+R2-1 removed the successful-action-bind tracking. Command:
+
+```powershell
+.\gradlew.bat :phone-hub:testDebugUnitTest --tests '*PhonePageBrokerTest' --console=plain
+```
+
+Observed **2 failures / 42 tests**, exit 1. Both regressions failed:
+`an accepted action bind after a refused page bind releases on result and lease expiry`
+and `an accepted action bind after a refused page bind releases at the action deadline`.
+Observed tail (`build/freeze-r3-mutation-R2-1.log`):
+
+```text
+BUILD FAILED in 10s
+101 actionable tasks: 5 executed, 96 up-to-date
+```
+
+R2-2 removed main-looper dispatch. R2-3 restored the early-return stop policy,
+removing stop-request recording and type downgrade. Each ran:
+
+```powershell
+.\gradlew.bat :bus-client:testDebugUnitTest --tests '*NexusPluginServiceForegroundTest' --console=plain
+```
+
+R2-2: **1 failure / 16 tests**, exit 1:
+`a worker command result queues foreground reconciliation on the main thread`.
+R2-3: **3 failures / 16 tests**, exit 1:
+`a feature stop removes the location type while retaining page protection`,
+`an adopted session stop waits for both the page and asynchronous command holds`,
+and `an adopted session stop takes effect when a visible page lease expires`.
+Both logs (`build/freeze-r3-mutation-R2-2.log` and
+`build/freeze-r3-mutation-R2-3.log`) ended with:
+
+```text
+BUILD FAILED in 9s
+29 actionable tasks: 4 executed, 25 up-to-date
+```
+
+### Remaining device gate
+
+No open implementation questions remain. Run the five S23 steps above with
+rebuilt plugin APKs; the fresh-connection thaw premise is still unverified.
+Also check Relay adopting a band while one of its pages is visible: protection
+must remain until page/command demand ends, then demote without waiting for
+`onClose`. For Transit, stopping location while a page is visible must remove
+the `location` type while retaining `specialUse`; an active journey must keep
+its location type. No ADB, device action, push, merge or tag was performed.

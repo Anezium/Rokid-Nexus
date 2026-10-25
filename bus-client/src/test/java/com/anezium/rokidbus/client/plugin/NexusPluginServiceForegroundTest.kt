@@ -15,6 +15,7 @@ import com.anezium.rokidbus.shared.PageCorrelation
 import com.anezium.rokidbus.shared.PageRow
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -32,6 +33,8 @@ import org.robolectric.shadow.api.Shadow
 import org.robolectric.shadows.ShadowService
 import org.robolectric.util.ReflectionHelpers
 import java.time.Duration
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], shadows = [NexusPluginServiceForegroundTest.SessionShadow::class])
@@ -44,16 +47,25 @@ class NexusPluginServiceForegroundTest {
         }
         var action: () -> NexusPageResult = { NexusPageResult.done() }
         var command: () -> NexusActivityCommandResult? = { NexusActivityCommandResult.done() }
+        var pendingCommand: NexusActivityCommand? = null
         var opens = 0
         var closes = 0
         override fun onNexusOpen() { opens++ }
+        override fun onNexusOpen(openType: String) {
+            if (openType == PluginOpenTypes.ADOPTED) stopNexusSessionForeground() else onNexusOpen()
+        }
         override fun onNexusClose() { closes++ }
         override fun onNexusInput(event: NexusInputEvent) = Unit
         override fun onNexusPageRequest(request: NexusPageRequest) = this.request()
         override fun onNexusPageAction(action: NexusPageAction) = this.action()
-        override fun onNexusActivityCommand(command: NexusActivityCommand) = this.command()
+        override fun onNexusActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult? {
+            pendingCommand = command
+            return this.command()
+        }
         fun hold(types: Int = 0) = holdNexusOngoingWork(types)
         fun release() = releaseNexusOngoingWork()
+        fun promote(types: Int = 0) = promoteNexusSessionForeground(types)
+        fun stop() = stopNexusSessionForeground()
     }
 
     @Implements(Service::class)
@@ -62,10 +74,12 @@ class NexusPluginServiceForegroundTest {
         var failure: RuntimeException? = null
         var notification: Notification? = null
         var types = 0
+        var transitionThread: Thread? = null
         @Implementation
         override fun startForeground(id: Int, notification: Notification, foregroundServiceType: Int) {
             failure?.let { throw it }
             active = true
+            transitionThread = Thread.currentThread()
             this.notification = notification
             types = foregroundServiceType
             super.startForeground(id, notification, foregroundServiceType)
@@ -73,6 +87,7 @@ class NexusPluginServiceForegroundTest {
         @Implementation
         override fun stopForeground(flags: Int) {
             active = false
+            transitionThread = Thread.currentThread()
             super.stopForeground(flags)
         }
     }
@@ -228,6 +243,95 @@ class NexusPluginServiceForegroundTest {
         invoke("lost")
         assertTrue(lifecycle.active)
         asynchronous.onRegistrationState(PluginRegistrationResult.DENIED)
+        assertFalse(lifecycle.active)
+    }
+
+    @Test
+    fun `a worker command result queues foreground reconciliation on the main thread`() {
+        service.command = { null }
+        command()
+        assertTrue(lifecycle.active)
+        val result = FutureTask { client.sendActivityCommandResult(service.pendingCommand!!, NexusActivityCommandResult.done()) }
+        Thread(result).start()
+        assertEquals(NexusSdkResult.SENT, result.get(5, TimeUnit.SECONDS))
+        assertTrue(lifecycle.active)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(lifecycle.active)
+        assertEquals(Looper.getMainLooper().thread, lifecycle.transitionThread)
+
+        command("overlap")
+        val overlap = FutureTask { client.sendActivityCommandResult(service.pendingCommand!!, NexusActivityCommandResult.done()) }
+        Thread(overlap).start()
+        assertEquals(NexusSdkResult.SENT, overlap.get(5, TimeUnit.SECONDS))
+        openPage()
+        visible(true)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(lifecycle.active)
+        closePage()
+        assertFalse(lifecycle.active)
+    }
+
+    @Test
+    fun `an adopted session stop waits for both the page and asynchronous command holds`() {
+        openPage()
+        visible(true)
+        service.command = { null }
+        command()
+        service.onOpen(PluginOpenTypes.ADOPTED)
+        assertTrue(lifecycle.active)
+        closePage()
+        assertTrue(lifecycle.active)
+        assertEquals(NexusSdkResult.SENT, client.sendActivityCommandResult(service.pendingCommand!!, NexusActivityCommandResult.done()))
+        assertFalse(lifecycle.active)
+        assertEquals(0, service.closes)
+
+        openPage(2)
+        visible(true, frame = 2)
+        closePage(2)
+        assertFalse(lifecycle.active)
+        service.onOpen()
+        assertTrue(lifecycle.active)
+        service.onClose()
+        assertFalse(lifecycle.active)
+    }
+
+    @Test
+    fun `an adopted session stop takes effect when a visible page lease expires`() {
+        openPage()
+        visible(true, lease = 1_000)
+        service.onOpen(PluginOpenTypes.ADOPTED)
+        assertTrue(lifecycle.active)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1_000))
+        assertFalse(lifecycle.active)
+    }
+
+    @Test
+    fun `a feature stop removes the location type while retaining page protection`() {
+        service.onOpen()
+        assertTrue(service.promote(ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION))
+        openPage()
+        visible(true)
+        assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION, lifecycle.types)
+        service.onBackground()
+        service.stop()
+        assertTrue(lifecycle.active)
+        assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE, lifecycle.types)
+        closePage()
+        assertFalse(lifecycle.active)
+    }
+
+    @Test
+    fun `new explicit feature work supersedes a deferred foreground stop`() {
+        openPage()
+        visible(true)
+        service.onOpen(PluginOpenTypes.ADOPTED)
+        assertTrue(service.hold(ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION))
+        closePage()
+        assertTrue(lifecycle.active)
+        assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION, lifecycle.types)
+        service.onClose()
+        assertTrue(lifecycle.active)
+        service.release()
         assertFalse(lifecycle.active)
     }
 

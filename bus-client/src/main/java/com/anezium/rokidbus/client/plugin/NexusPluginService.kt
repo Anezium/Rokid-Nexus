@@ -42,15 +42,20 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     private var audioSessionActive = false
     private var ongoingWorkHeld = false
     private var sessionForegroundActive = false
+    private var sessionForegroundStopRequested = false
     private val foregroundHandler = Handler(Looper.getMainLooper())
     private val foregroundExpiry = Runnable { refreshSessionForeground() }
 
     private fun refreshSessionForeground() {
+        if (Looper.myLooper() != foregroundHandler.looper) {
+            foregroundHandler.post(foregroundExpiry)
+            return
+        }
         foregroundHandler.removeCallbacks(foregroundExpiry)
         if (client?.hasForegroundDemand == true) {
-            if (!sessionForegroundActive) promoteNexusSessionForeground()
+            if (!sessionForegroundActive) startSessionForeground()
             client?.foregroundLeaseRemainingMs?.let { foregroundHandler.postDelayed(foregroundExpiry, it) }
-        } else if (!sessionOpen && !audioSessionActive && !ongoingWorkHeld) {
+        } else if (sessionForegroundStopRequested || (!sessionOpen && !audioSessionActive && !ongoingWorkHeld)) {
             stopNexusSessionForeground()
         }
     }
@@ -351,6 +356,13 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected fun promoteNexusSessionForeground(
         additionalTypes: Int = 0,
         onFailure: ((Throwable) -> Unit)? = null,
+    ): Boolean = startSessionForeground(additionalTypes, onFailure).also { started ->
+        if (started) sessionForegroundStopRequested = false
+    }
+
+    private fun startSessionForeground(
+        additionalTypes: Int = 0,
+        onFailure: ((Throwable) -> Unit)? = null,
     ): Boolean {
         if (!sessionOpen && !audioSessionActive && !ongoingWorkHeld && client?.hasForegroundDemand != true) return false
         return runCatching {
@@ -407,8 +419,8 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected fun releaseNexusOngoingWork() {
         if (!ongoingWorkHeld) return
         ongoingWorkHeld = false
-        if (sessionOpen || audioSessionActive || client?.hasForegroundDemand == true) {
-            promoteNexusSessionForeground()
+        if ((sessionOpen && !sessionForegroundStopRequested) || audioSessionActive || client?.hasForegroundDemand == true) {
+            startSessionForeground()
         } else {
             stopNexusSessionForeground()
         }
@@ -419,7 +431,11 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         get() = ongoingWorkHeld
 
     protected fun stopNexusSessionForeground() {
-        if (client?.hasForegroundDemand == true) return
+        sessionForegroundStopRequested = true
+        if (client?.hasForegroundDemand == true) {
+            startSessionForeground()
+            return
+        }
         sessionForegroundActive = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)

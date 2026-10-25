@@ -16,7 +16,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 
 ### Phone hub
 
-- Wake a plugin before delivering a launcher command or page action, and keep it bound until its answer or deadline. A refused keep-alive bind still allows a live plugin to answer; losing that connection no longer ends its activity.
+- Request a fresh plugin connection before delivering a launcher command or page action, and keep it bound until its answer or deadline. Whether this wakes an already-frozen plugin still needs device verification. A refused keep-alive bind still allows a live plugin to answer; losing that connection no longer ends its activity.
 - Settings → Glasses display: **Glasses launcher** (Default, New launcher, Classic launcher), the Navigation display size, and per-app behaviour over native apps.
 - Plugin access: **Show its activity on the glasses**, **Pin its activity**, and one-tap quick actions per plugin (**Check tasks with one tap**, **Play, pause and skip with one tap**). Off, each tap on the glasses asks to confirm first.
 - **Type your reply.** When you choose Type on the glasses, the phone shows its keyboard, or a notification that opens it.

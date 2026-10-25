@@ -10,7 +10,10 @@ The [2026-10-25 freezer fix report](LAUNCHER_FREEZE_FIX_20261025.md) records
 SDK session-foreground protection for launcher pages and delivered commands,
 fresh binds before command/action delivery, and bounded independent hub holds.
 The round-1 binding-only patch was insufficient per the independent review and
-device history in `0404260e`. Round-2 S23 confirmation remains with the orchestrator.
+device history in `0404260e`. Round 3 also covers recovered page-bind release,
+main-thread foreground refresh and deferred plugin stop requests. S23 confirmation,
+including whether a fresh connection thaws an already-frozen plugin, remains
+with the orchestrator.
 
 **Status.** The whole approved scope of plans 028/028a is implemented in source, integrated, covered
 by unit and Robolectric tests, and was accepted by the Sol review rounds (last: ACCEPT WITH ONE

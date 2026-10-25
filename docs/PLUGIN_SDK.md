@@ -2121,9 +2121,15 @@ permissions used for surfaces; missing declarations or an OS rejection leave
 the callbacks working without promotion. A client managed outside
 `NexusPluginService` does not gain this service lifecycle automatically.
 
+If a plugin calls `stopNexusSessionForeground()` while a page or command still
+needs protection, the service retains only the session foreground type and
+defers the stop until that demand ends. A later explicit foreground promotion
+for a new surface, audio session or ongoing feature supersedes that stop.
+
 The hub also holds an important connection while a request, visible lease or
-delivered action needs it and makes a fresh bind before delivering each action
-to thaw a frozen provider. The bind is not a Freecess exemption. An action
+delivered action needs it and makes a fresh bind before delivering each action.
+Whether that fresh connection thaws an already-frozen provider still needs
+device verification. The bind is not a Freecess exemption. An action
 already delivered keeps its binding until result or deadline even if the lease
 expires; cover and close retain their cancellation semantics. Use the SDK's
 session service, keep callbacks short, and do not poll.

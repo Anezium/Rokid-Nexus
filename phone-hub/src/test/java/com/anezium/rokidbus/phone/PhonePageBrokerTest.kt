@@ -192,6 +192,49 @@ class PhonePageBrokerTest {
     }
 
     @Test
+    fun `an accepted action bind after a refused page bind releases on result and lease expiry`() {
+        connect(relay)
+        val registration = register(relay, "relay-a")
+        host.bindAccepted = false
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), registration))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true, lease = 1_000))
+        assertFalse(broker.holdsProviderBinding("relay"))
+
+        host.bindAccepted = true
+        host.calls.clear()
+        broker.onGlasses(BusPaths.PAGE_ACTION, action())
+        assertTrue(broker.holdsProviderBinding("relay"))
+        assertEquals(listOf("rebind:relay", "deliver:relay-a:${BusPaths.PAGE_ACTION}"), host.calls)
+        host.now += 1_000
+        broker.onTick()
+        assertTrue(broker.holdsProviderBinding("relay"))
+        assertFalse("unbind:relay" in host.calls)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, result(), registration))
+        assertFalse(broker.holdsProviderBinding("relay"))
+        assertEquals(1, host.calls.count { it == "unbind:relay" })
+    }
+
+    @Test
+    fun `an accepted action bind after a refused page bind releases at the action deadline`() {
+        connect(relay)
+        val registration = register(relay, "relay-a")
+        host.bindAccepted = false
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), registration))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true, lease = 1_000))
+        assertFalse(broker.holdsProviderBinding("relay"))
+
+        host.bindAccepted = true
+        host.calls.clear()
+        broker.onGlasses(BusPaths.PAGE_ACTION, action())
+        host.now += PageSurfaceContract.PAGE_TIMEOUT_MS
+        broker.onTick()
+        assertFalse(broker.holdsProviderBinding("relay"))
+        assertEquals(1, host.calls.count { it == "unbind:relay" })
+    }
+
+    @Test
     fun `a request reaches only the owner's single live registration stamped with its epoch`() {
         connect(relay, nav)
         register(relay, "relay-a")

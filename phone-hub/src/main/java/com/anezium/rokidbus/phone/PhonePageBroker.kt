@@ -552,8 +552,12 @@ class PhonePageBroker(
                 live
             }
             if (current) {
-                // Oneway callbacks queue in a frozen process. A fresh bind wakes it before delivery.
-                if (!host.rebind(principal)) host.log("page action bind failed plugin=${frame.owner}")
+                // A fresh bind may acquire the first connection after an earlier refusal.
+                if (host.rebind(principal)) {
+                    mutate { bound[frame.owner] = principal }
+                } else {
+                    host.log("page action bind failed plugin=${frame.owner}")
+                }
                 host.deliver(registration, BusPaths.PAGE_ACTION, outgoing)
             } else {
                 host.log("page drop path=action id=${action.invocationId} reason=CANCELLED")
