@@ -4,6 +4,11 @@
 
 Street maps and render feedback need Nexus hubs 1.9.0; older hubs keep route-only guidance.
 
+- Keep the route activity and its launcher position through unreadable notification
+  rewrites and reroutes for up to ten seconds from the first unreadable post,
+  showing the last readable guidance. Recovery updates the same activity;
+  removal or switching the source off still ends it promptly. Ignore a late
+  owner close acknowledgement so it cannot restart a replacement route.
 - Street map. A walking route's maps now draw the real streets around it,
   from OpenStreetMap vector tiles the phone downloads only for the maps on
   the glasses, confirmed by authenticated, expiring render feedback for the

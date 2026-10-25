@@ -33,6 +33,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLog
 import java.time.Duration
 import java.util.Collections
 
@@ -124,7 +125,7 @@ class NavActivityLifecycleTest {
             it.shutdown()
             NavControl.detachJourney(it)
         }
-        listener.destroy()
+        if (NavState.listenerConnected) listener.destroy()
         service.destroy()
         NavState.guidance = null
         NavState.updatedAtMs = null
@@ -153,17 +154,24 @@ class NavActivityLifecycleTest {
     @Test
     fun `readable guidance within the grace updates the same activity and keeps planner significance`() {
         post()
+        assertTrue(ShadowLog.getLogsForTag("NexusNav").none { it.msg.startsWith("guidance recovered") })
         post(maps(title = ""))
         assertEquals("300 m", NavState.guidance?.primary)
-        idleFor(350)
+        idleFor(4_000)
+        post(maps(title = ""))
+        idleFor(5_350)
         post(maps(title = "450 m · Continuez sur Bd Saint-Michel"))
-        idleFor(3_000)
+        idleFor(10_000)
 
         assertEquals(listOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_UPDATE), hub.paths())
         val update = hub.traffic().last().second
         assertEquals("450 m", update.getString("primary"))
         assertTrue(update.getBoolean("significant"))
         assertFalse(update.optBoolean("urgent"))
+        assertEquals(
+            listOf("guidance recovered unreadableMs=9350"),
+            ShadowLog.getLogsForTag("NexusNav").filter { it.msg.startsWith("guidance recovered") }.map { it.msg },
+        )
     }
 
     @Test
@@ -179,15 +187,15 @@ class NavActivityLifecycleTest {
         assertEquals(listOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_UPDATE), hub.paths())
         assertEquals("280 m", hub.traffic().last().second.getString("primary"))
         assertFalse(hub.traffic().last().second.optBoolean("significant"))
-        idleFor(3_000)
+        idleFor(10_000)
         assertEquals(2, hub.traffic().size)
     }
 
     @Test
-    fun `unreadable guidance ends once after three seconds even if unreadable posts keep arriving`() {
+    fun `unreadable guidance ends once after ten seconds even if unreadable posts keep arriving`() {
         post()
         post(maps(title = ""))
-        idleFor(2_000)
+        idleFor(9_000)
         post(maps(title = ""))
         idleFor(999)
         assertEquals(listOf(BusPaths.ACTIVITY_START), hub.paths())
@@ -197,7 +205,7 @@ class NavActivityLifecycleTest {
         assertEquals(listOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_END), hub.paths())
         assertNull(NavState.guidance)
         post(maps(title = ""))
-        idleFor(4_000)
+        idleFor(11_000)
         assertEquals(2, hub.traffic().size)
     }
 
@@ -221,7 +229,7 @@ class NavActivityLifecycleTest {
         assertEquals(listOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_END), hub.paths())
 
         post(maps(id = 2))
-        idleFor(4_000)
+        idleFor(11_000)
         assertEquals(listOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_END, BusPaths.ACTIVITY_START), hub.paths())
         assertNotNull(NavState.guidance)
     }
@@ -273,10 +281,95 @@ class NavActivityLifecycleTest {
     }
 
     @Test
+    fun `a current activity closed at max duration still restarts on new guidance`() {
+        post()
+        hub.close(ActivityCloseReason.MAX_DURATION)
+        idleFor(0)
+        post(maps(title = "280 m · Prendre à droite sur Rue de Rivoli"))
+
+        assertEquals(listOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_START), hub.paths())
+    }
+
+    @Test
+    fun `a current activity closed on disconnect still restarts on new guidance`() {
+        post()
+        hub.close(ActivityCloseReason.DISCONNECT)
+        idleFor(0)
+        post(maps(title = "280 m · Prendre à droite sur Rue de Rivoli"))
+
+        assertEquals(listOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_START), hub.paths())
+    }
+
+    @Test
+    fun `an unreadable deadline cannot end the journey that took over`() {
+        post()
+        post(maps(title = ""))
+        idleFor(350)
+        val guidance = checkNotNull(NavState.guidance).copy(source = NavSource.NEXUS, stepKey = "journey")
+        val runtime = NavRuntime(app).also { journey = it }
+        NavControl.attachJourney(runtime) {}
+        runtime.onGuidance(guidance)
+        idleFor(10_000)
+
+        assertTrue(NavControl.journeyActive)
+        assertEquals(guidance, NavState.guidance)
+        assertEquals(listOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_END, BusPaths.ACTIVITY_START), hub.paths())
+        runtime.onGuidance(guidance.copy(primary = "280 m"))
+        idleFor(1_000)
+        assertEquals(BusPaths.ACTIVITY_UPDATE, hub.paths().last())
+
+        runtime.shutdown(releaseBus = false)
+        NavControl.detachJourney(runtime)
+        post(maps(id = 2))
+        assertEquals(NavSource.GOOGLE_MAPS, NavState.guidance?.source)
+        assertEquals(BusPaths.ACTIVITY_START, hub.paths().last())
+    }
+
+    @Test
+    fun `switching Maps off during unreadable guidance ends promptly and cancels its deadline`() {
+        post()
+        post(maps(title = ""))
+        idleFor(350)
+        NavSettings(app).setSource(NavSource.GOOGLE_MAPS, false)
+        NavControl.settingsChanged()
+        idleFor(0)
+
+        assertNull(NavState.guidance)
+        assertEquals(listOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_END), hub.paths())
+        post()
+        assertNull(NavState.guidance)
+
+        NavSettings(app).setSource(NavSource.GOOGLE_MAPS, true)
+        NavControl.settingsChanged()
+        post(maps(id = 2))
+        idleFor(11_000)
+        assertEquals(listOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_END, BusPaths.ACTIVITY_START), hub.paths())
+        assertEquals(NavSource.GOOGLE_MAPS, NavState.guidance?.source)
+    }
+
+    @Test
+    fun `destroying the listener cancels the unreadable deadline`() {
+        post()
+        post(maps(title = ""))
+        idleFor(350)
+        assertFalse(shadowOf(Looper.getMainLooper()).nextScheduledTaskTime.isZero)
+
+        listener.destroy()
+        idleFor(0)
+
+        assertNull(NavState.guidance)
+        assertFalse(NavState.listenerConnected)
+        assertEquals(listOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_END), hub.paths())
+        assertEquals(Duration.ZERO, shadowOf(Looper.getMainLooper()).nextScheduledTaskTime)
+        idleFor(11_000)
+        assertEquals(listOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_END), hub.paths())
+    }
+
+    @Test
     fun `an unreadable notification with another key does not end the live route`() {
         post()
         post(maps(title = "", id = 2))
-        idleFor(4_000)
+        idleFor(11_000)
 
         assertEquals(listOf(BusPaths.ACTIVITY_START), hub.paths())
         assertNotNull(NavState.guidance)

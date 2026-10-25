@@ -2,6 +2,7 @@ package com.anezium.rokidbus.plugin.nav
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -22,6 +23,7 @@ class NavNotificationListener : NotificationListenerService() {
     private val guidanceKeys = mutableMapOf<NavSource, String>()
     private var activeSource: NavSource? = null
     private var unreadableEnd: Runnable? = null
+    private var unreadableSinceMs: Long? = null
 
     override fun onListenerConnected() {
         super.onListenerConnected()
@@ -110,12 +112,14 @@ class NavNotificationListener : NotificationListenerService() {
             endRoute(source)
         }
         unreadableEnd = task
+        unreadableSinceMs = SystemClock.elapsedRealtime()
         main.postDelayed(task, UNREADABLE_GRACE_MS)
     }
 
     private fun cancelUnreadableEnd() {
         unreadableEnd?.let(main::removeCallbacks)
         unreadableEnd = null
+        unreadableSinceMs = null
     }
 
     private fun scanActive() {
@@ -153,6 +157,9 @@ class NavNotificationListener : NotificationListenerService() {
             if (guidanceKeys[source] == sbn.key) deferUnreadableEnd(source)
             return
         }
+        unreadableSinceMs?.let { since ->
+            Log.i(TAG, "guidance recovered unreadableMs=${SystemClock.elapsedRealtime() - since}")
+        }
         cancelUnreadableEnd()
         guidanceKeys[source] = sbn.key
         activeSource = source
@@ -161,6 +168,6 @@ class NavNotificationListener : NotificationListenerService() {
 
     private companion object {
         const val TAG = "NexusNav"
-        const val UNREADABLE_GRACE_MS = 3_000L
+        const val UNREADABLE_GRACE_MS = 10_000L
     }
 }
