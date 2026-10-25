@@ -352,6 +352,71 @@ class RouteNavigationTest {
     }
 
     @Test
+    fun `a saved Panel on a route without a map opens on Text and is never saved`() {
+        saved = AmbientSize.PANEL
+        openRoute(routeBody(follow = null, overview = null))
+        press(3_000)
+        press(3_100)
+        assertEquals(FramePanel.Display(OWNER, AmbientSize.PANEL, selected = 0), top().panel)
+        val rows = screen().blocks.filterIsInstance<ScreenBlock.Row>()
+        assertEquals(listOf(true, false, false), rows.map { it.enabled })
+        assertEquals(listOf(false, false, true), rows.map { it.checked })
+
+        send(SessionEvent.Step(1, 3_200))
+        send(SessionEvent.Step(1, 3_300))
+        assertEquals(0, top().panel?.selected)
+        send(SessionEvent.Back(3_400))
+        assertNull(top().panel)
+        assertTrue(allEffects.none { it is SessionEffect.SaveAmbientSize })
+    }
+
+    @Test
+    fun `the map sizes follow the page's geometry through its revisions, and save once it has one`() {
+        openRoute(routeBody(follow = null, overview = null))
+        press(3_000)
+        press(3_100)
+        assertEquals(listOf(true, false, false), screen().blocks.filterIsInstance<ScreenBlock.Row>().map { it.enabled })
+
+        // A revision brings the route's geometry: the open page offers every size.
+        respond(request, routeBody(distance = "80 m"), revision = 2, now = 3_200)
+        assertTrue(top().panel is FramePanel.Display)
+        assertEquals(listOf(true, true, true), screen().blocks.filterIsInstance<ScreenBlock.Row>().map { it.enabled })
+
+        // The next one has none again: the map sizes go back to unavailable and Step stays on Text.
+        respond(request, routeBody(distance = "60 m", follow = null, overview = null), revision = 3, now = 3_300)
+        assertEquals(listOf(true, false, false), screen().blocks.filterIsInstance<ScreenBlock.Row>().map { it.enabled })
+        send(SessionEvent.Step(1, 3_400))
+        assertEquals(0, top().panel?.selected)
+
+        respond(request, routeBody(distance = "40 m"), revision = 4, now = 3_500)
+        send(SessionEvent.Step(1, 3_600))
+        send(SessionEvent.Step(1, 3_700))
+        assertEquals(AmbientSize.PANEL, (top().panel as FramePanel.Display).size)
+        press(3_800)
+        assertEquals(SessionEffect.SaveAmbientSize(OWNER, AmbientSize.PANEL), allEffects.filterIsInstance<SessionEffect.SaveAmbientSize>().single())
+        assertNull(top().panel)
+    }
+
+    @Test
+    fun `live geometry arriving redraws the open display page and a map size then saves`() {
+        openRoute(routeBody(follow = null, overview = null))
+        press(3_000)
+        press(3_100)
+        send(SessionEvent.Step(1, 3_200))
+        assertEquals(0, top().panel?.selected)
+
+        // What the host dispatches when an owner's live map appears.
+        live = geometry()
+        send(SessionEvent.LauncherFactsChanged)
+        assertTrue(SessionEffect.ShowFrame in effects)
+        assertEquals(listOf(true, true, true), screen().blocks.filterIsInstance<ScreenBlock.Row>().map { it.enabled })
+        send(SessionEvent.Step(1, 3_300))
+        assertEquals(AmbientSize.MINIMAP, (top().panel as FramePanel.Display).size)
+        press(3_400)
+        assertEquals(SessionEffect.SaveAmbientSize(OWNER, AmbientSize.MINIMAP), allEffects.filterIsInstance<SessionEffect.SaveAmbientSize>().single())
+    }
+
+    @Test
     fun `a page without geometry draws the owner's live geometry and has no map without it`() {
         openRoute(routeBody(follow = null, overview = null))
         assertEquals(TypedPageItems.COMMANDS_KEY, rows().first().key)
