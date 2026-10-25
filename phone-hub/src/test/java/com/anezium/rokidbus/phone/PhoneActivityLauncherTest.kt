@@ -26,8 +26,20 @@ class PhoneActivityLauncherTest {
         var dataPlane = true
         val dataPlaneSent = mutableListOf<BusEnvelope>()
         var persisted: List<Pair<String, JSONObject>>? = null
+        val boundCommands = mutableSetOf<String>()
+        val releasedCommands = mutableListOf<String>()
+        var bindAccepted = true
 
         override fun registrationCount(pluginId: String): Int = registrations[pluginId] ?: 1
+        override fun bindCommand(pluginId: String): Boolean {
+            if (!bindAccepted) return false
+            boundCommands += pluginId
+            return true
+        }
+        override fun unbindCommand(pluginId: String) {
+            assertTrue(boundCommands.remove(pluginId))
+            releasedCommands += pluginId
+        }
         override fun dataPlaneUp(): Boolean = dataPlane
         override fun sendDataPlane(envelope: BusEnvelope): String? {
             if (!dataPlane) return "NO_DATA_PLANE"
@@ -62,6 +74,9 @@ class PhoneActivityLauncherTest {
         }
 
         override fun deliverLocal(envelope: BusEnvelope, targetBinder: IBinder?): Boolean {
+            if (envelope.path == BusPaths.ACTIVITY_ACTION && launcherVersion == 1) {
+                assertTrue(envelope.payload.getString("pluginId") in host.boundCommands)
+            }
             events += "local:${envelope.path}:${envelope.payload.optString("pluginId")}"
             return sink.deliverLocal(envelope, targetBinder)
         }
@@ -69,6 +84,7 @@ class PhoneActivityLauncherTest {
     private val host = FakeLauncherHost()
     private val state = newState()
     private val router = newRouter(state, orderedSink, host)
+    private var nextExpiryDelay: Long? = null
 
     @Test
     fun `render feedback is authenticated against live owner sequence and forwarded geometry revision`() {
@@ -116,8 +132,8 @@ class PhoneActivityLauncherTest {
             state = state,
             sink = sink,
             nowMs = { now },
-            postExpiry = {},
-            cancelExpiry = {},
+            postExpiry = { nextExpiryDelay = it },
+            cancelExpiry = { nextExpiryDelay = null },
             launcher = host,
         )
 
@@ -438,6 +454,81 @@ class PhoneActivityLauncherTest {
     }
 
     @Test
+    fun `a command binds before delivery and releases only after its own result`() {
+        router.handleLocal(local(start("media", mediaActions())), hudSender("media"))
+        val seq = sink.remote.last().payload.getLong("seq")
+        assertTrue(host.boundCommands.isEmpty())
+        router.handleGlassesAction(command("media", "play", seq, "inv-1"))
+        assertEquals(setOf("media"), host.boundCommands)
+        assertEquals(ActivitySurfaceContract.COMMAND_DEADLINE_MS, nextExpiryDelay)
+
+        router.handleLocal(result("media", "other"), hudSender("media"))
+        router.handleLocal(result("other", "inv-1", activityOwner = "media"), hudSender("other"))
+        assertEquals(setOf("media"), host.boundCommands)
+        router.handleLocal(result("media", "inv-1"), hudSender("media"))
+        assertTrue(host.boundCommands.isEmpty())
+        assertEquals(listOf("media"), host.releasedCommands)
+        assertEquals(null, nextExpiryDelay)
+    }
+
+    @Test
+    fun `command importance expires at the deadline even when the plugin never answers`() {
+        router.handleLocal(local(start("media", mediaActions())), hudSender("media"))
+        val seq = sink.remote.last().payload.getLong("seq")
+        router.handleGlassesAction(command("media", "play", seq, "inv-1"))
+        now += ActivitySurfaceContract.COMMAND_DEADLINE_MS - 1
+        router.expireCanonical()
+        assertEquals(setOf("media"), host.boundCommands)
+        assertEquals(1L, nextExpiryDelay)
+        now += 1
+        router.expireCanonical()
+        assertTrue(host.boundCommands.isEmpty())
+        assertEquals(listOf("media"), host.releasedCommands)
+        assertEquals(null, nextExpiryDelay)
+        router.handleLocal(result("media", "inv-1"), hudSender("media"))
+        assertTrue(sink.remote.none { it.path == BusPaths.ACTIVITY_RESULT })
+    }
+
+    @Test
+    fun `a command is not delivered if its importance binding fails`() {
+        router.handleLocal(local(start("media", mediaActions())), hudSender("media"))
+        val seq = sink.remote.last().payload.getLong("seq")
+        host.bindAccepted = false
+        router.handleGlassesAction(command("media", "play", seq, "inv-1"))
+        assertTrue(actionsDelivered().isEmpty())
+        assertTrue(host.boundCommands.isEmpty())
+        assertTrue(state.pendingCommandOwners().isEmpty())
+        assertEquals(null, nextExpiryDelay)
+
+        host.bindAccepted = true
+        router.handleGlassesAction(command("media", "play", seq, "inv-2"))
+        assertEquals(1, actionsDelivered().size)
+    }
+
+    @Test
+    fun `command bindings are owner scoped and end with revoke disconnect reconnect or hub stop`() {
+        router.handleLocal(local(start("media", mediaActions())), hudSender("media"))
+        val mediaSeq = sink.remote.last().payload.getLong("seq")
+        router.handleLocal(local(start("other", mediaActions())), hudSender("other"))
+        val otherSeq = sink.remote.last().payload.getLong("seq")
+        router.handleGlassesAction(command("media", "play", mediaSeq, "inv-1"))
+        router.handleGlassesAction(command("other", "play", otherSeq, "inv-2"))
+        router.clearForRevokedOwner("media", "revoked")
+        assertEquals(setOf("other"), host.boundCommands)
+        router.clearForDisconnectedOwner("other", "binderDied")
+        assertTrue(host.boundCommands.isEmpty())
+
+        router.handleLocal(local(start("media", mediaActions())), hudSender("media"))
+        router.handleGlassesAction(command("media", "play", sink.remote.last().payload.getLong("seq"), "inv-3"))
+        router.resendIfAvailable()
+        assertTrue(host.boundCommands.isEmpty())
+        router.handleGlassesAction(command("media", "play", sink.remote.last().payload.getLong("seq"), "inv-4"))
+        router.clearAllForHubStop()
+        assertTrue(host.boundCommands.isEmpty())
+        assertEquals(listOf("media", "other", "media", "media"), host.releasedCommands)
+    }
+
+    @Test
     fun `withdrawing a quick approval mid-flight drops the pending quick command's result`() {
         quick["media"] = setOf(QuickActionFamily.MEDIA)
         router.handleLocal(local(start("media", mediaActions())), hudSender("media"))
@@ -447,6 +538,7 @@ class PhoneActivityLauncherTest {
 
         quick.remove("media")
         router.onQuickPolicyChanged("media")
+        assertTrue(host.boundCommands.isEmpty())
         val restamp = sink.remote.last()
         assertEquals(BusPaths.ACTIVITY_UPDATE, restamp.path)
         assertFalse(restamp.payload.getJSONArray("actions").getJSONObject(0).has("hubQuick"))
@@ -472,6 +564,7 @@ class PhoneActivityLauncherTest {
         assertEquals("maps", delivered.getString("pluginId"))
         assertEquals("open", delivered.getString("id"))
         assertFalse(delivered.has("invocationId"))
+        assertTrue(host.boundCommands.isEmpty())
 
         router.handleLocal(result("maps", "inv-1"), hudSender("maps"))
         router.handleLocal(geometry("maps", 1), hudSender("maps"))

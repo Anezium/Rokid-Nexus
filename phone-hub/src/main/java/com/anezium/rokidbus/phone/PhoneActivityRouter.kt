@@ -18,6 +18,10 @@ internal interface PhoneActivityLauncherHost {
     /** Live registrations of [pluginId]; a command needs exactly one. */
     fun registrationCount(pluginId: String): Int = 0
 
+    /** A command-only importance hold, independent of page, skill and immersion bindings. */
+    fun bindCommand(pluginId: String): Boolean = false
+    fun unbindCommand(pluginId: String) = Unit
+
     /** Whether the SPP data plane is up, which route geometry requires. */
     fun dataPlaneUp(): Boolean = false
 
@@ -54,6 +58,7 @@ internal class PhoneActivityRouter(
     /** Highest route geometry revision forwarded per owner; geometry is latest-wins. */
     private val geometryRevisions = mutableMapOf<String, Long>()
     private val headingWindows = mutableMapOf<String, ArrayDeque<Long>>()
+    private val commandBindings = mutableSetOf<String>()
     private var persistedOfflineRevision = state.offlineRevision()
 
     fun matches(path: String): Boolean =
@@ -284,6 +289,7 @@ internal class PhoneActivityRouter(
 
     fun clearAllForHubStop(): Unit = synchronized(wireLock) {
         val (cleared, offline) = state.hubStopped()
+        reconcileCommandBindings()
         if (cleared.isEmpty() && offline.isEmpty()) return@synchronized
         cancelExpiry()
         (cleared.map { it.ownerPluginId } + offline).forEach { owner ->
@@ -371,6 +377,7 @@ internal class PhoneActivityRouter(
     fun onQuickPolicyChanged(pluginId: String): Unit = synchronized(wireLock) {
         if (state.rejectUnapprovedQuickCommands(pluginId)) {
             sink.log("activity command rejected owner=$pluginId reason=quick_policy_withdrawn")
+            scheduleExpiry()
         }
         val outcome = state.quickPolicyChanged(pluginId)
         if (outcome is PhoneActivityPreferenceOutcome.Restamped) sendRestamp(outcome)
@@ -386,11 +393,14 @@ internal class PhoneActivityRouter(
             is PhoneActivityCommandResult.Rejected ->
                 sink.log("activity command ignored id=${command.activityId.take(80)} reason=${result.reason}")
             is PhoneActivityCommandResult.Accepted -> {
-                val delivered = sink.deliverLocal(BusEnvelope(path = BusPaths.ACTIVITY_ACTION, payload = result.payload))
+                val bound = result.ownerPluginId in commandBindings || launcher.bindCommand(result.ownerPluginId)
+                if (bound) commandBindings += result.ownerPluginId
+                val delivered = bound && sink.deliverLocal(BusEnvelope(path = BusPaths.ACTIVITY_ACTION, payload = result.payload))
                 if (!delivered) {
                     state.commandUndelivered(result.ownerPluginId, result.invocationId)
-                    sink.log("activity command undelivered owner=${result.ownerPluginId}; no live registration")
+                    sink.log("activity command undelivered owner=${result.ownerPluginId} bound=$bound")
                 }
+                scheduleExpiry()
             }
         }
     }
@@ -399,6 +409,7 @@ internal class PhoneActivityRouter(
         val result = ActivitySurfaceContract.parseResult(envelope.payload)
             ?: return reject(envelope, sender, ActivitySurfaceContract.ERROR_INVALID_ACTIVITY)
         val forwarded = state.completeCommand(pluginId, result)
+        scheduleExpiry()
         if (forwarded == null) {
             // Late, unknown or already answered: the glasses already show it unconfirmed.
             sink.recordLocalRoute(envelope, sender.uid, pluginId, PluginBusJournal.Verdict.OK, "ACTIVITY_RESULT_DROPPED")
@@ -588,9 +599,18 @@ internal class PhoneActivityRouter(
     }
 
     fun scheduleExpiry(): Unit = synchronized(wireLock) {
+        reconcileCommandBindings()
         cancelExpiry()
         val deadline = state.nextExpiryDeadlineMs() ?: return
         postExpiry((deadline - nowMs()).coerceAtLeast(0L))
+    }
+
+    private fun reconcileCommandBindings() {
+        val pending = state.pendingCommandOwners()
+        commandBindings.filter { it !in pending }.forEach { owner ->
+            commandBindings.remove(owner)
+            launcher.unbindCommand(owner)
+        }
     }
 
     private companion object {

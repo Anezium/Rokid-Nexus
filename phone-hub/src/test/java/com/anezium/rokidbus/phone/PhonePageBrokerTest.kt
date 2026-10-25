@@ -808,6 +808,43 @@ class PhonePageBrokerTest {
     }
 
     @Test
+    fun `a delivered action keeps the provider important after the visible lease expires until its result`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true, lease = 1_000))
+        broker.onGlasses(BusPaths.PAGE_ACTION, action())
+
+        host.now += 1_000
+        broker.onTick()
+        assertTrue(broker.holdsProviderBinding("relay"))
+        assertEquals(host.now + PageSurfaceContract.PAGE_TIMEOUT_MS - 1_000, host.tick)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, result(), relayA))
+        assertFalse(broker.holdsProviderBinding("relay"))
+        assertEquals(1, host.calls.count { it == "unbind:relay" })
+    }
+
+    @Test
+    fun `a delivered action releases the provider at its deadline without a result or visible lease`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true, lease = 1_000))
+        broker.onGlasses(BusPaths.PAGE_ACTION, action())
+
+        host.now += PageSurfaceContract.PAGE_TIMEOUT_MS - 1
+        broker.onTick()
+        assertTrue(broker.holdsProviderBinding("relay"))
+        host.now += 1
+        broker.onTick()
+        assertFalse(broker.holdsProviderBinding("relay"))
+        assertEquals(1, host.calls.count { it == "unbind:relay" })
+        assertEquals(PhonePageBroker.ERROR_PAGE_NOT_REQUESTED, broker.onProvider(BusPaths.PAGE_RESULT, result(), relayA))
+    }
+
+    @Test
     fun `cover and lease expiry release page-only demand`() {
         connect(relay)
         val relayA = register(relay, "relay-a")

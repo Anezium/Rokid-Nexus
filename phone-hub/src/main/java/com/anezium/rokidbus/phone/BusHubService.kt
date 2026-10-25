@@ -335,6 +335,19 @@ class BusHubService : Service() {
             override fun registrationCount(pluginId: String): Int =
                 registrations.count { it.principal?.descriptor?.id == pluginId }
 
+            override fun bindCommand(pluginId: String): Boolean {
+                val principal = surfaceOwnerFor(pluginId) ?: return false
+                if (!::activityCommandRuntime.isInitialized || !activityCommandRuntime.bind(principal)) return false
+                activityCommandPrincipals[pluginId] = principal
+                return true
+            }
+
+            override fun unbindCommand(pluginId: String) {
+                activityCommandPrincipals.remove(pluginId)?.let { principal ->
+                    if (::activityCommandRuntime.isInitialized) activityCommandRuntime.unbind(principal)
+                }
+            }
+
             override fun dataPlaneUp(): Boolean = sppSession != null
 
             override fun sendDataPlane(envelope: BusEnvelope): String? = this@BusHubService.sendDataPlane(envelope)
@@ -503,6 +516,8 @@ class BusHubService : Service() {
     private lateinit var cameraCompanionController: CameraCompanionController
     private lateinit var skillGrantStore: SkillGrantStore
     private lateinit var skillLeaseRuntime: AndroidSkillLeaseRuntime
+    private lateinit var activityCommandRuntime: AndroidSkillLeaseRuntime
+    private val activityCommandPrincipals = ConcurrentHashMap<String, PhonePluginPrincipal>()
     private lateinit var skillsCoordinator: SkillsCoordinator
 
     // Skill calls must run in arrival order: a cancel must not overtake its invoke.
@@ -1240,6 +1255,12 @@ class BusHubService : Service() {
         skillLeaseRuntime = AndroidSkillLeaseRuntime(
             context = applicationContext,
             bindingDied = { principal -> skillsExecutor.execute { skillsCoordinator.onLeaseBindingDied(principal) } },
+        )
+        activityCommandRuntime = AndroidSkillLeaseRuntime(
+            context = applicationContext,
+            bindingDied = { principal ->
+                activityRouter.clearForDisconnectedOwner(principal.descriptor.id, "commandBindingDied")
+            },
         )
         skillsCoordinator = SkillsCoordinator(skillsHost, skillGrantStore)
         pluginRegistry = PhonePluginRegistry(

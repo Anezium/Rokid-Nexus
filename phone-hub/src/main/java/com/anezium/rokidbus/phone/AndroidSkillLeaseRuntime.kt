@@ -9,9 +9,9 @@ import com.anezium.rokidbus.shared.BusConstants
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * The binding behind a skill invocation lease. It is a connection of its own, separate from
- * the foreground and camera bindings: Android keeps the provider alive while any connection is
- * bound, so ending a call releases only this one and never closes a provider that is open on the
+ * The binding behind an invocation lease. Skills and activity commands use separate instances,
+ * independent of the foreground, page and camera bindings: Android keeps the provider alive
+ * while any connection is bound, so ending a call never closes a provider that is open on the
  * HUD, and closing the HUD never strands a call still in flight.
  */
 class AndroidSkillLeaseRuntime(

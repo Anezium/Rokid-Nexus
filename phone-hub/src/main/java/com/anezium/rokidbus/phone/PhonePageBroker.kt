@@ -805,7 +805,7 @@ class PhonePageBroker(
     private fun reconcileBindings() {
         val now = host.nowMs()
         val demand = frames.values.filter { frame ->
-            frame.pending || listOfNotNull(frame.leaseUntil, frame.displayDeadline).any { now < it }
+            frame.pending || listOfNotNull(frame.leaseUntil, frame.displayDeadline, frame.invocationDeadline).any { now < it }
         }.map { it.owner }.toSet()
         bound.keys.filter { it !in demand }.toList().forEach { owner ->
             bound.remove(owner)?.let { principal -> later { host.unbind(principal) } }

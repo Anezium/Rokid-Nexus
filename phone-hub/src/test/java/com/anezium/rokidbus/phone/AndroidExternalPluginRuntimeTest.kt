@@ -19,9 +19,11 @@ class AndroidExternalPluginRuntimeTest {
     private class RecordingContext : ContextWrapper(RuntimeEnvironment.getApplication()) {
         lateinit var connection: ServiceConnection
         var unbindCount = 0
+        var bindFlags = 0
 
         override fun bindService(service: Intent, conn: ServiceConnection, flags: Int): Boolean {
             connection = conn
+            bindFlags = flags
             return true
         }
 
@@ -54,6 +56,7 @@ class AndroidExternalPluginRuntimeTest {
         val runtime = runtime(context, disconnected)
 
         assertTrue(runtime.bind(principal))
+        assertEquals(Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT, context.bindFlags)
         context.connection.onServiceDisconnected(principal.serviceComponent)
 
         assertEquals(listOf("lens"), disconnected)
