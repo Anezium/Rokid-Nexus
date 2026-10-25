@@ -100,12 +100,16 @@ class ActivityIslandRenderingTest {
         assertEquals(width, compact.width)
         assertEquals(height, compact.height)
 
-        // Not shown, it does not run.
+        // Not shown, hidden or dark, it does not run.
         island.visibility = View.GONE
         idle()
         assertFalse(compact.title.scrolling)
         island.visibility = View.VISIBLE
         idle()
+        assertTrue(compact.title.scrolling)
+        screenState(View.SCREEN_STATE_OFF)
+        assertFalse(compact.title.scrolling)
+        screenState(View.SCREEN_STATE_ON)
         assertTrue(compact.title.scrolling)
         show(content(headline = headline, secondary = "Massive Attack"), ActivityPresentation.PANEL)
         assertFalse(compact.title.scrolling)
@@ -222,6 +226,13 @@ class ActivityIslandRenderingTest {
         primary = true,
         presentation = presentation,
     )
+
+    /** What the framework dispatches down a window when the display turns off or on; not public API. */
+    private fun screenState(state: Int) {
+        View::class.java.getDeclaredMethod("dispatchScreenStateChanged", Int::class.javaPrimitiveType)
+            .apply { isAccessible = true }
+            .invoke(island, state)
+    }
 
     private fun shownTexts(root: View): List<String> = find<TextView>(root).filter { it.isShown }.map { it.text.toString() }
 

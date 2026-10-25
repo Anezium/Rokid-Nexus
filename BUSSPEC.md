@@ -1451,7 +1451,7 @@ show at once. Every transition is glasses-local.
   `measure`. Over a pair with the launcher bundle the glasses draw `headline`,
   when sent, in place of `primary` in every form; a title wider than its line
   scrolls to its end after a short hold and back, without changing the
-  island's size, and only while the island is shown.
+  island's size, and only while the island is shown on a lit display.
 - **panel** — the expanded form: large glyph, `primary` at up to 24sp,
   `secondary` at 13sp, trailing `eta`, progress when present, detail at 11sp,
   and the action row. It uses a pure-black background and the shared hairline
