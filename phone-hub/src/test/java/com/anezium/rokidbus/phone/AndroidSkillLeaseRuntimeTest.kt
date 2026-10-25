@@ -23,15 +23,18 @@ class AndroidSkillLeaseRuntimeTest {
     private class RecordingContext : ContextWrapper(RuntimeEnvironment.getApplication()) {
         val bindings = mutableListOf<Triple<Intent, ServiceConnection, Int>>()
         val unbound = mutableListOf<ServiceConnection>()
+        val calls = mutableListOf<String>()
         var accepted = true
 
         override fun bindService(service: Intent, conn: ServiceConnection, flags: Int): Boolean {
             bindings += Triple(service, conn, flags)
+            calls += "bind"
             return accepted
         }
 
         override fun unbindService(conn: ServiceConnection) {
             unbound += conn
+            calls += "unbind"
         }
     }
 
@@ -74,6 +77,39 @@ class AndroidSkillLeaseRuntimeTest {
         pages.unbind(principal)
         skills.unbind(principal)
         assertEquals(context.bindings.map { it.second }.toSet(), context.unbound.toSet())
+    }
+
+    @Test
+    fun `delivery rebind creates a new connection and ignores an obsolete binding death`() {
+        val context = RecordingContext()
+        val died = mutableListOf<PhonePluginPrincipal>()
+        val runtime = AndroidSkillLeaseRuntime(context) { died += it }
+        assertTrue(runtime.bind(principal))
+        val old = context.bindings.last().second
+        assertTrue(runtime.rebind(principal))
+        val fresh = context.bindings.last().second
+        assertTrue(fresh !== old)
+        assertEquals(listOf(old), context.unbound)
+        assertEquals(listOf("bind", "bind", "unbind"), context.calls)
+        old.onBindingDied(principal.serviceComponent)
+        assertTrue(died.isEmpty())
+        fresh.onBindingDied(principal.serviceComponent)
+        assertEquals(listOf(principal), died)
+        runtime.unbind(principal)
+        assertEquals(1, context.unbound.count { it === fresh })
+    }
+
+    @Test
+    fun `a refused command rebind keeps the previous hold until its normal release`() {
+        val context = RecordingContext()
+        val runtime = AndroidSkillLeaseRuntime(context) {}
+        assertTrue(runtime.bind(principal))
+        val first = context.bindings.single().second
+        context.accepted = false
+        assertFalse(runtime.rebind(principal))
+        assertTrue(context.unbound.isEmpty())
+        runtime.unbind(principal)
+        assertEquals(listOf(first), context.unbound)
     }
 
     @Test

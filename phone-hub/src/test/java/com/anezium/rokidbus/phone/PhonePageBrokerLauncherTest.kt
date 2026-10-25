@@ -42,6 +42,7 @@ class PhonePageBrokerLauncherTest {
             return null
         }
         override fun bind(principal: PhonePluginPrincipal): Boolean = true
+        override fun rebind(principal: PhonePluginPrincipal): Boolean = true
         override fun unbind(principal: PhonePluginPrincipal) = Unit
         override fun scheduleTick(atMs: Long?) = Unit
         override fun log(message: String) = Unit

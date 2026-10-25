@@ -58,7 +58,7 @@ internal class PhoneActivityRouter(
     /** Highest route geometry revision forwarded per owner; geometry is latest-wins. */
     private val geometryRevisions = mutableMapOf<String, Long>()
     private val headingWindows = mutableMapOf<String, ArrayDeque<Long>>()
-    private val commandBindings = mutableSetOf<String>()
+    private val commandBindings = mutableMapOf<String, String>()
     private var persistedOfflineRevision = state.offlineRevision()
 
     fun matches(path: String): Boolean =
@@ -393,9 +393,10 @@ internal class PhoneActivityRouter(
             is PhoneActivityCommandResult.Rejected ->
                 sink.log("activity command ignored id=${command.activityId.take(80)} reason=${result.reason}")
             is PhoneActivityCommandResult.Accepted -> {
-                val bound = result.ownerPluginId in commandBindings || launcher.bindCommand(result.ownerPluginId)
-                if (bound) commandBindings += result.ownerPluginId
-                val delivered = bound && sink.deliverLocal(BusEnvelope(path = BusPaths.ACTIVITY_ACTION, payload = result.payload))
+                val bound = launcher.bindCommand(result.ownerPluginId)
+                if (bound) commandBindings[result.ownerPluginId] = result.invocationId
+                else sink.log("activity command bind failed owner=${result.ownerPluginId}")
+                val delivered = sink.deliverLocal(BusEnvelope(path = BusPaths.ACTIVITY_ACTION, payload = result.payload))
                 if (!delivered) {
                     state.commandUndelivered(result.ownerPluginId, result.invocationId)
                     sink.log("activity command undelivered owner=${result.ownerPluginId} bound=$bound")
@@ -605,9 +606,14 @@ internal class PhoneActivityRouter(
         postExpiry((deadline - nowMs()).coerceAtLeast(0L))
     }
 
+    fun onCommandBindingDied(pluginId: String): Unit = synchronized(wireLock) {
+        commandBindings[pluginId]?.let { state.commandUndelivered(pluginId, it) }
+        scheduleExpiry()
+    }
+
     private fun reconcileCommandBindings() {
         val pending = state.pendingCommandOwners()
-        commandBindings.filter { it !in pending }.forEach { owner ->
+        commandBindings.keys.filter { it !in pending }.forEach { owner ->
             commandBindings.remove(owner)
             launcher.unbindCommand(owner)
         }

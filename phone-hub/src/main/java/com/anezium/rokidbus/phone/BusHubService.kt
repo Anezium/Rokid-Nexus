@@ -337,7 +337,7 @@ class BusHubService : Service() {
 
             override fun bindCommand(pluginId: String): Boolean {
                 val principal = surfaceOwnerFor(pluginId) ?: return false
-                if (!::activityCommandRuntime.isInitialized || !activityCommandRuntime.bind(principal)) return false
+                if (!::activityCommandRuntime.isInitialized || !activityCommandRuntime.rebind(principal)) return false
                 activityCommandPrincipals[pluginId] = principal
                 return true
             }
@@ -490,6 +490,8 @@ class BusHubService : Service() {
                 sendRemote(BusEnvelope(path = path, payload = payload))
             override fun bind(principal: PhonePluginPrincipal): Boolean =
                 ::pagePluginRuntime.isInitialized && pagePluginRuntime.bind(principal)
+            override fun rebind(principal: PhonePluginPrincipal): Boolean =
+                ::pagePluginRuntime.isInitialized && pagePluginRuntime.rebind(principal)
             override fun unbind(principal: PhonePluginPrincipal) {
                 if (::pagePluginRuntime.isInitialized) pagePluginRuntime.unbind(principal)
             }
@@ -1020,6 +1022,10 @@ class BusHubService : Service() {
         }
     }
 
+    private fun createActivityCommandRuntime(context: Context) = AndroidSkillLeaseRuntime(context) { principal ->
+        activityRouter.onCommandBindingDied(principal.descriptor.id)
+    }
+
     override fun onCreate() {
         super.onCreate()
         NexusPhoneState.restore(applicationContext)
@@ -1256,12 +1262,7 @@ class BusHubService : Service() {
             context = applicationContext,
             bindingDied = { principal -> skillsExecutor.execute { skillsCoordinator.onLeaseBindingDied(principal) } },
         )
-        activityCommandRuntime = AndroidSkillLeaseRuntime(
-            context = applicationContext,
-            bindingDied = { principal ->
-                activityRouter.clearForDisconnectedOwner(principal.descriptor.id, "commandBindingDied")
-            },
-        )
+        activityCommandRuntime = createActivityCommandRuntime(applicationContext)
         skillsCoordinator = SkillsCoordinator(skillsHost, skillGrantStore)
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,

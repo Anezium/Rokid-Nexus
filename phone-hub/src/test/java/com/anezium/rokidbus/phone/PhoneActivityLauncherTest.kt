@@ -74,7 +74,7 @@ class PhoneActivityLauncherTest {
         }
 
         override fun deliverLocal(envelope: BusEnvelope, targetBinder: IBinder?): Boolean {
-            if (envelope.path == BusPaths.ACTIVITY_ACTION && launcherVersion == 1) {
+            if (envelope.path == BusPaths.ACTIVITY_ACTION && launcherVersion == 1 && host.bindAccepted) {
                 assertTrue(envelope.payload.getString("pluginId") in host.boundCommands)
             }
             events += "local:${envelope.path}:${envelope.payload.optString("pluginId")}"
@@ -490,19 +490,39 @@ class PhoneActivityLauncherTest {
     }
 
     @Test
-    fun `a command is not delivered if its importance binding fails`() {
+    fun `a refused command binding still delivers to its live registration and accepts the result`() {
         router.handleLocal(local(start("media", mediaActions())), hudSender("media"))
         val seq = sink.remote.last().payload.getLong("seq")
         host.bindAccepted = false
         router.handleGlassesAction(command("media", "play", seq, "inv-1"))
-        assertTrue(actionsDelivered().isEmpty())
+        assertEquals(1, actionsDelivered().size)
         assertTrue(host.boundCommands.isEmpty())
+        assertEquals(setOf("media"), state.pendingCommandOwners())
+        assertEquals(ActivitySurfaceContract.COMMAND_DEADLINE_MS, nextExpiryDelay)
+        router.handleLocal(result("media", "inv-1"), hudSender("media"))
         assertTrue(state.pendingCommandOwners().isEmpty())
-        assertEquals(null, nextExpiryDelay)
+        assertTrue(host.releasedCommands.isEmpty())
+        assertEquals(1, sink.remote.count { it.path == BusPaths.ACTIVITY_RESULT })
 
         host.bindAccepted = true
         router.handleGlassesAction(command("media", "play", seq, "inv-2"))
-        assertEquals(1, actionsDelivered().size)
+        assertEquals(2, actionsDelivered().size)
+    }
+
+    @Test
+    fun `a dead command connection releases only its invocation and preserves the live activity`() {
+        router.handleLocal(local(start("media", mediaActions())), hudSender("media"))
+        val seq = sink.remote.last().payload.getLong("seq")
+        router.handleGlassesAction(command("media", "play", seq, "inv-1"))
+        router.onCommandBindingDied("media")
+        assertTrue(state.pendingCommandOwners().isEmpty())
+        assertTrue(host.boundCommands.isEmpty())
+        assertEquals(setOf("media"), router.ownerPluginIds())
+        assertTrue(sink.remote.none { it.path == BusPaths.ACTIVITY_END })
+        router.handleLocal(result("media", "inv-1"), hudSender("media"))
+        assertTrue(sink.remote.none { it.path == BusPaths.ACTIVITY_RESULT })
+        router.handleGlassesAction(command("media", "play", seq, "inv-2"))
+        assertEquals(setOf("media"), state.pendingCommandOwners())
     }
 
     @Test

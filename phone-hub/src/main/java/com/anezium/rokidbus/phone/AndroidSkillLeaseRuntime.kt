@@ -20,6 +20,17 @@ class AndroidSkillLeaseRuntime(
 ) {
     private val connections = ConcurrentHashMap<PluginGrantKey, ServiceConnection>()
 
+    fun rebind(principal: PhonePluginPrincipal): Boolean {
+        val key = principal.grantKey()
+        val previous = connections.remove(key)
+        if (!bind(principal)) {
+            previous?.let { connections.putIfAbsent(key, it) }
+            return false
+        }
+        previous?.let { runCatching { context.unbindService(it) } }
+        return true
+    }
+
     fun bind(principal: PhonePluginPrincipal): Boolean {
         val key = principal.grantKey()
         val connection = object : ServiceConnection {
@@ -43,8 +54,7 @@ class AndroidSkillLeaseRuntime(
             context.bindService(
                 Intent(BusConstants.ACTION_PLUGIN).setComponent(principal.serviceComponent),
                 connection,
-                // As for an open plugin: the hub's foreground importance must reach the provider,
-                // or an OEM freezer can stop it mid-call.
+                // Importance holds the process, but is not a Samsung Freecess exemption.
                 Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT,
             )
         }.getOrDefault(false)

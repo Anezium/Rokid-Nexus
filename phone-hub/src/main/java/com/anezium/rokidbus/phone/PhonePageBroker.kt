@@ -36,6 +36,7 @@ interface PhonePageHost {
     fun deliver(registration: PageRegistration, path: String, payload: JSONObject): Boolean
     fun sendToGlasses(path: String, payload: JSONObject): String?
     fun bind(principal: PhonePluginPrincipal): Boolean
+    fun rebind(principal: PhonePluginPrincipal): Boolean
     fun unbind(principal: PhonePluginPrincipal)
     fun scheduleTick(atMs: Long?)
     fun log(message: String)
@@ -551,6 +552,8 @@ class PhonePageBroker(
                 live
             }
             if (current) {
+                // Oneway callbacks queue in a frozen process. A fresh bind wakes it before delivery.
+                if (!host.rebind(principal)) host.log("page action bind failed plugin=${frame.owner}")
                 host.deliver(registration, BusPaths.PAGE_ACTION, outgoing)
             } else {
                 host.log("page drop path=action id=${action.invocationId} reason=CANCELLED")
