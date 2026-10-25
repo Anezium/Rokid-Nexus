@@ -101,10 +101,13 @@ class NexusLauncherInteractiveTest {
     @Test
     fun `launcher support alone never authorizes streets and other owners cannot create demand`() {
         val (client, wire) = client(LegacyCallbacks())
+        val diagnostics = mutableListOf<String>()
+        client.mapDiagnosticLog = { diagnostics += it }
         val event = JSONObject().put("kind", "ambient").put("view", "follow").put("visible", true)
             .put("token", "a").put("leaseMs", 5000).put("revision", 7)
         wire.deliver(com.anezium.rokidbus.shared.RenderedMapContract.PATH, event)
         assertFalse(client.supportsRenderedMaps)
+        assertTrue(diagnostics.any { it.contains("gate=SDK_DELIVERY verdict=DROP reason=CAPABILITY") })
         assertTrue(client.renderedMapViews.isEmpty())
         val credited = RouteGeometry(400.0, emptyList(), attribution = "© OpenStreetMap")
         assertEquals(NexusSdkResult.CAPABILITY_NOT_AVAILABLE, client.publishActivityGeometry(1, credited))
@@ -112,6 +115,7 @@ class NexusLauncherInteractiveTest {
         wire.featureBits = interactive or BusCapabilityBits.RENDERED_MAP
         wire.listener.onLinkState(LinkStateBits.SPP_DATA_UP)
         wire.listener.onMessage(com.anezium.rokidbus.shared.RenderedMapContract.PATH, "other-owner", event.put("pluginId", "other"))
+        assertTrue(diagnostics.any { it.contains("gate=SDK_DELIVERY verdict=DROP reason=IDENTITY") })
         assertTrue(client.renderedMapViews.isEmpty())
         wire.deliver(com.anezium.rokidbus.shared.RenderedMapContract.PATH, event)
         assertEquals(setOf(NexusRenderedMapView.FOLLOW), client.renderedMapViews)
@@ -130,7 +134,8 @@ class NexusLauncherInteractiveTest {
     @Test
     fun `map leases select one page view, permit independent ambient Follow and expire closed`() {
         var now = 0L
-        val maps = NexusRenderedMaps { now }
+        val diagnostics = mutableListOf<String>()
+        val maps = NexusRenderedMaps({ now }, com.anezium.rokidbus.shared.MapFeedbackDiagnostics({ now }, diagnostics::add))
         fun event(kind: String, token: String, view: String, visible: Boolean = true, lease: Long = 5000) = JSONObject()
             .put("kind", kind).put("token", token).put("view", view).put("visible", visible).put("leaseMs", lease)
             .put("revision", 3).apply { if (kind == "page") put("pageId", "media:main") }
@@ -139,6 +144,7 @@ class NexusLauncherInteractiveTest {
         maps.receive(event("page", "p2", "overview"))
         assertEquals(5000L, maps.nextExpiryDelayMs())
         maps.receive(event("page", "p1", "follow", false))
+        assertTrue(diagnostics.any { it.contains("gate=SDK_LEASE verdict=DROP reason=TOKEN_MISMATCH") })
         assertEquals(setOf(NexusRenderedMapView.OVERVIEW), maps.views())
         assertEquals(setOf(NexusRenderedMap(NexusRenderedMapView.OVERVIEW, 3, "media:main")), maps.frames())
         maps.receive(event("ambient", "a", "follow"))
@@ -146,6 +152,8 @@ class NexusLauncherInteractiveTest {
         now = 5000
         assertTrue(maps.views().isEmpty())
         assertNull(maps.nextExpiryDelayMs())
+        assertEquals(2, diagnostics.count { it.contains("gate=SDK_LEASE verdict=CLEAR reason=EXPIRED") })
+        assertTrue(diagnostics.filter { it.contains("reason=EXPIRED") }.all { it.contains("ageMs=5000 leaseRemainingMs=0") })
         assertFalse(maps.receive(event("page", "p3", "overview", lease = 5001)))
         assertTrue(maps.views().isEmpty())
         maps.receive(event("ambient", "a", "follow"))

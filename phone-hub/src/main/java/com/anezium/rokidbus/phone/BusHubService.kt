@@ -47,6 +47,7 @@ import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.shared.RenderedMapContract
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics
 import com.anezium.rokidbus.shared.SetupNoteContract
 import com.anezium.rokidbus.shared.ImageSurfaceMetadata
 import com.anezium.rokidbus.shared.ImageSurfaceValidationResult
@@ -567,6 +568,7 @@ class BusHubService : Service() {
      */
     @Volatile private var remoteLauncherInteractiveVersion: Int? = null
     private val renderedMapNegotiation = PhoneRenderedMapNegotiation()
+    private val mapDiagnostics = MapFeedbackDiagnostics(SystemClock::elapsedRealtime, ::log)
     @Volatile private var remoteInkSurfaceVersion = 0
     @Volatile private var remoteEditableSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
@@ -1832,7 +1834,12 @@ class BusHubService : Service() {
     private fun routeRemote(envelope: BusEnvelope, renderedMapOrigin: PhoneRenderedMapNegotiation.Origin?) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
         if (envelope.path == RenderedMapContract.PATH) {
-            if (RenderedMapContract.supported(capabilities())) {
+            val supported = RenderedMapContract.supported(capabilities())
+            mapDiagnostics.record(MapFeedbackDiagnostics.Gate.PHONE_CAPABILITY,
+                if (supported) MapFeedbackDiagnostics.Verdict.PASS else MapFeedbackDiagnostics.Verdict.DROP,
+                if (supported) MapFeedbackDiagnostics.Reason.CURRENT else MapFeedbackDiagnostics.Reason.CAPABILITY,
+                MapFeedbackDiagnostics.Sample.from(envelope.payload))
+            if (supported) {
                 if (envelope.payload.optString("kind") == RenderedMapContract.AMBIENT) {
                     activityRouter.handleRenderedMap(envelope.payload)
                 } else {

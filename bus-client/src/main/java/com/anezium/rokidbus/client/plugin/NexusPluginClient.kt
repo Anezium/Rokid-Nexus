@@ -23,6 +23,7 @@ import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceValidationResult
 import com.anezium.rokidbus.shared.RouteGeometry
 import com.anezium.rokidbus.shared.RenderedMapContract
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PathRules
 import com.anezium.rokidbus.shared.plugin.CapabilityParseResult
@@ -51,7 +52,9 @@ class NexusPluginClient internal constructor(
     private val transport: NexusPluginTransport,
     private val monotonicClockMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ) : NexusPluginTransport.Listener, AutoCloseable {
-    private val renderedMaps = NexusRenderedMaps(monotonicClockMs)
+    internal var mapDiagnosticLog: (String) -> Unit = {}
+    private val mapDiagnostics = MapFeedbackDiagnostics(monotonicClockMs) { mapDiagnosticLog(it) }
+    private val renderedMaps = NexusRenderedMaps(monotonicClockMs, mapDiagnostics)
 
     /** Both hubs preserve map credit and support authenticated rendered-view feedback over SPP. */
     val supportsRenderedMaps: Boolean
@@ -1012,8 +1015,17 @@ class NexusPluginClient internal constructor(
         pendingSurfaceErrors[requestId] = onError
     }
 
+    private fun mapDeliveryDiagnostic(payload: JSONObject, reason: MapFeedbackDiagnostics.Reason?) {
+        mapDiagnostics.record(MapFeedbackDiagnostics.Gate.SDK_DELIVERY,
+            if (reason == null) MapFeedbackDiagnostics.Verdict.PASS else MapFeedbackDiagnostics.Verdict.DROP,
+            reason ?: MapFeedbackDiagnostics.Reason.CURRENT, MapFeedbackDiagnostics.Sample.from(payload))
+    }
+
     override fun onMessage(path: String, id: String, payload: JSONObject) {
-        if (closed) return
+        if (closed) {
+            if (path == RenderedMapContract.PATH) mapDeliveryDiagnostic(payload, MapFeedbackDiagnostics.Reason.CLOSED)
+            return
+        }
         if (path == BusPaths.ERROR) {
             if (!rememberEvent(id)) return
             val handler = pendingSurfaceErrors.remove(payload.optString("forId"))
@@ -1031,8 +1043,16 @@ class NexusPluginClient internal constructor(
             }
             return
         }
-        if (payload.optString("pluginId") != pluginId || !rememberEvent(id)) return
+        if (payload.optString("pluginId") != pluginId) {
+            if (path == RenderedMapContract.PATH) mapDeliveryDiagnostic(payload, MapFeedbackDiagnostics.Reason.IDENTITY)
+            return
+        }
+        if (!rememberEvent(id)) {
+            if (path == RenderedMapContract.PATH) mapDeliveryDiagnostic(payload, MapFeedbackDiagnostics.Reason.DUPLICATE)
+            return
+        }
         if (path == RenderedMapContract.PATH) {
+            mapDeliveryDiagnostic(payload, if (supportsRenderedMaps) null else MapFeedbackDiagnostics.Reason.CAPABILITY)
             if (supportsRenderedMaps) {
                 if (!renderedMaps.receive(payload)) renderedMaps.clear()
                 callbacks.onRenderedMapsChanged()
@@ -1584,6 +1604,6 @@ class NexusPluginClient internal constructor(
             pluginId = pluginId,
             callbacks = callbacks,
             transport = AndroidNexusPluginTransport(context, pluginId, hubTarget),
-        )
+        ).also { client -> client.mapDiagnosticLog = { android.util.Log.i("RokidBusClient", it); Unit } }
     }
 }

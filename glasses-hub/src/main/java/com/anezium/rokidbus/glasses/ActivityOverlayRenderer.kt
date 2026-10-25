@@ -24,6 +24,7 @@ import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.glasses.page.NavIslandView
 import com.anezium.rokidbus.glasses.page.OverflowLineView
 import com.anezium.rokidbus.shared.ActivityProgress
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics
 import com.anezium.rokidbus.shared.ActivitySurfaceContent
 import com.anezium.rokidbus.shared.PinSurfaceLine
 import com.anezium.rokidbus.shared.PinSurfacePosition
@@ -38,6 +39,7 @@ import kotlin.math.ceil
  * revealed inside it. The WindowManager layout is never animated or updated.
  */
 internal object ActivityOverlayRenderer {
+    private val mapDiagnostics = MapFeedbackDiagnostics(SystemClock::elapsedRealtime, ::log)
     private data class FlareSession(
         val surfaceId: String,
         val startedOrder: Long,
@@ -107,7 +109,10 @@ internal object ActivityOverlayRenderer {
         // camera therefore restores current state without replaying a flare.
         state.items
             .filter { it.presentation == ActivityPresentation.HIDDEN }
-            .forEach { processedMotionTokens[it.activity.surfaceId] = it.activity.motionToken }
+            .forEach {
+                processedMotionTokens[it.activity.surfaceId] = it.activity.motionToken
+                diagnoseIsland(it, null)
+            }
 
         val visible = state.items.filter { it.presentation != ActivityPresentation.HIDDEN }
         state.items.filter { it.presentation == ActivityPresentation.HIDDEN }.forEach { nodes[it.activity.surfaceId]?.visibility = View.GONE }
@@ -201,7 +206,30 @@ internal object ActivityOverlayRenderer {
             crowded = mapCrowded(latestState, pinDrawn = PinController.presentablePin() != null),
             geometryRevision = RouteLive.geometryRevision(owner),
             launcherAmbient = ActivityController.launcherAmbient(),
-        )
+        ).also { diagnoseIsland(item, it) }
+    }
+
+    private fun diagnoseIsland(item: ActivityRenderItem, guidance: GuidanceIsland?) {
+        val revision = RouteLive.geometryRevision(item.activity.ownerPluginId) ?: return
+        val now = SystemClock.elapsedRealtime()
+        val collapsed = item.size == null && now >= item.activity.collapseAtMs &&
+            service?.let(ActivityPresentationSettings::alwaysExpanded) != true
+        val drawsMap = guidance?.content?.map?.renderContext != null
+        val reason = when {
+            item.presentation == ActivityPresentation.HIDDEN -> MapFeedbackDiagnostics.Reason.HIDDEN
+            item.stale -> MapFeedbackDiagnostics.Reason.STALE
+            drawsMap -> MapFeedbackDiagnostics.Reason.CURRENT
+            collapsed -> MapFeedbackDiagnostics.Reason.COLLAPSED
+            guidance?.form == com.anezium.rokidbus.glasses.page.IslandForm.TEXT -> MapFeedbackDiagnostics.Reason.TEXT
+            else -> MapFeedbackDiagnostics.Reason.NO_CONTEXT
+        }
+        mapDiagnostics.record(MapFeedbackDiagnostics.Gate.GLASSES_ISLAND,
+            if (drawsMap) MapFeedbackDiagnostics.Verdict.PASS else MapFeedbackDiagnostics.Verdict.CLEAR,
+            reason, MapFeedbackDiagnostics.Sample(
+                kind = MapFeedbackDiagnostics.Kind.AMBIENT, view = MapFeedbackDiagnostics.View.FOLLOW,
+                revision = revision, seq = item.activity.seq, visible = drawsMap, collapsed = collapsed,
+                ageMs = (now - item.activity.collapseAtMs + ActivityStateMachine.COLLAPSE_AFTER_MS).coerceAtLeast(0),
+            ))
     }
 
     /**

@@ -117,6 +117,11 @@ class PhoneActivityLauncherTest {
         val afterEnd = sink.local.size
         router.handleRenderedMap(event)
         assertEquals(afterEnd, sink.local.size)
+        for (reason in listOf("SEQUENCE", "REVISION", "REGISTRATION", "DATA_PLANE", "IDENTITY")) {
+            assertTrue(reason, sink.logs.any { it.contains("NexusMapDiag gate=PHONE_AMBIENT verdict=DROP reason=$reason ") })
+        }
+        assertTrue(sink.logs.any { it.contains("gate=PHONE_AMBIENT verdict=PASS reason=CURRENT") &&
+            it.contains("revision=7 currentRevision=7 seq=$seq currentSeq=$seq") })
     }
 
     private fun newState(initialSequence: Long = 40L) = PhoneActivityState(

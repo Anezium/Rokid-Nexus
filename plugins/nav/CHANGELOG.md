@@ -7,7 +7,10 @@ Street maps and render feedback need Nexus hubs 1.9.0; older hubs keep route-onl
 - Keep acknowledged street-map covers through activity and page updates, and
   restore loaded streets on render feedback without waiting for the next GPS fix.
   Wait for a drawn map's pending update to be acknowledged before replacing it
-  again, so delayed render feedback cannot cut its streets off.
+  again to reduce a contributing race with delayed render feedback. Catch up
+  held pages after reconciling street demand and retry held publications at
+  rendered-lease expiry. Add bounded, counts-only feedback gate diagnostics
+  for the next device run; the island cutoff still needs device confirmation.
 - Decode dense city street maps without retaining address, POI or other unused
   layers. Keep tile-wide scan and street allocation limits; warn once per
   rejected tile without logging its location. Show route-only availability

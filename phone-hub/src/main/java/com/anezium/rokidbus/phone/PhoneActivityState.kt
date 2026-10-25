@@ -433,6 +433,9 @@ internal class PhoneActivityState(
         return owner.takeIf { activity.seq == seq }
     }
 
+    @Synchronized
+    fun activitySequence(ownerPluginId: String): Long? = residents[ownerPluginId]?.seq
+
     /**
      * The v1 resolution: only an action still present in the live canonical activity. This
      * prevents a delayed glasses event from firing an action that a newer update removed.
