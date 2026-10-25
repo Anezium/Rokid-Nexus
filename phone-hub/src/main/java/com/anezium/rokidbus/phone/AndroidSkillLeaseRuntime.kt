@@ -9,9 +9,9 @@ import com.anezium.rokidbus.shared.BusConstants
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * The binding behind a skill invocation lease. It is a connection of its own, separate from
- * the foreground and camera bindings: Android keeps the provider alive while any connection is
- * bound, so ending a call releases only this one and never closes a provider that is open on the
+ * The binding behind an invocation lease. Skills and activity commands use separate instances,
+ * independent of the foreground, page and camera bindings: Android keeps the provider alive
+ * while any connection is bound, so ending a call never closes a provider that is open on the
  * HUD, and closing the HUD never strands a call still in flight.
  */
 class AndroidSkillLeaseRuntime(
@@ -19,6 +19,17 @@ class AndroidSkillLeaseRuntime(
     private val bindingDied: (PhonePluginPrincipal) -> Unit,
 ) {
     private val connections = ConcurrentHashMap<PluginGrantKey, ServiceConnection>()
+
+    fun rebind(principal: PhonePluginPrincipal): Boolean {
+        val key = principal.grantKey()
+        val previous = connections.remove(key)
+        if (!bind(principal)) {
+            previous?.let { connections.putIfAbsent(key, it) }
+            return false
+        }
+        previous?.let { runCatching { context.unbindService(it) } }
+        return true
+    }
 
     fun bind(principal: PhonePluginPrincipal): Boolean {
         val key = principal.grantKey()
@@ -43,8 +54,7 @@ class AndroidSkillLeaseRuntime(
             context.bindService(
                 Intent(BusConstants.ACTION_PLUGIN).setComponent(principal.serviceComponent),
                 connection,
-                // As for an open plugin: the hub's foreground importance must reach the provider,
-                // or an OEM freezer can stop it mid-call.
+                // Importance holds the process, but is not a Samsung Freecess exemption.
                 Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT,
             )
         }.getOrDefault(false)

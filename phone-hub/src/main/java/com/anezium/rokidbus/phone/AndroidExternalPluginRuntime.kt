@@ -20,6 +20,19 @@ class AndroidExternalPluginRuntime(
 ) : ExternalPluginRuntime, CameraCompanionRuntime {
     private val connections = ConcurrentHashMap<PluginGrantKey, ServiceConnection>()
 
+    /** A new bind event thaws a frozen provider; an existing connection alone does not. */
+    fun rebind(principal: PhonePluginPrincipal): Boolean {
+        val key = principal.grantKey()
+        val previous = connections.remove(key)
+        if (!bind(principal)) {
+            previous?.let { connections.putIfAbsent(key, it) }
+            return false
+        }
+        // Acquire first so the last old connection cannot destroy a page-only service.
+        previous?.let { runCatching { context.unbindService(it) } }
+        return true
+    }
+
     override fun bind(principal: PhonePluginPrincipal): Boolean {
         val key = principal.grantKey()
         val connection = object : ServiceConnection {
@@ -47,9 +60,8 @@ class AndroidExternalPluginRuntime(
             context.bindService(
                 Intent(BusConstants.ACTION_PLUGIN).setComponent(principal.serviceComponent),
                 connection,
-                // BIND_IMPORTANT: this bind only exists while the plugin is open on the HUD,
-                // and OEM app freezers (Samsung Freecess) freeze plainly-bound background
-                // processes mid-display unless the hub's foreground importance propagates.
+                // Keep the provider important while needed. Freecess exemption additionally
+                // requires the plugin's own SDK-managed session foreground service.
                 Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT,
             )
         }.getOrDefault(false)

@@ -807,6 +807,23 @@ treat a revision you no longer show as `stale`. The default implementation calls
 `onNexusActivityAction(id)` and returns null, so an unchanged plugin keeps
 working and never reports an invented success.
 
+Before delivering a command, the phone hub makes a fresh service bind to wake
+its owner, then holds that connection until the result, the existing
+eight-second deadline or cancellation. If Android refuses the bind, a live
+registration still receives the command. An idle activity holds no command
+binding; page, skill and immersion connections remain independent. Losing this
+keep-alive connection cancels only its pending command, not the activity.
+
+Since SDK 0.24.0, `NexusPluginService` also uses its existing quiet **Active on
+your glasses** foreground notification while handling a delivered command,
+through sending its result. Returning null retains that protection until
+`sendActivityCommandResult` or the existing eight-second deadline. Declare the
+session service's `specialUse` type and foreground-service permissions as in
+[the plugin manifest](PLUGINS.md). This is the same service and type
+used for an open surface. A refused promotion (including missing declarations)
+is non-fatal: callbacks and results still work, but Samsung's freezer protection
+is unavailable. An important binding alone does not exempt a plugin from Freecess.
+
 ```kotlin
 class PlayerPluginService : NexusPluginService() {
     private fun playerActivity(state: PlayerState) = NexusActivity(
@@ -2093,11 +2110,34 @@ and `onPageClosed`. The defaults answer unavailable and reject actions, so an
 unchanged plugin compiles and behaves as before.
 
 Pages arrive whether or not your plugin is open. They never call `onNexusOpen`
-or `onNexusClose`, never start the session foreground service, and never release
-your audio, speech, TTS or surface sessions: an immersion of your plugin can be
-running underneath while the wearer reads one of its pages. `onNexusPageClosed`
-is not `onNexusClose`. The hub keeps your service bound while a page needs it;
-do not poll, and do not start a foreground service for pages.
+or `onNexusClose`, and never release your audio, speech, TTS or surface sessions:
+an immersion can run underneath while the wearer reads a page.
+`onNexusPageClosed` is not `onNexusClose`.
+
+Since SDK 0.24.0, `NexusPluginService` shares its existing session foreground
+notification with pages. Protection starts before the request callback, covers
+the answer's bounded display handoff and each visible lease, and ends on
+visibility false, page close, lease expiry or registration loss. An unavailable
+or unsent answer releases the request hold. A page action keeps protection
+through sending its result, even if the visible lease expires during handling.
+The service demotes once no page, command, open surface, audio session or
+explicit ongoing work needs it. Declare the same `specialUse` service type and
+permissions used for surfaces; missing declarations or an OS rejection leave
+the callbacks working without promotion. A client managed outside
+`NexusPluginService` does not gain this service lifecycle automatically.
+
+If a plugin calls `stopNexusSessionForeground()` while a page or command still
+needs protection, the service retains only the session foreground type and
+defers the stop until that demand ends. A later explicit foreground promotion
+for a new surface, audio session or ongoing feature supersedes that stop.
+
+The hub also holds an important connection while a request, visible lease or
+delivered action needs it and makes a fresh bind before delivering each action.
+Whether that fresh connection thaws an already-frozen provider still needs
+device verification. The bind is not a Freecess exemption. An action
+already delivered keeps its binding until result or deadline even if the lease
+expires; cover and close retain their cancellation semantics. Use the SDK's
+session service, keep callbacks short, and do not poll.
 
 Return the answer from `onNexusPageRequest`; that return value is the response.
 Answer quickly and from memory: the wearer's eight-second budget runs from their

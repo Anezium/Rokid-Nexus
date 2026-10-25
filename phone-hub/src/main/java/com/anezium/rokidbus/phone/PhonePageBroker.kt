@@ -36,6 +36,7 @@ interface PhonePageHost {
     fun deliver(registration: PageRegistration, path: String, payload: JSONObject): Boolean
     fun sendToGlasses(path: String, payload: JSONObject): String?
     fun bind(principal: PhonePluginPrincipal): Boolean
+    fun rebind(principal: PhonePluginPrincipal): Boolean
     fun unbind(principal: PhonePluginPrincipal)
     fun scheduleTick(atMs: Long?)
     fun log(message: String)
@@ -551,6 +552,12 @@ class PhonePageBroker(
                 live
             }
             if (current) {
+                // A fresh bind may acquire the first connection after an earlier refusal.
+                if (host.rebind(principal)) {
+                    mutate { bound[frame.owner] = principal }
+                } else {
+                    host.log("page action bind failed plugin=${frame.owner}")
+                }
                 host.deliver(registration, BusPaths.PAGE_ACTION, outgoing)
             } else {
                 host.log("page drop path=action id=${action.invocationId} reason=CANCELLED")
@@ -805,7 +812,7 @@ class PhonePageBroker(
     private fun reconcileBindings() {
         val now = host.nowMs()
         val demand = frames.values.filter { frame ->
-            frame.pending || listOfNotNull(frame.leaseUntil, frame.displayDeadline).any { now < it }
+            frame.pending || listOfNotNull(frame.leaseUntil, frame.displayDeadline, frame.invocationDeadline).any { now < it }
         }.map { it.owner }.toSet()
         bound.keys.filter { it !in demand }.toList().forEach { owner ->
             bound.remove(owner)?.let { principal -> later { host.unbind(principal) } }

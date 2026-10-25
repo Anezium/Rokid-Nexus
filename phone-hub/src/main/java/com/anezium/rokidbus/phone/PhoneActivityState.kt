@@ -364,10 +364,11 @@ internal class PhoneActivityState(
         return clearActive(owner, reason)
     }
 
-    /** Clears every duration-limited activity currently due. */
+    /** Expires pending commands and clears every duration-limited activity currently due. */
     @Synchronized
     fun expireIfDue(): List<PhoneActivityClearResult.Cleared> {
         val now = nowMs()
+        pendingCommands.entries.removeAll { now >= it.value.deadlineMs }
         val dueOwners = residents.values
             .filter { activity ->
                 activity.maxDurationDeadlineMs?.let { now >= it } == true
@@ -380,7 +381,10 @@ internal class PhoneActivityState(
 
     @Synchronized
     fun nextExpiryDeadlineMs(): Long? =
-        residents.values.mapNotNull { it.maxDurationDeadlineMs }.minOrNull()
+        (residents.values.mapNotNull { it.maxDurationDeadlineMs } + pendingCommands.values.map { it.deadlineMs }).minOrNull()
+
+    @Synchronized
+    fun pendingCommandOwners(): Set<String> = pendingCommands.keys.toSet()
 
     @Synchronized
     fun ownerPluginIds(): Set<String> = residents.keys.toSet()

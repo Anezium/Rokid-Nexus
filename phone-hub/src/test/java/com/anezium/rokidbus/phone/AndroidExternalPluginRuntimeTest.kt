@@ -19,14 +19,20 @@ class AndroidExternalPluginRuntimeTest {
     private class RecordingContext : ContextWrapper(RuntimeEnvironment.getApplication()) {
         lateinit var connection: ServiceConnection
         var unbindCount = 0
+        var bindFlags = 0
+        var bindAccepted = true
+        val calls = mutableListOf<String>()
 
         override fun bindService(service: Intent, conn: ServiceConnection, flags: Int): Boolean {
-            connection = conn
-            return true
+            calls += "bind"
+            if (bindAccepted) connection = conn
+            bindFlags = flags
+            return bindAccepted
         }
 
         override fun unbindService(conn: ServiceConnection) {
             assertTrue(conn === connection)
+            calls += "unbind"
             unbindCount += 1
         }
     }
@@ -48,12 +54,51 @@ class AndroidExternalPluginRuntimeTest {
     )
 
     @Test
+    fun `page delivery rebind replaces a held connection with a fresh bind event`() {
+        val calls = mutableListOf<String>()
+        val context = object : ContextWrapper(RuntimeEnvironment.getApplication()) {
+            val connections = mutableListOf<ServiceConnection>()
+            override fun bindService(service: Intent, conn: ServiceConnection, flags: Int): Boolean {
+                assertEquals(Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT, flags)
+                connections += conn
+                calls += "bind"
+                return true
+            }
+            override fun unbindService(conn: ServiceConnection) { calls += "unbind" }
+        }
+        val disconnected = mutableListOf<String>()
+        val runtime = runtime(context, disconnected)
+        assertTrue(runtime.bind(principal))
+        val original = context.connections.single()
+        assertTrue(runtime.rebind(principal))
+        assertTrue(original !== context.connections.last())
+        assertEquals(listOf("bind", "bind", "unbind"), calls)
+        original.onServiceDisconnected(principal.serviceComponent)
+        assertTrue(disconnected.isEmpty())
+        runtime.unbind(principal)
+        assertEquals(listOf("bind", "bind", "unbind", "unbind"), calls)
+    }
+
+    @Test
+    fun `a refused page rebind preserves the existing service hold`() {
+        val context = RecordingContext()
+        val runtime = runtime(context, mutableListOf())
+        assertTrue(runtime.bind(principal))
+        context.bindAccepted = false
+        assertTrue(!runtime.rebind(principal))
+        assertEquals(0, context.unbindCount)
+        runtime.unbind(principal)
+        assertEquals(1, context.unbindCount)
+    }
+
+    @Test
     fun `transient service disconnect preserves auto create binding`() {
         val context = RecordingContext()
         val disconnected = mutableListOf<String>()
         val runtime = runtime(context, disconnected)
 
         assertTrue(runtime.bind(principal))
+        assertEquals(Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT, context.bindFlags)
         context.connection.onServiceDisconnected(principal.serviceComponent)
 
         assertEquals(listOf("lens"), disconnected)

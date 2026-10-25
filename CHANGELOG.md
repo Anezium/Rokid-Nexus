@@ -18,6 +18,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 
 ### Phone hub
 
+- Request a fresh plugin connection before delivering a launcher command or page action, and keep it bound until its answer or deadline. Whether this wakes an already-frozen plugin still needs device verification. A refused keep-alive bind still allows a live plugin to answer; losing that connection no longer ends its activity.
 - Settings → Glasses display: **Glasses launcher** (Default, New launcher, Classic launcher), the Navigation display size, and per-app behaviour over native apps.
 - Plugin access: **Show its activity on the glasses** and **Pin its activity**. The per-plugin one-tap switches are removed; retained quick-action approvals and wire validation are unchanged.
 - Plugin access: **Float over the glasses** turns a plugin's island and pin off on the glasses' home and over apps, while its card, pages and notifications stay; on by default, it needs the new launcher (the switch says so), and up to 64 plugins can be kept off.
@@ -30,6 +31,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 
 ### SDK 0.24.0
 
+- Launcher pages and delivered commands now share the service's existing quiet **Active on your glasses** notification, helping them keep answering while the phone is idle. Pages release it when covered, closed or their lease expires; commands and actions release it after the result (or the existing deadline for an asynchronous command). Existing surface, microphone and ongoing-work holds still compose. Plugins already declaring the session's `specialUse` foreground service need no manifest change; a rejected promotion remains non-fatal.
 - The launcher bundle, active only when both hubs negotiate it (`supportsLauncherInteractive()`): page providers and the conversation, media and route page templates; typed page and activity actions with hub-approved quick actions; activity destinations and commands; notice destinations, event keys, conversation events and `withdrawNotice(eventKey)`; `forgetNotices(onAccepted)` asks the glasses to forget every notification the plugin showed, kept by the phone until they do, with `onAccepted` once the phone holds it; route geometry and heading for activities.
 - Activity actions are no longer deprecated. On a negotiated launcher they are selectable from the activity's card and page; islands themselves stay passive, and older hubs ignore them as before. Plugins still need a full-surface or notice fallback for hubs without the bundle.
 - Launcher taps use `QUICK` when the existing policy and phone stamp allow it, `CONFIRMED` otherwise. The SDK and wire are unchanged; `CONFIRMED` no longer implies a glasses confirmation panel.

@@ -75,6 +75,10 @@ class PhonePageBrokerTest {
             calls += "bind:${principal.descriptor.id}"
             return bindAccepted
         }
+        override fun rebind(principal: PhonePluginPrincipal): Boolean {
+            calls += "rebind:${principal.descriptor.id}"
+            return bindAccepted
+        }
         override fun unbind(principal: PhonePluginPrincipal) {
             calls += "unbind:${principal.descriptor.id}"
             onUnbound?.invoke()
@@ -162,6 +166,73 @@ class PhonePageBrokerTest {
 
     private fun requestsTo(epoch: String) = host.delivered.filter { it.first == epoch && it.second == BusPaths.PAGE_REQUEST }
     private fun responses() = host.glasses.filter { it.first == BusPaths.PAGE_RESPONSE }.map { it.second }
+
+    @Test
+    fun `each page action rebinds before oneway delivery even with a visible page hold`() {
+        connect(relay)
+        val registration = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        broker.onProvider(BusPaths.PAGE_RESPONSE, page(), registration)
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true))
+        host.calls.clear()
+        repeat(2) { index ->
+            broker.onGlasses(BusPaths.PAGE_ACTION, action("i$index"))
+            broker.onProvider(BusPaths.PAGE_RESULT, result("i$index"), registration)
+        }
+        assertEquals(2, host.calls.count { it == "rebind:relay" })
+        host.calls.withIndex().filter { it.value.endsWith(BusPaths.PAGE_ACTION) }.forEach {
+            assertEquals("rebind:relay", host.calls[it.index - 1])
+        }
+        assertFalse(host.calls.contains("unbind:relay"))
+
+        host.bindAccepted = false
+        broker.onGlasses(BusPaths.PAGE_ACTION, action("refused"))
+        assertEquals("rebind:relay", host.calls[host.calls.lastIndex - 1])
+        assertEquals("deliver:relay-a:${BusPaths.PAGE_ACTION}", host.calls.last())
+    }
+
+    @Test
+    fun `an accepted action bind after a refused page bind releases on result and lease expiry`() {
+        connect(relay)
+        val registration = register(relay, "relay-a")
+        host.bindAccepted = false
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), registration))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true, lease = 1_000))
+        assertFalse(broker.holdsProviderBinding("relay"))
+
+        host.bindAccepted = true
+        host.calls.clear()
+        broker.onGlasses(BusPaths.PAGE_ACTION, action())
+        assertTrue(broker.holdsProviderBinding("relay"))
+        assertEquals(listOf("rebind:relay", "deliver:relay-a:${BusPaths.PAGE_ACTION}"), host.calls)
+        host.now += 1_000
+        broker.onTick()
+        assertTrue(broker.holdsProviderBinding("relay"))
+        assertFalse("unbind:relay" in host.calls)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, result(), registration))
+        assertFalse(broker.holdsProviderBinding("relay"))
+        assertEquals(1, host.calls.count { it == "unbind:relay" })
+    }
+
+    @Test
+    fun `an accepted action bind after a refused page bind releases at the action deadline`() {
+        connect(relay)
+        val registration = register(relay, "relay-a")
+        host.bindAccepted = false
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), registration))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true, lease = 1_000))
+        assertFalse(broker.holdsProviderBinding("relay"))
+
+        host.bindAccepted = true
+        host.calls.clear()
+        broker.onGlasses(BusPaths.PAGE_ACTION, action())
+        host.now += PageSurfaceContract.PAGE_TIMEOUT_MS
+        broker.onTick()
+        assertFalse(broker.holdsProviderBinding("relay"))
+        assertEquals(1, host.calls.count { it == "unbind:relay" })
+    }
 
     @Test
     fun `a request reaches only the owner's single live registration stamped with its epoch`() {
@@ -805,6 +876,43 @@ class PhonePageBrokerTest {
         broker.onTick()
         assertFalse(broker.holdsProviderBinding("relay"))
         assertEquals(1, host.calls.count { it == "unbind:relay" })
+    }
+
+    @Test
+    fun `a delivered action keeps the provider important after the visible lease expires until its result`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true, lease = 1_000))
+        broker.onGlasses(BusPaths.PAGE_ACTION, action())
+
+        host.now += 1_000
+        broker.onTick()
+        assertTrue(broker.holdsProviderBinding("relay"))
+        assertEquals(host.now + PageSurfaceContract.PAGE_TIMEOUT_MS - 1_000, host.tick)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, result(), relayA))
+        assertFalse(broker.holdsProviderBinding("relay"))
+        assertEquals(1, host.calls.count { it == "unbind:relay" })
+    }
+
+    @Test
+    fun `a delivered action releases the provider at its deadline without a result or visible lease`() {
+        connect(relay)
+        val relayA = register(relay, "relay-a")
+        broker.onGlasses(BusPaths.PAGE_REQUEST, request())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), relayA))
+        broker.onGlasses(BusPaths.PAGE_VISIBILITY, visibility(true, lease = 1_000))
+        broker.onGlasses(BusPaths.PAGE_ACTION, action())
+
+        host.now += PageSurfaceContract.PAGE_TIMEOUT_MS - 1
+        broker.onTick()
+        assertTrue(broker.holdsProviderBinding("relay"))
+        host.now += 1
+        broker.onTick()
+        assertFalse(broker.holdsProviderBinding("relay"))
+        assertEquals(1, host.calls.count { it == "unbind:relay" })
+        assertEquals(PhonePageBroker.ERROR_PAGE_NOT_REQUESTED, broker.onProvider(BusPaths.PAGE_RESULT, result(), relayA))
     }
 
     @Test

@@ -335,6 +335,19 @@ class BusHubService : Service() {
             override fun registrationCount(pluginId: String): Int =
                 registrations.count { it.principal?.descriptor?.id == pluginId }
 
+            override fun bindCommand(pluginId: String): Boolean {
+                val principal = surfaceOwnerFor(pluginId) ?: return false
+                if (!::activityCommandRuntime.isInitialized || !activityCommandRuntime.rebind(principal)) return false
+                activityCommandPrincipals[pluginId] = principal
+                return true
+            }
+
+            override fun unbindCommand(pluginId: String) {
+                activityCommandPrincipals.remove(pluginId)?.let { principal ->
+                    if (::activityCommandRuntime.isInitialized) activityCommandRuntime.unbind(principal)
+                }
+            }
+
             override fun dataPlaneUp(): Boolean = sppSession != null
 
             override fun sendDataPlane(envelope: BusEnvelope): String? = this@BusHubService.sendDataPlane(envelope)
@@ -477,6 +490,8 @@ class BusHubService : Service() {
                 sendRemote(BusEnvelope(path = path, payload = payload))
             override fun bind(principal: PhonePluginPrincipal): Boolean =
                 ::pagePluginRuntime.isInitialized && pagePluginRuntime.bind(principal)
+            override fun rebind(principal: PhonePluginPrincipal): Boolean =
+                ::pagePluginRuntime.isInitialized && pagePluginRuntime.rebind(principal)
             override fun unbind(principal: PhonePluginPrincipal) {
                 if (::pagePluginRuntime.isInitialized) pagePluginRuntime.unbind(principal)
             }
@@ -503,6 +518,8 @@ class BusHubService : Service() {
     private lateinit var cameraCompanionController: CameraCompanionController
     private lateinit var skillGrantStore: SkillGrantStore
     private lateinit var skillLeaseRuntime: AndroidSkillLeaseRuntime
+    private lateinit var activityCommandRuntime: AndroidSkillLeaseRuntime
+    private val activityCommandPrincipals = ConcurrentHashMap<String, PhonePluginPrincipal>()
     private lateinit var skillsCoordinator: SkillsCoordinator
 
     // Skill calls must run in arrival order: a cancel must not overtake its invoke.
@@ -1005,6 +1022,10 @@ class BusHubService : Service() {
         }
     }
 
+    private fun createActivityCommandRuntime(context: Context) = AndroidSkillLeaseRuntime(context) { principal ->
+        activityRouter.onCommandBindingDied(principal.descriptor.id)
+    }
+
     override fun onCreate() {
         super.onCreate()
         NexusPhoneState.restore(applicationContext)
@@ -1242,6 +1263,7 @@ class BusHubService : Service() {
             context = applicationContext,
             bindingDied = { principal -> skillsExecutor.execute { skillsCoordinator.onLeaseBindingDied(principal) } },
         )
+        activityCommandRuntime = createActivityCommandRuntime(applicationContext)
         skillsCoordinator = SkillsCoordinator(skillsHost, skillGrantStore)
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
