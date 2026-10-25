@@ -216,17 +216,22 @@ internal object ActivityOverlayRenderer {
     ): Map<PinSurfacePosition, Int> {
         val occupants = mutableMapOf<PinSurfacePosition, Int?>()
         pin?.let { occupants[it.content.position] = PinOverlayRenderer.drawnWidthPx(context, it) }
-        visible.forEach { item -> occupants[item.activity.corner] = guidances[item.activity.surfaceId]?.form?.widthPx }
+        visible.forEach { item ->
+            // In the order [ActivityIsland.showSteady] picks its form.
+            occupants[item.activity.corner] = guidances[item.activity.surfaceId]?.form?.widthPx
+                ?: panelWidthPx(context).takeIf { item.presentation == ActivityPresentation.PANEL }
+        }
         return rowBudgets(context.resources.displayMetrics.widthPixels, dp(context, EDGE_MARGIN_DP), occupants)
     }
 
     /**
      * The widest each folded island may be so that it never meets the other occupant of its row
      * (the two top corners, or the two bottom ones) and keeps the edge margin from it, as from the
-     * screen's edges. [occupants] holds every drawn corner: the width a guidance form or a pin keeps
-     * whatever stands beside it, or null for a folded island, which gives way to such a width. Two
-     * folded islands share the row evenly. A folded island alone in its row is absent from the
-     * result and keeps its own widths; the expanded panel and the flare are not bounded by it.
+     * screen's edges. [occupants] holds every drawn corner: the width a guidance form, an expanded
+     * panel or a pin keeps whatever stands beside it, or null for a folded island, which gives way
+     * to such a width. Two folded islands share the row evenly. A folded island alone in its row
+     * is absent from the result and keeps its own widths. The flare is not bounded by it: its band
+     * is drawn opaque in front of every island and pin, across the top row, until it folds back.
      */
     internal fun rowBudgets(screenPx: Int, edgePx: Int, occupants: Map<PinSurfacePosition, Int?>): Map<PinSurfacePosition, Int> {
         val room = screenPx - 3 * edgePx
@@ -424,7 +429,7 @@ internal object ActivityOverlayRenderer {
             addForm(chip, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
             addForm(compact, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
             addForm(glyphOnly, LayoutParams(glyphOnly.sizePx, glyphOnly.sizePx))
-            addForm(panel, LayoutParams((width * PANEL_WIDTH_FRACTION).toInt(), LayoutParams.WRAP_CONTENT))
+            addForm(panel, LayoutParams(panelWidthPx(context), LayoutParams.WRAP_CONTENT))
             addForm(nav, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
             addForm(
                 flare,
@@ -919,6 +924,9 @@ internal object ActivityOverlayRenderer {
     }
 
     private fun dp(context: Context, value: Int): Int = BusTheme.dp(context, value)
+
+    /** The expanded panel's width, which it keeps whatever shares its row. */
+    private fun panelWidthPx(context: Context): Int = (context.resources.displayMetrics.widthPixels * PANEL_WIDTH_FRACTION).toInt()
 
     private val ROWS = listOf(
         PinSurfacePosition.TOP_LEFT to PinSurfacePosition.TOP_RIGHT,
