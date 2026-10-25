@@ -2176,15 +2176,19 @@ template as the fallback. `ink` stays reserved, and there is no Ink page body.
   side; `status` is `HANDED_OFF` or `UNCONFIRMED`. There are no per-message
   times and no read or delivery marks.
 - After a `done` compose send, show the reply in your next revisions as an
-  `OURS` message with a new `id` and the text as sent, after the messages the
-  page already showed (marked `HANDED_OFF` if you like). The glasses keep their
-  own bubble for it on that page until a revision carries such a message, so a
-  revision you computed before recording the reply, or one bringing someone
-  else's message, does not make it vanish. Keep each `OURS` message you showed in
-  its place; you may give it another `id` (replacing your record of a reply with
-  the app's own copy), and the glasses never take it for a later reply in the same
-  words. A page answered later (the thread opened again, a new registration of your
-  plugin) shows only what you put in it.
+  `OURS` message with the text as sent (marked `HANDED_OFF` if you like). The
+  glasses keep their own bubble for it on that page until a revision shows one
+  more `OURS` message in those words than the page showed when it was sent (plus
+  the earlier identical replies still waiting), so a revision you computed before
+  recording the reply, or one bringing someone else's message, does not make it
+  vanish. Ids and order do not enter that count: you may give a message another
+  `id` (replacing your record of a reply with the app's own copy) and show
+  identical replies' copies in any order. Add older history above the messages
+  already shown, never between them: counting starts at the oldest of them still
+  there. Dropping earlier `OURS` messages in the same words (a bounded log) never
+  hides a reply but can leave it drawn twice on that page until it closes. A page
+  answered later (the thread opened again, a new registration of your plugin)
+  shows only what you put in it.
 - `ConversationComposer(recipient, sendActionId, maxChars, replyable, ...)`
   offers the hub composer (Dictate, Type, Send). `sendActionId` must name one of
   the page's actions typed `NexusActionType.ComposeSend`, and no row may target

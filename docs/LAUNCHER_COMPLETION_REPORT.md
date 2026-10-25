@@ -72,12 +72,14 @@ This section supersedes the status paragraphs above, which are kept as history.
   a one-to-one conversation card no longer repeats its sender before each line, a group card
   keeps its senders (`ComposerSessionTest`); the reply just sent no longer blinks out when a
   revision computed before Relay recorded it lands after the result, nor when someone else's
-  message arrives meanwhile: the glasses keep it on its page until that page carries Relay's copy
-  of it, one copy per reply, and drop it with its page, a new provider registration or the
-  owner's purge (`ComposerSessionTest`). An earlier identical reply whose copy Relay replaces with
-  the app's own (`h-<serial>` to a captured `m-...` id, in place) is never taken for the newer
-  reply's copy, whether that reply is still in flight or already handed off; this relies on
-  providers keeping each outgoing message in its place, whatever its id (`ComposerSessionTest`).
+  message arrives meanwhile: the glasses keep it on its page until that page carries a copy of
+  it, and drop it with its page, a new provider registration or the owner's purge
+  (`ComposerSessionTest`). Copies are counted per text, not matched by id or place, so Relay
+  replacing its record with the app's own copy (`h-<serial>` to a captured `m-...` id), copies
+  arriving in any order, replies in other words between them and three or more identical replies
+  all keep one bubble per reply. The guarantee is one-sided: a reply is never hidden before a
+  copy is shown for it, but a provider dropping earlier copies in the same words (Relay's bounded
+  handoff log) can leave it drawn twice until its frame ends (`ComposerSessionTest`).
 - **What the tests prove, and what they do not.** Component tests (reducer, router, Relay with a
   fake hub) cover each fix above and were each observed to fail with the fix reverted. Production
   session-runtime tests (real `NexusSession`, real wall clock, the runner's own timer, a real

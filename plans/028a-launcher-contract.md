@@ -313,11 +313,11 @@ Step along the inline buttons (no wrap) -> Enter starts the capture or sends -> 
 tap (draft, back to reading, nothing sent) or Back (cancelled, old draft kept). Send needs a new
 focus and the fresh-contact rule. Results: `done` -> bubble `handed to the app`, draft cleared;
 the sent text stays on the frame it was sent from, through revisions computed before the provider
-recorded it or bringing other messages, until that page carries it (an ours message with the same
-text after the newest message shown when it was sent, one per reply; ours messages already in that
-text when it was sent may take another id in their place, so the newest message shown is the
-newest of the others and the first messages in that text after it stand for those earlier ones,
-never for the new reply); it ends with that frame, an
+recorded it or bringing other messages, until that page carries it (it shows more ours messages in
+that text, counted from the oldest message shown when it was sent that is still there, than it
+showed then plus the earlier identical replies still waiting; ids and order never enter the count,
+so a reply is never hidden before a copy is shown for it, and a provider dropping earlier copies
+can only leave it drawn twice until the frame ends); it ends with that frame, an
 answer from another provider registration, or the owner's purge or invalidation, and a page
 answered later says what the provider knows;
 `authority_lost` code or the composer's `replyable=false` -> text kept, Send withheld,
