@@ -8,6 +8,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 
 - **A new Nexus launcher.** Triple tap opens a stack: your live activities first (a route, what plays, a to-do list), then the latest notification, **Notifications** and **Applications**. Swipe moves, tap opens, double tap goes back. The stack keeps its order while it is open, so nothing jumps under your finger.
 - **Pages instead of apps.** An activity or a notification opens its page inside Nexus: a conversation, a player with Previous, Play/Pause and Next, a route with its map, a checklist. **Open app** is still there when you want the plugin's full surface.
+- **Tap to act.** A focused activity command, plugin page row or **Open app** runs immediately, without a confirmation screen. A press begun before the target was drawn cannot act; stale, offline and pending actions keep their guards. Conversation **Send** still needs its own fresh tap after the draft is visible.
 - **Notification history.** The last 30 notifications of the past 24 hours, in memory only. A message opens its exact conversation. A notification removed from the phone is marked removed and can no longer be answered, and nothing older than 24 hours is shown, even on a launcher left open.
 - **Reply from the glasses.** A conversation page offers Dictate (the glasses' microphone) and Type (the phone keyboard). Send needs a fresh tap after you saw it, and the result says the reply was handed to the app, never that it was delivered or read. What you dictated or typed is kept if the link drops or the notification goes away; it is never sent on its own.
 - **Navigation on the glasses.** A route shows as text, a minimap, a panel or a full map you can open from its card, with the real streets around a walking route. GPS loss is said plainly and the map turns north-up instead of guessing.
@@ -17,7 +18,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 ### Phone hub
 
 - Settings → Glasses display: **Glasses launcher** (Default, New launcher, Classic launcher), the Navigation display size, and per-app behaviour over native apps.
-- Plugin access: **Show its activity on the glasses**, **Pin its activity**, and one-tap quick actions per plugin (**Check tasks with one tap**, **Play, pause and skip with one tap**). Off, each tap on the glasses asks to confirm first.
+- Plugin access: **Show its activity on the glasses** and **Pin its activity**. The per-plugin one-tap switches are removed; retained quick-action approvals and wire validation are unchanged.
 - **Type your reply.** When you choose Type on the glasses, the phone shows its keyboard, or a notification that opens it.
 - A plugin that is revoked, disabled, uninstalled or re-signed leaves the glasses' notification history, even if the glasses were away at the time.
 - Route maps report only what the glasses actually drew, under a short owner-scoped lease. Both hubs negotiate this feedback and in-map attribution together; Navigation keeps route-only guidance with an older peer.
@@ -29,6 +30,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 
 - The launcher bundle, active only when both hubs negotiate it (`supportsLauncherInteractive()`): page providers and the conversation, media and route page templates; typed page and activity actions with hub-approved quick actions; activity destinations and commands; notice destinations, event keys, conversation events and `withdrawNotice(eventKey)`; `forgetNotices(onAccepted)` asks the glasses to forget every notification the plugin showed, kept by the phone until they do, with `onAccepted` once the phone holds it; route geometry and heading for activities.
 - Activity actions are no longer deprecated. On a negotiated launcher they are selectable from the activity's card and page; islands themselves stay passive, and older hubs ignore them as before. Plugins still need a full-surface or notice fallback for hubs without the bundle.
+- Launcher taps use `QUICK` when the existing policy and phone stamp allow it, `CONFIRMED` otherwise. The SDK and wire are unchanged; `CONFIRMED` no longer implies a glasses confirmation panel.
 - `supportsRenderedMaps`, `renderedMapViews`, `clearRenderedMapDemand()` and `onRenderedMapsChanged()` expose bounded, expiring hub-issued map demand.
 - `RouteGeometry.attribution` (optional, at most 40 printable characters) credits the source of a geometry's `street` and `major` paths. Older hubs ignore it.
 - Several model classes gained defaulted parameters. Source calls keep compiling; code built against 0.23.0 must be rebuilt against 0.24.0.
