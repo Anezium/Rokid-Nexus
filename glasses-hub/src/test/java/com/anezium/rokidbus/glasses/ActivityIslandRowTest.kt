@@ -38,7 +38,7 @@ import java.time.Duration
 
 /**
  * Two things sharing a row of the HUD's 480 pixels, as the activity renderer sizes them: a folded
- * island gives way to a guidance island or a pin beside it, two folded islands share the row,
+ * island gives way to a guidance island, an expanded panel or a pin beside it, two folded islands share the row,
  * and the edge margin stays between them; the title scrolls inside the narrower line.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -211,6 +211,50 @@ class ActivityIslandRowTest {
     }
 
     @Test
+    fun `a folded island beside an expanded panel keeps only its glyph, and its text when the panel folds`() {
+        val panelPx = (480 * 0.78f).toInt()
+        val other = "Teardrop (Mad Professor remix) Massive A"
+        val podcast = item("podcast", PinSurfacePosition.TOP_RIGHT, content(headline = other, secondary = "Massive Attack"))
+        val islands = mutableMapOf<String, ActivityOverlayRenderer.ActivityIsland>()
+        val expanded = item("media", PinSurfacePosition.TOP_LEFT, content(headline = headline, secondary = "Kid Loco"), ActivityPresentation.PANEL)
+        val (mediaIsland, podcastIsland) = draw(listOf(expanded to null, podcast to null), islands = islands)
+
+        assertEquals("the panel keeps its width", panelPx, mediaIsland.currentForm!!.width)
+        assertTrue(mediaIsland.currentForm !== mediaIsland.folded)
+        assertGivesWay(podcastIsland, mediaIsland, budgetPx = 480 - 3 * edgePx - panelPx)
+
+        // The ten seconds are up: the panel folds into its text form, and the row is shared again.
+        draw(listOf(item("media", PinSurfacePosition.TOP_LEFT, content(headline = headline, secondary = "Kid Loco")) to null, podcast to null), islands = islands)
+        val left = mediaIsland.currentForm as ActivityOverlayRenderer.ActivityCompactView
+        val right = podcastIsland.currentForm as ActivityOverlayRenderer.ActivityCompactView
+        assertApart(rectOf(left), rectOf(right))
+        assertDrawnWhole(right.title, other, right)
+
+        draw(listOf(expanded to null, podcast to null), islands = islands)
+        assertGivesWay(podcastIsland, mediaIsland, budgetPx = 480 - 3 * edgePx - panelPx)
+    }
+
+    @Test
+    fun `a measured chip beside an expanded panel in the bottom row keeps only its glyph, and its text when the panel folds`() {
+        val panelPx = (480 * 0.78f).toInt()
+        val transit = item("transit", PinSurfacePosition.BOTTOM_LEFT, content(headline = headline, measure = "3 min", secondary = "Gare de Lyon"))
+        val timer = { presentation: ActivityPresentation ->
+            item("timer", PinSurfacePosition.BOTTOM_RIGHT, content(headline = "Pasta", secondary = "Timer"), presentation)
+        }
+        val islands = mutableMapOf<String, ActivityOverlayRenderer.ActivityIsland>()
+        val (transitIsland, timerIsland) = draw(listOf(transit to null, timer(ActivityPresentation.PANEL) to null), islands = islands)
+
+        assertEquals(panelPx, timerIsland.currentForm!!.width)
+        assertGivesWay(transitIsland, timerIsland, budgetPx = 480 - 3 * edgePx - panelPx)
+
+        draw(listOf(transit to null, timer(ActivityPresentation.CHIP) to null), islands = islands)
+        val chip = transitIsland.currentForm!!
+        assertTrue(chip is PinOverlayRenderer.PinPanelView)
+        assertApart(rectOf(chip), rectOf(timerIsland.currentForm!!))
+        assertDrawnWhole(find<OverflowLineView>(chip).single(), headline, chip)
+    }
+
+    @Test
     fun `an island with no room for its glyph is not drawn, and comes back by itself`() {
         val media = item("media", PinSurfacePosition.TOP_LEFT, content(headline = headline, secondary = "Kid Loco"))
         val island = ActivityOverlayRenderer.ActivityIsland(activity, glyphOf = { _, _ -> GlyphDrawable(DISC) }, actionGlyphOf = { GlyphDrawable(DISC) })
@@ -303,7 +347,8 @@ class ActivityIslandRowTest {
         assertEquals(glyphPx, form!!.width)
         assertEquals(1f, form.alpha)
         assertTrue("$glyphPx px fits $budgetPx px", form.width <= budgetPx)
-        assertApart(rectOf(form), rectOf(neighbour.currentForm!!))
+        val (left, right) = listOf(rectOf(form), rectOf(neighbour.currentForm!!)).sortedBy { it.left }
+        assertApart(left, right)
     }
 
     /** Nothing of [island] is drawn: no form, its outline folded away. */
@@ -362,7 +407,12 @@ class ActivityIslandRowTest {
         headline = headline,
     )
 
-    private fun item(owner: String, corner: PinSurfacePosition, content: ActivitySurfaceContent) = ActivityRenderItem(
+    private fun item(
+        owner: String,
+        corner: PinSurfacePosition,
+        content: ActivitySurfaceContent,
+        presentation: ActivityPresentation = ActivityPresentation.CHIP,
+    ) = ActivityRenderItem(
         activity = NexusActivitySurface(
             surfaceId = "$owner:activity",
             ownerPluginId = owner,
@@ -378,7 +428,7 @@ class ActivityIslandRowTest {
             motionToken = 1,
         ),
         primary = owner == "media",
-        presentation = ActivityPresentation.CHIP,
+        presentation = presentation,
     )
 
     private fun rectOf(child: View): Rect = Rect(0, 0, child.width, child.height)
