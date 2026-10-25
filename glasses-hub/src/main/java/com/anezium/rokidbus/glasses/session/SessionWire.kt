@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.glasses.ActivityEntry
 import com.anezium.rokidbus.shared.ActivityAction
 import com.anezium.rokidbus.shared.ActivityActivation
 import com.anezium.rokidbus.shared.ActivityCommandResult
@@ -110,6 +111,52 @@ internal data class ActivitySource(
     /** Its launcher fields were validated before a link loss and nothing was announced since; see [ActivityStop.held]. */
     val held: Boolean = false,
 )
+
+/**
+ * [entry] as the session reads it. The launcher-bundle fields are read only over a pair that
+ * negotiated it ([interactive]); a v1 pair gets v1 cards, its 12-character primary included.
+ * Through a link loss ([held]) the card keeps what the bundle validated, to read and to open
+ * inert, but never a command: until the phone announces again, nothing on it can be sent.
+ */
+internal fun activitySourceOf(entry: ActivityEntry, interactive: Boolean, held: Boolean): ActivitySource {
+    val content = entry.content
+    val base = ActivitySource(
+        surfaceId = entry.surfaceId,
+        ownerPluginId = entry.ownerPluginId,
+        primary = entry.primary,
+        text = content.primary,
+        detail = content.secondary,
+        measure = content.eta ?: content.measure,
+        startedOrder = entry.startedOrder,
+        significantOrder = entry.lastSignificantOrder,
+        // The link is the hub's own fact: a v1 card shows its last-known state too.
+        stale = entry.stale,
+        knownAtWallMs = entry.knownAtWallMs.takeIf { entry.stale },
+    )
+    return when {
+        interactive -> base.copy(
+            text = content.headline ?: content.primary,
+            userPinned = content.userPinned,
+            offline = content.isOffline,
+            knownAtWallMs = content.knownAtWallMs ?: base.knownAtWallMs,
+            seq = entry.seq,
+            destination = content.destination,
+            activation = content.effectiveActivation,
+            commands = if (content.isOffline) emptyList() else content.actions,
+            defaultActionId = content.effectiveDefaultActionId,
+        )
+        held -> base.copy(
+            text = content.headline ?: content.primary,
+            userPinned = content.userPinned,
+            offline = content.isOffline,
+            knownAtWallMs = content.knownAtWallMs ?: base.knownAtWallMs,
+            destination = content.destination,
+            activation = content.effectiveActivation,
+            held = true,
+        )
+        else -> base
+    }
+}
 
 /**
  * Turns the activity tier's snapshots into session events: a newcomer starts, a change of value
