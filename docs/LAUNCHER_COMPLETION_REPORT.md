@@ -68,7 +68,9 @@ This section supersedes the status paragraphs above, which are kept as history.
   (Google Maps or Citymapper guidance) shows Minimap and Panel unavailable on its Display page and
   cannot save them, and phone Settings says maps need a route Nexus plans (`RouteNavigationTest`);
   Media Deck no longer marks a new track or player as a significant update, so what plays stays
-  below a running route (`MediaDeckActivityPublisherTest`; the hub's order rule is unchanged).
+  below a running route (`MediaDeckActivityPublisherTest`; the hub's order rule is unchanged);
+  a one-to-one conversation card no longer repeats its sender before each line, a group card
+  keeps its senders (`ComposerSessionTest`).
 - **What the tests prove, and what they do not.** Component tests (reducer, router, Relay with a
   fake hub) cover each fix above and were each observed to fail with the fix reverted. Production
   session-runtime tests (real `NexusSession`, real wall clock, the runner's own timer, a real

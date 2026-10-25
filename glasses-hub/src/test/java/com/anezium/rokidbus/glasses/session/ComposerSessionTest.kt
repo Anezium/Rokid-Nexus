@@ -623,6 +623,29 @@ class ComposerSessionTest {
     }
 
     @Test
+    fun `a one-to-one card does not repeat its sender before each line`() {
+        // Relay sends a thread's messages as lines, each under its sender's name.
+        arrive(conversationNotice("t1", "Mika", "").copy(body = null, lines = listOf("Mika: Can you check the build", "Mika: CI is red")))
+        openRoot(at = 1_000)
+        val drawn = screen().blocks.first() as ScreenBlock.Card
+        assertEquals("Mika", drawn.primary)
+        assertEquals("Can you check the build CI is red", drawn.secondary)
+    }
+
+    @Test
+    fun `a group card keeps every sender, and so does a thread with a reply of ours`() {
+        arrive(conversationNotice("t1", "Team", "").copy(body = null, lines = listOf("Mika: Can you check the build", "Ana: on it")))
+        openRoot(at = 1_000)
+        assertEquals("Mika: Can you check the build Ana: on it", (screen().blocks.first() as ScreenBlock.Card).secondary)
+
+        val reply = conversationNotice("t2", "Mika", "").copy(body = null, lines = listOf("Mika: Can you check the build", "Me: on it"))
+        assertEquals("Mika: Can you check the build Me: on it", reply.message)
+        // A body is read the same way, its line breaks kept.
+        assertEquals("check the build\nCI is red", conversationNotice("t3", "Mika", "Mika: check the build\nMika: CI is red").message)
+        assertEquals("Mikael: hi", conversationNotice("t4", "Mika", "Mikael: hi").message)
+    }
+
+    @Test
     fun `several live threads of one owner make an aggregate opening its main page`() {
         arrive(conversationNotice("t1", "Ana", "hi"))
         arrive(conversationNotice("t2", "Bo", "hello"))

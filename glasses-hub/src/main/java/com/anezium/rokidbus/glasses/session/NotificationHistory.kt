@@ -31,9 +31,24 @@ internal data class NoticeEntry(
     val text: String
         get() = listOfNotNull(title, body, lines.firstOrNull()).firstOrNull { it.isNotBlank() }.orEmpty()
 
-    /** The message of a conversation event, under its sender's name. */
+    /**
+     * The message of a conversation event, under its sender's name. A one-to-one thread's lines
+     * all start `<title>: `, the name the card already shows above them, and lose that prefix; a
+     * group's lines name other senders than its title and keep theirs.
+     */
     val message: String?
-        get() = (body ?: lines.joinToString(" ").ifBlank { null })?.takeIf { title != null && it.isNotBlank() }
+        get() {
+            val name = title?.trim() ?: return null
+            val prefix = "$name: "
+            val said = (body?.lines() ?: lines).map(String::trim).filter(String::isNotEmpty)
+            val oneToOne = name.isNotEmpty() && said.isNotEmpty() && said.all { it.startsWith(prefix) && it.length > prefix.length }
+            val text = if (oneToOne) {
+                said.joinToString(if (body != null) "\n" else " ") { it.removePrefix(prefix).trim() }
+            } else {
+                body ?: lines.joinToString(" ")
+            }
+            return text.takeIf(String::isNotBlank)
+        }
 
     /** The exact thread a conversation event belongs to: its event key, by the provider's contract. */
     val threadKey: String? get() = eventKey.takeIf { conversation && destination != null }

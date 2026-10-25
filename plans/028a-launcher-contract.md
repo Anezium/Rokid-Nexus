@@ -294,8 +294,10 @@ stop, then `Activities · n` when the collection has more than the promoted card
 entries come from more than one thread of one owner, an aggregate card (`3 conversations`,
 names) opening the owner's main page; else a conversation card for the newest conversation
 entry (opens its exact `destination` directly; identity never swaps under focus; resolves in
-place to handed-off or removed); else the generic preview of the newest entry. The armed band
-(NoticeController) is unchanged.
+place to handed-off or removed); else the generic preview of the newest entry. A conversation
+card shows the entry's title over its message; when every line of the message starts
+`<title>: ` (a one-to-one thread) the card drops that prefix, and a group's lines keep their
+senders. The armed band (NoticeController) is unchanged.
 
 ## 7. Composer (glasses-owned, generic, used by conversation pages)
 
