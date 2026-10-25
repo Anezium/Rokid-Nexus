@@ -15,7 +15,7 @@ notice, `Notifications · n` and Applications. Pages the hub authors (`nexus:`) 
 the glasses and work without a phone; plugin pages are pulled over `/page/*` once both hubs
 announce `pageSessionVersion: 1`, and drawn from the typed templates (the four base ones, plus
 conversation, media and route over the launcher bundle). Plugins that offer
-no pages appear in Applications as "Open the full app", behind a labelled launch step.
+no pages appear in Applications as "Open the full app", which launches on one tap.
 
 Nobody's choice means `SESSION` when the phone's last capabilities announcement negotiated the
 launcher bundle, and `LEGACY` before any announcement or with an older phone. The persisted

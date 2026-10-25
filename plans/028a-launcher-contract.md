@@ -363,6 +363,13 @@ overlays and IMEs excluded) splits home from native apps. Per-app mode `resident
 nothing` (unknown app -> `signals`; home -> `residents`), edited on the phone Native apps page and
 sent as `/core/ambient/policy {revision, modes: {package: mode}}`. In an app the hub caps islands
 at `text`. Islands stay passive; native apps and surfaces keep their input.
+Delivered 2026-10-24 (owner request): the policy also carries `hiddenOwners: [pluginId]`, the
+plugins whose "Float over the glasses" switch (phone Plugin access, default on, purged with the
+grant) is off. Such an owner gets no island, flare or display wake and its pin is held but not
+drawn; its entry, card, pages and notices are unchanged and the other islands expand in its place.
+Absent (older phone) or ignored (older glasses), every owner shows. Same scope as 8.1-8.2: the
+`SESSION` launcher over a bundle pair, which the switch states. At most 64 owners: the phone
+refuses a 65th rather than drop an accepted choice from the list.
 
 8.3 Launcher backend: `PhoneHubCapabilities.launcherBackend` = `"session" | "legacy"` when the
 user chose explicitly on the phone (absent = no opinion). Glasses precedence: phone explicit >

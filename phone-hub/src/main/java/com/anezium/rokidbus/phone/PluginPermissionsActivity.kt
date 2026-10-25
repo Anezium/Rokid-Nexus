@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.shared.AmbientPreferencesContract
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.skills.SkillEffect
 import com.anezium.rokidbus.shared.skills.SkillOperation
@@ -286,13 +287,48 @@ class PluginPermissionsActivity : Activity() {
                 preferences.setPinned(key, checked)
                 BusHubService.onActivityPreferencesChanged(key)
             },
+            floatingRow(key, preferences, preference),
         )
+    }
+
+    /**
+     * Whether this plugin's island and pin float over the glasses' home and apps. Like the rows
+     * above it never goes through [applyDecision]: it only re-sends the glasses' ambient policy.
+     * Only the new launcher honours it, which the note says, naming Classic when the user chose
+     * it. Once the most plugins the policy can name are kept off, the others' switches stay on.
+     */
+    private fun floatingRow(
+        key: PluginGrantKey,
+        preferences: PhoneActivityPreferences,
+        preference: PhoneActivityPreference,
+    ): LinearLayout {
+        val room = preferences.canKeepOffGlasses(key)
+        val note = when {
+            !room ->
+                "Its island and pin over the home and your apps. ${AmbientPreferencesContract.MAX_HIDDEN_OWNERS} " +
+                    "plugins already stay off the glasses, the most allowed: let one of them float again first."
+            PhoneLauncherBackendStore(this).choice() == PhoneLauncherBackendChoice.LEGACY ->
+                "Its island and pin over the home and your apps. The Classic launcher you chose always " +
+                    "shows them; this choice applies with the new launcher."
+            else ->
+                "Its island and pin over the home and your apps, with the new launcher. Off hides only " +
+                    "those: its card, pages and notifications stay."
+        }
+        return switchRow(
+            title = "Float over the glasses",
+            note = note,
+            checked = preference.floating,
+            enabled = room,
+        ) { checked ->
+            if (preferences.setFloating(key, checked)) onKeptOffGlassesChanged()
+        }
     }
 
     private fun switchRow(
         title: String,
         note: String,
         checked: Boolean,
+        enabled: Boolean = true,
         onChanged: (Boolean) -> Unit,
     ): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -320,6 +356,7 @@ class PluginPermissionsActivity : Activity() {
         addView(
             NexusUi.switch(this@PluginPermissionsActivity).apply {
                 isChecked = checked
+                isEnabled = enabled
                 setOnCheckedChangeListener { _, value ->
                     onChanged(value)
                     render()
@@ -674,6 +711,8 @@ class PluginPermissionsActivity : Activity() {
         private const val EXTRA_PLUGIN_ID = "plugin_id"
         private const val PREFERENCES = "plugin_access_ui"
         private const val KEY_DEVELOPER_DETAILS = "developer_details"
+        /** Re-sends the glasses' ambient policy after a Float over the glasses change; tests watch it. */
+        @Volatile internal var onKeptOffGlassesChanged: () -> Unit = { BusHubService.onAmbientPolicyChanged() }
 
         fun intent(context: Context, target: PluginGrantTarget): Intent =
             Intent(context, PluginPermissionsActivity::class.java)

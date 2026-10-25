@@ -70,11 +70,24 @@ internal object PinController {
     private val listeners = CopyOnWriteArrayList<(NexusPinSurface?) -> Unit>()
     private var expiry: Runnable? = null
     private var cameraOverlayActive = false
+    private var notified: NexusPinSurface? = null
+
+    init {
+        // The user's choice on the phone hides or brings back the held pin: no new pin is needed.
+        AmbientPreferences.observe(::refreshKeptOff)
+    }
 
     fun activePin(): NexusPinSurface? = state.activePin()
 
+    /**
+     * The held pin unless the user keeps its owner off the glasses. It stays held, with its own
+     * TTL, so letting the owner back shows it again at once.
+     */
+    fun presentablePin(): NexusPinSurface? =
+        state.activePin()?.takeUnless { ActivityController.keptOffGlasses(ownerOf(it)) }
+
     fun visiblePin(): NexusPinSurface? =
-        state.activePin().takeUnless { cameraOverlayActive }
+        presentablePin().takeUnless { cameraOverlayActive }
 
     fun observe(listener: (NexusPinSurface?) -> Unit): () -> Unit {
         listeners += listener
@@ -92,6 +105,11 @@ internal object PinController {
             true
         }
         else -> false
+    }
+
+    /** Whether the user keeps the pin's owner off the glasses may have changed; redraws only if it did. */
+    fun refreshKeptOff() {
+        runOnMain { if (visiblePin() != notified) notifyChanged() }
     }
 
     fun setCameraOverlayActive(active: Boolean) {
@@ -165,8 +183,12 @@ internal object PinController {
 
     private fun notifyChanged() {
         val visible = visiblePin()
+        notified = visible
         listeners.forEach { listener -> runCatching { listener(visible) } }
     }
+
+    private fun ownerOf(pin: NexusPinSurface): String =
+        pin.surfaceId.removeSuffix(":${PinSurfaceContract.LOCAL_SURFACE_ID}")
 
     private fun runOnMain(block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block)

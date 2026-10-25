@@ -122,7 +122,8 @@ class PhoneAmbientPreferencesStore(private val storage: PluginGrantStorage) {
  * Keeps glasses that negotiated the launcher bundle in step with [store]: the full size map and
  * the full app policy on every announce and every change, never a delta. Each message carries a
  * revision that rises with every send, across hub restarts too ([initialRevision] is wall time),
- * so the glasses can always tell the newest map from an older one that arrived late.
+ * so the glasses can always tell the newest map from an older one that arrived late. The policy
+ * also carries [hiddenOwners], the approved plugins the user keeps off the glasses.
  */
 internal class PhoneAmbientSync(
     private val store: PhoneAmbientPreferencesStore,
@@ -130,6 +131,7 @@ internal class PhoneAmbientSync(
     private val launcherActive: () -> Boolean,
     private val log: (String) -> Unit,
     initialRevision: Long = System.currentTimeMillis(),
+    private val hiddenOwners: () -> Set<String> = { emptySet() },
 ) {
     private val revision = AtomicLong(initialRevision)
 
@@ -164,8 +166,13 @@ internal class PhoneAmbientSync(
     @Synchronized
     fun pushPolicy() {
         if (!launcherActive()) return
-        val policy = AmbientPolicy(revision.incrementAndGet(), store.modes())
+        // Within the wire's bound: PhoneActivityPreferences refuses to keep one more plugin off.
+        val hidden = hiddenOwners()
+        val policy = AmbientPolicy(revision.incrementAndGet(), store.modes(), hidden)
         val error = send(AmbientPreferencesContract.POLICY_PATH, AmbientPreferencesContract.policyPayload(policy))
-        log("ambient policy ${if (error == null) "sent" else "not sent code=$error"} revision=${policy.revision} apps=${policy.modes.size}")
+        log(
+            "ambient policy ${if (error == null) "sent" else "not sent code=$error"} revision=${policy.revision} " +
+                "apps=${policy.modes.size} hidden=${hidden.size}",
+        )
     }
 }

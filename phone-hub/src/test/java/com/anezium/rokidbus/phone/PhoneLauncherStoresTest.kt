@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import android.content.ComponentName
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
+import com.anezium.rokidbus.shared.AmbientPreferencesContract
 import com.anezium.rokidbus.shared.QuickActionFamily
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
@@ -99,6 +100,96 @@ class PhoneLauncherStoresTest {
         preferences.setPinned(other, true)
         preferences.setPinned(other, false)
         assertFalse(storage.value.orEmpty().contains("todo"))
+    }
+
+    @Test
+    fun `a plugin kept off the glasses stays so across restarts until its grant goes`() {
+        val storage = MemoryStorage()
+        val preferences = PhoneActivityPreferences(storage)
+        val key = PluginGrantKey("dev.example.nav", "nav", "digest-nav")
+        val other = PluginGrantKey("dev.example.todo", "todo", "digest-todo")
+        assertTrue(preferences.preferenceFor(key).floating)
+        assertTrue(preferences.keptOffGlasses().isEmpty())
+
+        preferences.setFloating(key, false)
+        preferences.setPinned(other, true)
+        val reloaded = PhoneActivityPreferences(storage)
+        assertEquals(PhoneActivityPreference(floating = false), reloaded.preferenceFor(key))
+        assertEquals(setOf(key), reloaded.keptOffGlasses())
+
+        // Back on is the default again, so nothing is left behind for it.
+        preferences.setFloating(key, true)
+        assertFalse(storage.value.orEmpty().contains("\"nav\""))
+        preferences.setFloating(key, false)
+
+        assertTrue(preferences.purge(key))
+        assertFalse(preferences.purge(key))
+        assertTrue(PhoneActivityPreferences(storage).keptOffGlasses().isEmpty())
+        preferences.setFloating(other, false)
+        assertEquals(setOf(other), preferences.retainOnly(emptySet()))
+        assertTrue(preferences.preferenceFor(other).floating)
+    }
+
+    @Test
+    fun `a plugin past the most the glasses policy names is refused, never one already kept off`() {
+        val storage = MemoryStorage()
+        val preferences = PhoneActivityPreferences(storage)
+        fun key(id: String) = PluginGrantKey("dev.example.$id", id, "digest-$id")
+        val kept = (1..AmbientPreferencesContract.MAX_HIDDEN_OWNERS).map { key("plugin%02d".format(it)) }
+        kept.forEach { assertTrue(it.pluginId, preferences.setFloating(it, false)) }
+        val first = key("aaa")
+        val last = key("zzz")
+
+        // Refused whether it would sort before or after the others in the policy.
+        for (extra in listOf(first, last)) {
+            assertFalse(preferences.canKeepOffGlasses(extra))
+            assertFalse(preferences.setFloating(extra, false))
+            assertTrue(preferences.preferenceFor(extra).floating)
+        }
+        assertEquals(kept.toSet(), PhoneActivityPreferences(storage).keptOffGlasses())
+        val sent = mutableListOf<JSONObject>()
+        PhoneAmbientSync(
+            store = PhoneAmbientPreferencesStore(MemoryStorage()),
+            send = { _, payload -> sent += payload; null },
+            launcherActive = { true },
+            log = {},
+            hiddenOwners = { preferences.keptOffGlasses().mapTo(linkedSetOf()) { it.pluginId } },
+        ).pushPolicy()
+        assertEquals(
+            kept.mapTo(linkedSetOf()) { it.pluginId },
+            AmbientPreferencesContract.parsePolicy(sent.single())!!.hiddenOwners,
+        )
+
+        // One already off, or one going back on, always fits.
+        assertTrue(preferences.setFloating(kept.last(), false))
+        assertTrue(preferences.setFloating(kept.first(), true))
+        assertTrue(preferences.setFloating(first, false))
+        assertFalse(preferences.setFloating(last, false))
+        assertTrue(preferences.purge(kept[1]))
+        assertTrue(preferences.setFloating(last, false))
+        assertFalse(preferences.canKeepOffGlasses(kept.first()))
+        assertEquals(setOf(kept[2]), preferences.retainOnly(preferences.keptOffGlasses() - kept[2]))
+        assertTrue(preferences.canKeepOffGlasses(kept.first()))
+    }
+
+    @Test
+    fun `an entry stored before the floating choice existed still floats`() {
+        val storage = MemoryStorage()
+        storage.value = JSONObject()
+            .put("version", 1)
+            .put(
+                "entries",
+                org.json.JSONArray().put(
+                    JSONObject().put("package", "dev.example.nav").put("pluginId", "nav")
+                        .put("signingDigestSha256", "digest-nav").put("enabled", true).put("pinned", true),
+                ),
+            )
+            .toString()
+
+        assertEquals(
+            PhoneActivityPreference(enabled = true, pinned = true, floating = true),
+            PhoneActivityPreferences(storage).preferenceFor(PluginGrantKey("dev.example.nav", "nav", "digest-nav")),
+        )
     }
 
     @Test

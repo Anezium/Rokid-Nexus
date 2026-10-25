@@ -2,13 +2,19 @@ package com.anezium.rokidbus.phone
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.anezium.rokidbus.shared.AmbientPreferencesContract
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** The user's choice for one plugin's activity: shown at all, and pinned. */
+/**
+ * The user's choice for one plugin's activity: shown at all, pinned, and [floating]: whether its
+ * island and its pin may float over the glasses' home and apps. Off leaves its card, its pages and
+ * its notifications as they are.
+ */
 data class PhoneActivityPreference(
     val enabled: Boolean = true,
     val pinned: Boolean = false,
+    val floating: Boolean = true,
 ) {
     companion object {
         val DEFAULT = PhoneActivityPreference()
@@ -19,7 +25,8 @@ data class PhoneActivityPreference(
  * Per-plugin activity preferences on the phone, keyed by the plugin's grant key.
  *
  * Kept apart from the grant and from live activity state on purpose: the grant says a plugin may
- * draw on the glasses, this says whether its activity shows and whether the user pinned it.
+ * draw on the glasses, this says whether its activity shows, whether the user pinned it and
+ * whether its island and pin float over the glasses.
  * Editing it never goes through the grant teardown, and it is purged with the grant, so a
  * re-approved or re-signed plugin starts from the defaults.
  */
@@ -43,10 +50,35 @@ class PhoneActivityPreferences(private val storage: PluginGrantStorage) {
     @Synchronized
     fun setPinned(key: PluginGrantKey, pinned: Boolean) = edit(key) { it.copy(pinned = pinned) }
 
+    /**
+     * Keeps [key]'s island and pin off the glasses, or lets them back. Refused (false) when
+     * [canKeepOffGlasses] says there is no room: the glasses' policy names at most
+     * [AmbientPreferencesContract.MAX_HIDDEN_OWNERS] plugins, and a choice it cannot carry must be
+     * refused here rather than dropped from the policy while the switch still says off.
+     */
     @Synchronized
-    fun purge(key: PluginGrantKey) {
+    fun setFloating(key: PluginGrantKey, floating: Boolean): Boolean {
+        if (!floating && !canKeepOffGlasses(key)) return false
+        edit(key) { it.copy(floating = floating) }
+        return true
+    }
+
+    /** The plugins whose island and pin the user keeps off the glasses. */
+    @Synchronized
+    fun keptOffGlasses(): Set<PluginGrantKey> = entries().filterValues { !it.floating }.keys
+
+    /** True when [key] is already kept off, or the other plugins kept off leave room for it. */
+    @Synchronized
+    fun canKeepOffGlasses(key: PluginGrantKey): Boolean =
+        (keptOffGlasses() - key).size < AmbientPreferencesContract.MAX_HIDDEN_OWNERS
+
+    /** True when [key] had choices to drop. */
+    @Synchronized
+    fun purge(key: PluginGrantKey): Boolean {
         val current = entries()
-        if (key in current) write(current - key)
+        if (key !in current) return false
+        write(current - key)
+        return true
     }
 
     /** Drops every key that no longer has an approved grant; returns the keys it dropped. */
@@ -91,7 +123,8 @@ class PhoneActivityPreferences(private val storage: PluginGrantStorage) {
                     items.put(
                         GrantKeyJson.encode(key)
                             .put("enabled", preference.enabled)
-                            .put("pinned", preference.pinned),
+                            .put("pinned", preference.pinned)
+                            .put("floating", preference.floating),
                     )
                 }
             return JSONObject().put("version", VERSION).put("entries", items).toString()
@@ -109,7 +142,9 @@ class PhoneActivityPreferences(private val storage: PluginGrantStorage) {
                         val key = GrantKeyJson.decode(item) ?: continue
                         val enabled = item.opt("enabled") as? Boolean ?: continue
                         val pinned = item.opt("pinned") as? Boolean ?: continue
-                        put(key, PhoneActivityPreference(enabled = enabled, pinned = pinned))
+                        // Stored before the choice existed: floating, as it was then.
+                        val floating = item.opt("floating") as? Boolean ?: true
+                        put(key, PhoneActivityPreference(enabled = enabled, pinned = pinned, floating = floating))
                     }
                 }
             }.getOrDefault(emptyMap())
