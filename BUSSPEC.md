@@ -1750,6 +1750,13 @@ per owner, and an eight-second deadline. It then delivers
 from its own canonical copy, never from the glasses. Old glasses keep sending,
 and getting delivered, the v1 `{activityId, id}`.
 
+Before delivering a bundle command, the phone hub holds a separate
+`BIND_AUTO_CREATE | BIND_IMPORTANT` connection to the approved owner's service.
+It releases that connection on the result, the existing command deadline, failed
+delivery or cancellation. An idle activity keeps no command binding; page,
+skill and immersion bindings remain independent. A failed bind leaves the
+command unconfirmed without delivering it.
+
 The owner answers on `/activity/result`:
 
 ```json
@@ -2231,8 +2238,11 @@ through its own connection, within at most five seconds of the eight-second
 budget; a cold failure is a correlated error, never a launch or a rebind loop. It
 must never open the plugin, adopt a surface, acknowledge an open, or close, hide,
 unbinds, mutes or refocuses a live base immersion, even one of the same plugin.
-It keeps a page-only binding while that plugin has a visible leased page or a
-pending request, tells the owner about a close before unbinding, and releases
+It keeps a page-only `BIND_AUTO_CREATE | BIND_IMPORTANT` binding while that plugin
+has a visible leased page, a pending request or an action awaiting its result or
+existing deadline. Expiry of the visible lease alone does not release an action
+already delivered; covering or closing still cancels it. The hub tells the owner
+about a close before unbinding, and releases
 the binding when no demand remains. Page traffic is never queued while a link is
 down, between the hubs or between a provider and the phone hub: the SDK sends a
 page answer, revision or result over the live Binder or drops it, and a send

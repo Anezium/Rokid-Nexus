@@ -6,6 +6,10 @@ released or tagged. The later [2026-10-18 device smoke](LAUNCHER_DEVICE_SMOKE_20
 records signed in-place installs, three hardware-discovered fixes, targeted independent
 reviews, and the precise subset of hardware acceptance now observed.
 
+The [2026-10-25 freezer binding report](LAUNCHER_FREEZE_FIX_20261025.md) records
+the scoped activity-command binding and pending page-action hold added after the
+S23 freezer report. Device confirmation remains with the orchestrator.
+
 **Status.** The whole approved scope of plans 028/028a is implemented in source, integrated, covered
 by unit and Robolectric tests, and was accepted by the Sol review rounds (last: ACCEPT WITH ONE
 NONBLOCKING FIXTURE NIT, since fixed). A later independent review by GPT-6 Astra found four blockers

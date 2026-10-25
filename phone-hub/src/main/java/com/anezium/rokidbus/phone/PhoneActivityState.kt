@@ -364,7 +364,7 @@ internal class PhoneActivityState(
         return clearActive(owner, reason)
     }
 
-    /** Clears every duration-limited activity currently due. */
+    /** Expires pending commands and clears every duration-limited activity currently due. */
     @Synchronized
     fun expireIfDue(): List<PhoneActivityClearResult.Cleared> {
         val now = nowMs()

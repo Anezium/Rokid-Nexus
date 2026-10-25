@@ -803,6 +803,12 @@ treat a revision you no longer show as `stale`. The default implementation calls
 `onNexusActivityAction(id)` and returns null, so an unchanged plugin keeps
 working and never reports an invented success.
 
+The phone hub holds an important service binding while your command awaits its
+result or the existing eight-second deadline, and releases it on completion,
+failed delivery or cancellation. An idle activity holds no command binding.
+This connection is separate from page, skill and immersion bindings; no plugin
+foreground service is needed to answer a command.
+
 ```kotlin
 class PlayerPluginService : NexusPluginService() {
     private fun playerActivity(state: PlayerState) = NexusActivity(
@@ -2091,8 +2097,11 @@ Pages arrive whether or not your plugin is open. They never call `onNexusOpen`
 or `onNexusClose`, never start the session foreground service, and never release
 your audio, speech, TTS or surface sessions: an immersion of your plugin can be
 running underneath while the wearer reads one of its pages. `onNexusPageClosed`
-is not `onNexusClose`. The hub keeps your service bound while a page needs it;
-do not poll, and do not start a foreground service for pages.
+is not `onNexusClose`. The hub keeps your service bound with foreground importance
+while a page request, visible lease or delivered action needs it. An action
+already delivered keeps its binding until its result or existing deadline even
+if the visible lease expires; covering or closing still cancels the action.
+Do not poll, and do not start a foreground service for pages.
 
 Return the answer from `onNexusPageRequest`; that return value is the response.
 Answer quickly and from memory: the wearer's eight-second budget runs from their

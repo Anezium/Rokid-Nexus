@@ -506,6 +506,23 @@ class PhoneActivityLauncherTest {
     }
 
     @Test
+    fun `failed command delivery immediately releases its importance binding`() {
+        val unavailable = object : PhoneHudRouteSink by orderedSink {
+            override fun deliverLocal(envelope: BusEnvelope, targetBinder: IBinder?): Boolean {
+                orderedSink.deliverLocal(envelope, targetBinder)
+                return false
+            }
+        }
+        val failedRouter = newRouter(state, unavailable, host)
+        failedRouter.handleLocal(local(start("media", mediaActions())), hudSender("media"))
+        failedRouter.handleGlassesAction(command("media", "play", sink.remote.last().payload.getLong("seq"), "inv-1"))
+        assertTrue(host.boundCommands.isEmpty())
+        assertEquals(listOf("media"), host.releasedCommands)
+        assertTrue(state.pendingCommandOwners().isEmpty())
+        assertEquals(null, nextExpiryDelay)
+    }
+
+    @Test
     fun `command bindings are owner scoped and end with revoke disconnect reconnect or hub stop`() {
         router.handleLocal(local(start("media", mediaActions())), hudSender("media"))
         val mediaSeq = sink.remote.last().payload.getLong("seq")
