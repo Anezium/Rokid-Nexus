@@ -8,6 +8,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.TextPaint
 import android.text.TextUtils
 import android.util.TypedValue
@@ -227,13 +228,14 @@ internal object ActivityOverlayRenderer {
         )
         island.bringToFront()
         island.showFlare(urgent = item.urgent)
+        val foldByMs = SystemClock.uptimeMillis() + MAX_FLARE_MS
         val collapse = object : Runnable {
             override fun run() {
                 if (generation != flareGeneration) return
                 // A title still crossing the flare is read to its end before the flare folds.
-                val left = island.flareTitleLeftMs()
-                if (left > 0) {
-                    main.postDelayed(this, left)
+                val hold = flareHoldMs(island.flareTitleLeftMs(), SystemClock.uptimeMillis(), foldByMs)
+                if (hold > 0) {
+                    main.postDelayed(this, hold)
                     return
                 }
                 collapseFlare(generation)
@@ -242,6 +244,13 @@ internal object ActivityOverlayRenderer {
         flareCollapse = collapse
         main.postDelayed(collapse, HudMotion.STANDARD_MS + HudMotion.HOLD_MS)
     }
+
+    /**
+     * How much longer a flare stays for its title's first pass; 0 folds it now. Never past
+     * [foldByMs]: a title the screen or its owner keeps starting over does not hold the flare.
+     */
+    internal fun flareHoldMs(titleLeftMs: Long, nowMs: Long, foldByMs: Long): Long =
+        if (titleLeftMs <= 0) 0 else titleLeftMs.coerceAtMost(foldByMs - nowMs).coerceAtLeast(0)
 
     private fun collapseFlare(generation: Long) {
         if (generation != flareGeneration) return
@@ -426,6 +435,8 @@ internal object ActivityOverlayRenderer {
                 )
             }
             update(flare, content) {
+                // A ticking measure is the same title: the line keeps its place in it.
+                flareTitle.continuity = content.title
                 flare.render(
                     titleText = content.primaryWithMeasure(),
                     bodyText = buildList {
@@ -811,6 +822,9 @@ internal object ActivityOverlayRenderer {
     private const val URGENT_OUTLINE_DP = 2
     private const val URGENT_BEAT_DP = 10
     private const val URGENT_BEAT_DELAY_MS = 380L
+
+    /** A flare's whole life, from shown to folded: one pass of the longest title with its measure. */
+    private const val MAX_FLARE_MS = 15_000L
     private const val GLYPH_DP = 48
     private const val PROGRESS_HEIGHT_DP = 4
     private const val PRIMARY_SP = ACTIVITY_PRIMARY_MAX_SP

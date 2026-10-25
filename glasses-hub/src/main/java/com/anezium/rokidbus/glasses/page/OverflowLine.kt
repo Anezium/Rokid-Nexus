@@ -110,12 +110,19 @@ internal class OverflowLineView(context: Context) : TextView(context) {
     var memory: OverflowMemory? = null
     var memoryKey: String? = null
 
+    /**
+     * What the line names beyond its exact text: a text changing under the same continuity, a
+     * title whose live measure ticks, keeps its place instead of starting over.
+     */
+    var continuity: String? = null
+
     /** Whether the line is moving right now; for tests. */
     var scrolling: Boolean = false
         private set
 
     private var startedAtMs = 0L
     private var startedText = ""
+    private var startedContinuity: String? = null
     private var startedRoom = 0
     private var hiddenSinceStart = false
     private var screenLit = true
@@ -220,7 +227,8 @@ internal class OverflowLineView(context: Context) : TextView(context) {
 
     private fun sync() {
         // A moving line whose text or room changed under it reads its new value from the hold.
-        if (scrolling && (text.toString() != startedText || roomPx() != startedRoom)) {
+        val sameLine = text.toString() == startedText || (continuity != null && continuity == startedContinuity)
+        if (scrolling && (!sameLine || roomPx() != startedRoom)) {
             memoryKey?.let { memory?.forget(it) }
             stop()
         }
@@ -239,6 +247,7 @@ internal class OverflowLineView(context: Context) : TextView(context) {
         }
         startedAtMs = memoryKey?.let { memory?.resume(it, value, room, now) } ?: now
         startedText = value
+        startedContinuity = continuity
         startedRoom = room
         // Laid out at its full width so the text past the line exists to scroll to.
         setHorizontallyScrolling(true)
