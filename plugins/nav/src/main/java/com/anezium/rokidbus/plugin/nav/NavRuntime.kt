@@ -14,6 +14,7 @@ import com.anezium.rokidbus.client.plugin.NexusGuidanceStep
 import com.anezium.rokidbus.client.plugin.NexusPageDestination
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
 import com.anezium.rokidbus.client.plugin.surfaceSession
+import com.anezium.rokidbus.shared.ActivityCloseReason
 
 /**
  * Keeps the live route as one activity. Guidance comes from the notification listener, which
@@ -72,7 +73,7 @@ internal class NavRuntime(context: Context) {
         map.flush()
     }
 
-    /** The app withdrew its guidance, or it became unreadable: the route is over. */
+    /** The app withdrew its guidance, or it stayed unreadable past the listener's grace. */
     fun onRouteEnded(source: NavSource) = onMain {
         if (!NavControl.owns(this)) return@onMain
         if (NavState.guidance?.source != source && pending?.source != source) return@onMain
@@ -162,6 +163,10 @@ internal class NavRuntime(context: Context) {
 
     fun onActivityClosed(reason: String) = onMain {
         log("activity closed reason=$reason")
+        if (!NavControl.owns(this) || !started || client?.registrationGeneration != startedGeneration) return@onMain
+        // Owner closes acknowledge an end we already handled locally. The stable
+        // activity id may since have been reused by this route or another source.
+        if (reason == ActivityCloseReason.OWNER.wireValue) return@onMain
         started = false
         planner.reset()
         map.activityEnded()
