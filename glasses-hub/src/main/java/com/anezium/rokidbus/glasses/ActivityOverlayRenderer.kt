@@ -91,7 +91,8 @@ internal object ActivityOverlayRenderer {
         }.onFailure { logError("Activity overlay z-order refresh failed", it) }
     }
 
-    private fun render(state: ActivityRenderState) {
+    private fun render(published: ActivityRenderState) {
+        val state = islandStateOf(published, GlassesHub.launcherInteractiveActive() || GlassesHub.launcherBundleHeldThroughLoss())
         latestState = state
         val liveIds = state.items.mapTo(mutableSetOf()) { it.activity.surfaceId }
         processedMotionTokens.keys.retainAll(liveIds)
@@ -226,7 +227,18 @@ internal object ActivityOverlayRenderer {
         )
         island.bringToFront()
         island.showFlare(urgent = item.urgent)
-        val collapse = Runnable { collapseFlare(generation) }
+        val collapse = object : Runnable {
+            override fun run() {
+                if (generation != flareGeneration) return
+                // A title still crossing the flare is read to its end before the flare folds.
+                val left = island.flareTitleLeftMs()
+                if (left > 0) {
+                    main.postDelayed(this, left)
+                    return
+                }
+                collapseFlare(generation)
+            }
+        }
         flareCollapse = collapse
         main.postDelayed(collapse, HudMotion.STANDARD_MS + HudMotion.HOLD_MS)
     }
@@ -317,7 +329,8 @@ internal object ActivityOverlayRenderer {
         private val chip = PinOverlayRenderer.PinPanelView(context, movingTitle = titleLine(context)).apply { dropChrome() }
         private val compact = ActivityCompactView(context)
         private val panel = ActivityPanelView(context, actionGlyphOf)
-        private val flare = NoticeOverlayRenderer.NoticeBandView(context, chromeless = true, movingTitle = titleLine(context))
+        private val flareTitle = titleLine(context)
+        private val flare = NoticeOverlayRenderer.NoticeBandView(context, chromeless = true, movingTitle = flareTitle)
 
         private var renderedGuidance: GuidanceIsland? = null
 
@@ -475,6 +488,9 @@ internal object ActivityOverlayRenderer {
             }
             show(flare)
         }
+
+        /** How long the flare's moving title still needs to show its end; 0 once read or when it fits. */
+        fun flareTitleLeftMs(): Long = if (currentForm === flare) flareTitle.firstPassLeftMs() else 0
 
         private val urgentBeat = Runnable {
             if (currentForm === flare) bump(dp(context, URGENT_BEAT_DP).toFloat(), HudSpring.BEAT)
@@ -738,6 +754,21 @@ internal object ActivityOverlayRenderer {
 
         private fun visibleIf(visible: Boolean): Int =
             if (visible) View.VISIBLE else View.GONE
+    }
+
+    /**
+     * The islands' copy of [state]. A headline is a launcher-bundle field, read only while the
+     * bundle is negotiated or held through a link loss, as the card reads it: once an older
+     * phone announces, a headline kept from before names nothing and every island shows the
+     * primary that phone updates.
+     */
+    internal fun islandStateOf(state: ActivityRenderState, bundle: Boolean): ActivityRenderState {
+        if (bundle || state.items.none { it.activity.content.headline != null }) return state
+        return state.copy(
+            items = state.items.map { item ->
+                item.copy(activity = item.activity.copy(content = item.activity.content.copy(headline = null)))
+            },
+        )
     }
 
     /** The headline where the owner sent one, else the primary; an island has room for either. */

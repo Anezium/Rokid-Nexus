@@ -215,6 +215,60 @@ class ActivityIslandRenderingTest {
     }
 
     @Test
+    fun `the flare stays until its longest title has been read to its end`() {
+        val longest = "Teardrop (Mad Professor remix) · Massive"
+        assertEquals(40, longest.length)
+        show(content(headline = longest, measure = "250 m"), ActivityPresentation.CHIP)
+        island.showFlare(urgent = false)
+        idle()
+        val line = find<OverflowLineView>(requireNotNull(island.currentForm)).single { it.isShown }
+        val overflow = line.overflowPx()
+        assertTrue(overflow > 0)
+
+        // Where the renderer's own collapse first asks, the end is not reached yet.
+        idle(HudMotion.STANDARD_MS + HudMotion.HOLD_MS)
+        val left = island.flareTitleLeftMs()
+        assertTrue("$left ms", left > 0)
+        assertTrue(line.scrollX < overflow)
+        idle(left)
+        assertEquals("the end is shown before the flare folds", overflow, line.scrollX)
+        assertEquals(0, island.flareTitleLeftMs())
+
+        // A title that fits keeps the usual lifetime.
+        show(content(headline = "Teardrop"), ActivityPresentation.CHIP)
+        island.showFlare(urgent = false)
+        idle()
+        assertEquals(0, island.flareTitleLeftMs())
+    }
+
+    @Test
+    fun `after an older phone announces, every island names the activity by its primary`() {
+        val bundled = content(headline = headline, measure = "250 m")
+        val kept = ActivityOverlayRenderer.islandStateOf(ActivityRenderState(listOf(item(bundled, ActivityPresentation.CHIP))), bundle = true)
+        assertEquals(headline, kept.items.single().activity.content.headline)
+
+        // The old phone's partial update replaces the primary; the headline from before stays stored.
+        listOf(bundled, bundled.copy(primary = "Angel")).forEach { stored ->
+            val plain = ActivityOverlayRenderer.islandStateOf(ActivityRenderState(listOf(item(stored, ActivityPresentation.CHIP))), bundle = false)
+                .items.single().activity.content
+            assertEquals(null, plain.headline)
+            for (presentation in listOf(ActivityPresentation.CHIP, ActivityPresentation.PANEL)) {
+                for (shown in listOf(plain, plain.copy(measure = null))) {
+                    show(shown, presentation)
+                    val texts = shownTexts(requireNotNull(island.currentForm))
+                    assertTrue(texts.toString(), texts.any { it.startsWith(stored.primary) })
+                    assertTrue(texts.toString(), texts.none { headline in it })
+                }
+            }
+            island.showFlare(urgent = false)
+            idle()
+            val flare = shownTexts(requireNotNull(island.currentForm))
+            assertTrue(flare.toString(), flare.any { it.startsWith(stored.primary) })
+            assertTrue(flare.toString(), flare.none { headline in it })
+        }
+    }
+
+    @Test
     fun `folded with a measure and a headline, the chip keeps its layout and scrolls the title in its own width`() {
         show(content(headline = headline, measure = "250 m", secondary = "Rue de Rivoli"), ActivityPresentation.CHIP)
 

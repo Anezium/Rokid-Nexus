@@ -153,6 +153,17 @@ internal class OverflowLineView(context: Context) : TextView(context) {
         return (ceil(paint.measureText(text.toString())).toInt() - room).coerceAtLeast(0)
     }
 
+    /**
+     * How long until this line's first pass has reached its end and held it there; 0 when it
+     * fits, is still, or has already been read once.
+     */
+    fun firstPassLeftMs(nowMs: Long = SystemClock.uptimeMillis()): Long {
+        if (!scrolling) return 0
+        val overflow = overflowPx()
+        if (overflow <= 0) return 0
+        return (startedAtMs + OverflowScroll.cycleMs(overflow) - nowMs).coerceAtLeast(0)
+    }
+
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
         sync()
