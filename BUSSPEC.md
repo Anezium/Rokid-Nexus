@@ -2516,7 +2516,10 @@ the draft never goes to another recipient.
   default), stored with that plugin's other activity choices and dropped with
   its grant. The policy carries the plugins turned off as `hiddenOwners:
   [pluginId]` (at most 64; absent from an older phone, ignored by older
-  glasses, both meaning every plugin shows). The phone sends it with the policy
+  glasses, both meaning every plugin shows). The phone refuses to turn a 65th
+  plugin off, so every switch that says off is in the list and none is dropped
+  to fit. The row says it needs the new launcher and names Classic when that is
+  the phone's launcher choice. The phone sends the list with the policy
   on link-up, on every change and when such a plugin's grant goes. On the
   glasses such an owner gets no island (no chip, panel, flare or display wake,
   over the home or any app) and its held pin is not drawn; its collection entry,

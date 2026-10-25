@@ -361,7 +361,8 @@ plugins whose "Float over the glasses" switch (phone Plugin access, default on, 
 grant) is off. Such an owner gets no island, flare or display wake and its pin is held but not
 drawn; its entry, card, pages and notices are unchanged and the other islands expand in its place.
 Absent (older phone) or ignored (older glasses), every owner shows. Same scope as 8.1-8.2: the
-`SESSION` launcher over a bundle pair.
+`SESSION` launcher over a bundle pair, which the switch states. At most 64 owners: the phone
+refuses a 65th rather than drop an accepted choice from the list.
 
 8.3 Launcher backend: `PhoneHubCapabilities.launcherBackend` = `"session" | "legacy"` when the
 user chose explicitly on the phone (absent = no opinion). Glasses precedence: phone explicit >
