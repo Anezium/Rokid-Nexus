@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.nav
 
+import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -125,6 +126,7 @@ internal class NavBasemap(
     private val prepare: (TileKey, ByteArray, RouteLine) -> LocalTile = { key, body, route ->
         LocalTile.of(ShortbreadTiles.decode(key, body), route)
     },
+    private val warn: (String) -> Unit = { Log.w("NexusNav", it) },
 ) {
     private class Loaded(val tile: LocalTile, val freshUntilMs: Long, val reusable: Boolean = true)
 
@@ -149,8 +151,9 @@ internal class NavBasemap(
         override fun run() {
             val outcome = try {
                 load()
-            } catch (_: Exception) {
+            } catch (failure: Exception) {
                 // Nothing a tile does may reach the journey; a crash in decoding is a failed tile.
+                if (!cancelled) rejected(key, failure)
                 Outcome.Failed(stale = null)
             }
             post(Runnable { finished(this, outcome) })
@@ -161,7 +164,8 @@ internal class NavBasemap(
             val stored = cache?.read(source, key)?.let { entry ->
                 try {
                     entry.freshness to prepare(key, entry.body, line)
-                } catch (_: MvtFormatException) {
+                } catch (failure: MvtFormatException) {
+                    rejected(key, failure)
                     cache.remove(source, key)
                     null
                 }
@@ -203,7 +207,8 @@ internal class NavBasemap(
                     val body = response.body ?: return if (freshness == null) Outcome.Evicted else failure()
                     val tile = try {
                         prepare(key, body, line)
-                    } catch (_: MvtFormatException) {
+                    } catch (failure: MvtFormatException) {
+                        rejected(key, failure)
                         return if (freshness == null) Outcome.Evicted else failure()
                     }
                     if (cancelled || !displayed(key)) return Outcome.Cancelled
@@ -255,6 +260,7 @@ internal class NavBasemap(
     private val retryAt = HashMap<TileKey, Long>()
     private val failures = HashMap<TileKey, Int>()
     private val requestTimes = ArrayDeque<Long>()
+    private val rejectedTiles = HashSet<TileKey>()
     private var demanded: List<TileKey> = emptyList()
     @Volatile private var displayed: (TileKey) -> Boolean = { true }
     private var pausedUntil = 0L
@@ -309,6 +315,7 @@ internal class NavBasemap(
         jobs.clear()
         executor.shutdownNow()
         loaded.clear()
+        rejectedTiles.clear()
         tiles = NavBasemapTiles(source.attribution, source.maxZoom, emptyMap())
         demanded = emptyList()
     }
@@ -349,6 +356,8 @@ internal class NavBasemap(
 
     private fun finished(job: Job, outcome: Outcome) {
         if (closed || jobs[job.key] !== job) return
+        val previousState = state
+        val previousTiles = tiles
         jobs.remove(job.key)
         // Storage invalidation survives a view change between the response and its callback.
         if (job.invalidatedStorage || outcome is Outcome.Evicted || (outcome is Outcome.Loaded && !outcome.reusable) ||
@@ -389,6 +398,13 @@ internal class NavBasemap(
             }
         }
         pump()
+        if (state != previousState && tiles === previousTiles) post(Runnable { if (!closed) onChanged() })
+    }
+
+    private fun rejected(key: TileKey, failure: Exception) {
+        // Tile identities stay in memory; exception messages may contain provider data.
+        val reason = failure.javaClass.simpleName
+        post(Runnable { if (!closed && rejectedTiles.add(key)) warn("basemap rejected cause=$reason") })
     }
 
     private fun backOff(key: TileKey, now: Long) {

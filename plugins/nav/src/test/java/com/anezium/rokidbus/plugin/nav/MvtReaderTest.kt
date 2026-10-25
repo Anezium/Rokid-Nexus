@@ -12,28 +12,54 @@ import org.junit.Test
 /** The vector tile reader: the line grammar, tags, layer selection, and every bound that refuses a tile whole. */
 class MvtReaderTest {
     @Test
-    fun `empty and non-line feature fields exhaust one tile-wide budget before retention`() {
+    fun `empty and non-line features in requested layers exhaust one retained reader budget`() {
         fun layer(name: String, type: Long?) = MvtFixtures.Proto().apply {
             repeat(4) { bytes(2, MvtFixtures.Proto().apply { type?.let { varint(3, it) } }.toByteArray()) }
-            // Name may legally follow the features; the early limit must not depend on ordering.
+            // Name may legally follow the features; retention must not depend on ordering.
             string(1, name)
         }.toByteArray()
-        for (name in listOf("streets", "unrequested")) for (type in listOf(null, 0L, 1L, 3L)) {
-            val tile = MvtFixtures.Proto().apply { bytes(3, layer(name, type)) }.toByteArray()
-            assertThrows("$name/$type", MvtFormatException::class.java) {
+        for (type in listOf(null, 0L, 1L, 3L)) {
+            val tile = MvtFixtures.Proto().apply { bytes(3, layer("streets", type)) }.toByteArray()
+            assertThrows("$type", MvtFormatException::class.java) {
                 MvtReader.read(tile, setOf("streets"), MvtLimits(maxFeatures = 3))
             }
         }
         val tile = MvtFixtures.Proto().apply {
-            bytes(3, layer("unrequested", null))
             bytes(3, layer("streets", null))
+            bytes(3, layer("street_labels", null))
         }.toByteArray()
-        assertThrows(MvtFormatException::class.java) { MvtReader.read(tile, setOf("streets"), MvtLimits(maxFeatures = 7)) }
+        assertThrows(MvtFormatException::class.java) { MvtReader.read(tile, setOf("streets", "street_labels"), MvtLimits(maxFeatures = 7)) }
+        assertEquals(setOf("streets"), MvtReader.read(tile, setOf("streets"), MvtLimits(maxFeatures = 4)).keys)
         val metadata = MvtFixtures.Proto().apply {
             bytes(3, MvtFixtures.Proto().apply { string(1, "unrequested"); repeat(4) { string(3, "key") } }.toByteArray())
         }.toByteArray()
-        assertThrows(MvtFormatException::class.java) { MvtReader.read(metadata, emptySet(), MvtLimits(maxKeysOrValues = 3)) }
+        assertTrue(MvtReader.read(metadata, emptySet(), MvtLimits(maxKeysOrValues = 0)).isEmpty())
+        assertThrows(MvtFormatException::class.java) { MvtReader.read(metadata, setOf("unrequested"), MvtLimits(maxKeysOrValues = 3)) }
         assertThrows(MvtFormatException::class.java) { MvtReader.read(metadata, emptySet(), MvtLimits(maxFields = 3)) }
+    }
+
+    @Test
+    fun `unwanted features remain bounded by scan work even before the layer name is known`() {
+        val tile = MvtFixtures.Proto().apply {
+            bytes(3, MvtFixtures.Proto().apply {
+                repeat(MvtLimits().maxFields) { bytes(2, byteArrayOf()) }
+                string(1, "unrequested")
+            }.toByteArray())
+        }.toByteArray()
+        val failure = assertThrows(MvtFormatException::class.java) { MvtReader.read(tile, setOf("streets")) }
+        assertEquals("too many tile fields", failure.message)
+    }
+
+    @Test
+    fun `requested features still enforce the default retention bound`() {
+        val tile = MvtFixtures.Proto().apply {
+            bytes(3, MvtFixtures.Proto().apply {
+                repeat(MvtLimits().maxFeatures + 1) { bytes(2, byteArrayOf()) }
+                string(1, "streets")
+            }.toByteArray())
+        }.toByteArray()
+        val failure = assertThrows(MvtFormatException::class.java) { MvtReader.read(tile, setOf("streets")) }
+        assertEquals("too many feature fields", failure.message)
     }
 
     @Test
