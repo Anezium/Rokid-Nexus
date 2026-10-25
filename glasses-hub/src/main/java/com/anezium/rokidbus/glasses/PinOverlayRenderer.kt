@@ -6,7 +6,9 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.text.TextPaint
 import android.text.TextUtils
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -18,6 +20,7 @@ import com.anezium.rokidbus.glasses.page.OverflowLineView
 import com.anezium.rokidbus.shared.PinSurfaceEmphasis
 import com.anezium.rokidbus.shared.PinSurfacePosition
 import com.anezium.rokidbus.shared.PinSurfaceSize
+import kotlin.math.ceil
 
 object PinOverlayRenderer {
     private var service: AccessibilityService? = null
@@ -210,6 +213,19 @@ object PinOverlayRenderer {
                     },
                 )
             }
+        }
+
+        /**
+         * The narrowest an activity's chip, its glyph beside the title over the measure, keeps its
+         * text: the title line still shows one character at [size].
+         */
+        fun minStackedWidthPx(size: PinSurfaceSize): Int {
+            val titleSp = if (size == PinSurfaceSize.MEDIUM) MEDIUM_TITLE_SP else SMALL_TITLE_SP
+            val titlePaint = TextPaint(title.paint).apply {
+                textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, titleSp, resources.displayMetrics)
+            }
+            return paddingLeft + paddingRight + BusTheme.dp(context, GLYPH_SIZE_DP) + BusTheme.dp(context, 6) +
+                ceil(titlePaint.measureText("M")).toInt()
         }
 
         fun render(pin: NexusPinSurface?) {
