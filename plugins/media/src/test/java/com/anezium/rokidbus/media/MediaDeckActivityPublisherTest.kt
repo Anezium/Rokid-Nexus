@@ -163,9 +163,25 @@ class MediaDeckActivityPublisherTest {
         assertTrue(port.calls.isEmpty())
 
         advance(MediaDeckActivityPublisher.MIN_UPDATE_INTERVAL_MS)
-        assertEquals(listOf("update!"), port.calls)
+        assertEquals(listOf("update"), port.calls)
         assertEquals("Angel", port.activities.last().primary)
         assertTrue(publisher.isStarted)
+    }
+
+    @Test
+    fun `a new track or another player is an ordinary update, never a significant one`() {
+        live()
+        port.calls.clear()
+
+        advance(MediaDeckActivityPublisher.MIN_UPDATE_INTERVAL_MS)
+        fake.monitor.emit(observed(track = track(title = "Angel")))
+        advance(MediaDeckActivityPublisher.MIN_UPDATE_INTERVAL_MS)
+        fake.monitor.emit(observed(track = track(title = "Teardrop")))
+        advance(MediaDeckActivityPublisher.MIN_UPDATE_INTERVAL_MS)
+        fake.monitor.emit(observed(identity = SESSION_B, track = track(title = "Angel")))
+
+        assertEquals(listOf("update", "update", "update"), port.calls)
+        assertEquals("Angel", port.activities.last().primary)
     }
 
     @Test
@@ -196,7 +212,7 @@ class MediaDeckActivityPublisherTest {
 
         advance(MediaDeckActivityPublisher.MIN_UPDATE_INTERVAL_MS)
         fake.monitor.emit(observed(track = track(title = "Angel")))
-        assertEquals("update!", port.calls.last())
+        assertEquals("update", port.calls.last())
         assertEquals("Angel", port.activities.last().primary)
         assertTrue(publisher.isStarted)
     }

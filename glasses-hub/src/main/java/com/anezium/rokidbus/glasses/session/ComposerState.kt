@@ -1,6 +1,8 @@
 package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.shared.ComposeContract
+import com.anezium.rokidbus.shared.ConversationMessage
+import com.anezium.rokidbus.shared.ConversationRole
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageDestination
 
@@ -54,7 +56,7 @@ internal data class ComposerFacts(
     val capture: Capture? = null,
     val micUnavailable: Boolean = false,
     val pendingSend: PendingSend? = null,
-    val handoff: Handoff? = null,
+    val handoffs: List<Handoff> = emptyList(),
 )
 
 /**
@@ -108,6 +110,41 @@ internal object ComposerRules {
         check(ComposeContract.isValidCaptureId(id)) { "capture id out of contract" }
         return id
     }
+
+    /**
+     * What a reply [text] sent from [body] remembers of it, while [waiting] earlier replies in the
+     * same words still wait there for their copies: theirs come before its own.
+     */
+    fun shown(body: PageBody.Conversation, text: String, waiting: Int): ShownMessages {
+        val said = normalized(text)
+        return ShownMessages(body.messages.mapTo(LinkedHashSet()) { it.id }, body.messages.count { it.says(said) } + waiting)
+    }
+
+    /**
+     * Whether [body] carries the reply [text] sent from a page that showed [shown]: it holds more
+     * messages of ours in those words, spacing aside, than come before the reply's own copy. Copies
+     * are counted, never matched by id or place: a provider may give a message another id (Relay
+     * replaces its record of a reply with the app's own copy) and show identical replies' copies in
+     * any order. Counting starts at the oldest message shown then that is still there, so older
+     * messages entering above it are never a copy, and with none of them left nothing is. A provider
+     * dropping earlier copies only lowers the count: a reply may then be drawn twice, never hidden.
+     */
+    fun carries(body: PageBody.Conversation, text: String, shown: ShownMessages): Boolean {
+        val messages = body.messages
+        val start = if (shown.ids.isEmpty()) 0 else messages.indexOfFirst { it.id in shown.ids }
+        if (start < 0) return false
+        val said = normalized(text)
+        return messages.subList(start, messages.size).count { it.says(said) } > shown.ahead
+    }
+
+    /** Whether two replies say the same, spacing aside. */
+    fun sameWords(text: String, other: String): Boolean = normalized(text) == normalized(other)
+
+    private fun ConversationMessage.says(said: String): Boolean = role == ConversationRole.OURS && normalized(text) == said
+
+    private fun normalized(text: String): String = text.trim().replace(WHITESPACE, " ")
+
+    private val WHITESPACE = Regex("\\s+")
 
     /** The phone keyboard's ceiling: the page composer's, within the contract's. */
     fun maxChars(body: PageBody.Conversation): Int =

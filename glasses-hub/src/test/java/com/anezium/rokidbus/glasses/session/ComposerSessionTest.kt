@@ -10,6 +10,7 @@ import com.anezium.rokidbus.shared.ComposeTypeDone
 import com.anezium.rokidbus.shared.ComposeTypeText
 import com.anezium.rokidbus.shared.ConversationComposer
 import com.anezium.rokidbus.shared.ConversationMessage
+import com.anezium.rokidbus.shared.ConversationMessageStatus
 import com.anezium.rokidbus.shared.ConversationRole
 import com.anezium.rokidbus.shared.PageActionType
 import com.anezium.rokidbus.shared.PageActionTypeContract
@@ -146,7 +147,10 @@ class ComposerSessionTest {
         send(SessionEvent.PageResult(JSONObject().put("invocationId", action.invocationId).put("status", "done"), 5_500))
         assertNull(model.draft)
         assertNull(model.pendingSend)
-        assertEquals(Handoff("relay", "t1", "see you", 1), model.handoff)
+        assertEquals(
+            listOf(Handoff("relay", "t1", "see you", SentFrom(model.generation, 1, "relay:thread", null, ShownMessages(setOf("m1", "m2", "m3"))))),
+            model.handoffs,
+        )
         assertEquals(HistoryState.HANDED_OFF, model.history.entries.single().state)
         assertNull(top().outcome)
         val bubble = conversationBlock().bubbles.single { it.key == SessionScreens.HANDOFF_BUBBLE }
@@ -158,6 +162,516 @@ class ComposerSessionTest {
         val drawn = screen().blocks.first() as ScreenBlock.Card
         assertEquals("RELAY · ${SessionScreens.REPLY_HANDED_OFF}", drawn.label)
         assertEquals(SessionScreens.HANDED_OFF_UNCONFIRMED, drawn.tertiary)
+    }
+
+    @Test
+    fun `the reply just sent stays on screen through every revision until its page shows it`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        val action = sendDraft(at = 5_000)
+        assertEquals(listOf(SessionScreens.PENDING), sentBubbles("see you"))
+
+        // A revision the provider computed before it recorded the reply: still sending.
+        respond(requestOf(), conversation("t1"), revision = 2, now = 5_300)
+        assertEquals(listOf(SessionScreens.PENDING), sentBubbles("see you"))
+
+        send(SessionEvent.PageResult(JSONObject().put("invocationId", action.invocationId).put("status", "done"), 5_500))
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+
+        // Another such revision lands after the result: the reply does not blink out.
+        respond(requestOf(), conversation("t1"), revision = 3, now = 5_700)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+        assertEquals(3L, (top().status as FrameStatus.Shown).revision)
+
+        // The revision carrying it takes over: one bubble, the provider's.
+        respond(requestOf(), withReply("t1", "h-1", "see you"), revision = 4, now = 5_900)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+        assertTrue(conversationBlock().bubbles.none { it.key == SessionScreens.HANDOFF_BUBBLE })
+        assertTrue(model.handoffs.isEmpty())
+
+        // Once taken over it never comes back, even when the page no longer shows the reply.
+        respond(requestOf(), conversation("t1"), revision = 5, now = 6_100)
+        assertTrue(sentBubbles("see you").isEmpty())
+    }
+
+    @Test
+    fun `a revision carrying the reply before its result shows it once`() {
+        openThread("t1", at = 1_000)
+        dictate("j'arrive", at = 3_000)
+        val action = sendDraft(at = 5_000)
+        // The same words were already ours on the page: only a new message of ours is the reply.
+        assertEquals(listOf(null, SessionScreens.PENDING), sentBubbles("j'arrive"))
+
+        respond(requestOf(), withReply("t1", "h-1", " j'arrive "), revision = 2, now = 5_300)
+        assertEquals(listOf(null, SessionScreens.HANDED_TO_APP), sentBubbles("j'arrive"))
+
+        send(SessionEvent.PageResult(JSONObject().put("invocationId", action.invocationId).put("status", "done"), 5_500))
+        assertTrue(model.handoffs.isEmpty())
+        assertEquals(listOf(null, SessionScreens.HANDED_TO_APP), sentBubbles("j'arrive"))
+    }
+
+    @Test
+    fun `an unrelated message before or after the result never takes the reply's place`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        val action = sendDraft(at = 5_000)
+
+        // Before the result: someone else's new message is not the reply.
+        respond(requestOf(), thread("t1", extra = listOf(received("m4", "where are you?"))), revision = 2, now = 5_300)
+        assertEquals(listOf(SessionScreens.PENDING), sentBubbles("see you"))
+
+        result(action, "done", now = 5_500)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+        assertEquals(1, model.handoffs.size)
+
+        // After it, neither.
+        val later = listOf(received("m4", "where are you?"), received("m5", "hello?"))
+        respond(requestOf(), thread("t1", extra = later), revision = 3, now = 5_700)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+        assertEquals(SessionScreens.HANDOFF_BUBBLE, conversationBlock().bubbles.last().key)
+
+        // Its own copy takes over, once, wherever the provider put it.
+        respond(requestOf(), thread("t1", extra = later.take(1) + ours("h-1", "see you") + later.drop(1)), revision = 4, now = 5_900)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+        assertTrue(conversationBlock().bubbles.none { it.key == SessionScreens.HANDOFF_BUBBLE })
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
+    fun `an older message of ours entering the page is not the reply`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+
+        // A larger window shows an older "see you" of ours, before everything the page showed.
+        val older = listOf(ours("m0", "see you", status = null), received("m0b", "running late"))
+        respond(requestOf(), thread("t1", older = older), revision = 2, now = 5_700)
+        assertEquals(listOf(null, SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+        assertEquals(1, model.handoffs.size)
+
+        respond(requestOf(), thread("t1", older = older, extra = listOf(ours("h-1", "see you"))), revision = 3, now = 5_900)
+        assertEquals(listOf(null, SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
+    fun `replies sent one after another before any copy each stay until their own copy arrives`() {
+        openThread("t1", at = 1_000)
+        dictate("ok", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+        dictate("ok", at = 6_000)
+        val second = sendDraft(at = 8_000)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP, SessionScreens.PENDING), sentBubbles("ok"))
+
+        result(second, "done", now = 8_500)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP, SessionScreens.HANDED_TO_APP), sentBubbles("ok"))
+        assertEquals(2, model.handoffs.size)
+
+        // The first reply's copy stands for the first only.
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-1", "ok"))), revision = 2, now = 8_700)
+        assertEquals(listOf("m:h-1", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-1", "ok"), ours("h-2", "ok"))), revision = 3, now = 8_900)
+        assertEquals(listOf("m:h-1", "m:h-2"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
+    fun `an earlier reply's copy taking another id is never the next identical reply's, in flight or handed off`() {
+        openThread("t1", at = 1_000)
+        dictate("ok", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-1", "ok"))), revision = 2, now = 5_700)
+        assertEquals(listOf("m:h-1"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+
+        dictate("ok", at = 6_000)
+        val second = sendDraft(at = 8_000)
+        assertEquals(listOf("m:h-1", SessionScreens.DRAFT_BUBBLE), sentKeys("ok"))
+
+        // Computed before Relay recorded the second reply: the app's own copy of the first one
+        // replaces Relay's record of it, in its place, under another id.
+        val firstCopied = listOf(ours("m-first-ok", "ok", status = null))
+        respond(requestOf(), thread("t1", extra = firstCopied), revision = 3, now = 8_200)
+        assertEquals(listOf("m:m-first-ok", SessionScreens.DRAFT_BUBBLE), sentKeys("ok"))
+        assertEquals(listOf(null, SessionScreens.PENDING), sentBubbles("ok"))
+
+        result(second, "done", now = 8_500)
+        assertEquals(listOf("m:m-first-ok", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+
+        respond(requestOf(), thread("t1", extra = firstCopied), revision = 4, now = 8_700)
+        assertEquals(listOf("m:m-first-ok", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+
+        // The second reply's own copy takes over once, and keeps doing so under the app's id.
+        respond(requestOf(), thread("t1", extra = firstCopied + ours("h-2", "ok")), revision = 5, now = 8_900)
+        assertEquals(listOf("m:m-first-ok", "m:h-2"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+
+        respond(requestOf(), thread("t1", extra = firstCopied + ours("m-second-ok", "ok", status = null)), revision = 6, now = 9_100)
+        assertEquals(listOf("m:m-first-ok", "m:m-second-ok"), sentKeys("ok"))
+    }
+
+    @Test
+    fun `a claimed copy taking another id is never the next identical reply's`() {
+        openThread("t1", at = 1_000)
+        dictate("ok", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+        dictate("ok", at = 6_000)
+        result(sendDraft(at = 8_000), "done", now = 8_500)
+        assertEquals(listOf(SessionScreens.HANDOFF_BUBBLE, "${SessionScreens.HANDOFF_BUBBLE} 1"), sentKeys("ok"))
+
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-1", "ok"))), revision = 2, now = 8_700)
+        assertEquals(listOf("m:h-1", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+
+        val firstCopied = listOf(ours("m-first-ok", "ok", status = null))
+        respond(requestOf(), thread("t1", extra = firstCopied), revision = 3, now = 8_900)
+        assertEquals(listOf("m:m-first-ok", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+
+        respond(requestOf(), thread("t1", extra = firstCopied + ours("h-2", "ok")), revision = 4, now = 9_100)
+        assertEquals(listOf("m:m-first-ok", "m:h-2"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
+    fun `an earlier reply in other words filling in its copy never lends one to the next identical reply`() {
+        openThread("t1", at = 1_000)
+        dictate("first", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+        dictate("ok", at = 6_000)
+        result(sendDraft(at = 8_000), "done", now = 8_500)
+
+        // The second reply's copy is shown before the first one's.
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-2", "ok"))), revision = 2, now = 8_700)
+        assertEquals(listOf(SessionScreens.HANDOFF_BUBBLE), sentKeys("first"))
+        assertEquals(listOf("m:h-2"), sentKeys("ok"))
+
+        dictate("ok", at = 9_000)
+        val third = sendDraft(at = 11_000)
+        assertEquals(listOf("m:h-2", SessionScreens.DRAFT_BUBBLE), sentKeys("ok"))
+
+        // The first reply's copy fills in, in its place before the second's; the third has none yet.
+        val both = listOf(ours("h-1", "first"), ours("h-2", "ok"))
+        respond(requestOf(), thread("t1", extra = both), revision = 3, now = 11_200)
+        assertEquals(listOf("m:h-1"), sentKeys("first"))
+        assertEquals(listOf("m:h-2", SessionScreens.DRAFT_BUBBLE), sentKeys("ok"))
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP, SessionScreens.PENDING), sentBubbles("ok"))
+
+        result(third, "done", now = 11_500)
+        assertEquals(listOf("m:h-2", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+        for (revision in 4L..6L) {
+            respond(requestOf(), thread("t1", extra = both), revision = revision, now = 11_500 + revision * 100)
+            assertEquals(listOf("m:h-2", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        }
+
+        respond(requestOf(), thread("t1", extra = both + ours("h-3", "ok")), revision = 7, now = 12_400)
+        assertEquals(listOf("m:h-2", "m:h-3"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
+    fun `a third reply handed off before the first copy keeps its bubble until a copy for it arrives`() {
+        openThread("t1", at = 1_000)
+        dictate("first", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+        dictate("ok", at = 6_000)
+        result(sendDraft(at = 8_000), "done", now = 8_500)
+        dictate("ok", at = 9_000)
+        result(sendDraft(at = 11_000), "done", now = 11_500)
+        assertEquals(3, model.handoffs.size)
+        assertEquals(listOf("${SessionScreens.HANDOFF_BUBBLE} 1", "${SessionScreens.HANDOFF_BUBBLE} 2"), sentKeys("ok"))
+
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-2", "ok"))), revision = 2, now = 11_700)
+        assertEquals(listOf(SessionScreens.HANDOFF_BUBBLE), sentKeys("first"))
+        assertEquals(listOf("m:h-2", "${SessionScreens.HANDOFF_BUBBLE} 1"), sentKeys("ok"))
+
+        val both = listOf(ours("h-1", "first"), ours("h-2", "ok"))
+        for (revision in 3L..4L) {
+            respond(requestOf(), thread("t1", extra = both), revision = revision, now = 11_700 + revision * 100)
+            assertEquals(listOf("m:h-1"), sentKeys("first"))
+            assertEquals(listOf("m:h-2", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+            assertEquals(1, model.handoffs.size)
+        }
+
+        respond(requestOf(), thread("t1", extra = both + ours("h-3", "ok")), revision = 5, now = 12_300)
+        assertEquals(listOf("m:h-2", "m:h-3"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
+    fun `identical replies are counted, so renamed copies in any order keep one bubble per reply`() {
+        openThread("t1", at = 1_000)
+        for (sent in 0 until 3) {
+            dictate("ok", at = 3_000L + sent * 5_000)
+            result(sendDraft(at = 5_000L + sent * 5_000), "done", now = 5_500L + sent * 5_000)
+        }
+        assertEquals(3, model.handoffs.size)
+        assertEquals(3, sentKeys("ok").size)
+
+        // The last reply's copy comes first: it stands for one reply, whichever.
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-3", "ok"))), revision = 2, now = 15_700)
+        assertEquals(listOf("m:h-3", SessionScreens.HANDOFF_BUBBLE, "${SessionScreens.HANDOFF_BUBBLE} 1"), sentKeys("ok"))
+
+        // Relay replaces that record with the app's own copy, and another reply's copy lands before it.
+        val renamed = listOf(ours("h-1", " ok"), received("m4", "great"), ours("m-ok-1", "ok", status = null))
+        respond(requestOf(), thread("t1", extra = renamed), revision = 3, now = 15_900)
+        assertEquals(listOf("m:h-1", "m:m-ok-1", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+
+        respond(requestOf(), thread("t1", extra = renamed + ours("h-2", "ok  ")), revision = 4, now = 16_100)
+        assertEquals(listOf("m:h-1", "m:m-ok-1", "m:h-2"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+
+        // Every copy renamed in place: three bubbles still, none of them ours again.
+        val captured = listOf(ours("m-ok-2", "ok", status = null), received("m4", "great"), ours("m-ok-1", "ok", status = null), ours("m-ok-3", "ok", status = null))
+        respond(requestOf(), thread("t1", extra = captured), revision = 5, now = 16_300)
+        assertEquals(listOf("m:m-ok-2", "m:m-ok-1", "m:m-ok-3"), sentKeys("ok"))
+    }
+
+    @Test
+    fun `a provider dropping an earlier copy may draw a reply twice, never hide it`() {
+        openThread("t1", at = 1_000)
+        // An earlier reply of ours in the same words reads first: its message is no longer captured.
+        respond(requestOf(), thread("t1", older = listOf(ours("h-0", "ok"))), revision = 2, now = 2_000)
+        dictate("ok", at = 3_000)
+        val action = sendDraft(at = 5_000)
+        assertEquals(listOf("m:h-0", SessionScreens.DRAFT_BUBBLE), sentKeys("ok"))
+
+        // The provider's bounded log drops that earlier copy.
+        respond(requestOf(), conversation("t1"), revision = 3, now = 5_300)
+        assertEquals(listOf(SessionScreens.PENDING), sentBubbles("ok"))
+        result(action, "done", now = 5_500)
+        assertEquals(listOf(SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+
+        // Its own copy then counts as the one dropped: the reply is drawn twice, not lost.
+        respond(requestOf(), withReply("t1", "h-1", "ok"), revision = 4, now = 5_700)
+        assertEquals(listOf("m:h-1", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+
+        // A second identical reply is never hidden either, through more copies and drops.
+        dictate("ok", at = 6_000)
+        result(sendDraft(at = 8_000), "done", now = 8_500)
+        assertEquals(2, model.handoffs.size)
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-2", "ok"))), revision = 5, now = 8_700)
+        assertTrue(sentKeys("ok").size >= 2)
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-1", "ok"), ours("h-2", "ok"))), revision = 6, now = 8_900)
+        assertEquals(listOf("m:h-1", "m:h-2", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+
+        // The duplicate ends with its frame.
+        send(SessionEvent.Back(9_100))
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
+    fun `a purge of its owner erases a handed-off reply, and another owner's purge keeps it`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+
+        send(SessionEvent.NoticePurged("other"))
+        assertEquals(1, model.handoffs.size)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+
+        send(SessionEvent.NoticePurged("relay"))
+        assertTrue(model.handoffs.isEmpty())
+        assertTrue(SessionEffect.ShowFrame in effects)
+        assertTrue(sentBubbles("see you").isEmpty())
+
+        // Nothing brings it back: a later revision of the same page, still without the reply.
+        respond(requestOf(), conversation("t1"), revision = 2, now = 5_900)
+        assertTrue(sentBubbles("see you").isEmpty())
+    }
+
+    @Test
+    fun `a reply handed off from a page that closed is gone before its owner is purged`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+
+        send(SessionEvent.Back(5_600))
+        assertTrue(model.state is SessionState.Root)
+        assertTrue(model.handoffs.isEmpty())
+        send(SessionEvent.NoticePurged("relay"))
+        assertTrue(model.handoffs.isEmpty())
+        assertTrue(model.history.entries.isEmpty())
+    }
+
+    @Test
+    fun `an invalidated provider takes its handed-off replies with it`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+
+        send(SessionEvent.ProviderInvalidated("relay"))
+        assertTrue(model.handoffs.isEmpty())
+
+        // Its Retry is answered without the reply: none of ours is drawn for it.
+        shown(6_000)
+        press(6_010)
+        respond(requestOf(), conversation("t1"), revision = 2, now = 6_200)
+        assertTrue(sentBubbles("see you").isEmpty())
+    }
+
+    @Test
+    fun `a reply kept on its page lasts while the registration that took it answers, whatever the revisions`() {
+        registration = "reg-1"
+        openThread("t1", at = 1_000)
+        respond(requestOf(), conversation("t1"), revision = 50, now = 2_000)
+        dictate("see you", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+
+        // The link drops; the Retry is answered by the same registration: the reply is still ours to show.
+        send(SessionEvent.LinkLost)
+        send(SessionEvent.LinkRestored)
+        assertEquals(1, model.handoffs.size)
+        shown(6_000)
+        press(6_010)
+        respond(requestOf(), conversation("t1"), revision = 50, now = 6_200)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+
+        // Again, now answered by a new registration with the same messages: its page says what it knows.
+        send(SessionEvent.LinkLost)
+        send(SessionEvent.LinkRestored)
+        shown(7_000)
+        press(7_010)
+        registration = "reg-2"
+        respond(requestOf(), conversation("t1"), revision = 50, now = 7_200)
+        assertTrue(model.handoffs.isEmpty())
+        assertTrue(sentBubbles("see you").isEmpty())
+        respond(requestOf(), conversation("t1"), revision = 51, now = 7_400)
+        assertTrue(sentBubbles("see you").isEmpty())
+    }
+
+    @Test
+    fun `a thread opened again never shows an earlier page's kept reply, whatever its revision`() {
+        registration = "reg-1"
+        openThread("t1", at = 1_000)
+        respond(requestOf(), conversation("t1"), revision = 50, now = 2_000)
+        dictate("see you", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+
+        // Back and in again in the same session: the same frame index and page, a new answer.
+        send(SessionEvent.Back(5_600))
+        assertTrue(model.handoffs.isEmpty())
+        openThreadCard(at = 6_000)
+        assertTrue(sentBubbles("see you").isEmpty())
+
+        // A new notice, a new session, a new registration counting from 1 with the same messages, then past 50.
+        registration = "reg-2"
+        openThread("t1", at = 10_000)
+        for (revision in listOf(2L, 50L, 51L)) {
+            respond(requestOf(), conversation("t1"), revision = revision, now = 12_000 + revision)
+            assertTrue(sentBubbles("see you").isEmpty())
+        }
+    }
+
+    @Test
+    fun `a page that stops showing the thread ends the kept reply`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+
+        respond(requestOf(), PageBody.Summary(primary = "Thread moved"), revision = 2, now = 5_700)
+        assertTrue(model.handoffs.isEmpty())
+        respond(requestOf(), conversation("t1"), revision = 3, now = 5_900)
+        assertTrue(sentBubbles("see you").isEmpty())
+    }
+
+    @Test
+    fun `an evicted frame keeps its kept reply until its page answers again`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+
+        // Covered by another page and evicted for memory: nothing is drawn, nothing is forgotten.
+        val page = model.state as SessionState.InPage
+        val sentFrom = page.frames.single()
+        val evicted = sentFrom.copy(status = FrameStatus.Unavailable(null, SessionReducer.UNAVAILABLE_EVICTED))
+        model = model.copy(state = page.copy(frames = listOf(evicted, sentFrom.copy(pageId = "relay:main"))))
+        send(SessionEvent.Tick(5_700))
+        assertEquals(1, model.handoffs.size)
+
+        // Uncovered, its page answers again: without the reply it is still ours to show, with it the page's.
+        send(SessionEvent.Back(5_800))
+        respond(requestOf(), conversation("t1"), revision = 2, now = 6_000)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+        assertEquals(SessionScreens.HANDOFF_BUBBLE, sentKeys("see you").single())
+        respond(requestOf(), withReply("t1", "h-1", "see you"), revision = 3, now = 6_200)
+        assertEquals(listOf("m:h-1"), sentKeys("see you"))
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
+    fun `a kept reply belongs to its page, not to the history, so it outlives the display bound and ends with its frame`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+
+        wallNow += com.anezium.rokidbus.shared.NoticeSurfaceContract.MAX_HISTORY_AGE_MS + 1
+        send(SessionEvent.Tick(6_000))
+        assertTrue(model.history.visible(wallNow).isEmpty())
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+
+        send(SessionEvent.Back(6_100))
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
+    fun `a copy published before a refusal is the one bubble of an unconfirmed reply, and Type still edits it`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        val action = sendDraft(at = 5_000)
+
+        // The provider could not confirm the handoff and recorded it as unconfirmed before refusing.
+        val copy = ours("h-1", "see you", status = ConversationMessageStatus.UNCONFIRMED)
+        respond(requestOf(), thread("t1", extra = listOf(copy)), revision = 2, now = 5_300)
+        assertEquals(listOf("m:h-1"), sentKeys("see you"))
+        result(action, "rejected", now = 5_500)
+        assertEquals(DraftState.UNCONFIRMED, model.draft?.state)
+        assertEquals(listOf("m:h-1"), sentKeys("see you"))
+        assertEquals(listOf(SessionScreens.UNCONFIRMED_CHECK_PHONE), sentBubbles("see you"))
+        assertTrue(model.handoffs.isEmpty())
+
+        // The draft is still the wearer's to edit, never to send again as is.
+        focus(at = 6_000)
+        assertEquals(ComposerFocus(ComposerRules.TYPE, 1), top().composerFocus)
+        shown(6_100)
+        press(6_110)
+        val start = effects.filterIsInstance<SendCompose>().single().message as ComposeOutbound.TypeStart
+        assertEquals("see you", start.start.initialText)
+        assertTrue(effects.none { it is SendAction })
+    }
+
+    @Test
+    fun `an unconfirmed reply is drawn once whether its copy comes before or after the timeout or the refusal`() {
+        // A copy handed off before the result timed out: the provider's bubble alone.
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        sendDraft(at = 5_000)
+        respond(requestOf(), withReply("t1", "h-1", "see you"), revision = 2, now = 5_300)
+        send(SessionEvent.Tick(5_200 + PageSurfaceContract.PAGE_TIMEOUT_MS))
+        assertEquals(DraftState.UNCONFIRMED, model.draft?.state)
+        assertEquals(listOf("m:h-1"), sentKeys("see you"))
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+        assertTrue(effects.none { it is SendAction })
+
+        // Refused first, its copy afterwards: the draft's bubble until the copy, then the copy alone.
+        reset()
+        openThread("t1", at = 100_000)
+        dictate("see you", at = 103_000)
+        val action = sendDraft(at = 105_000)
+        result(action, "rejected", now = 105_500)
+        assertEquals(listOf(SessionScreens.DRAFT_BUBBLE), sentKeys("see you"))
+        val copy = ours("h-1", "see you", status = ConversationMessageStatus.UNCONFIRMED)
+        respond(requestOf(), thread("t1", extra = listOf(copy)), revision = 2, now = 105_700)
+        assertEquals(listOf("m:h-1"), sentKeys("see you"))
+        assertEquals(DraftState.UNCONFIRMED, model.draft?.state)
     }
 
     @Test
@@ -623,6 +1137,58 @@ class ComposerSessionTest {
     }
 
     @Test
+    fun `a one-to-one card does not repeat its sender before each line`() {
+        // Relay sends a thread's messages as lines, each under its sender's name.
+        arrive(conversationNotice("t1", "Mika", "").copy(body = null, lines = listOf("Mika: Can you check the build", "Mika: CI is red")))
+        openRoot(at = 1_000)
+        val drawn = screen().blocks.first() as ScreenBlock.Card
+        assertEquals("Mika", drawn.primary)
+        assertEquals("Can you check the build CI is red", drawn.secondary)
+    }
+
+    @Test
+    fun `a group card keeps every sender, and so does a thread with a reply of ours`() {
+        arrive(conversationNotice("t1", "Team", "").copy(body = null, lines = listOf("Mika: Can you check the build", "Ana: on it")))
+        openRoot(at = 1_000)
+        assertEquals("Mika: Can you check the build Ana: on it", (screen().blocks.first() as ScreenBlock.Card).secondary)
+
+        val reply = conversationNotice("t2", "Mika", "").copy(body = null, lines = listOf("Mika: Can you check the build", "Me: on it"))
+        assertEquals("Mika: Can you check the build Me: on it", reply.message)
+        // A body is read the same way, its line breaks kept.
+        assertEquals("check the build\nCI is red", conversationNotice("t3", "Mika", "Mika: check the build\nMika: CI is red").message)
+        assertEquals("Mikael: hi", conversationNotice("t4", "Mika", "Mikael: hi").message)
+    }
+
+    @Test
+    fun `a sender's name is matched as written, never as a pattern, and only before a whole message`() {
+        fun lines(title: String, vararg said: String) = conversationNotice("t1", title, "").copy(body = null, lines = said.toList()).message
+
+        // Characters that mean something in a pattern are only characters.
+        assertEquals("hi there", lines("Ana (work) [x]*", "Ana (work) [x]*: hi", "Ana (work) [x]*: there"))
+        assertEquals("Ana work: hi", lines("Ana (work)", "Ana work: hi"))
+        assertEquals("A.na: hi", lines("Ana", "A.na: hi"))
+        // A bare or cut prefix is not a sender before a message: every line stays as it came.
+        assertEquals("Mika: hi Mika:", lines("Mika", "Mika: hi", "Mika:"))
+        assertEquals("Mika:", lines("Mika", "Mika:"))
+        assertEquals("Mik: hi", lines("Mika", "Mik: hi"))
+        assertEquals("Mika:hi", lines("Mika", "Mika:hi"))
+        // Nothing to say is no preview, and an empty title strips nothing.
+        assertNull(lines("Mika", "", "  "))
+        assertNull(conversationNotice("t1", "Mika", "  ").message)
+        assertEquals(": hi", lines("", ": hi"))
+        assertEquals("Mika: hi", lines("  ", "Mika: hi"))
+    }
+
+    @Test
+    fun `a one-to-one card from another conversation owner drops the repeated sender too`() {
+        arrive(conversationNotice("t1", "Mika", "", owner = "chat").copy(body = null, lines = listOf("Mika: build is green", "Mika: merging")))
+        openRoot(at = 1_000)
+        val drawn = screen().blocks.first() as ScreenBlock.Card
+        assertEquals("Mika", drawn.primary)
+        assertEquals("build is green merging", drawn.secondary)
+    }
+
+    @Test
     fun `several live threads of one owner make an aggregate opening its main page`() {
         arrive(conversationNotice("t1", "Ana", "hi"))
         arrive(conversationNotice("t2", "Bo", "hello"))
@@ -733,6 +1299,35 @@ class ComposerSessionTest {
         composer = ConversationComposer(recipient, "send", 500, replyable),
     )
 
+    /** The thread's page in a revision that carries a reply of ours, as its provider recorded it. */
+    private fun withReply(thread: String, id: String, text: String) = conversation(thread).let {
+        it.copy(messages = it.messages + ConversationMessage(id, ConversationRole.OURS, text, status = ConversationMessageStatus.HANDED_OFF))
+    }
+
+    /** The thread's page with [older] before its usual messages and [extra] after them. */
+    private fun thread(thread: String, extra: List<ConversationMessage> = emptyList(), older: List<ConversationMessage> = emptyList()) =
+        conversation(thread).let { it.copy(messages = older + it.messages + extra) }
+
+    private fun ours(id: String, text: String, status: ConversationMessageStatus? = ConversationMessageStatus.HANDED_OFF) =
+        ConversationMessage(id, ConversationRole.OURS, text, status = status)
+
+    private fun received(id: String, text: String) = ConversationMessage(id, ConversationRole.RECEIVED, text)
+
+    /** The meta line of each bubble saying [text], in order. */
+    private fun sentBubbles(text: String): List<String?> = conversationBlock().bubbles.filter { it.text.trim() == text }.map { it.meta }
+
+    /** The key of each bubble saying [text], in order: a message's own, or the hub's. */
+    private fun sentKeys(text: String): List<String> = conversationBlock().bubbles.filter { it.text.trim() == text }.map { it.key }
+
+    /** The registration the phone stamps on the page answers and results that follow; none when null. */
+    private var registration: String? = null
+
+    private fun stamped(payload: JSONObject): JSONObject =
+        payload.apply { registration?.let { put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, it) } }
+
+    private fun result(action: com.anezium.rokidbus.shared.PageSurfaceInvocation, status: String, now: Long) =
+        send(SessionEvent.PageResult(stamped(JSONObject().put("invocationId", action.invocationId).put("status", status)), now))
+
     private val sendAction: JSONObject
         get() = JSONObject().put("id", "send").put("label", "Send").put("kind", "plugin").put("confirm", false)
             .put(PageActionTypeContract.FIELD_TYPED, PageActionTypeContract.encode(PageActionType.ComposeSend))
@@ -748,7 +1343,7 @@ class ComposerSessionTest {
         val payload = PageSurfaceContract.correlationPayload(request.correlation)
             .put("revision", revision).put("template", body.template).put("title", "Ana")
             .put("body", PageTemplateContract.encode(body)).put("actions", JSONArray().put(sendAction)).put("live", true)
-        send(SessionEvent.PageResponse(payload, now))
+        send(SessionEvent.PageResponse(stamped(payload), now))
         if (expectShown) assertTrue(top().status is FrameStatus.Shown)
     }
 
@@ -776,8 +1371,14 @@ class ComposerSessionTest {
 
     private fun reopenThread(thread: String, at: Long, owner: String = "relay", recipient: String = "Ana") {
         openRoot(at)
+        openThreadCard(at, thread, owner, recipient)
+    }
+
+    /** From the root, the conversation card opens its thread's page. */
+    private fun openThreadCard(at: Long, thread: String = "t1", owner: String = "relay", recipient: String = "Ana") {
         val card = root().stops.indexOfFirst { it.kind == RootStopKind.NOTICE_PREVIEW }
-        repeat(card) { send(SessionEvent.Step(1, at + 900L + it)) }
+        val steps = card - root().selected
+        repeat(kotlin.math.abs(steps)) { send(SessionEvent.Step(if (steps > 0) 1 else -1, at + 900L + it)) }
         send(SessionEvent.Enter(at + 1_000))
         val request = effects.filterIsInstance<RequestPage>().single().request
         assertEquals("$owner:thread", request.correlation.pageId)

@@ -618,7 +618,9 @@ Ordinary updates pulse. Set `significant = true` only for a real transition
 such as a maneuver change or arrival. The hub decides whether that becomes a
 flare and permits at most one flare per activity every 10 seconds; a throttled
 flare becomes a pulse and is never queued. Do not use `significant` for distance
-countdown ticks.
+countdown ticks, nor for media moving to a new track: on a negotiated launcher
+the collection is ordered by each activity's latest significant update, so a
+significant track change would lift what plays above a running route.
 
 #### Activity extras
 
@@ -2219,6 +2221,20 @@ template as the fallback. `ink` stays reserved, and there is no Ink page body.
 - A message's `role` is `RECEIVED`, `OURS` or `UNKNOWN`, and it alone decides the
   side; `status` is `HANDED_OFF` or `UNCONFIRMED`. There are no per-message
   times and no read or delivery marks.
+- After a `done` compose send, show the reply in your next revisions as an
+  `OURS` message with the text as sent (marked `HANDED_OFF` if you like). The
+  glasses keep their own bubble for it on that page until a revision shows one
+  more `OURS` message in those words than the page showed when it was sent (plus
+  the earlier identical replies still waiting), so a revision you computed before
+  recording the reply, or one bringing someone else's message, does not make it
+  vanish. Ids and order do not enter that count: you may give a message another
+  `id` (replacing your record of a reply with the app's own copy) and show
+  identical replies' copies in any order. Add older history above the messages
+  already shown, never between them: counting starts at the oldest of them still
+  there. Dropping earlier `OURS` messages in the same words (a bounded log) never
+  hides a reply but can leave it drawn twice on that page until it closes. A page
+  answered later (the thread opened again, a new registration of your plugin)
+  shows only what you put in it.
 - `ConversationComposer(recipient, sendActionId, maxChars, replyable, ...)`
   offers the hub composer (Dictate, Type, Send). `sendActionId` must name one of
   the page's actions typed `NexusActionType.ComposeSend`, and no row may target

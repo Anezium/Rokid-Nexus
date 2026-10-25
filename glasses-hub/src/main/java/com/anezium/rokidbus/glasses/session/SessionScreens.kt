@@ -487,7 +487,7 @@ internal class SessionScreens(
         val parent = state.frames.getOrNull(state.frames.lastIndex - 1)?.let { titleOfFrame(it) } ?: "root"
         val title = titleOfFrame(frame)
         val back = "back $parent"
-        frame.panel?.let { return panel(it, titleOf(frame.pageId), statusText) }
+        frame.panel?.let { return panel(it, titleOf(frame.pageId), statusText, hasMap = it is FramePanel.Display && hasMap(frame)) }
         val outcomeText = frame.outcome?.let(::outcomeText)
         return when (val status = frame.status) {
             is FrameStatus.Loading -> {
@@ -946,12 +946,18 @@ internal class SessionScreens(
             ?.takeIf { it.generation == identity.sessionGeneration && it.frameIndex == identity.frameIndex && it.pageId == frame.pageId }
         val view = ComposerRules.view(owner, body, facts.draft, facts.micUnavailable, facts.pendingSend)
         val draft = view?.threadDraft
-        val sending = facts.pendingSend?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey } != null
+        val pending = facts.pendingSend?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey }
+        val sending = pending != null
         val drawn = bubbles(body.messages).toMutableList()
-        facts.handoff?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey && it.revision == status.revision }?.let {
-            drawn += Bubble(HANDOFF_BUBBLE, BubbleSide.RIGHT, it.text, meta = HANDED_TO_APP)
-        }
-        if (draft != null && capture == null) {
+        // A reply sent from here is drawn as ours until the page carries its own copy of it.
+        facts.handoffs
+            .filter { it.ownerPluginId == owner && it.threadKey == body.threadKey && it.from.isFrame(identity.sessionGeneration, identity.frameIndex, frame) }
+            .filterNot { ComposerRules.carries(body, it.text, it.from.shown) }
+            .forEachIndexed { index, it ->
+                drawn += Bubble(if (index == 0) HANDOFF_BUBBLE else "$HANDOFF_BUBBLE $index", BubbleSide.RIGHT, it.text, meta = HANDED_TO_APP)
+            }
+        val carried = draft != null && (pending?.from?.shown ?: draft.sent)?.let { ComposerRules.carries(body, draft.text, it) } == true
+        if (draft != null && capture == null && !carried) {
             val meta = when {
                 sending -> PENDING
                 draft.state == DraftState.READY -> DRAFT_NOT_SENT
@@ -1062,17 +1068,31 @@ internal class SessionScreens(
         else -> false
     }
 
-    private fun panel(panel: FramePanel, owner: String, statusText: String?): SessionScreen = when (panel) {
+    /** A route frame's map, as its rows have it: the page's geometry or its owner's live one. */
+    private fun hasMap(frame: Frame): Boolean {
+        val page = when (val status = frame.status) {
+            is FrameStatus.Shown -> status.snapshot.page
+            is FrameStatus.Loading -> status.previous?.page
+            is FrameStatus.Unavailable -> null
+        } ?: return false
+        return items.rows(page).any { it.item == PageItem.RouteMap }
+    }
+
+    /** [owner] is the display page's plugin; [hasMap] is its route having a map to draw. */
+    private fun panel(panel: FramePanel, owner: String, statusText: String?, hasMap: Boolean = false): SessionScreen = when (panel) {
         // The hub's display page: the owner's island size, previewed on swipe, saved on tap (r17 3.8).
+        // A route without a map shows the map sizes unavailable, with why.
         is FramePanel.Display -> {
             val name = pluginLabel(panel.ownerPluginId) ?: owner
             SessionScreen(
                 ScreenHeader("${name.uppercase()} · ${RoutePresentation.DISPLAY.uppercase()}", "back: cancel", pluginIcon(panel.ownerPluginId)),
                 listOf<ScreenBlock>(ScreenBlock.Text("section", RoutePresentation.AMBIENT_SECTION, TextRole.SECTION)) +
                     RoutePresentation.SIZES.mapIndexed { index, size ->
+                        val available = RoutePresentation.sizeAvailable(size, hasMap)
                         ScreenBlock.Row(
-                            "size:${size.wireValue}", RoutePresentation.sizeLabel(size), RoutePresentation.sizeSub(size),
-                            selected = index == panel.selected, checked = size == panel.current,
+                            "size:${size.wireValue}", RoutePresentation.sizeLabel(size),
+                            if (available) RoutePresentation.sizeSub(size) else RoutePresentation.NO_MAP_SUB,
+                            enabled = available, selected = index == panel.selected, checked = size == panel.current,
                         )
                     } +
                     ScreenBlock.Text("note", RoutePresentation.DISPLAY_NOTE, TextRole.CAPTION),

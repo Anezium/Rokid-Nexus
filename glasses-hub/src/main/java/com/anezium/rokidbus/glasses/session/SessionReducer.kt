@@ -203,7 +203,10 @@ internal class SessionReducer(
         return withComposerRedraw(model, rootBookkeeping(model, updated))
     }
 
-    /** The owner was revoked, disabled, uninstalled or re-signed: its entries go, its draft loses authority. */
+    /**
+     * The owner was revoked, disabled, uninstalled or re-signed: its entries and the replies it was
+     * handed go, its draft loses authority.
+     */
     private fun onNoticePurged(model: SessionModel, owner: String): SessionTransition {
         val history = model.history.purge(owner)
         // A capture for the owner ends with it; nothing it would have produced may be sent.
@@ -211,6 +214,7 @@ internal class SessionReducer(
         val updated = model.copy(
             history = history,
             draft = DraftStore.authorityLost(model.draft, owner, revision = threadRevision(model, owner, model.draft?.threadKey)),
+            handoffs = model.handoffs.filterNot { it.ownerPluginId == owner },
             capture = if (capture != null) null else model.capture,
             state = model.state.mapRootStops { RootStops.withPurged(it, owner, history, wallClock()) },
         )
@@ -220,10 +224,11 @@ internal class SessionReducer(
         return transition.copy(effects = if (ShowFrame in effects) effects else effects + ShowFrame)
     }
 
-    /** A conversation page draws the draft, so a draft change redraws an open page. */
+    /** A conversation page draws the draft and the replies handed off, so a change to them redraws an open page. */
     private fun withComposerRedraw(before: SessionModel, transition: SessionTransition): SessionTransition {
         val after = transition.model
-        if (after.draft == before.draft || after.state !is SessionState.InPage || ShowFrame in transition.effects) return transition
+        val same = after.draft == before.draft && after.handoffs == before.handoffs
+        if (same || after.state !is SessionState.InPage || ShowFrame in transition.effects) return transition
         return transition.copy(effects = transition.effects + ShowFrame)
     }
 
@@ -604,6 +609,8 @@ internal class SessionReducer(
             }
             is FrameStatus.Shown -> {
                 (top.panel as? FramePanel.Display)?.let { panel ->
+                    // A map size whose route lost its map is inert.
+                    if (!RoutePresentation.sizeAvailable(panel.size, top.routeHasMap())) return keep(model)
                     return SessionTransition(
                         model.copy(state = state.withTop(top.copy(panel = null))),
                         listOf(SessionEffect.SaveAmbientSize(panel.ownerPluginId, panel.size), ShowFrame),
@@ -967,11 +974,13 @@ internal class SessionReducer(
 
     /**
      * Every frame of [owner] keeps its snapshot, inert; its requests, actions, leases and panels
-     * end. Its pages are gone, so a draft for one of its threads loses its authority to be sent.
+     * end. Its pages are gone, so a draft for one of its threads loses its authority to be sent,
+     * and the replies it was handed are no longer drawn for it.
      */
     private fun invalidateOwner(before: SessionModel, owner: String): SessionTransition {
         val model = before.copy(
             draft = DraftStore.authorityLost(before.draft, owner, revision = threadRevision(before, owner, before.draft?.threadKey)),
+            handoffs = before.handoffs.filterNot { it.ownerPluginId == owner },
         )
         fun invalidated(page: SessionState.InPage): SessionState.InPage = page.copy(
             frames = page.frames.map { frame ->
@@ -1159,7 +1168,7 @@ internal class SessionReducer(
                 base.copy(
                     draft = DraftStore.handedOff(model.draft, send),
                     history = history,
-                    handoff = revision?.let { Handoff(send.ownerPluginId, send.threadKey, send.text, it) },
+                    handoffs = model.handoffs.filter { it.from.sameFrameAs(send.from) } + Handoff(send.ownerPluginId, send.threadKey, send.text, send.from),
                     state = model.state.mapRootStops { RootStops.withHistory(it, history, wallClock()) },
                 )
             }
@@ -1339,6 +1348,9 @@ internal class SessionReducer(
         return entriesOf(this).indexOfFirst { it.item == PageItem.RouteMap }.takeIf { it >= 0 }
     }
 
+    /** Whether this route frame has a map to draw now: its page's geometry or its owner's live one. */
+    private fun Frame.routeHasMap(): Boolean = entriesOf(this).any { it.item == PageItem.RouteMap }
+
     /**
      * The index of a shown route frame's Commands entry, or null for any other frame. The page
      * selects only what comes up to it (the map, Commands); the command list is what follows it.
@@ -1448,7 +1460,9 @@ internal class SessionReducer(
                 SessionTransition(model.copy(state = next, mapViews = model.mapViews + (owner to item.view)), listOf(ShowFrame))
             }
             is PageItem.RouteDisplay -> {
-                val selected = item.current?.let(RoutePresentation.SIZES::indexOf)?.takeIf { it >= 0 } ?: 0
+                val hasMap = top.routeHasMap()
+                val selected = item.current?.takeIf { RoutePresentation.sizeAvailable(it, hasMap) }
+                    ?.let(RoutePresentation.SIZES::indexOf)?.takeIf { it >= 0 } ?: 0
                 val panel = FramePanel.Display(item.ownerPluginId, item.current, selected)
                 SessionTransition(model.copy(state = state.withTop(top.copy(panel = panel))), listOf(ShowFrame))
             }
@@ -1456,7 +1470,10 @@ internal class SessionReducer(
         }
     }
 
-    /** The display page walks Text, Minimap and Panel without wrapping; the island previews the choice. */
+    /**
+     * The display page walks Text, Minimap and Panel without wrapping; the island previews the
+     * choice. A route without a map holds on Text.
+     */
     private fun displayStep(
         model: SessionModel,
         state: SessionState.InPage,
@@ -1464,7 +1481,7 @@ internal class SessionReducer(
         panel: FramePanel.Display,
         delta: Int,
     ): SessionTransition {
-        val target = (panel.selected + delta).coerceIn(0, RoutePresentation.SIZES.lastIndex)
+        val target = (panel.selected + delta).coerceIn(0, RoutePresentation.lastAvailableSize(top.routeHasMap()))
         if (target == panel.selected) return keep(model)
         val frame = top.copy(panel = panel.copy(selected = target, moved = true))
         return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
@@ -1656,7 +1673,13 @@ internal class SessionReducer(
         val cleared = state.withTop(top.copy(composerFocus = null))
         val sent = invoke(model.copy(state = cleared), cleared, status, composer.sendActionId, nowMs, PageSurfaceContract.MODE_COMPOSE, draft.text)
         val invocationId = (sent.model.state as? SessionState.InPage)?.frames?.last()?.invocation?.invocationId ?: return keep(model)
-        return sent.copy(model = sent.model.copy(pendingSend = PendingSend(invocationId, draft.ownerPluginId, draft.threadKey, draft.text)))
+        val waiting = model.handoffs.count {
+            it.ownerPluginId == draft.ownerPluginId && it.threadKey == draft.threadKey &&
+                it.from.isFrame(model.generation, state.frames.size, top) && ComposerRules.sameWords(it.text, draft.text)
+        }
+        val from = SentFrom(model.generation, state.frames.size, top.pageId, top.providerEpoch, ComposerRules.shown(body, draft.text, waiting))
+        val pending = PendingSend(invocationId, draft.ownerPluginId, draft.threadKey, draft.text, from)
+        return sent.copy(model = sent.model.copy(pendingSend = pending))
     }
 
     /**
@@ -1713,8 +1736,9 @@ internal class SessionReducer(
      * replyable conversation frame with the link up, and is cancelled at the phone as soon as it
      * does not (the earlier draft stays); a finished one whose text never came is given up. A send
      * whose frame stopped waiting for it will never hear its result here: its draft is unconfirmed.
-     * A page saying its thread cannot be replied to takes its draft's authority. A focused button
-     * that is gone returns the frame to reading.
+     * A page saying its thread cannot be replied to takes its draft's authority. A handed-off reply
+     * lives on the frame it was sent from, under the registration that took it, until that page
+     * carries it. A focused button that is gone returns the frame to reading.
      */
     private fun settleComposer(transition: SessionTransition, event: SessionEvent): SessionTransition {
         var after = transition.model
@@ -1737,6 +1761,7 @@ internal class SessionReducer(
         val page = after.state as? SessionState.InPage
         val top = page?.frames?.last()
         val conversation = top?.shownConversation()
+        if (after.handoffs.isNotEmpty()) after = settleHandoffs(after)
         val draft = after.draft
         if (conversation != null && draft != null) {
             val (owner, body) = conversation
@@ -1759,6 +1784,30 @@ internal class SessionReducer(
         if (after == transition.model) return transition
         showEffect(after.state)?.takeIf { it !in effects }?.let { effects += it }
         return SessionTransition(after, effects)
+    }
+
+    /**
+     * The handed-off replies stay drawn on their frame (they share one) while it is the same page in
+     * the same session, at the same place, answered by the same registration, for the same thread,
+     * until it carries them. A frame waiting for its page keeps them; any other page or registration
+     * ends them.
+     */
+    private fun settleHandoffs(model: SessionModel): SessionModel {
+        val from = model.handoffs.first().from
+        val frames = when (val state = model.state) {
+            is SessionState.InPage -> state.frames
+            is SessionState.Launching -> (state.previous as? SessionState.InPage)?.frames.orEmpty()
+            else -> emptyList()
+        }
+        val frame = frames.getOrNull(from.frameIndex - 1)?.takeIf { from.isFrame(model.generation, from.frameIndex, it) }
+            ?: return model.copy(handoffs = emptyList())
+        if (frame.status !is FrameStatus.Shown) return model
+        val (owner, body) = frame.shownConversation() ?: return model.copy(handoffs = emptyList())
+        return model.copy(
+            handoffs = model.handoffs.filter {
+                owner == it.ownerPluginId && body.threadKey == it.threadKey && !ComposerRules.carries(body, it.text, it.from.shown)
+            },
+        )
     }
 
     private fun captureHolds(model: SessionModel, capture: Capture): Boolean {

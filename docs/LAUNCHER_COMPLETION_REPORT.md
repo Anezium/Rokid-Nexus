@@ -86,6 +86,26 @@ This section supersedes the status paragraphs above, which are kept as history.
   report of the same registration; a show the budget refuses no longer sends a deferred purge
   early. Added tests: an open Notifications list emptying on the timer alone, and an older
   acceptance that cannot settle a newer request.
+- **Fixed from the 2026-10-24 device footage** (lane `fx/nav-misc`): a route without geometry
+  (Google Maps or Citymapper guidance) shows Minimap and Panel unavailable on its Display page and
+  cannot save them, and phone Settings says maps need a route Nexus plans (`RouteNavigationTest`);
+  Media Deck no longer marks a new track or player as a significant update, so what plays stays
+  below a running route (`MediaDeckActivityPublisherTest`; the hub's order rule is unchanged);
+  a one-to-one conversation card no longer repeats its sender before each line, a group card
+  keeps its senders (`ComposerSessionTest`); the reply just sent no longer blinks out when a
+  revision computed before Relay recorded it lands after the result, nor when someone else's
+  message arrives meanwhile: the glasses keep it on its page until that page carries a copy of
+  it, and drop it with its page, a new provider registration or the owner's purge
+  (`ComposerSessionTest`). Copies are counted per text, not matched by id or place, so Relay
+  replacing its record with the app's own copy (`h-<serial>` to a captured `m-...` id), copies
+  arriving in any order, replies in other words between them and three or more identical replies
+  all keep one bubble per reply. The guarantee is one-sided: a reply is never hidden before a
+  copy is shown for it, but a provider dropping earlier copies in the same words (Relay's bounded
+  handoff log) can leave it drawn twice until its frame ends (`ComposerSessionTest`).
+  Known limit, accepted after four review rounds (Sol R4.1/R4.2): with identical words sent more
+  than once on one page, copies the provider dropped and then shows again, or older history
+  reusing Relay's occurrence ids, can still count as a newer identical reply's copy and hide its
+  local bubble until the real copy arrives or the page closes. The reply itself is sent either way.
 - **What the tests prove, and what they do not.** Component tests (reducer, router, Relay with a
   fake hub) cover each fix above and were each observed to fail with the fix reverted. Production
   session-runtime tests (real `NexusSession`, real wall clock, the runner's own timer, a real

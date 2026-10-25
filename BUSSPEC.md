@@ -2503,7 +2503,20 @@ link loss during a capture cancels it and keeps the previous draft.
 Send is offered only while the current page is a live conversation whose
 `threadKey` and owner equal the draft's and whose composer is `replyable`, and
 only for a fresh focus that keeps the fresh-contact rule. `done` hands the draft
-off (`handed to the app`) and clears it. `authority_lost`, `replyable: false`,
+off (`handed to the app`) and clears it. The glasses keep the sent text on the
+frame it was sent from until that page carries the reply. Copies are counted,
+never matched by id or place: the page carries it once it shows more `ours`
+messages with the same text, spacing aside, than it showed when the reply was
+sent plus the earlier replies in that text still waiting there, counting from
+the oldest message shown then that it still shows (older history added above
+it is never a copy). A message may take another id (Relay replaces its record
+of a reply with the app's copy) and identical replies' copies may come in any
+order. A reply is never hidden before a copy is shown for it; a provider that
+drops earlier `ours` messages in that text (a bounded log) can leave a reply
+drawn twice until its frame ends. Other messages never end it; the frame
+closing, an answer from another provider registration, or the owner's purge or
+invalidation does. A page carrying an unconfirmed reply shows it instead of the
+draft's bubble; the draft stays, for Type only. `authority_lost`, `replyable: false`,
 a withdrawn event for the draft's thread, or the page going away keeps the text
 but never sends it as is. `stale` keeps the draft and needs a new Send on the
 new revision. No result in time shows `unconfirmed · check on the phone`, keeps

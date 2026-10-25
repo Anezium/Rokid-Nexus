@@ -165,7 +165,7 @@ internal data class CommandFacts(
             pending = model.pendingCommands,
             outcomes = model.commandOutcomes,
             history = model.history,
-            composer = ComposerFacts(model.draft, model.capture, model.micUnavailable, model.pendingSend, model.handoff),
+            composer = ComposerFacts(model.draft, model.capture, model.micUnavailable, model.pendingSend, model.handoffs),
             mapViews = model.mapViews,
         )
     }

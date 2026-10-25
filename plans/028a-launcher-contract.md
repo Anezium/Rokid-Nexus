@@ -301,8 +301,10 @@ stop, then `Activities · n` when the collection has more than the promoted card
 entries come from more than one thread of one owner, an aggregate card (`3 conversations`,
 names) opening the owner's main page; else a conversation card for the newest conversation
 entry (opens its exact `destination` directly; identity never swaps under focus; resolves in
-place to handed-off or removed); else the generic preview of the newest entry. The armed band
-(NoticeController) is unchanged.
+place to handed-off or removed); else the generic preview of the newest entry. A conversation
+card shows the entry's title over its message; when every line of the message starts
+`<title>: ` (a one-to-one thread) the card drops that prefix, and a group's lines keep their
+senders. The armed band (NoticeController) is unchanged.
 
 ## 7. Composer (glasses-owned, generic, used by conversation pages)
 
@@ -317,6 +319,14 @@ ready draft for this thread exists; Type after an unconfirmed send or an unavail
 Step along the inline buttons (no wrap) -> Enter starts the capture or sends -> capture ends on
 tap (draft, back to reading, nothing sent) or Back (cancelled, old draft kept). Send needs a new
 focus and the fresh-contact rule. Results: `done` -> bubble `handed to the app`, draft cleared;
+the sent text stays on the frame it was sent from, through revisions computed before the provider
+recorded it or bringing other messages, until that page carries it (it shows more ours messages in
+that text, counted from the oldest message shown when it was sent that is still there, than it
+showed then plus the earlier identical replies still waiting; ids and order never enter the count,
+so a reply is never hidden before a copy is shown for it, and a provider dropping earlier copies
+can only leave it drawn twice until the frame ends); it ends with that frame, an
+answer from another provider registration, or the owner's purge or invalidation, and a page
+answered later says what the provider knows;
 `authority_lost` code or the composer's `replyable=false` -> text kept, Send withheld,
 `Reply unavailable here`; `stale` -> draft kept, new Send needed after the new revision is shown;
 no result in time -> `unconfirmed · check on the phone`, text kept, next focus on Type; never an
@@ -357,6 +367,10 @@ The phone is authoritative and stores it; glasses edits (display page) apply loc
 sent with `/core/ambient/sizes/set {ownerPluginId, size|null}`; the phone broadcasts the full map
 `/core/ambient/sizes {revision, sizes}` on link-up and change; offline glasses edits are queued
 (latest per owner) and sent before the phone snapshot is applied. The full map never writes it.
+The display page offers Minimap and Panel only for a route with geometry, its page's or its
+owner's live `/activity/geometry`. Without one (guidance read from another app's notification,
+such as Google Maps or Citymapper) they show unavailable, `no map for this route`, swipe holds
+on Text and they cannot be saved; a saved map size stays marked and the page opens on Text.
 
 8.2 Foreground policy: a glasses `ForegroundResolver` (accessibility window events, Nexus
 overlays and IMEs excluded) splits home from native apps. Per-app mode `residents | signals |
@@ -398,7 +412,8 @@ confirmed`, `removed from the phone · nothing is proven`; aggregate `<n> conver
 ages `2 min`, `1 h`. Command focus hint `swipe choose · tap run` / `back cards`; hub slot
 `Open app`; offline hint `offline · last known HH:MM`. Navigation: `MAP · FOLLOW` /
 `MAP · WHOLE ROUTE`, `Commands`, `View · Follow`, `View · Whole route`, `Full screen`,
-`Display · <size>`, sizes `Text`, `Minimap`, `Panel`, `GPS lost · last fix <n> s`.
+`Display · <size>`, sizes `Text`, `Minimap`, `Panel`, unavailable size `no map for this route`,
+`GPS lost · last fix <n> s`.
 
 ## 10. Lane ownership (one owner per file; integration is serialized)
 
