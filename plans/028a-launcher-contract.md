@@ -350,6 +350,10 @@ The phone is authoritative and stores it; glasses edits (display page) apply loc
 sent with `/core/ambient/sizes/set {ownerPluginId, size|null}`; the phone broadcasts the full map
 `/core/ambient/sizes {revision, sizes}` on link-up and change; offline glasses edits are queued
 (latest per owner) and sent before the phone snapshot is applied. The full map never writes it.
+The display page offers Minimap and Panel only for a route with geometry, its page's or its
+owner's live `/activity/geometry`. Without one (guidance read from another app's notification,
+such as Google Maps or Citymapper) they show unavailable, `no map for this route`, swipe holds
+on Text and they cannot be saved; a saved map size stays marked and the page opens on Text.
 
 8.2 Foreground policy: a glasses `ForegroundResolver` (accessibility window events, Nexus
 overlays and IMEs excluded) splits home from native apps. Per-app mode `residents | signals |
@@ -384,7 +388,8 @@ confirmed`, `removed from the phone · nothing is proven`; aggregate `<n> conver
 ages `2 min`, `1 h`. Command focus hint `swipe choose · tap run` / `back cards`; hub slot
 `Open app`; offline hint `offline · last known HH:MM`. Navigation: `MAP · FOLLOW` /
 `MAP · WHOLE ROUTE`, `Commands`, `View · Follow`, `View · Whole route`, `Full screen`,
-`Display · <size>`, sizes `Text`, `Minimap`, `Panel`, `GPS lost · last fix <n> s`.
+`Display · <size>`, sizes `Text`, `Minimap`, `Panel`, unavailable size `no map for this route`,
+`GPS lost · last fix <n> s`.
 
 ## 10. Lane ownership (one owner per file; integration is serialized)
 

@@ -243,8 +243,10 @@ class GlassesDisplaySettingsActivity : Activity() {
             addView(
                 note(
                     "Text shows arrow, distance and street. Minimap adds a heading-up map. Panel is a " +
-                        "wide map with street names. Automatic lets the glasses decide. Also on the " +
-                        "glasses' route page. Other plugins keep their developer's presentation.",
+                        "wide map with street names. Maps need a route Nexus plans (a walk started from " +
+                        "Navigation); sources like Google Maps or Citymapper show text. Automatic lets the " +
+                        "glasses decide. Also on the glasses' route page. Other plugins keep their " +
+                        "developer's presentation.",
                 ),
             )
             val owners = islandOwners()

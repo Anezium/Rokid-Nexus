@@ -309,6 +309,49 @@ class RouteNavigationTest {
     }
 
     @Test
+    fun `a route without a map shows the map sizes unavailable and saves only Text`() {
+        saved = AmbientSize.MINIMAP
+        // Another app's text guidance: no page geometry and no live geometry.
+        openRoute(routeBody(follow = null, overview = null))
+        press(3_000)
+        assertEquals(TypedPageItems.DISPLAY_KEY, top().selectedKey)
+        press(3_100)
+        // The saved Minimap stays marked, but the page opens on Text, the one size it can draw.
+        assertEquals(FramePanel.Display(OWNER, AmbientSize.MINIMAP, selected = 0), top().panel)
+        val unavailable = screen().blocks.filterIsInstance<ScreenBlock.Row>()
+        assertEquals(listOf(true, false, false), unavailable.map { it.enabled })
+        assertEquals(
+            listOf("arrow, distance, street", RoutePresentation.NO_MAP_SUB, RoutePresentation.NO_MAP_SUB),
+            unavailable.map { it.sub },
+        )
+        assertEquals(listOf(false, true, false), unavailable.map { it.checked })
+
+        send(SessionEvent.Step(1, 3_200))
+        send(SessionEvent.Step(1, 3_300))
+        assertEquals(FramePanel.Display(OWNER, AmbientSize.MINIMAP, selected = 0), top().panel)
+        assertEquals(listOf(SessionEffect.None), effects)
+
+        // The owner's live geometry arrives: the map sizes become selectable and savable.
+        live = geometry()
+        val available = screen().blocks.filterIsInstance<ScreenBlock.Row>()
+        assertEquals(listOf(true, true, true), available.map { it.enabled })
+        assertEquals(listOf("arrow, distance, street", "text + heading-up map", "wide map, street names"), available.map { it.sub })
+        send(SessionEvent.Step(1, 3_400))
+        assertEquals(AmbientSize.MINIMAP, (top().panel as FramePanel.Display).size)
+
+        // It goes again with Minimap selected: the tap is inert, nothing is saved.
+        live = null
+        press(3_500)
+        assertTrue(top().panel is FramePanel.Display)
+        assertTrue(allEffects.none { it is SessionEffect.SaveAmbientSize })
+        // A step from the size it lost goes back to Text, which saves.
+        send(SessionEvent.Step(-1, 3_600))
+        assertEquals(AmbientSize.TEXT, (top().panel as FramePanel.Display).size)
+        press(3_700)
+        assertEquals(SessionEffect.SaveAmbientSize(OWNER, AmbientSize.TEXT), allEffects.filterIsInstance<SessionEffect.SaveAmbientSize>().single())
+    }
+
+    @Test
     fun `a page without geometry draws the owner's live geometry and has no map without it`() {
         openRoute(routeBody(follow = null, overview = null))
         assertEquals(TypedPageItems.COMMANDS_KEY, rows().first().key)

@@ -49,6 +49,7 @@ internal object RoutePresentation {
     const val APP = "APP"
     const val AMBIENT_SECTION = "AMBIENT SIZE · DURING THE TRIP"
     const val DISPLAY_NOTE = "Provisional on swipe, saved on tap. In an app the hub caps islands at Text. Back cancels."
+    const val NO_MAP_SUB = "no map for this route"
     const val MAP_HINT = "swipe map ↔ Commands · tap full screen"
     const val COMMANDS_HINT = "swipe map ↔ Commands · tap open"
     const val FULL_NEXT_HINT = "swipe next view · tap commands"
@@ -118,6 +119,16 @@ internal object RoutePresentation {
         AmbientSize.MINIMAP -> "text + heading-up map"
         AmbientSize.PANEL -> "wide map, street names"
     }
+
+    /**
+     * Whether the display page may select and save [size]. Only a route with geometry, its page's
+     * or its owner's live one, has a map to draw: another app's text guidance has none, so
+     * choosing Minimap or Panel there would change nothing the wearer could see.
+     */
+    fun sizeAvailable(size: AmbientSize, hasMap: Boolean): Boolean = size == AmbientSize.TEXT || hasMap
+
+    /** The index of the last size the display page may select; the map sizes follow Text. */
+    fun lastAvailableSize(hasMap: Boolean): Int = SIZES.indexOfLast { sizeAvailable(it, hasMap) }
 
     fun sizeLabel(size: AmbientSize): String = when (size) {
         AmbientSize.TEXT -> "Text"

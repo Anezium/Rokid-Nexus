@@ -491,7 +491,7 @@ internal class SessionScreens(
         val parent = state.frames.getOrNull(state.frames.lastIndex - 1)?.let { titleOfFrame(it) } ?: "root"
         val title = titleOfFrame(frame)
         val back = "back $parent"
-        frame.panel?.let { return panel(it, title, titleOf(frame.pageId), statusText) }
+        frame.panel?.let { return panel(it, title, titleOf(frame.pageId), statusText, hasMap = it is FramePanel.Display && hasMap(frame)) }
         val outcomeText = frame.outcome?.let(::outcomeText)
         return when (val status = frame.status) {
             is FrameStatus.Loading -> {
@@ -1071,8 +1071,21 @@ internal class SessionScreens(
         else -> false
     }
 
-    /** [owner] is who will act: the page's plugin for a page action, the activity's for a command. */
-    private fun panel(panel: FramePanel, title: String, owner: String, statusText: String?): SessionScreen = when (panel) {
+    /** A route frame's map, as its rows have it: the page's geometry or its owner's live one. */
+    private fun hasMap(frame: Frame): Boolean {
+        val page = when (val status = frame.status) {
+            is FrameStatus.Shown -> status.snapshot.page
+            is FrameStatus.Loading -> status.previous?.page
+            is FrameStatus.Unavailable -> null
+        } ?: return false
+        return items.rows(page).any { it.item == PageItem.RouteMap }
+    }
+
+    /**
+     * [owner] is who will act: the page's plugin for a page action, the activity's for a command.
+     * [hasMap] is the display page's route having a map to draw.
+     */
+    private fun panel(panel: FramePanel, title: String, owner: String, statusText: String?, hasMap: Boolean = false): SessionScreen = when (panel) {
         is FramePanel.Confirm -> confirmScreen(title, panel.label, owner, panel.selected, statusText)
         is FramePanel.ConfirmCommand -> {
             val name = pluginLabel(panel.ownerPluginId) ?: owner
@@ -1094,15 +1107,18 @@ internal class SessionScreens(
             )
         }
         // The hub's display page: the owner's island size, previewed on swipe, saved on tap (r17 3.8).
+        // A route without a map shows the map sizes unavailable, with why.
         is FramePanel.Display -> {
             val name = pluginLabel(panel.ownerPluginId) ?: owner
             SessionScreen(
                 ScreenHeader("${name.uppercase()} · ${RoutePresentation.DISPLAY.uppercase()}", "back: cancel", pluginIcon(panel.ownerPluginId)),
                 listOf<ScreenBlock>(ScreenBlock.Text("section", RoutePresentation.AMBIENT_SECTION, TextRole.SECTION)) +
                     RoutePresentation.SIZES.mapIndexed { index, size ->
+                        val available = RoutePresentation.sizeAvailable(size, hasMap)
                         ScreenBlock.Row(
-                            "size:${size.wireValue}", RoutePresentation.sizeLabel(size), RoutePresentation.sizeSub(size),
-                            selected = index == panel.selected, checked = size == panel.current,
+                            "size:${size.wireValue}", RoutePresentation.sizeLabel(size),
+                            if (available) RoutePresentation.sizeSub(size) else RoutePresentation.NO_MAP_SUB,
+                            enabled = available, selected = index == panel.selected, checked = size == panel.current,
                         )
                     } +
                     ScreenBlock.Text("note", RoutePresentation.DISPLAY_NOTE, TextRole.CAPTION),

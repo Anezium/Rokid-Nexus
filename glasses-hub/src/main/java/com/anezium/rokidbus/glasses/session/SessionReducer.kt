@@ -715,10 +715,16 @@ internal class SessionReducer(
             is FramePanel.ConfirmCommand ->
                 commandPanelEnter(model, frameSite(state), model.latestActivityById(panel.stopId), event)
             // The display page saves what is selected; it changes a hub preference, nothing on the plugin.
-            is FramePanel.Display -> SessionTransition(
-                model.copy(state = cleared),
-                listOf(SessionEffect.SaveAmbientSize(panel.ownerPluginId, panel.size), ShowFrame),
-            )
+            // A map size whose route lost its map is inert.
+            is FramePanel.Display ->
+                if (!RoutePresentation.sizeAvailable(panel.size, top.routeHasMap())) {
+                    keep(model)
+                } else {
+                    SessionTransition(
+                        model.copy(state = cleared),
+                        listOf(SessionEffect.SaveAmbientSize(panel.ownerPluginId, panel.size), ShowFrame),
+                    )
+                }
         }
     }
 
@@ -1399,6 +1405,9 @@ internal class SessionReducer(
         return entriesOf(this).indexOfFirst { it.item == PageItem.RouteMap }.takeIf { it >= 0 }
     }
 
+    /** Whether this route frame has a map to draw now: its page's geometry or its owner's live one. */
+    private fun Frame.routeHasMap(): Boolean = entriesOf(this).any { it.item == PageItem.RouteMap }
+
     /**
      * The index of a shown route frame's Commands entry, or null for any other frame. The page
      * selects only what comes up to it (the map, Commands); the command list is what follows it.
@@ -1508,7 +1517,9 @@ internal class SessionReducer(
                 SessionTransition(model.copy(state = next, mapViews = model.mapViews + (owner to item.view)), listOf(ShowFrame))
             }
             is PageItem.RouteDisplay -> {
-                val selected = item.current?.let(RoutePresentation.SIZES::indexOf)?.takeIf { it >= 0 } ?: 0
+                val hasMap = top.routeHasMap()
+                val selected = item.current?.takeIf { RoutePresentation.sizeAvailable(it, hasMap) }
+                    ?.let(RoutePresentation.SIZES::indexOf)?.takeIf { it >= 0 } ?: 0
                 val panel = FramePanel.Display(item.ownerPluginId, item.current, selected)
                 SessionTransition(model.copy(state = state.withTop(top.copy(panel = panel))), listOf(ShowFrame))
             }
@@ -1516,7 +1527,10 @@ internal class SessionReducer(
         }
     }
 
-    /** The display page walks Text, Minimap and Panel without wrapping; the island previews the choice. */
+    /**
+     * The display page walks Text, Minimap and Panel without wrapping; the island previews the
+     * choice. A route without a map holds on Text.
+     */
     private fun displayStep(
         model: SessionModel,
         state: SessionState.InPage,
@@ -1524,7 +1538,7 @@ internal class SessionReducer(
         panel: FramePanel.Display,
         delta: Int,
     ): SessionTransition {
-        val target = (panel.selected + delta).coerceIn(0, RoutePresentation.SIZES.lastIndex)
+        val target = (panel.selected + delta).coerceIn(0, RoutePresentation.lastAvailableSize(top.routeHasMap()))
         if (target == panel.selected) return keep(model)
         val frame = top.copy(panel = panel.copy(selected = target, moved = true))
         return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
