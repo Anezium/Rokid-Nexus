@@ -394,8 +394,10 @@ internal class PhoneActivityRouter(
                 sink.log("activity command ignored id=${command.activityId.take(80)} reason=${result.reason}")
             is PhoneActivityCommandResult.Accepted -> {
                 val bound = launcher.bindCommand(result.ownerPluginId)
-                if (bound) commandBindings[result.ownerPluginId] = result.invocationId
-                else sink.log("activity command bind failed owner=${result.ownerPluginId}")
+                if (bound || result.ownerPluginId in commandBindings) {
+                    commandBindings[result.ownerPluginId] = result.invocationId
+                }
+                if (!bound) sink.log("activity command bind failed owner=${result.ownerPluginId}")
                 val delivered = sink.deliverLocal(BusEnvelope(path = BusPaths.ACTIVITY_ACTION, payload = result.payload))
                 if (!delivered) {
                     state.commandUndelivered(result.ownerPluginId, result.invocationId)

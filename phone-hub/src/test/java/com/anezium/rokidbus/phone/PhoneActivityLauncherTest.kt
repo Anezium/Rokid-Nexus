@@ -510,6 +510,22 @@ class PhoneActivityLauncherTest {
     }
 
     @Test
+    fun `a refused refresh of a retained command hold tracks the replacement invocation`() {
+        router.handleLocal(local(start("media", mediaActions())), hudSender("media"))
+        val seq = sink.remote.last().payload.getLong("seq")
+        router.handleGlassesAction(command("media", "play", seq, "expired"))
+        // A delivery can reach the router before the already-due expiry tick runs.
+        now += ActivitySurfaceContract.COMMAND_DEADLINE_MS
+        host.bindAccepted = false
+        router.handleGlassesAction(command("media", "play", seq, "replacement"))
+        assertEquals(setOf("media"), state.pendingCommandOwners())
+        router.onCommandBindingDied("media")
+        assertTrue(state.pendingCommandOwners().isEmpty())
+        assertTrue(host.boundCommands.isEmpty())
+        assertEquals(setOf("media"), router.ownerPluginIds())
+    }
+
+    @Test
     fun `a dead command connection releases only its invocation and preserves the live activity`() {
         router.handleLocal(local(start("media", mediaActions())), hudSender("media"))
         val seq = sink.remote.last().payload.getLong("seq")
