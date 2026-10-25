@@ -16,14 +16,11 @@ internal sealed interface PageItem {
      */
     data class Quick(val actionId: String, val label: String) : PageItem
 
-    /** Opens [pluginId]'s immersion at once. Only an injected resolver produces it. */
-    data class Launch(val pluginId: String) : PageItem
+    /** Opens [pluginId]'s immersion at once on a fresh tap. */
+    data class Launch(val pluginId: String, val label: String = pluginId) : PageItem
 
-    /** A plugin business action; the hub confirms it with the wearer before invoking it. */
-    data class Confirm(val actionId: String, val label: String) : PageItem
-
-    /** [pluginId]'s full app, behind a labelled launch step whose Open alone produces [Launch]. */
-    data class LaunchPrompt(val pluginId: String, val label: String) : PageItem
+    /** A plugin business action invoked in confirmed wire mode on a fresh tap. */
+    data class PluginAction(val actionId: String, val label: String) : PageItem
 
     /** A hub-authored local launch (a native app, the hub camera); never a provider's target. */
     data class LocalLaunch(val key: String, val label: String) : PageItem
@@ -99,13 +96,12 @@ internal data class PageControls(val keys: List<String>, val defaultKey: String)
 internal data class PageEntry(val key: String, val item: PageItem, val label: String = "")
 
 /**
- * The resolver a reducer gets when none is injected. Every `plugin` action is confirmed first,
- * whatever its `confirm` flag says, exactly as the typed resolver confirms it: a reducer built
- * without the host's resolver must never run a plugin action the wearer did not confirm. With no
- * quick-action gate here, no action is ever quick. `hub` and `immersion` rows stay inert.
+ * The resolver a reducer gets when none is injected. Every `plugin` action uses confirmed wire
+ * mode on a tap, whatever its `confirm` flag says. With no quick-action gate here, no action is
+ * ever quick. `hub` and `immersion` rows stay inert.
  */
 internal object DefaultPageItems : PageItemResolver {
     override fun items(page: PageSurfaceResponse.Page): List<PageItem> = page.actions.map {
-        if (it.kind == PageSurfaceContract.KIND_PLUGIN) PageItem.Confirm(it.id, it.label) else PageItem.Inert
+        if (it.kind == PageSurfaceContract.KIND_PLUGIN) PageItem.PluginAction(it.id, it.label) else PageItem.Inert
     }
 }

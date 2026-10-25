@@ -91,20 +91,17 @@ class LauncherInteractiveTest {
     }
 
     @Test
-    fun `Open app takes the labelled launch step and its Open needs a fresh press`() {
+    fun `Open app launches directly from a card slot on one fresh press`() {
         focusOnPlay()
         send(SessionEvent.Step(1, 3_000))
         send(SessionEvent.Step(1, 3_100))
         shown(3_200)
-        press(3_300)
-        assertEquals(FramePanel.Launch("media", "Media"), root().panel)
+        press(3_100)
+        assertTrue(model.state is SessionState.Root)
         assertTrue(effects.none { it is SessionEffect.SendLauncherOpen })
 
-        // The panel is a new target: a press that began before it was drawn opens nothing.
-        shown(3_500)
-        press(3_400)
-        assertTrue(effects.none { it is SessionEffect.SendLauncherOpen })
-        press(3_600)
+        press(3_300)
+        assertTrue(model.state is SessionState.Launching)
         assertEquals("media", effects.filterIsInstance<SessionEffect.SendLauncherOpen>().single().pluginId)
     }
 
@@ -167,28 +164,21 @@ class LauncherInteractiveTest {
     }
 
     @Test
-    fun `without the policy or the stamp a command is confirmed first with Cancel preselected`() {
+    fun `without the policy a single fresh tap sends the focused command in confirmed mode`() {
         policy = QuickActionPolicy(2, emptyMap())
         focusOnPlay()
-        press(3_000)
-        assertEquals(FramePanel.ConfirmCommand("media:activity", "media", "play", "Play", 7), root().panel)
-        assertEquals(FramePanel.CANCEL, root().panel?.selected)
+        press(2_000)
         assertTrue(effects.none { it is SendActivityCommand })
-
-        // Cancel is preselected: a tap there leaves the command unsent and keeps the focus.
-        shown(3_100)
-        press(3_200)
-        assertNull(root().panel)
-        assertEquals("play", root().focus?.key)
-
-        shown(3_300)
-        press(3_400)
-        send(SessionEvent.Step(1, 3_500))
-        shown(3_600)
-        press(3_700)
+        press(3_000)
         val command = effects.filterIsInstance<SendActivityCommand>().single().command
+        assertEquals("play", command.actionId)
+        assertEquals(7L, command.seq)
         assertEquals(ActivityCommandMode.CONFIRMED, command.mode)
-        assertNull(root().panel)
+        assertEquals("play", root().focus?.key)
+        val screen = SessionScreens(items, { null }, { "12:00" }, { it }).screen(model.state, null, model.generation)
+        assertTrue(screen.blocks.any { it is ScreenBlock.Card })
+        press(3_100)
+        assertTrue(effects.none { it is SendActivityCommand })
     }
 
     @Test
@@ -199,25 +189,24 @@ class LauncherInteractiveTest {
         press(2_000)
         shown(2_100)
         press(2_200)
-        assertTrue(root().panel is FramePanel.ConfirmCommand)
-        assertTrue(effects.none { it is SendActivityCommand })
+        assertEquals(ActivityCommandMode.CONFIRMED, effects.filterIsInstance<SendActivityCommand>().single().command.mode)
+        assertEquals("play", root().focus?.key)
     }
 
     @Test
-    fun `a confirmation bound to an older revision is withdrawn and never sent`() {
+    fun `a confirmed command waits for the new card revision to be drawn and a fresh press`() {
         policy = QuickActionPolicy(2, emptyMap())
         focusOnPlay()
-        press(3_000)
-        send(SessionEvent.Step(1, 3_100))
-        assertEquals(FramePanel.CONFIRM, root().panel?.selected)
-
         send(SessionEvent.ActivityUpdated(stop(seq = 9)))
-        assertNull(root().panel)
-        shown(3_200)
-        press(3_300)
-        // That tap reached the focus again, not a stale Confirm: it asks anew, bound to seq 9.
-        assertEquals(9L, (root().panel as FramePanel.ConfirmCommand).seq)
+        press(3_100)
         assertTrue(effects.none { it is SendActivityCommand })
+        shown(3_200)
+        send(SessionEvent.Enter(3_250, pressStartMs = 3_150))
+        assertTrue(effects.none { it is SendActivityCommand })
+        press(3_300)
+        val command = effects.filterIsInstance<SendActivityCommand>().single().command
+        assertEquals(9L, command.seq)
+        assertEquals(ActivityCommandMode.CONFIRMED, command.mode)
     }
 
     @Test
@@ -275,11 +264,15 @@ class LauncherInteractiveTest {
         assertEquals(underneath, model.underneath)
         assertEquals(OpenApp("media", "Media"), top().openApp)
 
-        // The destination ends with the hub's own Open app row, behind the launch step.
+        // The destination ends with the hub's own Open app row.
         respond(request, PageBody.SelectableList(listOf(PageRow("a", "Ana"))), JSONArray(), now = 2_100)
         send(SessionEvent.Step(1, 2_200))
+        press(2_210)
+        assertTrue(effects.none { it is SessionEffect.SendLauncherOpen })
+        shown(2_220)
         press(2_300)
-        assertEquals(FramePanel.Launch("media", "Media"), top().panel)
+        assertTrue(model.state is SessionState.Launching)
+        assertEquals("media", effects.filterIsInstance<SessionEffect.SendLauncherOpen>().single().pluginId)
     }
 
     @Test
@@ -326,7 +319,7 @@ class LauncherInteractiveTest {
     }
 
     @Test
-    fun `an old phone keeps the v1 card and confirms every page action`() {
+    fun `an old phone keeps the v1 card and a tap invokes a page action in confirmed mode`() {
         negotiated = false
         openRoot(stop(activation = ActivityActivation.DESTINATION, destination = PageDestination("media:now"), pageId = "media:main"))
         press(2_000)
@@ -342,8 +335,11 @@ class LauncherInteractiveTest {
             now = 2_100,
         )
         press(2_200)
-        assertTrue(top().panel is FramePanel.Confirm)
-        assertTrue(effects.none { it is SendAction })
+        val action = effects.filterIsInstance<SendAction>().single().action
+        assertEquals("check", action.actionId)
+        assertEquals(PageSurfaceContract.MODE_CONFIRMED, action.mode)
+        assertEquals(1L, action.revision)
+        assertNull(top().panel)
     }
 
     @Test
@@ -362,15 +358,6 @@ class LauncherInteractiveTest {
         respond(effects.filterIsInstance<RequestPage>().single().request, rows, actions, now = 2_100)
         assertEquals(listOf(false, false), items.rows((top().status as FrameStatus.Shown).snapshot.page).take(2).map { it.checked })
 
-        // The unstamped row asks first, whatever the policy says.
-        send(SessionEvent.Step(1, 2_150))
-        shown(2_160)
-        press(2_170)
-        assertTrue(top().panel is FramePanel.Confirm)
-        assertTrue(effects.none { it is SendAction })
-        send(SessionEvent.Back(2_180))
-        send(SessionEvent.Step(-1, 2_190))
-
         // The stamped one runs on one tap, but only for a press begun after it was drawn.
         press(2_195)
         assertTrue(effects.none { it is SendAction })
@@ -379,7 +366,76 @@ class LauncherInteractiveTest {
         val invocation = effects.filterIsInstance<SendAction>().single().action
         assertEquals("check-milk", invocation.actionId)
         assertEquals(PageSurfaceContract.MODE_QUICK, invocation.mode)
+        assertEquals(1L, invocation.revision)
+        assertNull(top().panel)
         assertEquals("check-milk", top().invocation?.actionId)
+    }
+
+    @Test
+    fun `a typed page row without a stamp or policy runs confirmed on one fresh tap`() {
+        listOf(false to true, true to false, false to false).forEach { (stamped, approved) ->
+            model = SessionModel()
+            policy = QuickActionPolicy(2, if (approved) mapOf("todo" to setOf(QuickActionFamily.CHECKLIST)) else emptyMap())
+            openRoot(stop(owner = "todo", activation = ActivityActivation.DESTINATION, destination = PageDestination("todo:list")))
+            press(2_000)
+            respond(
+                effects.filterIsInstance<RequestPage>().single().request,
+                PageBody.SelectableList(listOf(PageRow("milk", "Milk", target = PageTarget.Action("check")))),
+                JSONArray().put(typedAction("check", PageActionType.SetChecked(true), stamped)),
+                now = 2_100,
+            )
+            shown(2_200)
+            send(SessionEvent.Enter(2_300, pressStartMs = 2_150))
+            assertTrue(effects.none { it is SendAction })
+            press(2_400)
+            val sent = effects.filterIsInstance<SendAction>().single().action
+            assertEquals("check", sent.actionId)
+            assertEquals(1L, sent.revision)
+            assertEquals(PageSurfaceContract.MODE_CONFIRMED, sent.mode)
+            assertNull(top().panel)
+            press(2_500)
+            assertTrue(effects.none { it is SendAction })
+        }
+    }
+
+    @Test
+    fun `a confirmed command is inert offline and reports NotAvailable when the link is lost`() {
+        policy = QuickActionPolicy(2, emptyMap())
+        focusOnPlay()
+        send(SessionEvent.LinkLost)
+        press(3_000)
+        assertEquals(listOf(SessionEffect.ShowStatus(SessionStatus.NotAvailable)), effects)
+        assertTrue(model.pendingCommands.isEmpty())
+
+        send(SessionEvent.ActivityUpdated(stop().copy(offline = true)))
+        shown(3_100)
+        press(3_200)
+        assertTrue(effects.none { it is SendActivityCommand })
+        assertTrue(model.pendingCommands.isEmpty())
+    }
+
+    @Test
+    fun `an Applications launch enters Launching on one fresh tap`() {
+        val local = LocalPages(
+            history = { NotificationHistory() },
+            activities = { emptyList() },
+            applications = { listOf(AppEntry("plugin:media", "Media", AppKind.IMMERSION, "media")) },
+            providerPagesReady = { false },
+            formatTime = { "12:00" },
+        )
+        openRoot()
+        val applications = root().stops.indexOfFirst { it.kind == RootStopKind.APPLICATIONS }
+        repeat(applications) { send(SessionEvent.Step(1, 1_900L + it)) }
+        press(2_000)
+        send(SessionEvent.PageResponse(local.answer(effects.filterIsInstance<RequestPage>().single().request), 2_100))
+        shown(2_200)
+        press(2_190)
+        assertTrue(effects.none { it is SessionEffect.SendLauncherOpen })
+        press(2_300)
+        assertTrue(model.state is SessionState.Launching)
+        assertEquals("media", effects.filterIsInstance<SessionEffect.SendLauncherOpen>().single().pluginId)
+        press(2_400)
+        assertTrue(effects.none { it is SessionEffect.SendLauncherOpen })
     }
 
     @Test
@@ -446,7 +502,15 @@ class LauncherInteractiveTest {
         repeat(media) { send(SessionEvent.Step(1, 2_100L + it)) }
         press(2_200)
         assertEquals(CommandFocus("media:activity", "play", 1), top().commandFocus)
-        send(SessionEvent.Back(2_300))
+        shown(2_250)
+        send(SessionEvent.ActivityUpdated(stop(seq = 8)))
+        assertTrue(effects.contains(SessionEffect.ShowFrame))
+        press(2_300)
+        assertTrue(effects.none { it is SendActivityCommand })
+        shown(2_350)
+        press(2_400)
+        assertEquals(8L, effects.filterIsInstance<SendActivityCommand>().single().command.seq)
+        send(SessionEvent.Back(2_500))
         assertNull(top().commandFocus)
         assertTrue(model.state is SessionState.InPage)
     }

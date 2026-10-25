@@ -7,8 +7,8 @@ import com.anezium.rokidbus.shared.PageActionType
 import com.anezium.rokidbus.shared.QuickActionPolicy
 
 /**
- * Whether one tap may run an action with no confirmation (plan 028a §3.2). The glasses check is
- * never the only gate: the phone checks owner, revision, type and policy again at invocation.
+ * Whether a tap uses quick wire mode (plan 028a §3.2). The glasses check is never the only gate:
+ * the phone checks owner, revision, type and policy again at invocation.
  */
 internal fun interface QuickGate {
     fun allows(ownerPluginId: String, typed: PageActionType?, hubQuick: Boolean): Boolean
@@ -117,13 +117,13 @@ internal object ActivityCommands {
         return focus.copy(key = slots[clamped].key, index = clamped)
     }
 
-    /** The hub's final row on an activity's destination page: Open app, behind the labelled launch step. */
+    /** The hub's final row on an activity's destination page: Open app, on a fresh tap. */
     fun openAppEntry(openApp: OpenApp): PageEntry =
-        PageEntry(OPEN_APP_KEY, PageItem.LaunchPrompt(openApp.pluginId, openApp.label), OPEN_APP)
+        PageEntry(OPEN_APP_KEY, PageItem.Launch(openApp.pluginId, openApp.label), OPEN_APP)
 
     /** [openAppEntry] as the screens draw it. */
     fun openAppRow(openApp: OpenApp): TypedRow =
-        TypedRow(OPEN_APP_KEY, OPEN_APP, null, true, PageItem.LaunchPrompt(openApp.pluginId, openApp.label))
+        TypedRow(OPEN_APP_KEY, OPEN_APP, null, true, PageItem.Launch(openApp.pluginId, openApp.label))
 
     /**
      * One hub rule for a page opened for a launchable owner: it ends with the hub's Open app, and
@@ -138,7 +138,7 @@ internal object ActivityCommands {
     fun withOpenAppRows(rows: List<TypedRow>, openApp: OpenApp?): List<TypedRow> =
         if (openApp == null) rows else rows.filterNot { it.item.launches(openApp) } + openAppRow(openApp)
 
-    private fun PageItem.launches(openApp: OpenApp): Boolean = this is PageItem.LaunchPrompt && pluginId == openApp.pluginId
+    private fun PageItem.launches(openApp: OpenApp): Boolean = this is PageItem.Launch && pluginId == openApp.pluginId
 }
 
 /**
@@ -193,7 +193,7 @@ internal object SessionFocus {
             is SessionState.Root -> {
                 val stop = state.stops.getOrNull(state.selected)
                 val seq = stop?.activity?.seq
-                "$prefix/root/${state.selected}/${stop?.id}/s$seq" + focusPart(state.focus) + panelPart(state.panel)
+                "$prefix/root/${state.selected}/${stop?.id}/s$seq" + focusPart(state.focus)
             }
             is SessionState.InPage -> {
                 val top = state.frames.last()
@@ -202,8 +202,10 @@ internal object SessionFocus {
                     is FrameStatus.Shown -> "shown/${status.requestId}/r${status.revision}"
                     is FrameStatus.Unavailable -> "unavailable/${status.reason}"
                 }
+                val commandSeq = top.commandFocus?.takeIf { it.stopId != CommandFocus.MEDIA }
+                    ?.let { model.latestActivityById(it.stopId)?.seq }
                 "$prefix/f${state.frames.size}/${top.pageId}/$status/${top.mode}/p${top.page}" +
-                    "/${top.selected}/${top.selectedKey}/${top.tombstone != null}" +
+                    "/${top.selected}/${top.selectedKey}/${top.tombstone != null}/epoch${top.providerEpoch}/s$commandSeq" +
                     focusPart(top.commandFocus) + panelPart(top.panel) + composerPart(model, top) +
                     top.fullMap?.let { "/map/$it" }.orEmpty()
             }
@@ -233,9 +235,6 @@ internal object SessionFocus {
 
     private fun panelPart(panel: FramePanel?): String = when (panel) {
         null -> ""
-        is FramePanel.Confirm -> "/confirm/${panel.actionId}/r${panel.revision}/${panel.providerEpoch}/${panel.selected}"
-        is FramePanel.Launch -> "/launch/${panel.pluginId}/${panel.selected}"
-        is FramePanel.ConfirmCommand -> "/confirm-command/${panel.stopId}/${panel.actionId}/s${panel.seq}/${panel.selected}"
         is FramePanel.Display -> "/display/${panel.ownerPluginId}/${panel.selected}"
     }
 }

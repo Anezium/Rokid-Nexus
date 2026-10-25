@@ -41,12 +41,12 @@ import org.json.JSONObject
  * [isLocalPage] names the pages the glasses hub answers itself: they need no phone, so link loss
  * and provider invalidation never touch them, while provider frames keep every loss rule.
  *
- * [quickGate] decides which activity commands one tap may run; page rows get the same answer
+ * [quickGate] decides which activity commands use quick wire mode; page rows get the same answer
  * from the resolver. [launcherActive] is whether the pair negotiated the launcher bundle now:
  * only then do activity cards activate, provider pages carry the phone's quick stamps, and every
  * effect (a plugin action or activity command, quick or confirmed, an app launch, a composer
  * capture or Send) needs a fresh contact, see [SessionFocus]. Without it the session keeps its v1
- * behaviour exactly.
+ * behaviour apart from invoking page actions and app launches without an intermediate panel.
  *
  * [wallClock] dates the notification history only: its entries are displayed for 24 hours of wall
  * time, which the session clock cannot measure across a deep sleep. [sessionClock], when given,
@@ -258,32 +258,23 @@ internal class SessionReducer(
     }
 
     /**
-     * Command focus follows its entry: an update keeps it on the same command (or clamps it), and
-     * a confirmation bound to an older revision is withdrawn. An entry that ended, or left the
-     * collection, takes its focus and panel with it.
+     * Command focus follows its entry: an update keeps it on the same command (or clamps it).
+     * An entry that ended, or left the collection, takes its focus with it.
      */
     private fun reconcileFocus(model: SessionModel): SessionModel {
-        fun focusOn(stop: ActivityStop?, focus: CommandFocus, panel: FramePanel?): Pair<CommandFocus?, FramePanel?> {
+        fun focusOn(stop: ActivityStop?, focus: CommandFocus): CommandFocus? {
             val slots = stop?.let(ActivityCommands::slots).orEmpty()
-            val next = if (stop == null) null else ActivityCommands.reconcile(focus, slots)
-            val kept = when (panel) {
-                is FramePanel.ConfirmCommand ->
-                    panel.takeIf { next != null && stop != null && !stop.lastKnown && stop.seq == panel.seq && stop.commands.any { it.id == panel.actionId } }
-                else -> panel.takeIf { next != null }
-            }
-            return next to kept
+            return if (stop == null) null else ActivityCommands.reconcile(focus, slots)
         }
         fun rootOf(root: SessionState.Root): SessionState.Root {
             val focus = root.focus ?: return root
             val card = root.stops.firstOrNull { it.id == focus.stopId }
-            val (next, panel) = focusOn(card?.takeUnless { it.ended }?.activity, focus, root.panel)
-            return root.copy(focus = next, panel = panel)
+            return root.copy(focus = focusOn(card?.takeUnless { it.ended }?.activity, focus))
         }
         fun pageOf(page: SessionState.InPage): SessionState.InPage {
             val top = page.frames.last()
             val focus = top.commandFocus?.takeIf { it.stopId != CommandFocus.MEDIA } ?: return page
-            val (next, panel) = focusOn(model.latestActivityById(focus.stopId), focus, top.panel)
-            return page.withTop(top.copy(commandFocus = next, panel = panel))
+            return page.withTop(top.copy(commandFocus = focusOn(model.latestActivityById(focus.stopId), focus)))
         }
         val state = when (val state = model.state) {
             is SessionState.Root -> rootOf(state)
@@ -338,7 +329,6 @@ internal class SessionReducer(
     private fun onRoot(model: SessionModel, state: SessionState.Root, event: SessionEvent): SessionTransition =
         when (event) {
             is SessionEvent.Step -> when {
-                state.panel != null -> panelStep(model, rootSite(state), event.delta)
                 state.focus != null -> focusStep(model, rootSite(state), rootActivity(state, state.focus.stopId), event.delta)
                 else -> {
                     val target = (state.selected + event.delta).coerceIn(0, state.stops.lastIndex.coerceAtLeast(0))
@@ -350,7 +340,6 @@ internal class SessionReducer(
                 }
             }
             is SessionEvent.Enter -> when {
-                state.panel != null -> commandPanelEnter(model, rootSite(state), state.focus?.let { rootActivity(state, it.stopId) }, event)
                 state.focus != null -> focusEnter(model, rootSite(state), rootActivity(state, state.focus.stopId), event)
                 // An ended activity keeps its place but opens nothing.
                 else -> state.stops.getOrNull(state.selected)?.takeUnless { it.ended }?.let { stop ->
@@ -363,9 +352,8 @@ internal class SessionReducer(
                     }
                 } ?: keep(model)
             }
-            // BACK leaves a panel, then command focus, then the session.
+            // BACK leaves command focus, then the session.
             is SessionEvent.Back -> when {
-                state.panel != null -> SessionTransition(model.copy(state = state.copy(panel = null)), listOf(ShowRoot))
                 state.focus != null -> SessionTransition(model.copy(state = state.copy(focus = null)), listOf(ShowRoot))
                 else -> SessionTransition(closed(model), listOf(RestoreUnderneath(model.underneath)))
             }
@@ -555,7 +543,6 @@ internal class SessionReducer(
     private fun step(model: SessionModel, state: SessionState.InPage, delta: Int): SessionTransition {
         val top = state.frames.last()
         (top.panel as? FramePanel.Display)?.let { return displayStep(model, state, top, it, delta) }
-        if (top.panel != null) return panelStep(model, frameSite(state), delta)
         top.fullMapMode()?.let { mode -> return fullMapStep(model, state, top, mode, delta) }
         top.routeCommandsIndex()?.let { commands -> return routePageStep(model, state, top, commands, delta) }
         top.shownConversation()?.let { (_, body) -> return conversationStep(model, state, top, body, delta) }
@@ -616,7 +603,12 @@ internal class SessionReducer(
                 else -> keep(model)
             }
             is FrameStatus.Shown -> {
-                top.panel?.let { return enterPanel(model, state, top, status, it, event) }
+                (top.panel as? FramePanel.Display)?.let { panel ->
+                    return SessionTransition(
+                        model.copy(state = state.withTop(top.copy(panel = null))),
+                        listOf(SessionEffect.SaveAmbientSize(panel.ownerPluginId, panel.size), ShowFrame),
+                    )
+                }
                 top.commandFocus?.takeIf { it.stopId != CommandFocus.MEDIA }?.let { focus ->
                     return focusEnter(model, frameSite(state), model.latestActivityById(focus.stopId), event)
                 }
@@ -660,65 +652,13 @@ internal class SessionReducer(
                     is PageItem.Activity -> model.latestActivity(item.ownerPluginId)
                         ?.let { activate(model, frameSite(state), it, state.root, state.frames, it.pageId, nowMs) }
                         ?: keep(model)
-                    is PageItem.Confirm -> SessionTransition(
-                        model.copy(
-                            state = state.withTop(
-                                top.copy(panel = FramePanel.Confirm(item.actionId, item.label, status.revision, top.providerEpoch)),
-                            ),
-                        ),
-                        listOf(ShowFrame),
-                    )
-                    is PageItem.LaunchPrompt -> SessionTransition(
-                        model.copy(state = state.withTop(top.copy(panel = FramePanel.Launch(item.pluginId, item.label)))),
-                        listOf(ShowFrame),
-                    )
+                    is PageItem.PluginAction -> if (fresh(model, event)) invoke(model, state, status, item.actionId, nowMs) else keep(model)
                     is PageItem.LocalLaunch -> SessionTransition(model, listOf(SessionEffect.LaunchLocal(item.key, item.label)))
                     is PageItem.Notification -> openEntry(model, state.root, state.frames, item.entryId, nowMs)
                     PageItem.Back -> pop(model, state, nowMs)
                     else -> keep(model)
                 }
             }
-        }
-    }
-
-    /** G5/G6: only the panel's own choice acts, and a confirmation only for what was shown. */
-    private fun enterPanel(
-        model: SessionModel,
-        state: SessionState.InPage,
-        top: Frame,
-        status: FrameStatus.Shown,
-        panel: FramePanel,
-        event: SessionEvent.Enter,
-    ): SessionTransition {
-        val nowMs = event.nowMs
-        val cleared = state.withTop(top.copy(panel = null))
-        return when (panel) {
-            is FramePanel.Confirm -> {
-                if (panel.selected != FramePanel.CONFIRM) {
-                    SessionTransition(model.copy(state = cleared), listOf(ShowFrame))
-                } else if (!fresh(model, event)) {
-                    keep(model)
-                } else if (panel.revision != status.revision || panel.providerEpoch != top.providerEpoch || top.invocation != null) {
-                    SessionTransition(model.copy(state = cleared), listOf(ShowFrame))
-                } else {
-                    invoke(model.copy(state = cleared), cleared, status, panel.actionId, nowMs)
-                }
-            }
-            is FramePanel.Launch ->
-                if (panel.selected != FramePanel.OPEN) {
-                    SessionTransition(model.copy(state = cleared), listOf(ShowFrame))
-                } else if (!fresh(model, event)) {
-                    keep(model)
-                } else {
-                    launch(model.copy(state = cleared), cleared, panel.pluginId, nowMs)
-                }
-            is FramePanel.ConfirmCommand ->
-                commandPanelEnter(model, frameSite(state), model.latestActivityById(panel.stopId), event)
-            // The display page saves what is selected; it changes a hub preference, nothing on the plugin.
-            is FramePanel.Display -> SessionTransition(
-                model.copy(state = cleared),
-                listOf(SessionEffect.SaveAmbientSize(panel.ownerPluginId, panel.size), ShowFrame),
-            )
         }
     }
 
@@ -1243,9 +1183,8 @@ internal class SessionReducer(
             status = status.copy(snapshot = Snapshot(page, extended = itemResolver.acceptsExtended()), revision = page.revision),
             revisionFloor = page.revision,
             shownAtMs = nowMs,
-            // A confirmation was for the revision the wearer saw; a new one cancels it. The display
-            // page is the hub's own preference, bound to no revision: guidance updates keep it.
-            panel = top.panel as? FramePanel.Display,
+            // The display page is a hub preference, bound to no revision: guidance updates keep it.
+            panel = top.panel,
         )
         val frame = reselect(replaced, top, page)
             .let { if (it.mode == FrameMode.READING && !it.readsFirst()) it.copy(mode = FrameMode.ROWS) else it }
@@ -1833,21 +1772,20 @@ internal class SessionReducer(
 
     // ---- activity cards: activation, command focus, commands --------------------------------
 
-    /** Where a command focus lives and how its focus and panel are put back. */
+    /** Where a command focus lives and how it is put back. */
     private class CommandSite(
         val focus: CommandFocus?,
-        val panel: FramePanel?,
         val show: SessionEffect,
-        val place: (CommandFocus?, FramePanel?) -> SessionState,
+        val place: (CommandFocus?) -> SessionState,
     )
 
     private fun rootSite(state: SessionState.Root) =
-        CommandSite(state.focus, state.panel, ShowRoot) { focus, panel -> state.copy(focus = focus, panel = panel) }
+        CommandSite(state.focus, ShowRoot) { focus -> state.copy(focus = focus) }
 
     private fun frameSite(state: SessionState.InPage): CommandSite {
         val top = state.frames.last()
-        return CommandSite(top.commandFocus, top.panel, ShowFrame) { focus, panel ->
-            state.withTop(top.copy(commandFocus = focus, panel = panel))
+        return CommandSite(top.commandFocus, ShowFrame) { focus ->
+            state.withTop(top.copy(commandFocus = focus))
         }
     }
 
@@ -1879,7 +1817,7 @@ internal class SessionReducer(
                 val slots = ActivityCommands.slots(activity)
                 val index = ActivityCommands.initialIndex(activity, slots)
                 val focus = CommandFocus(activity.id, slots[index].key, index)
-                SessionTransition(model.copy(state = site.place(focus, null)), listOf(site.show))
+                SessionTransition(model.copy(state = site.place(focus)), listOf(site.show))
             }
             else -> openFrame(model, root, below, pageId, null, nowMs)
         }
@@ -1897,81 +1835,25 @@ internal class SessionReducer(
         if (slots.isEmpty()) return keep(model)
         val target = (focus.index + delta).coerceIn(0, slots.lastIndex)
         if (target == focus.index) return keep(model)
-        return SessionTransition(model.copy(state = site.place(focus.copy(key = slots[target].key, index = target), null)), listOf(site.show))
+        return SessionTransition(model.copy(state = site.place(focus.copy(key = slots[target].key, index = target))), listOf(site.show))
     }
 
     /**
-     * Runs the focused command: one tap for a stamped type the latest policy approves, over a
-     * fresh press; otherwise the confirmation step with Cancel preselected. Open app takes the
-     * labelled launch step. An offline entry's commands, and a second command for an owner that
-     * has one pending, do nothing.
+     * Runs the focused command on a fresh tap, quick when the latest policy allows it, confirmed
+     * otherwise. Open app launches directly. Offline commands and a second command for an owner
+     * with one pending do nothing.
      */
     private fun focusEnter(model: SessionModel, site: CommandSite, activity: ActivityStop?, event: SessionEvent.Enter): SessionTransition {
         val focus = site.focus ?: return keep(model)
         activity ?: return keep(model)
         val owner = activity.ownerPluginId ?: return keep(model)
         val slot = ActivityCommands.slots(activity).getOrNull(focus.index)?.takeIf { it.key == focus.key } ?: return keep(model)
-        val action = slot.action
-            ?: return SessionTransition(
-                model.copy(state = site.place(focus, FramePanel.Launch(owner, activity.ownerLabel ?: owner))),
-                listOf(site.show),
-            )
+        val action = slot.action ?: return if (fresh(model, event)) launch(model, model.state, owner, event.nowMs) else keep(model)
         if (!slot.enabled || activity.lastKnown || owner in model.pendingCommands) return keep(model)
-        if (quickGate.allows(owner, action.typed, action.hubQuick)) {
-            if (!fresh(model, event)) return keep(model)
-            if (model.linkLost) return SessionTransition(model, listOf(SessionEffect.ShowStatus(SessionStatus.NotAvailable)))
-            return sendCommand(model, activity, owner, action.id, ActivityCommandMode.QUICK, event.nowMs, site.show)
-        }
-        val panel = FramePanel.ConfirmCommand(activity.id, owner, action.id, action.label, activity.seq)
-        return SessionTransition(model.copy(state = site.place(focus, panel)), listOf(site.show))
-    }
-
-    private fun panelStep(model: SessionModel, site: CommandSite, delta: Int): SessionTransition {
-        val panel = site.panel ?: return keep(model)
-        val target = (panel.selected + delta).coerceIn(0, 1)
-        if (target == panel.selected) return keep(model)
-        val next = when (panel) {
-            is FramePanel.Confirm -> panel.copy(selected = target)
-            is FramePanel.Launch -> panel.copy(selected = target)
-            is FramePanel.ConfirmCommand -> panel.copy(selected = target)
-            // Walked by displayStep; never reached from a command site.
-            is FramePanel.Display -> return keep(model)
-        }
-        return SessionTransition(model.copy(state = site.place(site.focus, next)), listOf(site.show))
-    }
-
-    /** A command's confirmation, or the launch step of Open app, taken from command focus. */
-    private fun commandPanelEnter(
-        model: SessionModel,
-        site: CommandSite,
-        activity: ActivityStop?,
-        event: SessionEvent.Enter,
-    ): SessionTransition {
-        val panel = site.panel ?: return keep(model)
-        val placed = site.place(site.focus, null)
-        val cleared = SessionTransition(model.copy(state = placed), listOf(site.show))
-        return when (panel) {
-            is FramePanel.Launch -> when {
-                panel.selected != FramePanel.OPEN -> cleared
-                !fresh(model, event) -> keep(model)
-                else -> launch(model.copy(state = placed), placed, panel.pluginId, event.nowMs)
-            }
-            is FramePanel.ConfirmCommand -> {
-                if (panel.selected != FramePanel.CONFIRM) return cleared
-                if (!fresh(model, event)) return keep(model)
-                val action = activity?.commands?.firstOrNull { it.id == panel.actionId }
-                // The confirmation is for the revision the wearer saw; anything newer withdraws it.
-                if (activity == null || action == null || activity.lastKnown || activity.seq != panel.seq ||
-                    activity.ownerPluginId != panel.ownerPluginId || panel.ownerPluginId in model.pendingCommands
-                ) {
-                    return cleared
-                }
-                if (model.linkLost) return cleared.copy(effects = cleared.effects + SessionEffect.ShowStatus(SessionStatus.NotAvailable))
-                sendCommand(model.copy(state = placed), activity, panel.ownerPluginId, action.id, ActivityCommandMode.CONFIRMED, event.nowMs, site.show)
-            }
-            // A page action's confirmation and the display page never reach a command site.
-            is FramePanel.Confirm, is FramePanel.Display -> cleared
-        }
+        if (!fresh(model, event)) return keep(model)
+        if (model.linkLost) return SessionTransition(model, listOf(SessionEffect.ShowStatus(SessionStatus.NotAvailable)))
+        val mode = if (quickGate.allows(owner, action.typed, action.hubQuick)) ActivityCommandMode.QUICK else ActivityCommandMode.CONFIRMED
+        return sendCommand(model, activity, owner, action.id, mode, event.nowMs, site.show)
     }
 
     /** Sends one command, once: it is pending until its result or its deadline, never resent. */
@@ -2012,7 +1894,8 @@ internal class SessionReducer(
         val state = after.state
         val effects = when {
             state is SessionState.Root && state != before.state -> listOf(ShowRoot)
-            state is SessionState.InPage && state.frames.last() != (before.state as? SessionState.InPage)?.frames?.lastOrNull() ->
+            state is SessionState.InPage && (state.frames.last() != (before.state as? SessionState.InPage)?.frames?.lastOrNull() ||
+                SessionFocus.tokenOf(before) != SessionFocus.tokenOf(after)) ->
                 listOf(ShowFrame)
             else -> emptyList()
         }

@@ -692,7 +692,7 @@ class SessionReducerTest {
     }
 
     @Test
-    fun `rule 11 the default resolver confirms every plugin action and keeps hub and immersion rows inert`() {
+    fun `rule 11 the default resolver invokes plugin actions directly and keeps hub and immersion rows inert`() {
         val defaults = SessionReducer()
         openRoot(using = defaults)
         send(Enter(4_000), defaults)
@@ -706,10 +706,13 @@ class SessionReducerTest {
             using = defaults,
         )
 
-        // A plugin action asks first whatever its own confirm flag says: Cancel is preselected.
+        // The tap invokes a plugin action whatever its own confirm flag says.
         send(Enter(5_000), defaults)
-        assertEquals(FramePanel.Confirm("delete", "delete", 1, null), top().panel)
-        send(Back(5_010), defaults)
+        val sent = effects.filterIsInstance<SendAction>().single().action
+        assertEquals("delete", sent.actionId)
+        assertEquals(PageSurfaceContract.MODE_CONFIRMED, sent.mode)
+        assertNull(top().panel)
+        send(PageResult(JSONObject().put("invocationId", sent.invocationId).put("status", "done"), 5_010), defaults)
         repeat(2) { index ->
             send(Step(1, 5_050L + index * 100), defaults)
             send(Enter(5_100L + index * 100), defaults)
@@ -717,10 +720,7 @@ class SessionReducerTest {
         }
         send(Step(1, 6_000), defaults)
         send(Enter(6_010), defaults)
-        assertEquals(FramePanel.Confirm("mute", "mute", 1, null), top().panel)
-        assertTrue(effects.none { it is SendAction })
-        send(Step(1, 6_020), defaults)
-        send(Enter(6_030), defaults)
+        assertNull(top().panel)
         assertEquals("mute", effects.filterIsInstance<SendAction>().single().action.actionId)
     }
 

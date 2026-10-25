@@ -23,7 +23,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** PR3a's session rules over the real typed resolver: stable rows, panels, documents, local pages. */
+/** PR3a's session rules over the real typed resolver: stable rows, actions, documents, local pages. */
 class SessionPagesTest {
     private val items = TypedPageItems(
         isLocalPage = PageTemplateContract::isLocalPageId,
@@ -199,25 +199,16 @@ class SessionPagesTest {
     }
 
     @Test
-    fun `every plugin action is confirmed with cancel preselected and confirm sends exactly one`() {
+    fun `a plugin row tap sends exactly one confirmed action without a panel`() {
         openProviderPage(
             body = body(listOf(PageRow("mark", "Mark read", target = PageTarget.Action("mark")))),
             actions = JSONArray().put(action("mark", "plugin")),
         )
         send(SessionEvent.Enter(2_200))
-        val panel = top().panel as FramePanel.Confirm
-        assertEquals(FramePanel.CANCEL, panel.selected)
-        assertTrue(effects.none { it is SendAction })
-        send(SessionEvent.Enter(2_300))
-        assertNull(top().panel)
-        assertTrue(effects.none { it is SendAction })
-
-        send(SessionEvent.Enter(2_400))
-        send(SessionEvent.Step(1, 2_500))
-        send(SessionEvent.Enter(2_600))
         val sent = effects.filterIsInstance<SendAction>().single().action
         assertEquals("mark", sent.actionId)
         assertEquals(1L, sent.revision)
+        assertEquals(PageSurfaceContract.MODE_CONFIRMED, sent.mode)
         assertNull(top().panel)
         // A pending invocation takes no second one.
         send(SessionEvent.Enter(2_700))
@@ -225,18 +216,13 @@ class SessionPagesTest {
     }
 
     @Test
-    fun `back, a new revision or a cover cancels a confirmation`() {
+    fun `a page revision needs to be drawn before a new fresh press can invoke it`() {
+        reducer = SessionReducer(items, isLocalPage = PageTemplateContract::isLocalPageId, launcherActive = { true })
         openProviderPage(
             body = body(listOf(PageRow("mark", "Mark read", target = PageTarget.Action("mark")), PageRow("t", "Thread", target = PageTarget.Page("relay:t")))),
             actions = JSONArray().put(action("mark", "plugin")),
         )
-        send(SessionEvent.Enter(2_200))
-        send(SessionEvent.Back(2_300))
-        assertNull(top().panel)
-        assertEquals(1, page().frames.size)
-
-        send(SessionEvent.Enter(2_400))
-        send(SessionEvent.Step(1, 2_450))
+        acknowledge(2_200)
         val request = (top().status as FrameStatus.Shown).requestId
         respond(
             PageSurfaceRequest(PageCorrelation(request, model.generation, 1, "relay:main"), "open"), 2_500, revision = 2,
@@ -246,29 +232,26 @@ class SessionPagesTest {
         assertNull(top().panel)
         send(SessionEvent.Enter(2_600))
         assertTrue(effects.none { it is SendAction })
+        acknowledge(2_700)
+        send(SessionEvent.Enter(2_800, pressStartMs = 2_650))
+        assertTrue(effects.none { it is SendAction })
+        send(SessionEvent.Enter(2_900, pressStartMs = 2_750))
+        assertEquals(2L, effects.filterIsInstance<SendAction>().single().action.revision)
+        assertEquals("e1", top().providerEpoch)
     }
 
     @Test
-    fun `an immersion action needs the labelled launch step and a hub action from a provider does nothing`() {
+    fun `an immersion row launches directly and a hub action from a provider does nothing`() {
         openProviderPage(
             pageId = "nav:main",
             body = body(listOf(PageRow("open", "Open the full app", target = PageTarget.Action("open")), PageRow("ctl", "Hub control", target = PageTarget.Action("ctl")))),
             actions = JSONArray().put(action("open", "immersion")).put(action("ctl", "hub")),
         )
         send(SessionEvent.Enter(2_200))
-        val launch = top().panel as FramePanel.Launch
-        assertEquals("nav", launch.pluginId)
-        assertEquals(FramePanel.OPEN, launch.selected)
-        send(SessionEvent.Step(1, 2_300))
-        send(SessionEvent.Enter(2_400))
-        assertTrue(model.state is SessionState.InPage)
-        assertTrue(effects.none { it is SessionEffect.SendLauncherOpen })
-
-        send(SessionEvent.Enter(2_500))
-        send(SessionEvent.Enter(2_600))
         assertTrue(model.state is SessionState.Launching)
         assertEquals("nav", effects.filterIsInstance<SessionEffect.SendLauncherOpen>().single().pluginId)
-        // BACK before the surface arrives cancels the open and returns to the page, panel gone.
+        assertNull(top().panel)
+        // BACK before the surface arrives cancels the open and returns to the page.
         send(SessionEvent.Back(2_700))
         assertNull(top().panel)
         assertTrue("nav" in model.cancelledOpen)
@@ -591,7 +574,7 @@ class SessionPagesTest {
         val payload = local.answer(PageSurfaceRequest(PageCorrelation("r", 1, 1, RootStops.APPLICATIONS_PAGE_ID), "open"))
         val page = (PageSurfaceContract.validateResponse(payload) as PageSurfaceValidationResult.Valid).value as PageSurfaceResponse.Page
         assertEquals(
-            listOf(PageItem.LaunchPrompt("lens", "Lens"), PageItem.LocalLaunch("plugin:camera", "Camera"), PageItem.LocalLaunch("app:dev.tele", "Teleprompter")),
+            listOf(PageItem.Launch("lens", "Lens"), PageItem.LocalLaunch("plugin:camera", "Camera"), PageItem.LocalLaunch("app:dev.tele", "Teleprompter")),
             items.items(page),
         )
     }
@@ -806,7 +789,7 @@ class SessionPagesTest {
     }
 
     @Test
-    fun `a pages plugin entered from Applications ends with one hub Open app that takes the labelled launch step`() {
+    fun `a pages plugin entered from Applications ends with one hub Open app that launches on a fresh tap`() {
         reducer = SessionReducer(
             items,
             isLocalPage = PageTemplateContract::isLocalPageId,
@@ -831,11 +814,11 @@ class SessionPagesTest {
         repeat(3) { send(SessionEvent.Step(1, 2_300L + it)) }
         assertEquals(ActivityCommands.OPEN_APP_KEY, top().selectedKey)
         acknowledge(2_400)
-        send(SessionEvent.Enter(2_460, pressStartMs = 2_420))
-        assertEquals(FramePanel.Launch("relay", "Relay"), top().panel)
+        send(SessionEvent.Enter(2_440, pressStartMs = 2_390))
         assertTrue(effects.none { it is SessionEffect.SendLauncherOpen })
-        acknowledge(2_500)
-        send(SessionEvent.Enter(2_560, pressStartMs = 2_520))
+        send(SessionEvent.Enter(2_460, pressStartMs = 2_420))
+        assertTrue(model.state is SessionState.Launching)
+        assertNull(top().panel)
         assertEquals("relay", effects.filterIsInstance<SessionEffect.SendLauncherOpen>().single().pluginId)
     }
 
@@ -852,8 +835,8 @@ class SessionPagesTest {
         send(SessionEvent.Enter(2_100))
         respond(requested().request, 2_200, epoch = "e1", actions = JSONArray().put(action("open-full", "immersion", "Open full app")))
         assertNull(top().openApp)
-        // The provider's own row is then the way to its full app, behind the same launch step.
-        assertEquals(PageItem.LaunchPrompt("relay", "Open full app"), items.entries((top().status as FrameStatus.Shown).snapshot.page).last().item)
+        // The provider's own row is then the way to its full app.
+        assertEquals(PageItem.Launch("relay", "Open full app"), items.entries((top().status as FrameStatus.Shown).snapshot.page).last().item)
     }
 
     @Test

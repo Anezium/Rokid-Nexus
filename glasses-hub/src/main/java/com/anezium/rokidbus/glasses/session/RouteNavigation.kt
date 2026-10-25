@@ -44,7 +44,6 @@ internal object RoutePresentation {
     const val VIEW_OVERVIEW_SUB = "the whole route, north up"
     const val FULL_SCREEN_SUB = "the map fills the screen"
     const val DISPLAY_SUB = "island size during the trip"
-    const val CONFIRM_SUB = "asks for confirmation"
     const val PLUGIN_ACTIONS = "PLUGIN ACTIONS"
     const val APP = "APP"
     const val AMBIENT_SECTION = "AMBIENT SIZE · DURING THE TRIP"
