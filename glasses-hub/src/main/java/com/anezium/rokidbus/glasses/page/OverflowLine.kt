@@ -143,8 +143,8 @@ internal class OverflowLineView(context: Context) : TextView(context) {
         this.typeface = typeface
     }
 
-    /** The width the text may use. */
-    fun roomPx(): Int = (width - paddingLeft - paddingRight).coerceAtLeast(0)
+    /** The width the text may use, beside any glyph drawn in the line. */
+    fun roomPx(): Int = (width - compoundPaddingLeft - compoundPaddingRight).coerceAtLeast(0)
 
     /** How many pixels of the text lie past the line's width; 0 when it fits. */
     fun overflowPx(): Int {

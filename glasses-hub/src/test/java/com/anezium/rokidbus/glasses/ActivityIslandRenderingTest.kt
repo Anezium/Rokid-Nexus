@@ -175,12 +175,67 @@ class ActivityIslandRenderingTest {
     }
 
     @Test
-    fun `the flare names the activity by its headline too`() {
+    fun `the flare names the activity by its headline and scrolls it to its end, measure included`() {
         show(content(headline = headline), ActivityPresentation.CHIP)
         island.showFlare(urgent = false)
         idle()
         val flare = requireNotNull(island.currentForm)
+        assertTrue(flare is NoticeOverlayRenderer.NoticeBandView)
         assertTrue(shownTexts(flare).toString(), headline in shownTexts(flare))
+        assertDrawnWhole(find<TextView>(flare).single { it.isShown && it.text.toString() == headline }, headline, flare)
+
+        show(content(headline = headline, measure = "250 m"), ActivityPresentation.CHIP)
+        island.showFlare(urgent = false)
+        idle()
+        val measured = "$headline - 250 m"
+        assertDrawnWhole(find<TextView>(flare).single { it.isShown && it.text.toString() == measured }, measured, flare)
+    }
+
+    @Test
+    fun `folded with a measure and a headline, the chip keeps its layout and scrolls the title in its own width`() {
+        show(content(headline = headline, measure = "250 m", secondary = "Rue de Rivoli"), ActivityPresentation.CHIP)
+
+        val chip = island.folded
+        assertTrue(chip is PinOverlayRenderer.PinPanelView)
+        assertSame(chip, island.currentForm)
+        assertEquals(listOf(headline, "250 m", "Rue de Rivoli"), shownTexts(chip))
+        val title = find<TextView>(chip).single { it.isShown && it.text.toString() == headline }
+        val glyph = rectOf(chip, find<android.widget.ImageView>(chip).single { it.isShown })
+        val (measure, street) = find<TextView>(chip).filter { it.isShown && it !== title }.map { rectOf(chip, it) }
+        assertTrue(rectOf(chip, title).left >= glyph.right)
+        assertEquals(rectOf(chip, title).left, measure.left)
+        assertTrue(street.top >= glyph.bottom)
+        assertDrawnWhole(title, headline, chip)
+    }
+
+    @Test
+    fun `a pin's panel and a notice's band keep plain titles that never move`() {
+        val activity = controller.get()
+        assertTrue(find<OverflowLineView>(PinOverlayRenderer.PinPanelView(activity)).isEmpty())
+        assertTrue(find<OverflowLineView>(NoticeOverlayRenderer.NoticeBandView(activity)).isEmpty())
+    }
+
+    /**
+     * [line] carries the whole [text], too wide for it, and moves to its very end after the
+     * hold without ever drawing an ellipsis or resizing the [form] it stands in.
+     */
+    private fun assertDrawnWhole(line: TextView, text: String, form: View) {
+        assertEquals(text, line.text.toString())
+        assertEquals("no drawn title characters are replaced by an ellipsis", 0, requireNotNull(line.layout).getEllipsisCount(0))
+        line as OverflowLineView
+        val overflow = line.overflowPx()
+        assertTrue("$text fits its ${line.roomPx()} px", overflow > 0)
+        assertTrue(line.scrolling)
+        val width = form.width
+        val height = form.height
+        idle(OverflowScroll.HOLD_MS + OverflowScroll.travelMs(overflow) + OverflowScroll.FRAME_MS)
+        assertEquals("the hidden end is reached", overflow, line.scrollX)
+        // Measured beside the line's glyph, not through it: the last letter is inside the line.
+        val textRoom = line.width - line.totalPaddingLeft - line.totalPaddingRight
+        assertTrue(line.scrollX + textRoom >= kotlin.math.ceil(line.paint.measureText(text)).toInt())
+        assertEquals(0, requireNotNull(line.layout).getEllipsisCount(0))
+        assertEquals(width, form.width)
+        assertEquals(height, form.height)
     }
 
     private fun show(content: ActivitySurfaceContent, presentation: ActivityPresentation) {

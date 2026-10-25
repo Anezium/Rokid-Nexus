@@ -313,10 +313,11 @@ internal object ActivityOverlayRenderer {
         /** A command's built-in glyph by name. */
         actionGlyphOf: (String) -> Drawable = HudActionRowView.builtInGlyphs(context),
     ) : HudIslandView(context) {
-        private val chip = PinOverlayRenderer.PinPanelView(context).apply { dropChrome() }
+        // Every form that names the activity scrolls a title wider than its line rather than cut it.
+        private val chip = PinOverlayRenderer.PinPanelView(context, movingTitle = titleLine(context)).apply { dropChrome() }
         private val compact = ActivityCompactView(context)
         private val panel = ActivityPanelView(context, actionGlyphOf)
-        private val flare = NoticeOverlayRenderer.NoticeBandView(context, chromeless = true)
+        private val flare = NoticeOverlayRenderer.NoticeBandView(context, chromeless = true, movingTitle = titleLine(context))
 
         private var renderedGuidance: GuidanceIsland? = null
 
@@ -746,6 +747,12 @@ internal object ActivityOverlayRenderer {
     /** Expanded, the measure stands beside the title: "3 min - 250 m". */
     private fun ActivitySurfaceContent.primaryWithMeasure(): String =
         measure?.let { "$title - $it" } ?: title
+
+    /** A title the chip or the flare styles as its own, moving while that form is shown. */
+    private fun titleLine(context: Context) = OverflowLineView(context).apply {
+        softEdges()
+        active = true
+    }
 
     /** A scrolling line fades into the island's black at the side its text runs past, never cut mid-letter. */
     private fun OverflowLineView.softEdges() {
