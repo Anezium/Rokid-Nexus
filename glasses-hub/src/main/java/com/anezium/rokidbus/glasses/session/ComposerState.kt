@@ -55,7 +55,7 @@ internal data class ComposerFacts(
     val capture: Capture? = null,
     val micUnavailable: Boolean = false,
     val pendingSend: PendingSend? = null,
-    val handoff: Handoff? = null,
+    val handoffs: List<Handoff> = emptyList(),
 )
 
 /**
@@ -110,19 +110,28 @@ internal object ComposerRules {
         return id
     }
 
-    /** The message ids a reply sent from [body] remembers, to tell what a later revision adds. */
+    /** The message ids a reply sent from [body] remembers, to tell its page's own copy of it later. */
     fun messageIds(body: PageBody.Conversation): Set<String> = body.messages.mapTo(LinkedHashSet()) { it.id }
 
-    /** Whether [body] shows a message that the revision showing [shownIds] did not. */
-    fun movedOn(body: PageBody.Conversation, shownIds: Set<String>): Boolean = body.messages.any { it.id !in shownIds }
-
     /**
-     * Whether [body] shows [text] as one of our messages that the revision showing [shownIds] did
-     * not: the provider's page now carries the reply. Spacing is the provider's to change.
+     * [body]'s own copies of replies sent from its thread. A reply's copy is a message of ours with
+     * the same words, spacing aside, after the newest message its page showed when it was sent:
+     * the provider records a reply after what it answered, so a message that was merely older, or
+     * anyone else's, never stands for it. Each copy stands for one reply, taken oldest reply first.
      */
-    fun carries(body: PageBody.Conversation, text: String, shownIds: Set<String>): Boolean {
-        val said = normalized(text)
-        return body.messages.any { it.id !in shownIds && it.role == ConversationRole.OURS && normalized(it.text) == said }
+    class Echoes(private val body: PageBody.Conversation) {
+        private val taken = HashSet<String>()
+
+        /** The id of [body]'s copy of the reply [text] sent from a page showing [shownIds], now taken; null when none. */
+        fun take(text: String, shownIds: Set<String>): String? {
+            val messages = body.messages
+            val said = normalized(text)
+            val echo = messages.subList(messages.indexOfLast { it.id in shownIds } + 1, messages.size)
+                .firstOrNull { it.id !in taken && it.role == ConversationRole.OURS && normalized(it.text) == said }
+                ?: return null
+            taken += echo.id
+            return echo.id
+        }
     }
 
     private fun normalized(text: String): String = text.trim().replace(WHITESPACE, " ")

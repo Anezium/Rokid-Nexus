@@ -2489,9 +2489,12 @@ Send is offered only while the current page is a live conversation whose
 `threadKey` and owner equal the draft's and whose composer is `replyable`, and
 only for a fresh focus that keeps the fresh-contact rule. `done` hands the draft
 off (`handed to the app`) and clears it. The glasses keep the sent text on the
-thread's page through every later revision until one shows a message `id` that
-the revision it was sent from did not: the reply as `ours`, or anything newer.
-`authority_lost`, `replyable: false`,
+frame it was sent from until that page carries the reply: an `ours` message with
+the same text, spacing aside, after the newest message the page showed when it
+was sent, one such message per reply. Other messages never end it; the frame
+closing, an answer from another provider registration, or the owner's purge or
+invalidation does. A page carrying an unconfirmed reply shows it instead of the
+draft's bubble; the draft stays, for Type only. `authority_lost`, `replyable: false`,
 a withdrawn event for the draft's thread, or the page going away keeps the text
 but never sends it as is. `stale` keeps the draft and needs a new Send on the
 new revision. No result in time shows `unconfirmed · check on the phone`, keeps

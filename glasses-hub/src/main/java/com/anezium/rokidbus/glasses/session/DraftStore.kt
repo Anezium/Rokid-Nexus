@@ -14,7 +14,8 @@ internal enum class DraftState { READY, UNCONFIRMED, AUTHORITY_LOST }
  * [DraftState.AUTHORITY_LOST] draft whose thread received a new replyable notice, or showed a
  * newer replyable revision of its page ([pageReopened]): Type may then reopen it prefilled, as a
  * new capture, and only that capture's completion makes it ready. [lostRevision] is the newest
- * revision of the thread's page shown when the authority was lost, when one was.
+ * revision of the thread's page shown when the authority was lost, when one was. [sentIds] are the
+ * messages its page showed when it was sent and left unconfirmed, to tell the page's own copy of it.
  */
 internal data class Draft(
     val ownerPluginId: String,
@@ -26,36 +27,51 @@ internal data class Draft(
     val reopened: Boolean = false,
     val lostRevision: Long? = null,
     val pageReopened: Boolean = false,
+    val sentIds: Set<String>? = null,
 ) {
     fun isFor(ownerPluginId: String?, threadKey: String?): Boolean =
         this.ownerPluginId == ownerPluginId && this.threadKey == threadKey
 }
 
-/**
- * One compose send awaiting its result; the text is the draft's as it was sent, from [revision]
- * of its thread's page, which showed the messages [shownIds].
- */
+/** One compose send awaiting its result; the text is the draft's as it was sent, from [from]. */
 internal data class PendingSend(
     val invocationId: String,
     val ownerPluginId: String,
     val threadKey: String,
     val text: String,
-    val revision: Long? = null,
-    val shownIds: Set<String> = emptySet(),
+    val from: SentFrom,
 )
 
 /**
- * A reply handed to its app, shown on its thread's page from the [revision] it was sent from
- * until the page shows a message that revision did not ([shownIds]): the reply itself, or anything
- * newer, and the provider's page then says what it knows. A newer revision computed before the
- * provider recorded the reply shows neither, and the reply stays on screen through it.
+ * The conversation frame a reply was sent from: the session [generation], the wire [frameIndex],
+ * the page, the provider registration that answered it ([providerEpoch]), and the messages it
+ * showed then ([shownIds]).
+ */
+internal data class SentFrom(
+    val generation: Long,
+    val frameIndex: Int,
+    val pageId: String,
+    val providerEpoch: String?,
+    val shownIds: Set<String>,
+) {
+    fun isFrame(generation: Long, frameIndex: Int, frame: Frame): Boolean =
+        this.generation == generation && this.frameIndex == frameIndex && pageId == frame.pageId && providerEpoch == frame.providerEpoch
+
+    fun sameFrameAs(other: SentFrom): Boolean =
+        generation == other.generation && frameIndex == other.frameIndex && pageId == other.pageId && providerEpoch == other.providerEpoch
+}
+
+/**
+ * A reply handed to its app, shown as ours on the frame it was sent from until that page carries
+ * it (its own copy of the reply, [ComposerRules.Echoes]). It lives no longer than that frame under
+ * the registration that took it, and goes with its owner's purge or invalidation: a page answered
+ * later, or by another registration, says what its provider knows.
  */
 internal data class Handoff(
     val ownerPluginId: String,
     val threadKey: String,
     val text: String,
-    val revision: Long,
-    val shownIds: Set<String> = emptySet(),
+    val from: SentFrom,
 )
 
 /**
@@ -133,7 +149,7 @@ internal object DraftStore {
 
     /** A send whose result never came: the text stays, to be edited and sent again deliberately. */
     fun unconfirmed(draft: Draft?, send: PendingSend): Draft? =
-        if (draft != null && draft.matches(send)) draft.copy(state = DraftState.UNCONFIRMED) else draft
+        if (draft != null && draft.matches(send)) draft.copy(state = DraftState.UNCONFIRMED, sentIds = send.from.shownIds) else draft
 
     /** The app took the reply: the draft that was sent is gone. */
     fun handedOff(draft: Draft?, send: PendingSend): Draft? = draft?.takeUnless { it.matches(send) }

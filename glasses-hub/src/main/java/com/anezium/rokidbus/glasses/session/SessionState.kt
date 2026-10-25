@@ -304,8 +304,11 @@ internal data class SessionModel(
     val micUnavailable: Boolean = false,
     /** A compose send awaiting its result; never sent twice, never resent on reconnect. */
     val pendingSend: PendingSend? = null,
-    /** The latest reply handed to its app, shown on its thread until its page shows something newer. */
-    val handoff: Handoff? = null,
+    /**
+     * The replies handed to their app from one conversation frame, oldest first, each shown there
+     * until that page carries it; a send from another frame starts over.
+     */
+    val handoffs: List<Handoff> = emptyList(),
     /**
      * The map view the wearer chose per route owner, kept for the session only and never written
      * to the ambient size preference (plan 028a §5.5).

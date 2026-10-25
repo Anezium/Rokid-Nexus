@@ -2176,10 +2176,12 @@ template as the fallback. `ink` stays reserved, and there is no Ink page body.
   side; `status` is `HANDED_OFF` or `UNCONFIRMED`. There are no per-message
   times and no read or delivery marks.
 - After a `done` compose send, show the reply in your next revisions as an
-  `OURS` message with a new `id` (marked `HANDED_OFF` if you like). The glasses
-  keep their own bubble for it until a revision shows a message id the page did
-  not show when it was sent, so a revision you computed before recording the
-  reply does not make it vanish.
+  `OURS` message with a new `id` and the text as sent, after the messages the
+  page already showed (marked `HANDED_OFF` if you like). The glasses keep their
+  own bubble for it on that page until a revision carries such a message, so a
+  revision you computed before recording the reply, or one bringing someone
+  else's message, does not make it vanish. A page answered later (the thread
+  opened again, a new registration of your plugin) shows only what you put in it.
 - `ConversationComposer(recipient, sendActionId, maxChars, replyable, ...)`
   offers the hub composer (Dictate, Type, Send). `sendActionId` must name one of
   the page's actions typed `NexusActionType.ComposeSend`, and no row may target

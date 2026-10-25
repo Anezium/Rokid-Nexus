@@ -958,11 +958,15 @@ internal class SessionScreens(
         val pending = facts.pendingSend?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey }
         val sending = pending != null
         val drawn = bubbles(body.messages).toMutableList()
-        // The reply just sent stays on screen through every revision until its page shows it.
-        facts.handoff?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey && status.revision >= it.revision }?.let {
-            drawn += Bubble(HANDOFF_BUBBLE, BubbleSide.RIGHT, it.text, meta = HANDED_TO_APP)
-        }
-        val carried = pending != null && ComposerRules.carries(body, pending.text, pending.shownIds)
+        // A reply sent from here is drawn once: as the page's own copy once it carries it, as ours until then.
+        val echoes = ComposerRules.Echoes(body)
+        facts.handoffs
+            .filter { it.ownerPluginId == owner && it.threadKey == body.threadKey && it.from.isFrame(identity.sessionGeneration, identity.frameIndex, frame) }
+            .filter { echoes.take(it.text, it.from.shownIds) == null }
+            .forEachIndexed { index, it ->
+                drawn += Bubble(if (index == 0) HANDOFF_BUBBLE else "$HANDOFF_BUBBLE $index", BubbleSide.RIGHT, it.text, meta = HANDED_TO_APP)
+            }
+        val carried = draft != null && (pending?.from?.shownIds ?: draft.sentIds)?.let { echoes.take(draft.text, it) } != null
         if (draft != null && capture == null && !carried) {
             val meta = when {
                 sending -> PENDING
