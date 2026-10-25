@@ -173,6 +173,48 @@ class OverflowLineTest {
         assertTrue(late.scrolling)
     }
 
+    @Test
+    fun `a line taken off while dark and put back on lit glasses starts over, and stays still while they are dark`() {
+        val memory = OverflowMemory()
+        val view = line(long, active = true, memory = memory, key = "media:activity:primary")
+        val host = host(200, view)
+        attach(host)
+        idle(OverflowScroll.HOLD_MS + 1_000)
+        assertTrue(view.scrollX > 0)
+
+        // Dark, then taken off its window; the glasses wake while it is off, so it hears nothing.
+        lit(host, false)
+        assertFalse(view.scrolling)
+        host.removeView(view)
+        lit(host, true)
+        host.addView(view, FrameLayout.LayoutParams(200, FrameLayout.LayoutParams.WRAP_CONTENT))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue("put back on lit glasses, it moves again", view.scrolling)
+        assertEquals(0, view.scrollX)
+        idle(OverflowScroll.HOLD_MS - 200)
+        assertEquals("a fresh hold, not the phase it had before the dark", 0, view.scrollX)
+        idle(1_000)
+        assertTrue(view.scrollX > 0)
+
+        // Taken off and put back while the glasses are still dark, it waits for them.
+        lit(host, false)
+        host.removeView(view)
+        host.addView(view, FrameLayout.LayoutParams(200, FrameLayout.LayoutParams.WRAP_CONTENT))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(view.scrolling)
+        idle(OverflowScroll.cycleMs(view.overflowPx()))
+        assertEquals(0, view.scrollX)
+        lit(host, true)
+        assertTrue(view.scrolling)
+    }
+
+    /** The display's state and the screen state the framework dispatches down an attached window with it. */
+    private fun lit(host: View, on: Boolean) {
+        shadowOf(host.display).setState(if (on) Display.STATE_ON else Display.STATE_OFF)
+        screenState(host, if (on) View.SCREEN_STATE_ON else View.SCREEN_STATE_OFF)
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
     /** What the framework dispatches down a window when the display turns off or on; not public API. */
     private fun screenState(root: View, state: Int) {
         View::class.java.getDeclaredMethod("dispatchScreenStateChanged", Int::class.javaPrimitiveType)

@@ -160,6 +160,9 @@ internal class OverflowLineView(context: Context) : TextView(context) {
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        // A detached line hears no screen-state change: one that went dark, was taken off and is
+        // put back on lit glasses would otherwise wait for a next wake that may never come.
+        screenLit = display?.state != Display.STATE_OFF
         sync()
     }
 
