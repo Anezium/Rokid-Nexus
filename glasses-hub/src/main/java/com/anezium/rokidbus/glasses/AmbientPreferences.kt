@@ -9,6 +9,7 @@ import com.anezium.rokidbus.shared.AmbientSize
 import com.anezium.rokidbus.shared.AmbientSizeEdit
 import com.anezium.rokidbus.shared.AmbientSizes
 import com.anezium.rokidbus.shared.ForegroundAmbientMode
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -34,14 +35,15 @@ internal interface AmbientPreferencesStorage {
 }
 
 /**
- * What the glasses hold: the phone's [sizes] and per-app [modes] as last received, with the
- * glasses' own edits applied on top, and the edits not yet sent ([queued], latest per owner; a
- * null size returns an owner to automatic).
+ * What the glasses hold: the phone's [sizes], per-app [modes] and [hiddenOwners] as last received,
+ * with the glasses' own size edits applied on top, and the edits not yet sent ([queued], latest
+ * per owner; a null size returns an owner to automatic).
  */
 internal data class AmbientPreferencesSnapshot(
     val sizes: Map<String, AmbientSize> = emptyMap(),
     val modes: Map<String, ForegroundAmbientMode> = emptyMap(),
     val queued: Map<String, AmbientSize?> = emptyMap(),
+    val hiddenOwners: Set<String> = emptySet(),
 )
 
 /**
@@ -71,6 +73,8 @@ internal class AmbientPreferencesMirror(
     val modes: Map<String, ForegroundAmbientMode> get() = snapshot.modes
 
     val queued: Map<String, AmbientSize?> get() = snapshot.queued
+
+    val hiddenOwners: Set<String> get() = snapshot.hiddenOwners
 
     fun size(owner: String): AmbientSize? = snapshot.sizes[owner]
 
@@ -110,14 +114,14 @@ internal class AmbientPreferencesMirror(
         return before != sizes
     }
 
-    /** `/core/ambient/policy`: true when the modes changed. An old revision is dropped. */
+    /** `/core/ambient/policy`: true when the modes or the hidden owners changed. An old revision is dropped. */
     fun onPolicy(incoming: AmbientPolicy): Boolean {
         val last = policyRevision
         if (last != null && incoming.revision <= last) return false
         policyRevision = incoming.revision
-        val before = snapshot.modes
-        commit(snapshot.copy(modes = incoming.modes))
-        return before != incoming.modes
+        val before = snapshot
+        commit(snapshot.copy(modes = incoming.modes, hiddenOwners = incoming.hiddenOwners))
+        return before.modes != incoming.modes || before.hiddenOwners != incoming.hiddenOwners
     }
 
     /** The link went: the next phone snapshots are taken whatever their revision. */
@@ -149,7 +153,10 @@ internal class SharedPreferencesAmbientStorage(context: Context) : AmbientPrefer
                 owner to (if (json.isNull(owner)) null else AmbientSize.fromWireValue(json.optString(owner)))
             }.toMap()
         }.orEmpty()
-        AmbientPreferencesSnapshot(sizes, modes, queued)
+        val hidden = prefs.getString(HIDDEN, null)?.let(::JSONArray)?.let { json ->
+            (0 until json.length()).mapTo(linkedSetOf()) { json.getString(it) }
+        }.orEmpty()
+        AmbientPreferencesSnapshot(sizes, modes, queued, hidden)
     }.getOrElse { AmbientPreferencesSnapshot() }
 
     override fun save(snapshot: AmbientPreferencesSnapshot) {
@@ -160,6 +167,7 @@ internal class SharedPreferencesAmbientStorage(context: Context) : AmbientPrefer
                 QUEUED,
                 JSONObject().apply { snapshot.queued.forEach { (owner, size) -> put(owner, size?.wireValue ?: JSONObject.NULL) } }.toString(),
             )
+            .putString(HIDDEN, JSONArray(snapshot.hiddenOwners.sorted()).toString())
             .apply()
     }
 
@@ -168,6 +176,7 @@ internal class SharedPreferencesAmbientStorage(context: Context) : AmbientPrefer
         const val SIZES = "sizes"
         const val MODES = "modes"
         const val QUEUED = "queued"
+        const val HIDDEN = "hidden_owners"
     }
 }
 
@@ -215,6 +224,9 @@ internal object AmbientPreferences {
     }
 
     fun modeFor(packageName: String?, isHome: Boolean): ForegroundAmbientMode = mirror.modeFor(packageName, isHome)
+
+    /** True when the user keeps [owner]'s island and pin off the glasses, as the phone last said. */
+    fun keptOffGlasses(owner: String): Boolean = owner in mirror.hiddenOwners
 
     /** The wearer saved [size] for [owner] on the display page. */
     fun edit(owner: String, size: AmbientSize?) {

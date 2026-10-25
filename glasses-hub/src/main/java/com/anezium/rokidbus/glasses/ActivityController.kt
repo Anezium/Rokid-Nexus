@@ -175,9 +175,18 @@ internal class ActivityStateMachine {
 
     fun surfaceIds(): Set<String> = residents.keys.toSet()
 
-    /** The expanded island's entry: offline entries never hold one. */
-    fun primarySurfaceId(): String? = selectPrimaryActivity(
-        residents.values.filterNot { it.content.isOffline }.map {
+    /**
+     * The collection's primary: its island is the expanded one unless the user keeps its owner off
+     * the glasses. Offline entries never hold one.
+     */
+    fun primarySurfaceId(): String? = islandPrimary { false }
+
+    /**
+     * The expanded island's entry. An owner kept off the glasses has no island, so it never keeps
+     * another owner's from expanding; its entry stays the collection's primary.
+     */
+    private fun islandPrimary(keptOff: (String) -> Boolean): String? = selectPrimaryActivity(
+        residents.values.filterNot { it.content.isOffline || keptOff(it.ownerPluginId) }.map {
             ActivityPrimaryCandidate(
                 activityId = it.surfaceId,
                 startedOrder = it.startedOrder,
@@ -360,13 +369,16 @@ internal class ActivityStateMachine {
         alwaysExpanded: Boolean,
         sizeOf: (String) -> AmbientSize? = { null },
         mode: ForegroundAmbientMode = ForegroundAmbientMode.RESIDENTS,
+        keptOff: (String) -> Boolean = { false },
     ): ActivityEventPresentation {
         val resident = residents[surfaceId]
             ?: return ActivityEventPresentation(ActivityPresentation.HIDDEN)
-        if (context == ActivityPresentationContext.CAMERA_OVERLAY || mode == ForegroundAmbientMode.NOTHING) {
+        if (context == ActivityPresentationContext.CAMERA_OVERLAY || mode == ForegroundAmbientMode.NOTHING ||
+            keptOff(resident.ownerPluginId)
+        ) {
             return ActivityEventPresentation(ActivityPresentation.HIDDEN)
         }
-        if (surfaceId != primarySurfaceId()) {
+        if (surfaceId != islandPrimary(keptOff)) {
             return ActivityEventPresentation(applyForegroundMode(ActivityPresentation.PULSE, mode))
         }
         val flareAvailable = resident.lastFlareAtMs
@@ -403,10 +415,13 @@ internal class ActivityStateMachine {
         eventUrgent: Boolean = false,
         sizeOf: (String) -> AmbientSize? = { null },
         mode: ForegroundAmbientMode = ForegroundAmbientMode.RESIDENTS,
+        keptOff: (String) -> Boolean = { false },
     ): ActivityRenderState {
         val ordered = residents.values.sortedBy(Resident::startedOrder)
         val primary = primarySurfaceId()
-        val islands = islandIds(primary)
+        // An owner kept off the glasses keeps its entry, so its card, but no island nor corner.
+        val islandPrimary = islandPrimary(keptOff)
+        val islands = islandIds(islandPrimary, keptOff)
         corners = allocateActivityCorners(
             activityIdsInOrder = ordered.map(Resident::surfaceId).filter { it in islands },
             existing = corners.filterKeys { it in islands },
@@ -421,7 +436,7 @@ internal class ActivityStateMachine {
                         ActivityPresentation.HIDDEN
                     resident.surfaceId == eventSurfaceId && eventPresentation != null ->
                         eventPresentation
-                    resident.surfaceId != primary ->
+                    resident.surfaceId != islandPrimary ->
                         applyForegroundMode(ActivityPresentation.CHIP, mode)
                     else ->
                         applyForegroundMode(
@@ -451,7 +466,7 @@ internal class ActivityStateMachine {
                         selectedActionIndex = NO_SELECTED_ACTION,
                         motionToken = resident.motionToken,
                     ),
-                    primary = resident.surfaceId == primary,
+                    primary = resident.surfaceId == islandPrimary,
                     presentation = presentation,
                     urgent = eventUrgent &&
                         resident.surfaceId == eventSurfaceId &&
@@ -475,11 +490,12 @@ internal class ActivityStateMachine {
 
     /**
      * The entries that get a corner island: the primary and one other live entry, the wearer's
-     * pin first, then the latest significant update, then the earliest start. Never an offline one.
+     * pin first, then the latest significant update, then the earliest start. Never an offline one,
+     * nor one whose owner the user keeps off the glasses.
      */
-    private fun islandIds(primary: String?): Set<String> {
+    private fun islandIds(primary: String?, keptOff: (String) -> Boolean): Set<String> {
         val other = residents.values
-            .filter { !it.content.isOffline && it.surfaceId != primary }
+            .filter { !it.content.isOffline && it.surfaceId != primary && !keptOff(it.ownerPluginId) }
             .sortedWith(
                 compareByDescending<Resident> { it.content.userPinned }
                     .thenByDescending { it.lastSignificantOrder ?: Long.MIN_VALUE }
@@ -755,6 +771,7 @@ internal object ActivityController {
             }
             // Every announcement may change whether the bundle's ambient presentation applies.
             publish()
+            PinController.refreshKeptOff()
         }
     }
 
@@ -817,7 +834,9 @@ internal object ActivityController {
                 DisplayWakePolicy.requestWake(
                     context,
                     DisplayWakeKind.ACTIVITY,
-                    requested = result.significant && state.wakeDisplayRequested(result.surfaceId),
+                    // Nothing of an owner kept off the glasses would light up.
+                    requested = result.significant && state.wakeDisplayRequested(result.surfaceId) &&
+                        !keptOffGlasses(identity.second),
                 )
                 publishEvent(result, now)
             }
@@ -858,6 +877,7 @@ internal object ActivityController {
             alwaysExpanded = alwaysExpanded(),
             sizeOf = ambientSizes(ambient),
             mode = ambientMode(ambient),
+            keptOff = keptOff(ambient),
         )
         if (result.significant && event.presentation == ActivityPresentation.PULSE) {
             log("activity flare throttled id=${result.surfaceId}")
@@ -883,13 +903,14 @@ internal object ActivityController {
         latestRender = staleness.apply(state.snapshot(
             nowMs = nowMs,
             context = presentationContext(ambient),
-            pinCorner = PinController.activePin()?.content?.position,
+            pinCorner = PinController.presentablePin()?.content?.position,
             alwaysExpanded = alwaysExpanded(),
             eventSurfaceId = eventSurfaceId,
             eventPresentation = eventPresentation,
             eventUrgent = eventUrgent,
             sizeOf = ambientSizes(ambient),
             mode = ambientMode(ambient),
+            keptOff = keptOff(ambient),
         ))
         // A route lives as long as its activity: ended or offline, its geometry and heading go.
         RouteLive.retain(
@@ -925,6 +946,15 @@ internal object ActivityController {
         if (ambient) AmbientForeground.mode() else ForegroundAmbientMode.RESIDENTS
 
     /**
+     * Whether the user keeps [owner]'s island and pin off the glasses. Chosen on the phone, it
+     * applies like the other ambient preferences: only with the bundle's ambient presentation.
+     */
+    internal fun keptOffGlasses(owner: String): Boolean = keptOff(launcherAmbient())(owner)
+
+    private fun keptOff(ambient: Boolean): (String) -> Boolean =
+        if (ambient) AmbientPreferences::keptOffGlasses else { _ -> false }
+
+    /**
      * With the bundle's ambient presentation, the open Nexus session counts as the launcher and the
      * foreground resolver tells the home from a native app; without it, as before the bundle, only
      * the classic launcher's overlay does, and anything else is the home.
@@ -939,7 +969,10 @@ internal object ActivityController {
 
     /** The launcher backend changed: the islands follow whether the bundle's ambient presentation applies. */
     fun onLauncherBackendChanged() {
-        runOnMain(::contextChanged)
+        runOnMain {
+            contextChanged()
+            PinController.refreshKeptOff()
+        }
     }
 
     /** The Nexus session opened or closed; told by the session host, on the main thread. */

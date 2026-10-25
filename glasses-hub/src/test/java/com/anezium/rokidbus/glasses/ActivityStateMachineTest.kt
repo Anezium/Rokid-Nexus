@@ -3,6 +3,7 @@ package com.anezium.rokidbus.glasses
 import com.anezium.rokidbus.shared.ActivityAction
 import com.anezium.rokidbus.shared.ActivityField
 import com.anezium.rokidbus.shared.ActivitySurfaceContent
+import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.ActivitySurfacePatch
 import com.anezium.rokidbus.shared.PinSurfacePosition
 import org.junit.Assert.assertEquals
@@ -450,6 +451,52 @@ class ActivityStateMachineTest {
                 urgent = true,
                 nowMs = now + 60_000L,
                 alwaysExpanded = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `an owner kept off the glasses keeps its entry and primacy but no island, corner or flare`() {
+        val keptOff = { owner: String -> owner == "maps" }
+        state.setCapacity(ActivitySurfaceContract.MAX_COLLECTION_ACTIVITIES)
+        state.start("maps:activity", "maps", 1, content("300 m"), now)
+        state.start("ride:activity", "ride", 2, content("4 min"), now)
+        state.start("todo:activity", "todo", 3, content("2 left"), now)
+        state.update("maps:activity", 4, ActivitySurfacePatch(significant = true), now)
+        assertEquals("maps:activity", state.primarySurfaceId())
+
+        // Nothing of it is drawn, and its flare budget is left untouched.
+        assertEquals(
+            ActivityPresentation.HIDDEN,
+            state.presentEvent(
+                "maps:activity", ActivityPresentationContext.IDLE_HOME, significant = true, urgent = true,
+                nowMs = now, alwaysExpanded = false, keptOff = keptOff,
+            ).presentation,
+        )
+        val render = state.snapshot(now, ActivityPresentationContext.IDLE_HOME, pinCorner = null, alwaysExpanded = false, keptOff = keptOff)
+        // The other owners take both islands; the first started expands in its place.
+        assertEquals(listOf("ride:activity", "todo:activity"), render.items.map { it.activity.surfaceId })
+        assertEquals("ride:activity", render.primary?.activity?.surfaceId)
+        assertEquals(ActivityPresentation.PANEL, render.primary?.presentation)
+        assertEquals(setOf(PinSurfacePosition.TOP_LEFT, PinSurfacePosition.TOP_RIGHT), render.items.map { it.activity.corner }.toSet())
+        // Its card stays, still the collection's primary.
+        assertEquals(listOf("maps:activity", "ride:activity", "todo:activity"), render.collection.map { it.surfaceId })
+        assertEquals("maps:activity", render.collection.single { it.primary }.surfaceId)
+        assertEquals(
+            ActivityPresentation.PANEL,
+            state.presentEvent(
+                "ride:activity", ActivityPresentationContext.IDLE_HOME, significant = false, urgent = false,
+                nowMs = now, alwaysExpanded = false, keptOff = keptOff,
+            ).presentation,
+        )
+
+        // Back on: its island returns as the primary, with the flare it never spent.
+        val back = state.snapshot(now, ActivityPresentationContext.IDLE_HOME, pinCorner = null, alwaysExpanded = false)
+        assertEquals("maps:activity", back.primary?.activity?.surfaceId)
+        assertEquals(
+            ActivityPresentation.FLARE,
+            state.presentationForEvent(
+                "maps:activity", ActivityPresentationContext.IDLE_HOME, significant = true, nowMs = now, alwaysExpanded = false,
             ),
         )
     }

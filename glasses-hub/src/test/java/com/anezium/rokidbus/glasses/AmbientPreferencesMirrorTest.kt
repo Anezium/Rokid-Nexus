@@ -94,4 +94,17 @@ class AmbientPreferencesMirrorTest {
         assertEquals(mapOf("maps" to AmbientSize.MINIMAP), restarted.queued)
         assertEquals(ForegroundAmbientMode.SIGNALS, restarted.modeFor("com.example.reader", isHome = false))
     }
+
+    @Test
+    fun `the owners kept off the glasses follow each newer policy and survive a restart`() {
+        assertTrue(mirror.onPolicy(AmbientPolicy(3, emptyMap(), setOf("maps"))))
+        assertEquals(setOf("maps"), mirror.hiddenOwners)
+        assertFalse(mirror.onPolicy(AmbientPolicy(2, emptyMap(), emptySet())))
+        assertEquals(setOf("maps"), AmbientPreferencesMirror(storage) { false }.hiddenOwners)
+
+        // Only the owners changed: still a change to draw.
+        assertTrue(mirror.onPolicy(AmbientPolicy(4, emptyMap(), emptySet())))
+        assertEquals(emptySet<String>(), mirror.hiddenOwners)
+        assertFalse(mirror.onPolicy(AmbientPolicy(5, emptyMap(), emptySet())))
+    }
 }
