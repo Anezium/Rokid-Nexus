@@ -39,7 +39,13 @@ class NavPluginService : NexusPluginService() {
     private val pages = NavPageProvider<NexusPageRequest>(
         pageIdOf = NexusPageRequest::pageId,
         floorOf = NexusPageRequest::minimumRevision,
-        publish = { request, page -> nexusClient?.publishPage(request, page) ?: NexusSdkResult.NOT_REGISTERED },
+        publish = { request, page ->
+            if (NavControl.renderedFrames.awaitingAcknowledgment(nexusClient?.renderedMapFrames.orEmpty(), NavPages.MAIN)) {
+                NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+            } else {
+                nexusClient?.publishPage(request, page) ?: NexusSdkResult.NOT_REGISTERED
+            }
+        },
         state = {
             NavPageState(
                 guidance = NavState.guidance,
@@ -147,7 +153,10 @@ class NavPluginService : NexusPluginService() {
     }
 
     override fun onNexusActivityClosed(reason: String) = NavControl.activityClosed(reason)
-    override fun onNexusRenderedMapsChanged() = NavControl.mapDemandChanged()
+    override fun onNexusRenderedMapsChanged() {
+        NavControl.mapDemandChanged()
+        pages.onRenderedMapsChanged()
+    }
 
     override fun onDestroy() {
         NavControl.pageListener = null

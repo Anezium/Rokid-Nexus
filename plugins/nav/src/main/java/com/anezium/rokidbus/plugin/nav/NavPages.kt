@@ -171,6 +171,10 @@ internal class NavPageProvider<R : Any>(
         forget()
     }
 
+    fun onRenderedMapsChanged() {
+        if (dirty) guidanceChanged()
+    }
+
     /** The route changed: publish now, or once the half-second since the last revision has passed. */
     fun guidanceChanged() {
         current ?: return

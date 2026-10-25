@@ -249,14 +249,18 @@ class NavJourneyService : Service(), LocationListener {
         return snapshot.copy(basemap = if (keys.isEmpty()) NavBasemapTiles.NONE else streets.tiles)
     }
 
-    /** A heartbeat changes authorization/deadlines, never guidance or the page it acknowledges. */
+    /** Stable renewals only change deadlines; a changed street layer must reach every surface. */
     private fun reconcileMapDemand() {
         if (stopping || tracker == null) return
         if (!hasLocationPermission()) {
             finishJourney(MESSAGE_PERMISSION_LOST)
             return
         }
-        NavState.journey = NavState.journey?.let(::withStreets)
+        val previous = NavState.journey ?: return
+        val next = withStreets(previous)
+        NavState.journey = next
+        if (previous.basemap !== next.basemap) runtime.onJourney(next)
+        else runtime.onRenderedMapsChanged()
     }
 
     private fun finishJourney(message: String) {

@@ -70,6 +70,13 @@ internal class NavMapPublisher(
         activityEnded()
     }
 
+    /** When a rate-limited update can be flushed without waiting for another journey event. */
+    fun geometryDelayMs(): Long? {
+        if (snapshot == null || !activityLive || !supported()) return null
+        val last = sentGeometryAtMs ?: return null
+        return (last + MIN_GEOMETRY_INTERVAL_MS - now()).takeIf { it > 0 }
+    }
+
     /** Sends what the remembered journey changed, within the rates above. */
     fun flush() {
         val current = snapshot ?: return
