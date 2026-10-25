@@ -807,8 +807,9 @@ treat a revision you no longer show as `stale`. The default implementation calls
 `onNexusActivityAction(id)` and returns null, so an unchanged plugin keeps
 working and never reports an invented success.
 
-Before delivering a command, the phone hub makes a fresh service bind to wake
-its owner, then holds that connection until the result, the existing
+Before delivering a command, the phone hub requests a fresh service connection
+to its owner (whether that wakes an already-frozen owner still needs device
+verification), then holds that connection until the result, the existing
 eight-second deadline or cancellation. If Android refuses the bind, a live
 registration still receives the command. An idle activity holds no command
 binding; page, skill and immersion connections remain independent. Losing this
