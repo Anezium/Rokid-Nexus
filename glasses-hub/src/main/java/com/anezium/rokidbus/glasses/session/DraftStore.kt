@@ -43,10 +43,11 @@ internal data class PendingSend(
 )
 
 /**
- * The messages a conversation page showed when a reply was sent from it, in order ([ids]), and
- * among them [twins]: ours in the reply's own words, which its copy follows whatever their ids become.
+ * What a conversation page showed when a reply was sent from it: its messages' [ids], and [ahead],
+ * how many messages of ours in the reply's words come before its own copy there (those it showed,
+ * and the earlier replies in those words still waiting for theirs), [ComposerRules.carries].
  */
-internal data class ShownMessages(val ids: Set<String>, val twins: Set<String> = emptySet())
+internal data class ShownMessages(val ids: Set<String>, val ahead: Int = 0)
 
 /**
  * The conversation frame a reply was sent from: the session [generation], the wire [frameIndex],
@@ -69,7 +70,7 @@ internal data class SentFrom(
 
 /**
  * A reply handed to its app, shown as ours on the frame it was sent from until that page carries
- * it (its own copy of the reply, [ComposerRules.Echoes]). It lives no longer than that frame under
+ * it (its own copy of the reply, [ComposerRules.carries]). It lives no longer than that frame under
  * the registration that took it, and goes with its owner's purge or invalidation: a page answered
  * later, or by another registration, says what its provider knows.
  */

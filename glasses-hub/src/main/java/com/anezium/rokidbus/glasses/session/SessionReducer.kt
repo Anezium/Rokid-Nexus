@@ -1737,7 +1737,11 @@ internal class SessionReducer(
         val cleared = state.withTop(top.copy(composerFocus = null))
         val sent = invoke(model.copy(state = cleared), cleared, status, composer.sendActionId, nowMs, PageSurfaceContract.MODE_COMPOSE, draft.text)
         val invocationId = (sent.model.state as? SessionState.InPage)?.frames?.last()?.invocation?.invocationId ?: return keep(model)
-        val from = SentFrom(model.generation, state.frames.size, top.pageId, top.providerEpoch, ComposerRules.shown(body, draft.text))
+        val waiting = model.handoffs.count {
+            it.ownerPluginId == draft.ownerPluginId && it.threadKey == draft.threadKey &&
+                it.from.isFrame(model.generation, state.frames.size, top) && ComposerRules.sameWords(it.text, draft.text)
+        }
+        val from = SentFrom(model.generation, state.frames.size, top.pageId, top.providerEpoch, ComposerRules.shown(body, draft.text, waiting))
         val pending = PendingSend(invocationId, draft.ownerPluginId, draft.threadKey, draft.text, from)
         return sent.copy(model = sent.model.copy(pendingSend = pending))
     }
@@ -1850,8 +1854,7 @@ internal class SessionReducer(
      * The handed-off replies stay drawn on their frame (they share one) while it is the same page in
      * the same session, at the same place, answered by the same registration, for the same thread,
      * until it carries them. A frame waiting for its page keeps them; any other page or registration
-     * ends them. A copy found for one reply is never another's: the later replies from that page, the
-     * one in flight and an unconfirmed draft then look past it.
+     * ends them.
      */
     private fun settleHandoffs(model: SessionModel): SessionModel {
         val from = model.handoffs.first().from
@@ -1864,23 +1867,10 @@ internal class SessionReducer(
             ?: return model.copy(handoffs = emptyList())
         if (frame.status !is FrameStatus.Shown) return model
         val (owner, body) = frame.shownConversation() ?: return model.copy(handoffs = emptyList())
-        val echoes = ComposerRules.Echoes(body)
-        val claimed = LinkedHashSet<String>()
-        val held = model.handoffs.mapNotNull { handoff ->
-            if (owner != handoff.ownerPluginId || body.threadKey != handoff.threadKey) return@mapNotNull null
-            val shown = echoes.behind(handoff.from.shown, handoff.text, claimed)
-            val echo = echoes.take(handoff.text, shown)
-            if (echo != null) claimed += echo
-            handoff.takeIf { echo == null }?.copy(from = handoff.from.copy(shown = shown))
-        }
-        if (claimed.isEmpty()) return model.copy(handoffs = held)
-        val pending = model.pendingSend?.takeIf { it.from.sameFrameAs(from) }
-        val draft = model.draft?.takeIf { it.isFor(owner, body.threadKey) }
-            ?.let { draft -> draft.sent?.let { draft.copy(sent = echoes.behind(it, draft.text, claimed)) } }
         return model.copy(
-            handoffs = held,
-            pendingSend = pending?.copy(from = pending.from.copy(shown = echoes.behind(pending.from.shown, pending.text, claimed))) ?: model.pendingSend,
-            draft = draft ?: model.draft,
+            handoffs = model.handoffs.filter {
+                owner == it.ownerPluginId && body.threadKey == it.threadKey && !ComposerRules.carries(body, it.text, it.from.shown)
+            },
         )
     }
 

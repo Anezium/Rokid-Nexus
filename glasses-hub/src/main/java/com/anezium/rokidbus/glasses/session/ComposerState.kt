@@ -111,46 +111,34 @@ internal object ComposerRules {
         return id
     }
 
-    /** What a reply [text] sent from [body] remembers of it, to tell its page's own copy of it later. */
-    fun shown(body: PageBody.Conversation, text: String): ShownMessages =
-        Echoes(body).behind(ShownMessages(emptySet()), text, body.messages.map { it.id })
+    /**
+     * What a reply [text] sent from [body] remembers of it, while [waiting] earlier replies in the
+     * same words still wait there for their copies: theirs come before its own.
+     */
+    fun shown(body: PageBody.Conversation, text: String, waiting: Int): ShownMessages {
+        val said = normalized(text)
+        return ShownMessages(body.messages.mapTo(LinkedHashSet()) { it.id }, body.messages.count { it.says(said) } + waiting)
+    }
 
     /**
-     * [body]'s own copies of replies sent from its thread. A reply's copy is a message of ours with
-     * the same words, spacing aside, after the newest message its page showed when it was sent:
-     * the provider records a reply after what it answered, so a message that was merely older, or
-     * anyone else's, never stands for it. The page's earlier messages of ours in those words keep
-     * their place but not always their id (Relay replaces its record of a reply with the app's own
-     * copy), so the newest message shown is the newest of the others, and the messages in those
-     * words after it stand first for the earlier ones it was followed by. Each copy stands for one
-     * reply, taken oldest reply first.
+     * Whether [body] carries the reply [text] sent from a page that showed [shown]: it holds more
+     * messages of ours in those words, spacing aside, than come before the reply's own copy. Copies
+     * are counted, never matched by id or place: a provider may give a message another id (Relay
+     * replaces its record of a reply with the app's own copy) and show identical replies' copies in
+     * any order. Counting starts at the oldest message shown then that is still there, so older
+     * messages entering above it are never a copy, and with none of them left nothing is. A provider
+     * dropping earlier copies only lowers the count: a reply may then be drawn twice, never hidden.
      */
-    class Echoes(private val body: PageBody.Conversation) {
-        private val taken = HashSet<String>()
-
-        /** The id of [body]'s copy of the reply [text] sent from a page that showed [shown], now taken; null when none. */
-        fun take(text: String, shown: ShownMessages): String? {
-            val messages = body.messages
-            val said = normalized(text)
-            val anchor = messages.indexOfLast { it.id in shown.ids && it.id !in shown.twins }
-            val anchorId = messages.getOrNull(anchor)?.id
-            val earlier = shown.ids.reversed().takeWhile { it != anchorId }.count { it in shown.twins }
-            val echo = messages.subList(anchor + 1, messages.size)
-                .filter { it.says(said) }
-                .drop(earlier)
-                .firstOrNull { it.id !in taken }
-                ?: return null
-            taken += echo.id
-            return echo.id
-        }
-
-        /** [shown], with [ids] of [body] shown too, as the reply [text] counts them. */
-        fun behind(shown: ShownMessages, text: String, ids: Collection<String>): ShownMessages {
-            val said = normalized(text)
-            val twins = body.messages.filter { it.id in ids && it.says(said) }.map { it.id }
-            return ShownMessages(shown.ids + ids, shown.twins + twins)
-        }
+    fun carries(body: PageBody.Conversation, text: String, shown: ShownMessages): Boolean {
+        val messages = body.messages
+        val start = if (shown.ids.isEmpty()) 0 else messages.indexOfFirst { it.id in shown.ids }
+        if (start < 0) return false
+        val said = normalized(text)
+        return messages.subList(start, messages.size).count { it.says(said) } > shown.ahead
     }
+
+    /** Whether two replies say the same, spacing aside. */
+    fun sameWords(text: String, other: String): Boolean = normalized(text) == normalized(other)
 
     private fun ConversationMessage.says(said: String): Boolean = role == ConversationRole.OURS && normalized(text) == said
 

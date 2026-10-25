@@ -337,6 +337,136 @@ class ComposerSessionTest {
     }
 
     @Test
+    fun `an earlier reply in other words filling in its copy never lends one to the next identical reply`() {
+        openThread("t1", at = 1_000)
+        dictate("first", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+        dictate("ok", at = 6_000)
+        result(sendDraft(at = 8_000), "done", now = 8_500)
+
+        // The second reply's copy is shown before the first one's.
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-2", "ok"))), revision = 2, now = 8_700)
+        assertEquals(listOf(SessionScreens.HANDOFF_BUBBLE), sentKeys("first"))
+        assertEquals(listOf("m:h-2"), sentKeys("ok"))
+
+        dictate("ok", at = 9_000)
+        val third = sendDraft(at = 11_000)
+        assertEquals(listOf("m:h-2", SessionScreens.DRAFT_BUBBLE), sentKeys("ok"))
+
+        // The first reply's copy fills in, in its place before the second's; the third has none yet.
+        val both = listOf(ours("h-1", "first"), ours("h-2", "ok"))
+        respond(requestOf(), thread("t1", extra = both), revision = 3, now = 11_200)
+        assertEquals(listOf("m:h-1"), sentKeys("first"))
+        assertEquals(listOf("m:h-2", SessionScreens.DRAFT_BUBBLE), sentKeys("ok"))
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP, SessionScreens.PENDING), sentBubbles("ok"))
+
+        result(third, "done", now = 11_500)
+        assertEquals(listOf("m:h-2", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+        for (revision in 4L..6L) {
+            respond(requestOf(), thread("t1", extra = both), revision = revision, now = 11_500 + revision * 100)
+            assertEquals(listOf("m:h-2", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        }
+
+        respond(requestOf(), thread("t1", extra = both + ours("h-3", "ok")), revision = 7, now = 12_400)
+        assertEquals(listOf("m:h-2", "m:h-3"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
+    fun `a third reply handed off before the first copy keeps its bubble until a copy for it arrives`() {
+        openThread("t1", at = 1_000)
+        dictate("first", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+        dictate("ok", at = 6_000)
+        result(sendDraft(at = 8_000), "done", now = 8_500)
+        dictate("ok", at = 9_000)
+        result(sendDraft(at = 11_000), "done", now = 11_500)
+        assertEquals(3, model.handoffs.size)
+        assertEquals(listOf("${SessionScreens.HANDOFF_BUBBLE} 1", "${SessionScreens.HANDOFF_BUBBLE} 2"), sentKeys("ok"))
+
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-2", "ok"))), revision = 2, now = 11_700)
+        assertEquals(listOf(SessionScreens.HANDOFF_BUBBLE), sentKeys("first"))
+        assertEquals(listOf("m:h-2", "${SessionScreens.HANDOFF_BUBBLE} 1"), sentKeys("ok"))
+
+        val both = listOf(ours("h-1", "first"), ours("h-2", "ok"))
+        for (revision in 3L..4L) {
+            respond(requestOf(), thread("t1", extra = both), revision = revision, now = 11_700 + revision * 100)
+            assertEquals(listOf("m:h-1"), sentKeys("first"))
+            assertEquals(listOf("m:h-2", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+            assertEquals(1, model.handoffs.size)
+        }
+
+        respond(requestOf(), thread("t1", extra = both + ours("h-3", "ok")), revision = 5, now = 12_300)
+        assertEquals(listOf("m:h-2", "m:h-3"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
+    fun `identical replies are counted, so renamed copies in any order keep one bubble per reply`() {
+        openThread("t1", at = 1_000)
+        for (sent in 0 until 3) {
+            dictate("ok", at = 3_000L + sent * 5_000)
+            result(sendDraft(at = 5_000L + sent * 5_000), "done", now = 5_500L + sent * 5_000)
+        }
+        assertEquals(3, model.handoffs.size)
+        assertEquals(3, sentKeys("ok").size)
+
+        // The last reply's copy comes first: it stands for one reply, whichever.
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-3", "ok"))), revision = 2, now = 15_700)
+        assertEquals(listOf("m:h-3", SessionScreens.HANDOFF_BUBBLE, "${SessionScreens.HANDOFF_BUBBLE} 1"), sentKeys("ok"))
+
+        // Relay replaces that record with the app's own copy, and another reply's copy lands before it.
+        val renamed = listOf(ours("h-1", " ok"), received("m4", "great"), ours("m-ok-1", "ok", status = null))
+        respond(requestOf(), thread("t1", extra = renamed), revision = 3, now = 15_900)
+        assertEquals(listOf("m:h-1", "m:m-ok-1", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+
+        respond(requestOf(), thread("t1", extra = renamed + ours("h-2", "ok  ")), revision = 4, now = 16_100)
+        assertEquals(listOf("m:h-1", "m:m-ok-1", "m:h-2"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+
+        // Every copy renamed in place: three bubbles still, none of them ours again.
+        val captured = listOf(ours("m-ok-2", "ok", status = null), received("m4", "great"), ours("m-ok-1", "ok", status = null), ours("m-ok-3", "ok", status = null))
+        respond(requestOf(), thread("t1", extra = captured), revision = 5, now = 16_300)
+        assertEquals(listOf("m:m-ok-2", "m:m-ok-1", "m:m-ok-3"), sentKeys("ok"))
+    }
+
+    @Test
+    fun `a provider dropping an earlier copy may draw a reply twice, never hide it`() {
+        openThread("t1", at = 1_000)
+        // An earlier reply of ours in the same words reads first: its message is no longer captured.
+        respond(requestOf(), thread("t1", older = listOf(ours("h-0", "ok"))), revision = 2, now = 2_000)
+        dictate("ok", at = 3_000)
+        val action = sendDraft(at = 5_000)
+        assertEquals(listOf("m:h-0", SessionScreens.DRAFT_BUBBLE), sentKeys("ok"))
+
+        // The provider's bounded log drops that earlier copy.
+        respond(requestOf(), conversation("t1"), revision = 3, now = 5_300)
+        assertEquals(listOf(SessionScreens.PENDING), sentBubbles("ok"))
+        result(action, "done", now = 5_500)
+        assertEquals(listOf(SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+
+        // Its own copy then counts as the one dropped: the reply is drawn twice, not lost.
+        respond(requestOf(), withReply("t1", "h-1", "ok"), revision = 4, now = 5_700)
+        assertEquals(listOf("m:h-1", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+
+        // A second identical reply is never hidden either, through more copies and drops.
+        dictate("ok", at = 6_000)
+        result(sendDraft(at = 8_000), "done", now = 8_500)
+        assertEquals(2, model.handoffs.size)
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-2", "ok"))), revision = 5, now = 8_700)
+        assertTrue(sentKeys("ok").size >= 2)
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-1", "ok"), ours("h-2", "ok"))), revision = 6, now = 8_900)
+        assertEquals(listOf("m:h-1", "m:h-2", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+
+        // The duplicate ends with its frame.
+        send(SessionEvent.Back(9_100))
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
     fun `a purge of its owner erases a handed-off reply, and another owner's purge keeps it`() {
         openThread("t1", at = 1_000)
         dictate("see you", at = 3_000)
