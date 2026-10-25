@@ -618,7 +618,9 @@ Ordinary updates pulse. Set `significant = true` only for a real transition
 such as a maneuver change or arrival. The hub decides whether that becomes a
 flare and permits at most one flare per activity every 10 seconds; a throttled
 flare becomes a pulse and is never queued. Do not use `significant` for distance
-countdown ticks.
+countdown ticks, nor for media moving to a new track: on a negotiated launcher
+the collection is ordered by each activity's latest significant update, so a
+significant track change would lift what plays above a running route.
 
 #### Activity extras
 

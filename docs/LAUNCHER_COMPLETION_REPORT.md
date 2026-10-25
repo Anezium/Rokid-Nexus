@@ -66,7 +66,9 @@ This section supersedes the status paragraphs above, which are kept as history.
   acceptance that cannot settle a newer request.
 - **Fixed from the 2026-10-24 device footage** (lane `fx/nav-misc`): a route without geometry
   (Google Maps or Citymapper guidance) shows Minimap and Panel unavailable on its Display page and
-  cannot save them, and phone Settings says maps need a route Nexus plans (`RouteNavigationTest`).
+  cannot save them, and phone Settings says maps need a route Nexus plans (`RouteNavigationTest`);
+  Media Deck no longer marks a new track or player as a significant update, so what plays stays
+  below a running route (`MediaDeckActivityPublisherTest`; the hub's order rule is unchanged).
 - **What the tests prove, and what they do not.** Component tests (reducer, router, Relay with a
   fake hub) cover each fix above and were each observed to fail with the fix reverted. Production
   session-runtime tests (real `NexusSession`, real wall clock, the runner's own timer, a real

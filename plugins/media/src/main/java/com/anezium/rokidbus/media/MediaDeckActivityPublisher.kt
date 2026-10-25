@@ -10,7 +10,6 @@ import com.anezium.rokidbus.media.session.MediaDeckState
 import com.anezium.rokidbus.media.session.MediaDeckStateListener
 import com.anezium.rokidbus.media.session.MediaDeckSubscriber
 import com.anezium.rokidbus.media.session.MediaDeckTarget
-import com.anezium.rokidbus.media.session.MediaSessionIdentity
 import com.anezium.rokidbus.shared.ActivityCloseReason
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 
@@ -50,7 +49,7 @@ internal class MediaDeckActivityPublisher(
     onHubAtStart: Boolean = false,
     private val rememberOnHub: (Boolean) -> Unit = {},
 ) {
-    private data class Published(val revision: Long, val identity: MediaSessionIdentity, val trackKey: String)
+    private data class Published(val revision: Long)
 
     var enabled = false
         private set
@@ -285,8 +284,9 @@ internal class MediaDeckActivityPublisher(
                 return
             }
         }
-        val significant = previous == null || previous.identity != state.identity || previous.trackKey != state.track.key
-        val result = if (started) port.update(activity, significant) else port.start(activity)
+        // Nothing here is an event the wearer must notice, and a significant update would lift what
+        // plays above a route on every new track: a track or player change is an ordinary update.
+        val result = if (started) port.update(activity, significant = false) else port.start(activity)
         lastSentAt = now()
         if (result != NexusSdkResult.SENT) {
             // Whatever did not arrive is sent whole at the next chance: approval with its
@@ -297,7 +297,7 @@ internal class MediaDeckActivityPublisher(
         }
         started = true
         markOnHub(true)
-        published = Published(state.revision, state.identity, state.track.key)
+        published = Published(state.revision)
         shownTargets[state.revision] = MediaDeckTarget(state.identity, state.revision)
         while (shownTargets.size > MAX_SHOWN_REVISIONS) shownTargets.remove(shownTargets.keys.first())
     }
