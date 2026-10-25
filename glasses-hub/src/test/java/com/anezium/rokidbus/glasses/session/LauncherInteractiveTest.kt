@@ -334,6 +334,7 @@ class LauncherInteractiveTest {
             JSONArray().put(typedAction("check", PageActionType.SetChecked(true))),
             now = 2_100,
         )
+        shown(2_150)
         press(2_200)
         val action = effects.filterIsInstance<SendAction>().single().action
         assertEquals("check", action.actionId)
@@ -407,11 +408,48 @@ class LauncherInteractiveTest {
         assertEquals(listOf(SessionEffect.ShowStatus(SessionStatus.NotAvailable)), effects)
         assertTrue(model.pendingCommands.isEmpty())
 
+        send(SessionEvent.LinkRestored)
         send(SessionEvent.ActivityUpdated(stop().copy(offline = true)))
+        assertFalse(model.linkLost)
+        assertEquals("play", root().focus?.key)
         shown(3_100)
         press(3_200)
-        assertTrue(effects.none { it is SendActivityCommand })
+        assertEquals(listOf(SessionEffect.None), effects)
         assertTrue(model.pendingCommands.isEmpty())
+    }
+
+    @Test
+    fun `native and Camera launches require a press begun after the selected row was drawn`() {
+        val apps = listOf(
+            AppEntry("app:dev.tele", "Teleprompter", AppKind.NATIVE),
+            AppEntry("plugin:camera", "Camera", AppKind.CAMERA),
+        )
+        val local = LocalPages(
+            history = { NotificationHistory() }, activities = { emptyList() },
+            applications = { apps }, providerPagesReady = { false }, formatTime = { "12:00" },
+        )
+        apps.forEachIndexed { index, app ->
+            model = SessionModel()
+            openRoot()
+            val applications = root().stops.indexOfFirst { it.kind == RootStopKind.APPLICATIONS }
+            repeat(applications) { send(SessionEvent.Step(1, 1_900L + it)) }
+            press(2_000)
+            send(SessionEvent.PageResponse(local.answer(effects.filterIsInstance<RequestPage>().single().request), 2_100))
+            if (index > 0) {
+                shown(2_110)
+                send(SessionEvent.Step(1, 2_150))
+            }
+            send(SessionEvent.Enter(2_180, pressStartMs = 2_120))
+            assertTrue(effects.none { it is SessionEffect.LaunchLocal })
+            shown(2_200)
+            send(SessionEvent.Enter(2_500, pressStartMs = 2_120))
+            assertTrue(effects.none { it is SessionEffect.LaunchLocal })
+            send(SessionEvent.Enter(2_510, pressStartMs = 2_200))
+            assertTrue(effects.none { it is SessionEffect.LaunchLocal })
+            press(2_600)
+            assertEquals(SessionEffect.LaunchLocal(app.key, app.label), effects.filterIsInstance<SessionEffect.LaunchLocal>().single())
+            assertNull(top().panel)
+        }
     }
 
     @Test

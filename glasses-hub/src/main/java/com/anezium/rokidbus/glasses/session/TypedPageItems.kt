@@ -33,8 +33,8 @@ internal data class TypedRow(
  * Body rows and appended actions key in disjoint namespaces: a row id may equal an action id, or
  * look like an appended key, and the two still never share selection, focus or SELECT.
  *
- * A provider's `plugin` action is confirmed first, unless [quickGate] lets one tap run it; its
- * `immersion` action can only open that provider's own full app on a fresh tap;
+ * A provider's `plugin` action runs on one fresh tap; [quickGate] selects quick or confirmed wire
+ * mode. Its `immersion` action can only open that provider's own full app on a fresh tap;
  * its `hub` actions are refused, and so is an action typed `compose.send`, which only the
  * composer's deliberate Send reaches. Only a hub-authored local page may carry hub actions, and
  * only the local launch ones named here.

@@ -2163,7 +2163,7 @@ A visible frame renews its lease within 30 seconds of expiry. A lease that
 expires without renewal voids that frame's live context on the phone.
 
 The glasses hub invokes a plugin row immediately on a tap, whatever its
-`confirm` flag says. With the launcher bundle, the tap must keep the
+`confirm` flag says. With or without the launcher bundle, the tap must keep the
 fresh-contact rule (see "Launcher bundle v1"): only a press begun after the
 current target was drawn acts. The invocation stays bound to the provider
 registration, page, action and shown revision; loading, unavailable and
@@ -2172,7 +2172,8 @@ second one. Each tap creates one invocation with a fresh id and the shown
 revision. Its mode is `quick` only for a quick-eligible type stamped `hubQuick`
 whose family the latest `/core/policy/quick-actions` approves for that owner;
 otherwise it is `confirmed`. Without the bundle, the tap invokes in `confirmed`
-mode with the existing v1 guards. `confirmed` names the wire mode, not a dialog.
+mode with the existing v1 guards and the draw acknowledgement binding it to the
+shown revision. `confirmed` names the wire mode, not a dialog.
 The composer's own Send remains separate and sends `mode: compose` with its text.
 
 With the bundle the phone keeps each frame's full action map, not ids only, and
@@ -2345,8 +2346,9 @@ it never takes a type from the glasses.
 ### Fresh contact
 
 An Enter that would cause an effect (a quick or confirmed plugin action, an
-activity command, the composer's Send, an app launch) is accepted only if its
-press began strictly after the focused target was displayed: after the host's
+activity command, the composer's Send, an app launch including native apps and
+Camera in Applications) is accepted only if its press began strictly after the
+focused target was displayed: after the host's
 draw acknowledgement of the frame that showed that focus. A new revision, a new
 selection, a panel or a focus mode each reset it. The press start is the
 touchpad contact-down time paired with that Enter, or the ring tap's down time.

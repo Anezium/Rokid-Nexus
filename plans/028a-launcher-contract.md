@@ -254,7 +254,8 @@ behaviours.
 
 5.2 `Open app` is hub-owned, outside the three plugin slots, and launches directly on a fresh
 tap from a card slot, page row or Applications entry. Destination pages opened from an activity
-get a final hub row `Open app` for a launchable owner.
+get a final hub row `Open app` for a launchable owner. Native apps and Camera in Applications
+also require a fresh tap.
 
 5.3 Fresh-contact rule. An Enter that would cause an effect (quick or confirmed plugin action,
 activity command, composer Send, app launch) is accepted only if its press began strictly
@@ -262,6 +263,8 @@ after the focused target was displayed. Displayed = the host's draw acknowledgem
 that showed that focus (a new revision, a new selection, a panel, or a focus mode each reset
 it). Press start = the touchpad contact-down time paired with that Enter; for the ring, the ring
 tap's down time. A rejected Enter is absorbed silently.
+Plugin page actions keep this draw acknowledgement even without the launcher bundle, so a
+delayed tap cannot invoke an updated row the wearer had not seen when the press began.
 
 5.4 Capture: while a composer capture runs (dictation or typing), triple tap is not recognised
 (InputArbiter gains `captureActive`, alongside `editableFocused` and `noticeArmed`), and the

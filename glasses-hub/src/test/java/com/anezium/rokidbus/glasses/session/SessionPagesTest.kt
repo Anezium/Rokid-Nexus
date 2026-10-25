@@ -204,6 +204,7 @@ class SessionPagesTest {
             body = body(listOf(PageRow("mark", "Mark read", target = PageTarget.Action("mark")))),
             actions = JSONArray().put(action("mark", "plugin")),
         )
+        acknowledge(2_150)
         send(SessionEvent.Enter(2_200))
         val sent = effects.filterIsInstance<SendAction>().single().action
         assertEquals("mark", sent.actionId)
@@ -213,6 +214,42 @@ class SessionPagesTest {
         // A pending invocation takes no second one.
         send(SessionEvent.Enter(2_700))
         assertTrue(effects.none { it is SendAction })
+    }
+
+    @Test
+    fun `without the launcher bundle a delayed row tap cannot invoke a replacement revision`() {
+        openProviderPage(
+            body = body(listOf(PageRow("milk", "Milk", target = PageTarget.Action("check")))),
+            actions = JSONArray().put(action("check", "plugin")),
+        )
+        acknowledge(2_200)
+        val token = SessionFocus.tokenOf(model) ?: error("nothing focused")
+        val request = (top().status as FrameStatus.Shown).requestId
+        respond(
+            PageSurfaceRequest(PageCorrelation(request, model.generation, 1, "relay:main"), "open"), 2_400, revision = 2,
+            body = body(listOf(PageRow("milk", "Milk", target = PageTarget.Action("uncheck")))),
+            actions = JSONArray().put(action("uncheck", "plugin")), epoch = "e1",
+        )
+        assertEquals("milk", top().selectedKey)
+        send(SessionEvent.FocusShown(token, 2_450))
+        send(SessionEvent.Enter(2_500, pressStartMs = 2_300))
+        assertTrue(effects.none { it is SendAction })
+        assertNull(top().invocation)
+        send(SessionEvent.Enter(2_550, pressStartMs = 2_510))
+        assertTrue(effects.none { it is SendAction })
+
+        acknowledge(2_600)
+        send(SessionEvent.Enter(2_700, pressStartMs = 2_590))
+        assertTrue(effects.none { it is SendAction })
+        send(SessionEvent.Enter(2_800, pressStartMs = 2_600))
+        assertTrue(effects.none { it is SendAction })
+        send(SessionEvent.Enter(2_900, pressStartMs = 2_850))
+        val sent = effects.filterIsInstance<SendAction>().single().action
+        assertEquals("uncheck", sent.actionId)
+        assertEquals(2L, sent.revision)
+        assertEquals(PageSurfaceContract.MODE_CONFIRMED, sent.mode)
+        assertEquals("e1", top().providerEpoch)
+        assertNull(top().panel)
     }
 
     @Test

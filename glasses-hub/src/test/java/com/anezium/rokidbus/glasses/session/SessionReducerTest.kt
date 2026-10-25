@@ -707,6 +707,7 @@ class SessionReducerTest {
         )
 
         // The tap invokes a plugin action whatever its own confirm flag says.
+        send(SessionEvent.FocusShown(SessionFocus.tokenOf(model) ?: error("nothing focused"), 4_900), defaults)
         send(Enter(5_000), defaults)
         val sent = effects.filterIsInstance<SendAction>().single().action
         assertEquals("delete", sent.actionId)
@@ -719,6 +720,7 @@ class SessionReducerTest {
             assertEquals(listOf(SessionEffect.None), effects)
         }
         send(Step(1, 6_000), defaults)
+        send(SessionEvent.FocusShown(SessionFocus.tokenOf(model) ?: error("nothing focused"), 6_005), defaults)
         send(Enter(6_010), defaults)
         assertNull(top().panel)
         assertEquals("mute", effects.filterIsInstance<SendAction>().single().action.actionId)

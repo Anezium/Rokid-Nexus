@@ -652,8 +652,9 @@ internal class SessionReducer(
                     is PageItem.Activity -> model.latestActivity(item.ownerPluginId)
                         ?.let { activate(model, frameSite(state), it, state.root, state.frames, it.pageId, nowMs) }
                         ?: keep(model)
-                    is PageItem.PluginAction -> if (fresh(model, event)) invoke(model, state, status, item.actionId, nowMs) else keep(model)
-                    is PageItem.LocalLaunch -> SessionTransition(model, listOf(SessionEffect.LaunchLocal(item.key, item.label)))
+                    // Legacy page taps also need the drawn revision now that no confirmation binds it.
+                    is PageItem.PluginAction -> if (SessionFocus.isFresh(model, event.pressStartMs)) invoke(model, state, status, item.actionId, nowMs) else keep(model)
+                    is PageItem.LocalLaunch -> if (fresh(model, event)) SessionTransition(model, listOf(SessionEffect.LaunchLocal(item.key, item.label))) else keep(model)
                     is PageItem.Notification -> openEntry(model, state.root, state.frames, item.entryId, nowMs)
                     PageItem.Back -> pop(model, state, nowMs)
                     else -> keep(model)

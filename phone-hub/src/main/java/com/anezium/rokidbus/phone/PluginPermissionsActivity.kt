@@ -189,11 +189,10 @@ class PluginPermissionsActivity : Activity() {
                     card.addView(row, NexusUi.block())
                     card.addView(BusTheme.gap(this, 8))
                 }
-            } else if (capability == PluginCapability.SURFACES && live && principal.descriptor.quickActionFamilies.isNotEmpty()) {
-                // The activity and one-tap choices still exist, they just cannot apply: say why
-                // the rows are gone instead of leaving a plugin that declares them with none.
+            } else if (capability == PluginCapability.SURFACES && live) {
+                // Activity preferences apply only while the surfaces grant is selected.
                 card.addView(
-                    NexusUi.cardBody(this, "Allow \"Show on your glasses\" to manage its activity and one-tap actions."),
+                    NexusUi.cardBody(this, "Allow \"Show on your glasses\" to manage its activity."),
                     NexusUi.block(),
                 )
                 card.addView(BusTheme.gap(this, 8))

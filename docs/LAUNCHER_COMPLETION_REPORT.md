@@ -31,8 +31,9 @@ This section supersedes the status paragraphs above, which are kept as history.
   stay in force. Activities command focus now includes the live sequence in its draw token, so
   an update needs a redraw and a new press before it can act. Plugin access drops the two
   quick-action family switches without changing stored approvals, their wire or phone validation.
-  Old-phone page actions invoke on a tap in confirmed mode. Composer Send and its visible-draft
-  fresh-press rule are unchanged. Device verification belongs to the integrating orchestrator;
+  Old-phone page actions invoke on a fresh tap in confirmed mode, bound to the drawn revision.
+  Native apps and Camera in Applications also require a fresh press. Composer Send and its
+  visible-draft fresh-press rule are unchanged. Device verification belongs to the integrating orchestrator;
   this lane performs no install or ADB action.
 
 - **Integrated with main.** `origin/main` at `a66f55e1` (Nexus 1.8.1, Relay 1.3.0, the
@@ -432,3 +433,95 @@ merge, tag, ADB or device action was performed. Device checks remain with the or
 focused transport/custom commands and checklist rows, all three Open app entry points,
 delayed ring presses after target changes, pending/offline/link-loss behavior, the phone's
 remaining activity switches, and a separate fresh Send after a visible conversation draft.
+
+### Immediate-action review fixes, round 2 (2026-10-25)
+
+The independent Opus review's F1–F5 findings are addressed in the same lane:
+
+- **F1:** plugin page actions require `SessionFocus.isFresh` even without the launcher bundle.
+  A delayed tap cannot invoke a replacement revision before its draw acknowledgement, use an
+  obsolete acknowledgement, or reuse a contact begun before that draw. The regression keeps
+  the row key while changing its action from check to uncheck, then verifies one fresh tap
+  sends the new action at revision 2 in confirmed mode.
+- **F2/F4:** Plugin access explains the activity preferences whenever its surfaces grant is
+  absent, independently of declared quick families; the obsolete one-tap wording is removed.
+  The typed resolver's KDoc now describes quick versus confirmed wire mode.
+- **F3:** native apps and Camera in Applications use the same fresh-press gate as plugin app
+  launches. The regression covers both rows before draw, at the draw timestamp, after draw
+  with an older contact (including a selection change), and with a fresh successful tap.
+- **F5:** the offline-command regression restores the link before the offline update and
+  verifies command focus survives. Its rejection now proves the offline guard independently
+  of link loss. Stored policy, phone validation, the wire and composer Send are unchanged.
+
+The focused `LauncherInteractiveTest`, `SessionPagesTest` and `SessionReducerTest` run passed:
+
+```text
+BUILD SUCCESSFUL in 48s
+87 actionable tasks: 5 executed, 82 up-to-date
+```
+
+Three independent mutations reverted only the relevant guard in `SessionReducer.kt`, keeping
+the regressions. Each selected test failed by assertion, with one test, one failure, zero
+errors and zero skips. The temporary runner restored the original source bytes in `finally`
+after each mutation and verified byte equality. Exact commands:
+
+```powershell
+.\gradlew.bat :glasses-hub:testDebugUnitTest --console=plain --tests '*.SessionPagesTest.without the launcher bundle a delayed row tap cannot invoke a replacement revision'
+.\gradlew.bat :glasses-hub:testDebugUnitTest --console=plain --tests '*.LauncherInteractiveTest.native and Camera launches require a press begun after the selected row was drawn'
+.\gradlew.bat :glasses-hub:testDebugUnitTest --console=plain --tests '*.LauncherInteractiveTest.a confirmed command is inert offline and reports NotAvailable when the link is lost'
+```
+
+Observed output excerpts, in the same order:
+
+```text
+1 test completed, 1 failed
+BUILD FAILED in 10s
+87 actionable tasks: 4 executed, 83 up-to-date
+
+1 test completed, 1 failed
+BUILD FAILED in 8s
+87 actionable tasks: 4 executed, 83 up-to-date
+
+1 test completed, 1 failed
+BUILD FAILED in 7s
+87 actionable tasks: 4 executed, 83 up-to-date
+```
+
+After restoring the guards, the full glasses command passed with 1,283 tests, zero failures,
+errors or skips, counted from the JUnit XML. Debug assembly passed in the same invocation:
+
+```powershell
+.\gradlew.bat :glasses-hub:testDebugUnitTest :glasses-hub:assembleDebug --console=plain
+```
+
+Real output tail (`build/noconfirm-round2-glasses.log`):
+
+```text
+BUILD SUCCESSFUL in 1m 45s
+116 actionable tasks: 7 executed, 109 up-to-date
+```
+
+The full phone command passed with 1,029 tests, zero failures, errors or skips, counted from
+the JUnit XML. Debug assembly passed in the same invocation:
+
+```powershell
+.\gradlew.bat :phone-hub:testDebugUnitTest :phone-hub:assembleDebug --console=plain
+```
+
+Real output tail (`build/noconfirm-round2-phone.log`):
+
+```text
+BUILD SUCCESSFUL in 1m 4s
+134 actionable tasks: 7 executed, 127 up-to-date
+```
+
+`git diff --check` passed; every changed file is within the contract's source/documentation
+globs. Searches found no obsolete dialog strings or removed panel references in
+`glasses-hub/src/main`. No build configuration, SDK, wire, phone validation, composer Send,
+push, merge, tag, ADB or device action changed or ran.
+
+There are no open implementation questions. The orchestrator must verify delayed ring/touchpad
+contacts across a page update with an older phone, native/Camera row changes in Applications,
+offline focused commands with the link up, and command taps on frequently updating Activities
+entries. The review's F6 wording in out-of-scope READMEs and the policy-store KDoc remains for
+integration; quick mode still depends on approvals retained from earlier builds.

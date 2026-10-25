@@ -2200,8 +2200,8 @@ content page the SDK finds invalid is answered as `INVALID_PAGE` instead.
 `NexusPageActionSpec(id, label, kind, confirm, typed)` declares an action: label
 at most 24 characters, kind `PLUGIN`, `IMMERSION` or `HUB`. A tap on a plugin row
 invokes it immediately, whatever `confirm` says, with a fresh `invocationId`
-and the revision the wearer saw. With the launcher bundle, the press must begin
-after that target was drawn. A `SetChecked(checked)` action (family `checklist`)
+and the revision the wearer saw. With or without the launcher bundle, the press
+must begin after that target was drawn. A `SetChecked(checked)` action (family `checklist`)
 or a media action (family `media`) uses quick mode only when the plugin declared
 the family, its retained phone policy approves it, and the phone stamped it
 `hubQuick`; otherwise the tap uses confirmed mode. Confirmed mode no longer
