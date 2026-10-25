@@ -16,7 +16,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 
 ### Phone hub
 
-- Hold a plugin's service at important priority while an activity command is pending. A delivered page action keeps its existing important binding through the result or deadline even if the visible page lease expires. Each hold ends when its work ends, independently of other sessions.
+- Wake a plugin before delivering a launcher command or page action, and keep it bound until its answer or deadline. A refused keep-alive bind still allows a live plugin to answer; losing that connection no longer ends its activity.
 - Settings → Glasses display: **Glasses launcher** (Default, New launcher, Classic launcher), the Navigation display size, and per-app behaviour over native apps.
 - Plugin access: **Show its activity on the glasses**, **Pin its activity**, and one-tap quick actions per plugin (**Check tasks with one tap**, **Play, pause and skip with one tap**). Off, each tap on the glasses asks to confirm first.
 - **Type your reply.** When you choose Type on the glasses, the phone shows its keyboard, or a notification that opens it.
@@ -28,6 +28,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 
 ### SDK 0.24.0
 
+- Launcher pages and delivered commands now share the service's existing quiet **Active on your glasses** notification, helping them keep answering while the phone is idle. Pages release it when covered, closed or their lease expires; commands and actions release it after the result (or the existing deadline for an asynchronous command). Existing surface, microphone and ongoing-work holds still compose. Plugins already declaring the session's `specialUse` foreground service need no manifest change; a rejected promotion remains non-fatal.
 - The launcher bundle, active only when both hubs negotiate it (`supportsLauncherInteractive()`): page providers and the conversation, media and route page templates; typed page and activity actions with hub-approved quick actions; activity destinations and commands; notice destinations, event keys, conversation events and `withdrawNotice(eventKey)`; `forgetNotices(onAccepted)` asks the glasses to forget every notification the plugin showed, kept by the phone until they do, with `onAccepted` once the phone holds it; route geometry and heading for activities.
 - Activity actions are no longer deprecated. On a negotiated launcher they are selectable from the activity's card and page; islands themselves stay passive, and older hubs ignore them as before. Plugins still need a full-surface or notice fallback for hubs without the bundle.
 - `supportsRenderedMaps`, `renderedMapViews`, `clearRenderedMapDemand()` and `onRenderedMapsChanged()` expose bounded, expiring hub-issued map demand.

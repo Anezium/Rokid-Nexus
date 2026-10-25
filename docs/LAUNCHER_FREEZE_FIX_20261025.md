@@ -1,198 +1,329 @@
-# Launcher freezer binding fix — 2026-10-25
+# Launcher freeze fix, round 2 — 2026-10-25
 
-Verdict: **DONE for implementation and host acceptance**. The Samsung S23 device
-check belongs to the orchestrator and remains unverified.
+Verdict: **DONE for implementation and host verification**. The S23 checks below
+are pending with the orchestrator; no device result is claimed.
 
-Contract: `launcher-fix-freeze`, dated 2026-10-24. Worktree:
-`E:\Tools\Rokid\RokidNexus-fx-freeze`, branch `fx/freeze`, base `f651994c`.
-Implementation commit: `094a8fc8 Keep launcher command providers important until work completes`.
+Contract: `launcher-fix-freeze`, 2026-10-24, with the orchestrator's round-2
+authorization to reuse the SDK session foreground service for pages and commands.
+Worktree: `E:\Tools\Rokid\RokidNexus-fx-freeze`, branch `fx/freeze`.
+Round-1 commits `094a8fc8` and `b4d7af14` remain in the branch.
 
-## Findings and changes
+## Why round 1 was insufficient
 
-The base already used `BIND_AUTO_CREATE | BIND_IMPORTANT` in both
-`AndroidExternalPluginRuntime` (including the page runtime) and
-`AndroidSkillLeaseRuntime`. The page broker already retained its connection for
-requests, display handoffs and visible leases. This lane does **not** establish
-why the reported S23 froze Sample six seconds after binding while its page was
-apparently still visible.
+The independent review was correct: pages already had `BIND_IMPORTANT`, and the
+pending-action hold does not explain or fix the 22:12 freeze. Commit `0404260e`
+already documented Freecess freezing a plugin despite that bind, and verified
+the plugin's own session foreground service as the exemption. Commands/actions
+use a oneway registration callback, which a frozen process silently queues.
 
-Two missing lifetimes are now covered:
+## Changes
 
-- A negotiated activity command acquires an independent important binding to
-  its approved owner before delivery. It uses a separate instance of the
-  existing invocation runtime, so releasing it does not release a page, skill,
-  camera or immersion connection. A failed bind leaves the command undelivered.
-- A delivered page action remains part of the page broker's binding demand
-  until its result or existing deadline, even if the visible lease expires
-  first. Covering and closing retain their existing cancellation semantics.
+- `NexusPluginService` reuses its existing quiet **Active on your glasses**
+  notification and `specialUse` type for page request/display handoffs, visible
+  page leases, and delivered actions/commands through result sending. A null
+  command result remains protected until its asynchronous result or existing
+  deadline. One local timer observes the existing durations; no wire deadline
+  changed. Page cover, close, expiry, lost link/support, registration reset/loss
+  and service destruction release page demand. Unavailable or unsent page
+  answers release the request hold.
+- Surface, audio and explicit ongoing-work holds compose with that demand.
+  Page/command events do not open or close an immersion or replace an active
+  feature's foreground types. Releasing ongoing work restores session-only
+  types when a page still needs the service. Android foreground-start failures,
+  including absent manifest declarations, remain non-fatal, as on the surface
+  path. No plugin manifests changed.
+- A command and each accepted page action make a fresh bind before callback
+  delivery. A replacement bind is acquired before dropping the old connection,
+  preserving the service's registration; a refused refresh preserves the old
+  hold. Existing round-1 result/deadline holds remain independent of other
+  session bindings. An important binding is not described as a Freecess exemption.
+- Refused command binds log the failure and still deliver to the one live
+  registered owner. A dead command connection releases only its pending command
+  and hold; real activity disconnection remains owned by the registration path.
+  A replacement command updates a retained hold's invocation even if its refresh
+  is refused before the previous deadline tick ran.
+- SDK/BUS docs and SDK 0.24.0 release notes now describe these lifetimes and the
+  non-fatal fallback. The stale round-1 implementation report is replaced here.
 
-The activity timer now includes the existing pending-command deadlines and
-removes expired commands. Results, failed delivery, expiry, access loss,
-disconnect, reconnect and hub stop release command bindings when their demand
-ends. An idle activity has no command binding. Legacy activity actions keep
-their old delivery path.
+First-party plugins already declare the session foreground service, but their
+APKs must be rebuilt and installed against the updated SDK. Updating only the
+hub cannot add foreground protection to an old installed plugin binary.
 
-There are no changes to grants, capabilities, wire fields, deadline values,
-glasses code or plugin foreground services. `local.properties` remains absent;
-no SDK, Gradle home, dependency cache or build configuration was changed.
-No push, merge, tag, ADB or device action was performed.
+No grants, capabilities, wire fields, deadline values, glasses code, build
+configuration or machine environment changed. No push, merge, tag, ADB or device
+operation was performed. Plan 028a and plugin changelogs are unchanged: no
+public page/wire contract or plugin source changed, and the plan is outside
+the lane's allowed paths.
 
-## Files touched
+## Implementation commits
 
-Production files under `phone-hub/src/main/java/com/anezium/rokidbus/phone/`:
+- `72057558` Protect launcher pages and commands with the session foreground service
+- `8fbb0da3` Thaw launcher deliveries without dropping live commands or activities
+- `064b30a0` Track replacement commands when a retained binding cannot refresh
 
-- `AndroidSkillLeaseRuntime.kt`
-- `BusHubService.kt`
-- `PhoneActivityRouter.kt`
-- `PhoneActivityState.kt`
-- `PhonePageBroker.kt`
+## Files touched in round 2
 
-Tests under `phone-hub/src/test/java/com/anezium/rokidbus/phone/`:
-
-- `AndroidExternalPluginRuntimeTest.kt`
-- `AndroidSkillLeaseRuntimeTest.kt` (new)
-- `PhoneActivityLauncherTest.kt`
-- `PhonePageBrokerTest.kt`
-
-Documentation: `BUSSPEC.md`, `CHANGELOG.md`, `docs/PLUGIN_SDK.md`,
-`docs/LAUNCHER_COMPLETION_REPORT.md`, and this report. All 14 files are within
-the contract scope. Plan 028a, plugin sources and plugin changelogs did not need
-changes; the public contract and Sample behaviour are unchanged.
+- `BUSSPEC.md`
+- `CHANGELOG.md`
+- `bus-client/src/main/java/com/anezium/rokidbus/client/plugin/NexusPluginClient.kt`
+- `bus-client/src/main/java/com/anezium/rokidbus/client/plugin/NexusPluginService.kt`
+- `bus-client/src/main/java/com/anezium/rokidbus/client/plugin/PageModels.kt`
+- `bus-client/src/test/java/com/anezium/rokidbus/client/plugin/NexusPluginServiceForegroundTest.kt`
+- `docs/LAUNCHER_COMPLETION_REPORT.md`
+- `docs/LAUNCHER_FREEZE_FIX_20261025.md`
+- `docs/PLUGINS.md`
+- `docs/PLUGIN_SDK.md`
+- `phone-hub/src/main/java/com/anezium/rokidbus/phone/AndroidExternalPluginRuntime.kt`
+- `phone-hub/src/main/java/com/anezium/rokidbus/phone/AndroidSkillLeaseRuntime.kt`
+- `phone-hub/src/main/java/com/anezium/rokidbus/phone/BusHubService.kt`
+- `phone-hub/src/main/java/com/anezium/rokidbus/phone/PhoneActivityRouter.kt`
+- `phone-hub/src/main/java/com/anezium/rokidbus/phone/PhonePageBroker.kt`
+- `phone-hub/src/test/java/com/anezium/rokidbus/phone/AndroidExternalPluginRuntimeTest.kt`
+- `phone-hub/src/test/java/com/anezium/rokidbus/phone/AndroidSkillLeaseRuntimeTest.kt`
+- `phone-hub/src/test/java/com/anezium/rokidbus/phone/HubLauncherBindingTest.kt`
+- `phone-hub/src/test/java/com/anezium/rokidbus/phone/PhoneActivityLauncherTest.kt`
+- `phone-hub/src/test/java/com/anezium/rokidbus/phone/PhonePageBrokerLauncherTest.kt`
+- `phone-hub/src/test/java/com/anezium/rokidbus/phone/PhonePageBrokerTest.kt`
 
 ## Required verification
 
-Commands ran in the named worktree through native PowerShell. `gradlew.bat` is
-the Windows wrapper for the contract's `./gradlew` commands. Gradle output is
-retained in the worktree's ignored `build/` directory.
+All commands ran from this worktree using the Windows Gradle wrapper.
+Each test summary below has zero failures, errors and skipped tests.
 
 ```powershell
 .\gradlew.bat :phone-hub:testDebugUnitTest :phone-hub:assembleDebug :bus-client:testDebugUnitTest --console=plain
 ```
 
-Log: `build/freeze-hub-sdk.log`. Real tail:
+Log: `build/freeze-r2-final-hub-sdk.log`. Real tail:
 
 ```text
-BUILD SUCCESSFUL in 1m 7s
-139 actionable tasks: 30 executed, 10 from cache, 99 up-to-date
+
+BUILD SUCCESSFUL in 46s
+139 actionable tasks: 10 executed, 129 up-to-date
 Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.5.1/userguide/configuration_cache_enabling.html
 ```
 
-JUnit XML: phone hub **1,037 tests**, bus client **195 tests**, each with **0
-failures, 0 errors, 0 skipped**. Phone tests executed; the unchanged bus-client
-test task was `FROM-CACHE`. Phone debug assembly executed successfully.
+**phone-hub: 1045 tests**; **bus-client: 206 tests**.
+
+```powershell
+.\gradlew.bat :bus-client:testDebugUnitTest --console=plain
+```
+
+Log: `build/freeze-r2-final-sdk.log`. Real tail:
+
+```text
+
+BUILD SUCCESSFUL in 3s
+29 actionable tasks: 29 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.5.1/userguide/configuration_cache_enabling.html
+```
+
+**bus-client: 206 tests**.
 
 ```powershell
 .\gradlew.bat -PskipCxrGlobal=true :plugin-sample:testDebugUnitTest :plugin-sample:assembleDebug --console=plain
 ```
 
-Log: `build/freeze-sample.log`. Real tail:
+Log: `build/freeze-r2-final-sample.log`. Real tail:
 
 ```text
-BUILD SUCCESSFUL in 13s
-82 actionable tasks: 19 executed, 21 from cache, 42 up-to-date
+
+BUILD SUCCESSFUL in 8s
+82 actionable tasks: 9 executed, 73 up-to-date
 Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.5.1/userguide/configuration_cache_enabling.html
 ```
 
-JUnit XML: Sample **55 tests, 0 failures, 0 errors, 0 skipped**. The unchanged
-Sample test task was `FROM-CACHE`; debug assembly executed successfully.
-
-`git diff --check` and a scope/forbidden-path audit also passed.
-
-## Targeted verification and mutation checks
-
-The targeted command was:
+**plugins/sample: 55 tests**.
 
 ```powershell
-.\gradlew.bat :phone-hub:testDebugUnitTest --tests '*AndroidExternalPluginRuntimeTest' --tests '*AndroidSkillLeaseRuntimeTest' --tests '*PhonePageBrokerTest' --tests '*PhoneActivityLauncherTest' --console=plain
+.\gradlew.bat -PskipCxrGlobal=true :plugin-media:testDebugUnitTest :plugin-sample:testDebugUnitTest :plugin-relay:testDebugUnitTest :plugin-nav:testDebugUnitTest :plugin-transit:testDebugUnitTest --console=plain
 ```
 
-The first run exposed a new test fixture using `ServiceConnection.onNullBinding`
-under Robolectric's old default Android API. Log: `build/freeze-targeted.log`.
-Real output excerpts:
+Log: `build/freeze-r2-final-plugins.log`. Real tail:
 
 ```text
-AndroidSkillLeaseRuntimeTest > a refused bind leaves no hold and a dead binding releases its owner FAILED
-    java.lang.NoSuchMethodError at AndroidSkillLeaseRuntimeTest.kt:90
-66 tests completed, 1 failed
-BUILD FAILED in 1m 38s
-101 actionable tasks: 32 executed, 54 from cache, 15 up-to-date
-```
 
-The fixture now explicitly uses API 32. The same command passed with **66 tests,
-0 failures, 0 errors, 0 skipped** (`build/freeze-targeted-retry.log`):
-
-```text
-BUILD SUCCESSFUL in 22s
-101 actionable tasks: 2 executed, 99 up-to-date
+BUILD SUCCESSFUL in 47s
+160 actionable tasks: 39 executed, 43 from cache, 78 up-to-date
 Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.5.1/userguide/configuration_cache_enabling.html
 ```
 
-Mutation 1 temporarily removed both runtimes' `BIND_IMPORTANT`, restored the
-old page demand without pending invocations, and bypassed command binding.
-The same four-class command failed as expected (`build/freeze-mutation-holds.log`):
+**plugins/media: 78 tests**; **plugins/nav: 218 tests**; **plugins/relay: 169 tests**; **plugins/transit: 130 tests**; **plugins/sample: 55 tests**.
 
-```text
-66 tests completed, 12 failed
-BUILD FAILED in 17s
-101 actionable tasks: 4 executed, 97 up-to-date
-```
+The final full hub/SDK suites executed after restoring every mutation.
+The standalone SDK rerun and Sample in the combined plugin run were up-to-date;
+the Media, Relay, Nav and Transit unit suites executed. Gradle emitted existing
+deprecation warnings.
 
-Observed failing tests:
+## Regression and mutation checks
 
-- `AndroidExternalPluginRuntimeTest`: `transient service disconnect preserves auto create binding` (flags assertion).
-- `AndroidSkillLeaseRuntimeTest`: `commands inherit importance without releasing page or skill bindings` (flags assertion).
-- `PhonePageBrokerTest`: `a delivered action keeps the provider important after the visible lease expires until its result`; `a delivered action releases the provider at its deadline without a result or visible lease`.
-- `PhoneActivityLauncherTest`: `a command is bound to the visible seq and carries the phone's own type`; `a command is not delivered if its importance binding fails`; `command importance expires at the deadline even when the plugin never answers`; `a command needs exactly one live registration of its owner`.
-- `PhoneActivityLauncherTest`: `an approved quick command runs and its result reaches the glasses once`; `command bindings are owner scoped and end with revoke disconnect reconnect or hub stop`; `a command binds before delivery and releases only after its own result`; `withdrawing a quick approval mid-flight drops the pending quick command's result`.
+New tests cover page request promotion, visible lease renewal/expiry, cover and
+close, multiple frames, action promotion through the result, synchronous and
+asynchronous commands, null/throwing handlers, lost registration/link, teardown,
+surface/ongoing-work composition and type preservation, non-fatal Android
+foreground rejection, new bind events, refused binds, and stale connection
+callbacks. `HubLauncherBindingTest` exercises the actual hub host's owner
+resolution, runtime factory, principal map, fresh bind and death callback;
+router-only fakes are not the only evidence.
 
-Mutation 2 restored the good bindings and temporarily removed command expiry
-cleanup and command deadlines from the activity timer. Command:
+The final targeted run before mutation had 11 SDK tests and 74 phone tests,
+zero failures (`build/freeze-r2-targeted-verified.log`). The retained replacement
+invocation regression was then added and passed in the final full phone suite.
+The development runs found malformed new test payloads (cover lease fields,
+activity identity/action fields, and a missing activity kind); these were fixed.
+No existing production test was weakened.
+
+Mutation commands (the ignored script restores original bytes in `finally`):
 
 ```powershell
-.\gradlew.bat :phone-hub:testDebugUnitTest --tests '*PhoneActivityLauncherTest.command importance expires at the deadline even when the plugin never answers' --console=plain
+$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'
+python build/freeze-r2-mutations.py
+python build/freeze-r2-mutations.py hub-delivery hub-binding-death
 ```
 
-The named test failed with `expected:<1> but was:<null>` for the remaining
-scheduled delay (`build/freeze-mutation-deadline.log`). Real tail excerpts:
+The first script invocation completed the SDK mutation, then stopped before
+running the hub tests because its replacement expected LF while one source had
+CRLF. The script restored all files; newline handling was corrected before the
+hub mutation retry. This was a harness replacement error, not a Gradle result.
+
+The script's exact Gradle commands and observed failures follow.
+
+### sdk-promotion
+
+Disable page/command foreground reconciliation, reproducing the old service policy.
+
+```powershell
+.\gradlew.bat :bus-client:testDebugUnitTest --tests '*NexusPluginServiceForegroundTest' --console=plain
+```
+
+Observed **7 failures / 11 tests**, exit 1.
+Log: `build/freeze-r2-mutation-sdk-promotion.log`. Tests observed failing:
+
+- `com.anezium.rokidbus.client.plugin.NexusPluginServiceForegroundTest: a page request promotes before callback and uses the existing special use notification`
+- `com.anezium.rokidbus.client.plugin.NexusPluginServiceForegroundTest: renewed visibility expires on the local lease and closing one frame preserves another`
+- `com.anezium.rokidbus.client.plugin.NexusPluginServiceForegroundTest: an asynchronous command keeps promotion until its explicit result or registration loss`
+- `com.anezium.rokidbus.client.plugin.NexusPluginServiceForegroundTest: page demand ends on cover close or the request handoff timeout`
+- `com.anezium.rokidbus.client.plugin.NexusPluginServiceForegroundTest: an unavailable page releases its request promotion after the answer`
+- `com.anezium.rokidbus.client.plugin.NexusPluginServiceForegroundTest: commands promote before handling and demote only after sending their result`
+- `com.anezium.rokidbus.client.plugin.NexusPluginServiceForegroundTest: a page action stays foreground through result send after its visible lease expires`
+
+Real tail:
 
 ```text
-1 test completed, 1 failed
+For more on this, please refer to https://docs.gradle.org/9.5.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 27s
+29 actionable tasks: 4 executed, 25 up-to-date
+```
+
+### hub-delivery
+
+Restore connection reuse, omit page-action rebind, and restore command suppression after a refused bind.
+
+```powershell
+.\gradlew.bat :phone-hub:testDebugUnitTest --tests '*AndroidExternalPluginRuntimeTest' --tests '*AndroidSkillLeaseRuntimeTest' --tests '*PhonePageBrokerTest' --tests '*PhoneActivityLauncherTest' --tests '*HubLauncherBindingTest' --console=plain
+```
+
+Observed **8 failures / 75 tests**, exit 1.
+Log: `build/freeze-r2-mutation-hub-delivery.log`. Tests observed failing:
+
+- `com.anezium.rokidbus.phone.AndroidExternalPluginRuntimeTest: page delivery rebind replaces a held connection with a fresh bind event`
+- `com.anezium.rokidbus.phone.AndroidExternalPluginRuntimeTest: a refused page rebind preserves the existing service hold`
+- `com.anezium.rokidbus.phone.AndroidSkillLeaseRuntimeTest: a refused command rebind keeps the previous hold until its normal release`
+- `com.anezium.rokidbus.phone.AndroidSkillLeaseRuntimeTest: delivery rebind creates a new connection and ignores an obsolete binding death`
+- `com.anezium.rokidbus.phone.HubLauncherBindingTest: hub command glue resolves the approved owner rebinds and isolates connection death from activity death`
+- `com.anezium.rokidbus.phone.PhoneActivityLauncherTest: a refused command binding still delivers to its live registration and accepts the result`
+- `com.anezium.rokidbus.phone.PhoneActivityLauncherTest: a refused refresh of a retained command hold tracks the replacement invocation`
+- `com.anezium.rokidbus.phone.PhonePageBrokerTest: each page action rebinds before oneway delivery even with a visible page hold`
+
+Real tail:
+
+```text
+For more on this, please refer to https://docs.gradle.org/9.5.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 21s
+101 actionable tasks: 8 executed, 2 from cache, 91 up-to-date
+```
+
+### hub-binding-death
+
+Restore the production hub callback that clears the activity on command-binding death.
+
+```powershell
+.\gradlew.bat :phone-hub:testDebugUnitTest --tests '*HubLauncherBindingTest' --console=plain
+```
+
+Observed **1 failures / 1 tests**, exit 1.
+Log: `build/freeze-r2-mutation-hub-binding-death.log`. Tests observed failing:
+
+- `com.anezium.rokidbus.phone.HubLauncherBindingTest: hub command glue resolves the approved owner rebinds and isolates connection death from activity death`
+
+Real tail:
+
+```text
+For more on this, please refer to https://docs.gradle.org/9.5.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 16s
 101 actionable tasks: 5 executed, 96 up-to-date
-BUILD FAILED in 41s
 ```
 
-Both mutations were fully restored before the required full suites. A further
-failed-delivery cleanup test passed in the full phone suite. Expected mutation
-failures are distinct from failures of the completed implementation.
+## S23 verification for the orchestrator
 
-## S23 checks for the orchestrator
+These steps are not executed by this lane. Replace `S23_SERIAL` with the phone's
+ADB serial. Keep its existing battery settings and normal hub foreground
+notification; do not force-stop the plugin, which tests registration loss rather
+than the Freecess scenario.
 
-1. Use the updated phone APK with the matching launcher-enabled glasses hub.
-   Keep Nexus's normal hub foreground notification active. In Sample, leave an
-   unchecked task named Eggs, publish the to-do activity, put Sample in the
-   background and leave the phone idle long enough to reproduce Freecess.
-2. Open Sample's to-do page from the glasses activity. Wait at least 12 seconds
-   after opening, beyond the six-second refreeze in the report. With checklist
-   quick actions disabled, select Eggs and confirm it. Require the result within
-   the existing eight-second budget, with no unconfirmed message or delayed
-   phone-side check about 20 seconds later. Repeat with quick actions enabled.
-3. Capture the Sample service connections and process state while the page is
-   visible, while its action is pending and after leaving it. Verify an active
-   `BIND_AUTO_CREATE | BIND_IMPORTANT` page connection while its lease is valid;
-   no freezer stop should occur during that demand. A visible page may keep its
-   page binding after a result; closing the last page should release it.
-4. Exercise a live Media Deck activity command while its app is backgrounded:
-   confirmed and quick Play/Pause should answer within the existing deadline.
-   Verify a separate command binding before delivery and release after result;
-   an unanswered command must release at the existing eight-second deadline.
-   Page, skill and immersion connections must survive command cleanup.
-5. If Sample still freezes while a valid important page connection is present,
-   retain the Freecess log timestamps, actual installed phone build, binding
-   flags, foreground hub state and page lease state. The base already carried
-   those page flags, so this would require further diagnosis of the specific
-   OEM behaviour. This lane has neither proven binding impossible nor added a
-   plugin foreground service.
+1. Install the rebuilt phone hub and Sample APK, and use the matching launcher
+   glasses hub. Also build/install Media Deck against this SDK for command
+   checks (`.\gradlew.bat -PskipCxrGlobal=true :plugin-media:assembleDebug`). In
+   Sample create an unchecked **Eggs**, publish its to-do activity, then background
+   the phone UI. Capture logs while waiting for the dormant plugin's natural
+   `FreecessController: FZ ... reason: Bg`:
 
-Open question: was the page's important connection still present at
-22:12:35.145 on the reported build? Host tests prove the lifetimes and flags;
-they cannot prove Samsung Freecess honours them on that phone.
+   ```powershell
+   adb -s S23_SERIAL logcat -v threadtime FreecessController:V FreecessHandler:V ActivityManager:I NexusPluginService:V '*:S' > s23-freeze-r2.log
+   ```
+
+2. Open Sample's to-do page on the glasses. Before touching the phone UI, inspect
+   `adb -s S23_SERIAL shell dumpsys activity services com.anezium.rokidbus.plugin.sample`
+   and `adb -s S23_SERIAL shell dumpsys activity processes`. Expect the plugin's
+   own session service to be foreground (`specialUse`, normally `0x40000000`),
+   using its one existing session notification, as well as the important page
+   connection. Wait **12 seconds**, past the original six-second refreeze, then
+   select Eggs and confirm it with quick actions disabled. Require an outcome
+   within the existing **8 seconds**, with no unconfirmed result or delayed
+   execution about 20 seconds later. Reset the item and repeat with checklist
+   quick actions enabled.
+
+3. Leave the page visible for **150 seconds**, crossing a lease renewal. Check
+   that the own foreground service persists, and correlate action-time new bind
+   events with any `UFZ ... reason: bindService`. Specifically verify that a
+   fresh connection to an already-bound service can thaw it on this firmware;
+   host tests cannot establish this OEM behaviour. Cover the page, uncover it,
+   and Back out of the last page. With no open surface/audio/ongoing work,
+   require demotion and page-connection release. Repeat open/Back twice to catch
+   orphan holds. While an immersion or audio/ongoing-work hold is also active,
+   leaving the page must preserve that independent foreground reason.
+
+4. With rebuilt Media Deck backgrounded, publish its activity and exercise
+   confirmed and quick Play/Pause from the glasses after **12-second** idle
+   gaps. Observe a fresh command bind before delivery, a transient own session
+   foreground service during handling/result send, and command-bind release
+   after result. Use a test/debug callback returning null to observe the full
+   **8-second** asynchronous hold, its explicit-result demotion, and expiry
+   without a result. Verify the activity and any page/skill/immersion remain.
+
+5. Use a test plugin without the special-use declaration: page and command
+   callbacks must still run without a foreground-transition crash, while no
+   Freecess exemption is promised. Exercise a refused/null keep-alive bind with
+   a live registration: commands must still be attempted and connection loss
+   must not end its activity; a real registration/process death must retain its
+   existing activity-end/offline behaviour. Save installed build versions, the
+   service/process dumps and the Freecess/result timestamps on any failure.
+
+Open questions are limited to this hardware validation: whether the S23 firmware
+thaws on the new connection while another hold exists, and whether the updated
+SDK protection eliminates the original 22:12 timeline. The existing surface
+device result in `0404260e` supports the mechanism; it does not substitute for
+testing these new page/command paths. No round-2 device success is claimed.

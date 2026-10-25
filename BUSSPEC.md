@@ -1750,12 +1750,13 @@ per owner, and an eight-second deadline. It then delivers
 from its own canonical copy, never from the glasses. Old glasses keep sending,
 and getting delivered, the v1 `{activityId, id}`.
 
-Before delivering a bundle command, the phone hub holds a separate
-`BIND_AUTO_CREATE | BIND_IMPORTANT` connection to the approved owner's service.
-It releases that connection on the result, the existing command deadline, failed
-delivery or cancellation. An idle activity keeps no command binding; page,
-skill and immersion bindings remain independent. A failed bind leaves the
-command unconfirmed without delivering it.
+The phone holds the provider while a command is pending, independently of its
+page, skill and immersion sessions, and releases the hold on result, deadline,
+failed delivery or cancellation. A refused keep-alive bind does not suppress
+delivery to a live registration. Losing that connection cancels its pending
+command; activity loss is determined by the registration lifecycle. Android
+wake and foreground-service policy is described in `docs/PLUGIN_SDK.md`; it
+adds no wire fields, grants or deadlines.
 
 The owner answers on `/activity/result`:
 
