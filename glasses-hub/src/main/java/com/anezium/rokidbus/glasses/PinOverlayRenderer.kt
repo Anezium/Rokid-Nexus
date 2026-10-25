@@ -90,6 +90,16 @@ object PinOverlayRenderer {
         }
     }
 
+    /** The width [pin] is drawn at, for the activity island that shares its row. */
+    internal fun drawnWidthPx(context: Context, pin: NexusPinSurface): Int {
+        val view = PinPanelView(context).apply { render(pin) }
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(context.resources.displayMetrics.widthPixels, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        return view.measuredWidth
+    }
+
     private fun hide() {
         val currentRoot = root
         if (currentRoot != null) {
@@ -218,20 +228,28 @@ object PinOverlayRenderer {
             size: PinSurfaceSize,
             leadingGlyph: Drawable?,
             subtitleText: String? = null,
+            /** An activity's chip beside another occupant of its row stays inside this width. */
+            widthBudgetPx: Int? = null,
         ) {
             val medium = size == PinSurfaceSize.MEDIUM
-            val maxWidthPx = (
+            val fractionPx = (
                 resources.displayMetrics.widthPixels *
                     if (medium) MEDIUM_SCREEN_WIDTH_FRACTION else SMALL_SCREEN_WIDTH_FRACTION
                 ).toInt()
-
-            title.textSize = if (medium) MEDIUM_TITLE_SP else SMALL_TITLE_SP
-            title.maxWidth = maxWidthPx
-            title.text = titleText.orEmpty()
-            title.visibility = visibleIf(!titleText.isNullOrEmpty())
+            val maxWidthPx = widthBudgetPx?.let { (it - paddingLeft - paddingRight).coerceIn(0, fractionPx) } ?: fractionPx
             // With a subtitle the glyph stands beside both rows; without one it
             // stays the title's compound drawable, exactly as pins always drew.
             val stacked = leadingGlyph != null && !subtitleText.isNullOrEmpty()
+            val besideGlyphPx = if (stacked && widthBudgetPx != null) {
+                (maxWidthPx - BusTheme.dp(context, GLYPH_SIZE_DP) - BusTheme.dp(context, 6)).coerceAtLeast(0)
+            } else {
+                maxWidthPx
+            }
+
+            title.textSize = if (medium) MEDIUM_TITLE_SP else SMALL_TITLE_SP
+            title.maxWidth = besideGlyphPx
+            title.text = titleText.orEmpty()
+            title.visibility = visibleIf(!titleText.isNullOrEmpty())
             if (stacked) {
                 title.compoundDrawablePadding = 0
                 title.setCompoundDrawables(null, null, null, null)
@@ -250,7 +268,7 @@ object PinOverlayRenderer {
                 title.setCompoundDrawables(leadingGlyph, null, null, null)
             }
             subtitle.textSize = if (medium) MEDIUM_LINE_SP else SMALL_LINE_SP
-            subtitle.maxWidth = maxWidthPx
+            subtitle.maxWidth = besideGlyphPx
             subtitle.text = subtitleText.orEmpty()
             subtitle.visibility = visibleIf(stacked)
 

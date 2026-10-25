@@ -133,6 +133,8 @@ internal object ActivityOverlayRenderer {
             nodes.remove(id)?.let { island -> island.dismiss { container.removeView(island) } }
         }
 
+        val guidances = visible.associate { it.activity.surfaceId to guidanceOf(it) }
+        val budgets = foldedWidthBudgets(activeService, visible, guidances)
         var pendingFlare: Pair<ActivityRenderItem, ActivityIsland>? = null
         visible.forEach { item ->
             val island = nodes[item.activity.surfaceId] ?: ActivityIsland(activeService).also {
@@ -146,7 +148,7 @@ internal object ActivityOverlayRenderer {
             val previousToken = processedMotionTokens[item.activity.surfaceId] ?: Long.MIN_VALUE
             val newMotion = item.activity.motionToken > previousToken
             island.place(item.activity.corner, hudTopInsetDp)
-            island.render(item, guidanceOf(item))
+            island.render(item, guidances[item.activity.surfaceId], budgets[item.activity.corner])
             island.visibility = View.VISIBLE
             // A running flare holds its form; the steady form returns when it folds.
             if (!flareInProgress) island.showSteady(item.presentation)
@@ -199,6 +201,50 @@ internal object ActivityOverlayRenderer {
             geometryRevision = RouteLive.geometryRevision(owner),
             launcherAmbient = ActivityController.launcherAmbient(),
         )
+    }
+
+    /**
+     * Each island has a window-wide frame and places its forms by gravity, so none knows what its
+     * row's other corner takes: the widths are decided here, from what will be drawn.
+     */
+    private fun foldedWidthBudgets(
+        context: Context,
+        visible: List<ActivityRenderItem>,
+        guidances: Map<String, GuidanceIsland?>,
+    ): Map<PinSurfacePosition, Int> {
+        val occupants = mutableMapOf<PinSurfacePosition, Int?>()
+        PinController.presentablePin()?.let { pin ->
+            occupants[pin.content.position] = PinOverlayRenderer.drawnWidthPx(context, pin)
+        }
+        visible.forEach { item -> occupants[item.activity.corner] = guidances[item.activity.surfaceId]?.form?.widthPx }
+        return rowBudgets(context.resources.displayMetrics.widthPixels, dp(context, EDGE_MARGIN_DP), occupants)
+    }
+
+    /**
+     * The widest each folded island may be so that it never meets the other occupant of its row
+     * (the two top corners, or the two bottom ones) and keeps the edge margin from it, as from the
+     * screen's edges. [occupants] holds every drawn corner: the width a guidance form or a pin keeps
+     * whatever stands beside it, or null for a folded island, which gives way to such a width. Two
+     * folded islands share the row evenly. A folded island alone in its row is absent from the
+     * result and keeps its own widths; the expanded panel and the flare are not bounded by it.
+     */
+    internal fun rowBudgets(screenPx: Int, edgePx: Int, occupants: Map<PinSurfacePosition, Int?>): Map<PinSurfacePosition, Int> {
+        val room = screenPx - 3 * edgePx
+        val budgets = mutableMapOf<PinSurfacePosition, Int>()
+        for ((left, right) in ROWS) {
+            if (left !in occupants || right !in occupants) continue
+            val leftPx = occupants[left]
+            val rightPx = occupants[right]
+            if (leftPx == null && rightPx == null) {
+                budgets[left] = room / 2
+                budgets[right] = room - room / 2
+            } else if (leftPx == null && rightPx != null) {
+                budgets[left] = (room - rightPx).coerceAtLeast(0)
+            } else if (rightPx == null && leftPx != null) {
+                budgets[right] = (room - leftPx).coerceAtLeast(0)
+            }
+        }
+        return budgets
     }
 
     /**
@@ -406,7 +452,8 @@ internal object ActivityOverlayRenderer {
             flare.layoutParams = (flare.layoutParams as LayoutParams).apply { topMargin = topEdge }
         }
 
-        fun render(item: ActivityRenderItem, guidance: GuidanceIsland?) {
+        /** [widthBudgetPx] bounds the folded forms beside another occupant of the row; null leaves them their own widths. */
+        fun render(item: ActivityRenderItem, guidance: GuidanceIsland?, widthBudgetPx: Int? = null) {
             guided = guidance != null
             if (guidance != null) renderGuidance(guidance) else renderedGuidance = null
             // While the phone link is down the island says it is last known and offers no action.
@@ -414,7 +461,7 @@ internal object ActivityOverlayRenderer {
             val owner = item.activity.ownerPluginId
             if (content.measure != null) {
                 folded = chip
-                update(chip, listOf(content.title, content.measure, content.secondary, content.glyph)) {
+                update(chip, listOf(content.title, content.measure, content.secondary, content.glyph, widthBudgetPx)) {
                     chip.render(
                         titleText = content.title,
                         // Folded, the measure sits under the primary beside the glyph:
@@ -425,15 +472,17 @@ internal object ActivityOverlayRenderer {
                             .orEmpty(),
                         size = PinSurfaceSize.MEDIUM,
                         leadingGlyph = glyphOf(owner, content.glyph),
+                        widthBudgetPx = widthBudgetPx,
                     )
                 }
             } else {
                 folded = compact
-                update(compact, listOf(content.title, content.secondary, content.glyph)) {
+                update(compact, listOf(content.title, content.secondary, content.glyph, widthBudgetPx)) {
                     compact.render(
                         titleText = content.title,
                         secondaryText = content.secondary,
                         glyph = glyphOf(owner, content.glyph),
+                        widthBudgetPx = widthBudgetPx,
                     )
                 }
             }
@@ -528,7 +577,8 @@ internal object ActivityOverlayRenderer {
      * An activity folded without a measure: its glyph beside two lines, the title over the
      * secondary, and nothing under them. The glyph is as tall as the two lines, so a missing
      * secondary leaves the title centred beside it and the form keeps its height. A title wider
-     * than its line scrolls to its end while the form is shown, inside the width it already has.
+     * than its line scrolls to its end while the form is shown, inside the width it already has;
+     * a [render] width budget narrows the two lines so the whole form stays inside it.
      */
     internal class ActivityCompactView(context: Context) : LinearLayout(context) {
         val glyph = ImageView(context)
@@ -570,8 +620,13 @@ internal object ActivityOverlayRenderer {
             )
         }
 
-        fun render(titleText: String, secondaryText: String?, glyph: Drawable) {
-            val maxWidthPx = (resources.displayMetrics.widthPixels * COMPACT_TEXT_WIDTH_FRACTION).toInt()
+        fun render(titleText: String, secondaryText: String?, glyph: Drawable, widthBudgetPx: Int? = null) {
+            val glyphParams = this.glyph.layoutParams as LayoutParams
+            val fractionPx = (resources.displayMetrics.widthPixels * COMPACT_TEXT_WIDTH_FRACTION).toInt()
+            val maxWidthPx = widthBudgetPx
+                ?.let { it - paddingLeft - paddingRight - glyphParams.width - glyphParams.marginEnd }
+                ?.coerceIn(0, fractionPx)
+                ?: fractionPx
             this.glyph.setImageDrawable(glyph)
             title.maxWidth = maxWidthPx
             title.text = titleText
@@ -823,6 +878,11 @@ internal object ActivityOverlayRenderer {
     }
 
     private fun dp(context: Context, value: Int): Int = BusTheme.dp(context, value)
+
+    private val ROWS = listOf(
+        PinSurfacePosition.TOP_LEFT to PinSurfacePosition.TOP_RIGHT,
+        PinSurfacePosition.BOTTOM_LEFT to PinSurfacePosition.BOTTOM_RIGHT,
+    )
 
     private const val MATCH = FrameLayout.LayoutParams.MATCH_PARENT
     private const val EDGE_MARGIN_DP = 12
