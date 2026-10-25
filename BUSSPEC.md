@@ -1591,8 +1591,8 @@ owner is not opened by tapping an island.
 
 Commands are reached only inside the Nexus session, between hubs that
 negotiated the launcher bundle: a commands-first card enters command focus,
-and Enter runs the focused command through the confirmation, or directly when
-the user approved its type for that plugin (see "Launcher bundle v1"). Actions
+and a fresh Enter runs the focused command immediately, in quick mode when
+the retained policy allows it and confirmed mode otherwise (see "Launcher bundle v1"). Actions
 stay one-shot commands: no text entry, scrolling, plugin layout, or fourth
 action. Anything more involved is a page or a surface. BACK is never claimed or
 forwarded by an activity, and activity windows never take focus.
@@ -1829,10 +1829,10 @@ directly, with its params: no detail page, no `onNexusOpen`/`onNexusClose`, no
 change underneath. A commands-first card's first tap enters command focus on
 `defaultActionId` and never executes. In focus, STEP moves along the plugin
 commands and then a hub-owned `Open app` slot (shown when the owner is
-launchable in Applications); SELECT runs the focused one, quick or through the
-confirmation panel; BACK leaves focus first. An offline entry still opens its
+launchable in Applications); a fresh SELECT runs the focused one immediately,
+in quick or confirmed mode; BACK leaves focus first. An offline entry still opens its
 destination, its commands are inert, and Open app stays available. `Open app`
-always goes through the labelled launch step, and a destination page opened
+launches directly on a fresh tap, and a destination page opened
 from an activity ends with a hub row `Open app` for a launchable owner.
 
 `Notifications · n` counts the readable notices the hub retains in memory, which
@@ -2162,19 +2162,19 @@ with a fresh lease; a refreshed, uncovered frame keeps the lease sent on uncover
 A visible frame renews its lease within 30 seconds of expiry. A lease that
 expires without renewal voids that frame's live context on the phone.
 
-The glasses hub confirms every plugin action in a hub-owned panel, with Cancel
-preselected and Confirm second, whatever its `confirm` flag says, with one
-exception between hubs that negotiated the launcher bundle: an action whose
-type is quick-eligible, stamped `hubQuick` by the phone, whose family the latest
-`/core/policy/quick-actions` approves for that owner, runs on an Enter that
-keeps the fresh-contact rule (see "Launcher bundle v1"). Without the bundle,
-every plugin action is confirmed. The confirmation is bound to the provider
-registration, page, action and shown revision; cover, refresh, a changed
-revision, BACK, GLOBAL, link loss or invalidation cancels it, and none is
-actionable while a frame loads or is unavailable. Confirm alone creates one
-invocation with a fresh id and the revision the wearer saw, with `mode:
-confirmed`; a quick action sends `mode: quick`, and the composer's Send
-sends `mode: compose` with its text.
+The glasses hub invokes a plugin row immediately on a tap, whatever its
+`confirm` flag says. With or without the launcher bundle, the tap must keep the
+fresh-contact rule (see "Launcher bundle v1"): only a press begun after the
+current target was drawn acts. The invocation stays bound to the provider
+registration, page, action and shown revision; loading, unavailable and
+invalidated frames cannot act, and a frame with an invocation pending sends no
+second one. Each tap creates one invocation with a fresh id and the shown
+revision. Its mode is `quick` only for a quick-eligible type stamped `hubQuick`
+whose family the latest `/core/policy/quick-actions` approves for that owner;
+otherwise it is `confirmed`. Without the bundle, the tap invokes in `confirmed`
+mode with the existing v1 guards and the draw acknowledgement binding it to the
+shown revision. `confirmed` names the wire mode, not a dialog.
+The composer's own Send remains separate and sends `mode: compose` with its text.
 
 With the bundle the phone keeps each frame's full action map, not ids only, and
 checks the mode: `quick` only for a quick-eligible typed action whose family
@@ -2196,7 +2196,7 @@ blocks another SELECT. `done`, `stale`, and `rejected` clear it; rejection keeps
 the page. A lost acknowledgement becomes Unconfirmed and is never resent. A
 provider's `kind: hub` action gives it no hub control and is rejected; only
 hub-authored local navigation is handled. `kind: immersion` can only open that
-provider's own full app, after the labelled launch step. Notice answers keep
+provider's own full app, directly on a fresh tap. Notice answers keep
 their existing reply-token validation and are not offered from pages yet.
 
 On total link loss all provider frames become inert unavailable, keep bounded
@@ -2293,7 +2293,9 @@ version is raised. HUD copy is English, like the rest of the session chrome.
 - New fields are optional everywhere. A phone strips every bundle field from
   activities, notices and pages before forwarding to glasses that did not
   negotiate it, and keeps the v1 behaviours there: eviction at two, end on
-  disconnect, every page action confirmed. Glasses never act on a bundle field
+  disconnect, every page action in confirmed wire mode. Older glasses retain
+  their confirmation panels; these glasses invoke on a tap even with an older
+  phone. Glasses never act on a bundle field
   unless the phone negotiated the bundle. Old plugins keep working unchanged.
 
 ### Typed actions
@@ -2320,31 +2322,33 @@ it never takes a type from the glasses.
   `rokidbus.plugin.quickActions`, comma-separated (`checklist`, `media`; unknown
   values ignored; conflicting entries declare none). It is not a capability and
   never invalidates the plugin or its grant.
-- The user approves families per plugin on the phone's plugin page. The copy is
-  honest: one tap runs these actions without a confirmation; Nexus checks the
-  owner, the revision and the type, but cannot verify what the plugin's code
-  does. Nothing is approved by default, a newly declared family is never
-  grandfathered, and revoke, disable, uninstall or a signer change clears the
-  approvals. Toggling never goes through the grant teardown; turning a family
-  off rejects pending quick invocations at once.
+- The retained per-plugin approvals still control quick wire mode. Plugin access
+  no longer offers quick-action switches: every launcher action runs on a tap.
+  Nothing is approved by default, a newly declared family is never grandfathered,
+  and revoke, disable, uninstall or a signer change clears the approvals. The
+  stored policy and phone validation are unchanged; a removed approval rejects
+  pending quick invocations at once.
 - The phone stamps `hubQuick: true` on a page or activity action only when its
   type is quick-eligible and its family approved, after deleting any
   `hubQuick` a plugin supplied, and sends `/core/policy/quick-actions`
   `{revision, approvals: {pluginId: [family]}}` to the glasses on link-up and on
   every change.
-- The glasses run an action directly only when the bundle is negotiated, the
+- The glasses use quick mode only when the bundle is negotiated, the
   action is stamped, the latest policy approves its family for the owner, and
-  the fresh-contact rule holds; otherwise the confirmation panel runs, Cancel
-  preselected. The phone checks again at invocation; the glasses check is never
-  the only gate.
-- Sends, deletes, external effects, untyped actions, immersion and full-app
-  launches keep their explicit gates. No plugin field can make itself quick.
+  the fresh-contact rule holds; otherwise the same tap invokes in confirmed
+  mode. The phone checks again at invocation; the glasses check is never the
+  only gate.
+- Untyped actions, deletes and external effects use confirmed mode on a fresh
+  tap. Immersion and full-app rows launch directly. `compose.send` is never a
+  row or quick: only the conversation composer's deliberate Send reaches it.
+  No plugin field can make itself quick.
 
 ### Fresh contact
 
 An Enter that would cause an effect (a quick or confirmed plugin action, an
-activity command, the composer's Send, a launch's Open) is accepted only if its
-press began strictly after the focused target was displayed: after the host's
+activity command, the composer's Send, an app launch including native apps and
+Camera in Applications) is accepted only if its press began strictly after the
+focused target was displayed: after the host's
 draw acknowledgement of the frame that showed that focus. A new revision, a new
 selection, a panel or a focus mode each reset it. The press start is the
 touchpad contact-down time paired with that Enter, or the ring tap's down time.

@@ -30,7 +30,9 @@ D0.1 Negotiation. One additive launcher bundle, never a bump of an existing vers
 
 D0.2 Old peers. New fields are optional everywhere. A new phone strips every new activity,
 notice and page field before forwarding to glasses that did not negotiate the bundle, and keeps
-the v1 behaviours (eviction at 2, end on disconnect, every page action confirmed). New glasses
+the v1 behaviours (eviction at 2, end on disconnect, every page action in confirmed wire mode).
+Older glasses retain their dialogs; these glasses invoke page actions and app launches directly
+on a tap even with an older phone. New glasses
 never act on a new field unless the phone negotiated the bundle. Old plugins keep working
 unchanged; nothing new is required of them.
 
@@ -207,21 +209,23 @@ Providers must fall back to the base four templates when it is false.
 3.2 Policy (phone authoritative, `PluginQuickActionPolicyStore`, keyed by `PluginGrantKey`):
 - A plugin declares families in descriptor metadata `rokidbus.plugin.quickActions`
   (comma-separated; known: `checklist`, `media`; unknown ignored). Not a capability.
-- The user approves families per plugin in the phone plugin page with honest copy: one tap runs
-  these actions without a confirmation; Nexus checks owner, revision and type but cannot verify
-  what the plugin's code does. Default: not approved. A newly declared family is never
-  grandfathered. Revoke, disable, uninstall or signer change clears it. Toggling does not use the
-  grant teardown path; turning it off immediately rejects pending quick invocations.
+- Retained per-plugin approvals control quick wire mode. The phone's Plugin access page no
+  longer offers quick-action switches, since every launcher action runs on a tap. Default: not
+  approved. A newly declared family is never grandfathered. Revoke, disable, uninstall or signer
+  change clears it. Stored policy and phone validation remain unchanged; removing an approval
+  immediately rejects pending quick invocations.
 - The phone stamps `hubQuick: true` on a page or activity action only when its typed value is
   quick-eligible and the family is approved, and deletes any plugin-supplied `hubQuick`. It
   also sends `/core/policy/quick-actions {revision, approvals: {pluginId: [family]}}` to the
   glasses on link-up and on every change.
-- Glasses execute directly only if: bundle negotiated, `hubQuick` stamped, the latest
+- Glasses use quick mode only if: bundle negotiated, `hubQuick` stamped, the latest
   `/core/policy/quick-actions` approves the family for the owner, and the fresh-contact rule
-  (section 5.3) holds. Otherwise the existing confirm panel (Cancel preselected) runs.
+  (section 5.3) holds. Otherwise the same tap invokes in confirmed mode, with no panel.
   The phone re-checks at invocation; the glasses check is never the only gate.
-- Sends, deletes, external effects, untyped actions, immersion and full-app launches keep their
-  explicit gates. No plugin field can make itself quick.
+- Deletes, external effects and untyped actions run on a fresh tap in confirmed mode; immersion
+  and full-app rows launch directly. `compose.send` never becomes a row and remains reachable
+  only through the composer's own Send after the draft is visible. No plugin field can make
+  itself quick.
 
 ## 4. Route geometry schema (shared `RouteGeometryContract`, SDK model)
 
@@ -243,21 +247,24 @@ distances with "~".
 no detail page, no onNexusOpen/onNexusClose, no change underneath). Commands-first: first tap
 enters command focus on `defaultActionId`, never executes. Focus mode: Step moves along plugin
 commands then a hub-owned `Open app` slot (shown when the owner is launchable in the
-Applications catalog); Enter executes the focused one (quick or through the confirm panel per
+Applications catalog); one fresh Enter executes the focused one (quick or confirmed mode per
 section 3); Back leaves focus first. Offline entries: destination still opens; commands inert;
 Open app still available. Activities page lists every collection entry with the same
 behaviours.
 
-5.2 `Open app` is hub-owned, outside the three plugin slots, and always goes through the
-existing labelled launch step. Destination pages opened from an activity get a final hub row
-`Open app` for a launchable owner.
+5.2 `Open app` is hub-owned, outside the three plugin slots, and launches directly on a fresh
+tap from a card slot, page row or Applications entry. Destination pages opened from an activity
+get a final hub row `Open app` for a launchable owner. Native apps and Camera in Applications
+also require a fresh tap.
 
 5.3 Fresh-contact rule. An Enter that would cause an effect (quick or confirmed plugin action,
-activity command, composer Send, launch Open) is accepted only if its press began strictly
+activity command, composer Send, app launch) is accepted only if its press began strictly
 after the focused target was displayed. Displayed = the host's draw acknowledgement of the frame
 that showed that focus (a new revision, a new selection, a panel, or a focus mode each reset
 it). Press start = the touchpad contact-down time paired with that Enter; for the ring, the ring
 tap's down time. A rejected Enter is absorbed silently.
+Plugin page actions keep this draw acknowledgement even without the launcher bundle, so a
+delayed tap cannot invoke an updated row the wearer had not seen when the press began.
 
 5.4 Capture: while a composer capture runs (dictation or typing), triple tap is not recognised
 (InputArbiter gains `captureActive`, alongside `editableFocused` and `noticeArmed`), and the

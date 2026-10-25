@@ -17,7 +17,7 @@ internal enum class AppKind {
     /** A plugin that provides pages over a negotiated pair: its row opens `<id>:main`. */
     PAGES,
 
-    /** Any other plugin: its row offers the full app, labelled, behind a launch step. */
+    /** Any other plugin: its labelled row opens the full app directly on a fresh tap. */
     IMMERSION,
     NATIVE,
 

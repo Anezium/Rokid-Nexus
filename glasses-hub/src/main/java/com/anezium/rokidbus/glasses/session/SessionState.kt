@@ -65,34 +65,6 @@ internal sealed interface FramePanel {
     val selected: Int
 
     /**
-     * A plugin action waiting for the wearer, bound to what they were shown. Cancel is row 0 and
-     * preselected; Confirm is row 1.
-     */
-    data class Confirm(
-        val actionId: String,
-        val label: String,
-        val revision: Long,
-        val providerEpoch: String?,
-        override val selected: Int = CANCEL,
-    ) : FramePanel
-
-    /** The labelled step before an exclusive immersion replaces the screen. Open is row 0 and preselected. */
-    data class Launch(val pluginId: String, val label: String, override val selected: Int = OPEN) : FramePanel
-
-    /**
-     * An activity command waiting for the wearer, bound to the activity revision ([seq]) the
-     * card showed. Cancel is row 0 and preselected; Confirm is row 1.
-     */
-    data class ConfirmCommand(
-        val stopId: String,
-        val ownerPluginId: String,
-        val actionId: String,
-        val label: String,
-        val seq: Long,
-        override val selected: Int = CANCEL,
-    ) : FramePanel
-
-    /**
      * The hub's display page for [ownerPluginId]'s ambient size: Text, Minimap, Panel in
      * [RoutePresentation.SIZES] order, opened on [current] (the first while automatic). Once the
      * wearer swipes ([moved]) the island previews the selected size; a tap saves it, BACK cancels.
@@ -104,13 +76,6 @@ internal sealed interface FramePanel {
         val moved: Boolean = false,
     ) : FramePanel {
         val size: AmbientSize get() = RoutePresentation.SIZES[selected]
-    }
-
-    companion object {
-        const val CANCEL = 0
-        const val CONFIRM = 1
-        const val OPEN = 0
-        const val DISMISS = 1
     }
 }
 
@@ -205,15 +170,11 @@ internal sealed interface SessionState {
     /** [root] is frozen when the triple tap is accepted, before the gate ends. */
     data class Opening(val sinceMs: Long, val root: Root) : SessionState
 
-    /**
-     * [focus] is an activity card's command focus; [panel] the confirmation or launch step taken
-     * from it. Both belong to the card at [selected].
-     */
+    /** [focus] is the command focus of the activity card at [selected]. */
     data class Root(
         val stops: List<RootStop>,
         val selected: Int = 0,
         val focus: CommandFocus? = null,
-        val panel: FramePanel? = null,
     ) : SessionState
 
     /** [frames] excludes the root; `frames[i]` is wire frame index `i + 1`. */

@@ -35,8 +35,8 @@ import java.time.Duration
 
 /**
  * The real session runtime behind a connected service window, with no phone: local pages answer
- * in-process, Applications follows the launcher catalog, unchanged plugins sit behind the
- * labelled launch step, and nothing from the phone can author a hub page.
+ * in-process, Applications follows the launcher catalog, unchanged plugins launch on a tap,
+ * and nothing from the phone can author a hub page.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [32])
@@ -259,7 +259,7 @@ class NexusSessionRuntimeTest {
     }
 
     @Test
-    fun `Applications lists the catalog and keeps unchanged plugins behind the labelled launch step`() {
+    fun `Applications lists the catalog and tries to launch an unchanged plugin on one tap`() {
         openRoot()
         send(SessionEvent.Step(1, now()))
         send(SessionEvent.Enter(now()))
@@ -269,20 +269,11 @@ class NexusSessionRuntimeTest {
         assertEquals(listOf("Lens", "Relay"), rows.map { it.label })
         assertTrue(rows.all { it.sub == null })
 
-        send(SessionEvent.Enter(now()))
-        val panel = top().panel as FramePanel.Launch
-        assertEquals("lens", panel.pluginId)
-        assertEquals(FramePanel.OPEN, panel.selected)
-        // BACK leaves the panel without opening anything.
-        send(SessionEvent.Back(now()))
-        assertNull(top().panel)
-        assertTrue(NexusSession.state is SessionState.InPage)
-
-        // Open, with no phone to carry it, fails back to Applications with nothing launched.
-        send(SessionEvent.Enter(now()))
+        // With no phone to carry it, the direct open fails back to Applications.
         send(SessionEvent.Enter(now()))
         assertTrue("${NexusSession.state}", NexusSession.state is SessionState.InPage)
         assertEquals(RootStops.APPLICATIONS_PAGE_ID, top().pageId)
+        assertNull(top().panel)
     }
 
     @Test

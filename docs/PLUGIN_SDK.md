@@ -782,15 +782,15 @@ same code runs against old hubs.
   `startActivity` from a new registration. Turning the setting off means
   `endActivity()`. See plugins/AGENTS.md for the background rules.
 - `NexusActivityAction.typed` — `MediaPrevious`, `MediaPlay`, `MediaPause` or
-  `MediaNext`, and nothing else on an activity. A typed action of a family the
-  user approved for your plugin runs on one tap (see "Actions" under Pages).
+  `MediaNext`, and nothing else on an activity. A focused action runs on one
+  fresh tap, in quick or confirmed wire mode (see "Actions" under Pages).
 - Using any of these fields also requires every action id to be a page-style id
   (printable ASCII without spaces, at most 128) and ids to be unique.
 
 The user can also disable your activity on the phone (the hub then ends it and
 refuses your starts with an `ACTIVITY_DISABLED` error on `/error`) or pin it. In focus the wearer steps
-along your commands and a hub `Open app` slot that opens your full app through
-the labelled launch step; that slot is the hub's, not one of your three.
+along your commands and a hub `Open app` slot that opens your full app directly
+on a fresh tap; that slot is the hub's, not one of your three.
 
 A command arrives on `onNexusActivityCommand(command)` with `actionId`, a fresh
 `invocationId`, the revision `seq` the wearer saw, and the `typed` you declared
@@ -2061,9 +2061,10 @@ grant is kept.
 Any other value means no pages; it never makes the plugin invalid. Template
 pages need the existing `surfaces` grant.
 
-A plugin whose typed actions should be able to run on one tap also declares the
-families it offers. This lets the user approve them on the phone; it approves
-nothing by itself and is not a capability either:
+A plugin whose typed actions support quick wire mode also declares the
+families it offers. Existing per-plugin approvals remain in use, although
+Plugin access no longer offers quick-action switches. The declaration approves
+nothing by itself and is not a capability:
 
 ```xml
 <meta-data
@@ -2197,19 +2198,20 @@ content page the SDK finds invalid is answered as `INVALID_PAGE` instead.
 ### Actions
 
 `NexusPageActionSpec(id, label, kind, confirm, typed)` declares an action: label
-at most 24 characters, kind `PLUGIN`, `IMMERSION` or `HUB`. The glasses hub
-confirms a plugin action with the wearer, Cancel preselected, whatever
-`confirm` says, before `onNexusPageAction` is called with a fresh `invocationId`
-and the revision the wearer saw. There is one exception, between hubs that
-negotiated the launcher bundle: an action whose `typed` is `SetChecked(checked)`
-(family `checklist`) or a media type (family `media`), when your plugin
-declared that family in `rokidbus.plugin.quickActions` and the user approved it
-for your plugin on the phone, runs on one tap. The phone and the glasses check
-the owner, the revision and the type; nobody can check what your callback then
-does, and the user's approval is trust in your plugin, so keep a quick action
-exactly what its type says. Sends, deletes, anything with an external effect,
-untyped actions, immersions and full-app launches are always confirmed, and no
-field of yours can make an action quick. Types state the desired state, never a
+at most 24 characters, kind `PLUGIN`, `IMMERSION` or `HUB`. A tap on a plugin row
+invokes it immediately, whatever `confirm` says, with a fresh `invocationId`
+and the revision the wearer saw. With or without the launcher bundle, the press
+must begin after that target was drawn. A `SetChecked(checked)` action (family `checklist`)
+or a media action (family `media`) uses quick mode only when the plugin declared
+the family, its retained phone policy approves it, and the phone stamped it
+`hubQuick`; otherwise the tap uses confirmed mode. Confirmed mode no longer
+implies a confirmation panel. Without the bundle, these glasses invoke on a tap
+in confirmed mode; older glasses keep their existing confirmation behavior.
+The phone and glasses still check owner, revision and type. Keep a quick action
+exactly what its type says; no field of yours can make an action quick. Untyped
+actions, deletes and external effects also run on a fresh tap in confirmed mode.
+`compose.send` never becomes a row: only the conversation composer's own Send
+can send, with a fresh tap after the draft is visible. Types state the desired state, never a
 toggle: put the task and the state in the action id (`check:milk:1`) and bind it
 to the revision you sent.
 
@@ -2229,8 +2231,8 @@ and a replacement is the same page at a higher revision. Each also takes an
 optional `code` (printable ASCII, at most 32); the hub acts on
 `NexusPageResult.CODE_AUTHORITY_LOST` only, for a composer whose reply authority
 is gone: it keeps the text and stops offering Send. A lost result shows as
-unconfirmed and is never resent. `IMMERSION` only opens your own full app, after
-the hub's labelled launch step; `HUB` gives you no hub control.
+unconfirmed and is never resent. `IMMERSION` opens only your own full app,
+directly on a fresh tap; `HUB` gives you no hub control.
 
 ```kotlin
 override fun onNexusPageAction(action: NexusPageAction): NexusPageResult {

@@ -33,8 +33,8 @@ internal data class TypedRow(
  * Body rows and appended actions key in disjoint namespaces: a row id may equal an action id, or
  * look like an appended key, and the two still never share selection, focus or SELECT.
  *
- * A provider's `plugin` action is confirmed first, unless [quickGate] lets one tap run it; its
- * `immersion` action can only open that provider's own full app, behind the labelled launch step;
+ * A provider's `plugin` action runs on one fresh tap; [quickGate] selects quick or confirmed wire
+ * mode. Its `immersion` action can only open that provider's own full app on a fresh tap;
  * its `hub` actions are refused, and so is an action typed `compose.send`, which only the
  * composer's deliberate Send reaches. Only a hub-authored local page may carry hub actions, and
  * only the local launch ones named here.
@@ -99,7 +99,7 @@ internal class TypedPageItems(
         }
         val route = (body as? PageBody.Route)?.takeUnless { local } ?: return rows + extra
         // The command list reads hub, then plugin actions, then the full app (r17 3.7).
-        return routeRows(route, owner) + (rows + extra).sortedBy { it.item is PageItem.LaunchPrompt }
+        return routeRows(route, owner) + (rows + extra).sortedBy { it.item is PageItem.Launch }
     }
 
     /**
@@ -177,7 +177,7 @@ internal class TypedPageItems(
                 } else {
                     when (action.kind) {
                         KIND_PLUGIN -> pluginAction(owner, action, row.label)
-                        KIND_IMMERSION -> PageItem.LaunchPrompt(owner, row.label)
+                        KIND_IMMERSION -> PageItem.Launch(owner, row.label)
                         else -> PageItem.Inert
                     }
                 }
@@ -189,11 +189,11 @@ internal class TypedPageItems(
         // A send is reachable only through the composer's own deliberate Send, never as a row.
         action.typed is PageActionType.ComposeSend -> PageItem.Inert
         quickGate.allows(owner, action.typed, action.hubQuick) -> PageItem.Quick(action.id, label)
-        else -> PageItem.Confirm(action.id, label)
+        else -> PageItem.PluginAction(action.id, label)
     }
 
     private fun localAction(actionId: String, label: String): PageItem = when {
-        actionId.startsWith(LAUNCH_PREFIX) -> PageItem.LaunchPrompt(actionId.removePrefix(LAUNCH_PREFIX), label)
+        actionId.startsWith(LAUNCH_PREFIX) -> PageItem.Launch(actionId.removePrefix(LAUNCH_PREFIX), label)
         actionId.startsWith(LOCAL_PREFIX) -> PageItem.LocalLaunch(actionId.removePrefix(LOCAL_PREFIX), label)
         actionId.startsWith(ACTIVITY_PREFIX) -> PageItem.Activity(actionId.removePrefix(ACTIVITY_PREFIX))
         actionId.startsWith(NOTICE_PREFIX) -> PageItem.Notification(actionId.removePrefix(NOTICE_PREFIX))
@@ -205,7 +205,7 @@ internal class TypedPageItems(
         const val KIND_PLUGIN = PageSurfaceContract.KIND_PLUGIN
         const val KIND_IMMERSION = PageSurfaceContract.KIND_IMMERSION
 
-        /** A hub action opening a plugin's full app behind the labelled launch step. */
+        /** A hub action opening a plugin's full app on a fresh tap. */
         const val LAUNCH_PREFIX = "launch:"
 
         /** A hub action launching a local catalog entry, by its key. */

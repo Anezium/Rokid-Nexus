@@ -118,7 +118,7 @@ class RouteNavigationTest {
         val subs = list.blocks.filterIsInstance<ScreenBlock.Row>().associate { it.label to it.sub }
         assertEquals("centred on you, heading up", subs["View · Follow"])
         assertEquals("island size during the trip", subs["Display"])
-        assertEquals("asks for confirmation", subs["Reroute"])
+        assertNull(subs["Reroute"])
         assertNull(subs[ActivityCommands.OPEN_APP])
 
         // The list never steps back onto Commands or the map.
@@ -240,11 +240,13 @@ class RouteNavigationTest {
         assertEquals(listOf("View · Follow", "View · Whole route", "Full screen", "Display", "End the journey", ActivityCommands.OPEN_APP), rows)
         assertTrue(rows.none { it == "Open full app" })
 
-        // The one full-app row is the hub's, behind the labelled launch step.
+        // The one full-app row is the hub's and launches directly.
         repeat(5) { send(SessionEvent.Step(1, 3_300L + it)) }
         assertEquals(ActivityCommands.OPEN_APP_KEY, top().selectedKey)
+        shown(3_350)
         press(3_400)
-        assertEquals(FramePanel.Launch(OWNER, "Maps"), top().panel)
+        assertTrue(model.state is SessionState.Launching)
+        assertEquals(OWNER, effects.filterIsInstance<SessionEffect.SendLauncherOpen>().single().pluginId)
     }
 
     @Test

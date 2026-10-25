@@ -23,7 +23,7 @@ Action-focus mode: the same swipe axis chooses commands and tap executes the foc
 
 No second swipe axis, long-press dependency, touch-screen selection or hidden gesture. Preserve firmware double-tap Back, armed-notice and focused-editor triple exclusions, the session opening gate and captured press ownership. Paired directional aliases must produce exactly one movement. A contact that began before a focus/capture transition cannot activate a newly exposed send/control target.
 
-Nexus supplies an explicit Open app affordance; it is separate from the three plugin-command slots. It opens the owner's full interface through the labelled launch flow. Opening a consultation page must not call onNexusOpen/onNexusClose, replace an existing surface, or switch the app underneath.
+Nexus supplies an explicit Open app affordance; it is separate from the three plugin-command slots. A fresh tap opens the owner's full interface directly. Opening a consultation page must not call onNexusOpen/onNexusClose, replace an existing surface, or switch the app underneath.
 
 ## 3. Todo acceptance case
 
@@ -53,11 +53,11 @@ No playback on the focus-entry tap, stale session controls, guessed playback sta
 
 ## 5. Fast actions require a real policy change
 
-The current delivered session contract confirms every plugin page action, regardless of its confirm field. Change that explicitly, compatibly and in both wire/API documentation to support the accepted fast checkbox and media workflows.
+Every launcher command, plugin page action and Open app choice runs immediately on a fresh tap, regardless of the action's confirm field. There is no confirmation or launch panel. The first tap on a commands-first card still enters command focus without executing.
 
-Implement a hub-owned, user-approved quick-action policy per plugin with narrowly typed action declarations. Default behavior for existing/unknown plugins remains confirmed. Direct execution still requires the current owner, approved grant/policy, declared action, live registration, visible current page/card revision and a fresh invocation id/contact. Revoke permission immediately; never grandfather a newly requested privilege.
+Keep the hub-owned per-plugin quick-action policy and narrowly typed declarations as wire-mode validation. An action uses quick mode when the existing policy and stamp allow it, confirmed mode otherwise; confirmed names the wire mode, not a dialog. Plugin access no longer offers quick-action switches, and stored approvals are unchanged. Execution still requires the current owner, approved grant, declared action, live registration, visible page/card revision and a fresh invocation id/contact. Revoke permission immediately; never grandfather a newly requested privilege.
 
-A plugin calling an action safe or reversible does not prove its callback's effects. The user opt-in is trust in that plugin, not a guarantee that arbitrary code cannot do something else. Untyped operations, send/delete/external-effect actions and full-app launches retain the appropriate explicit confirmation/launch gate. Relay's approved deliberate send sequence remains separate; do not add a redundant review menu or make sends implicitly eligible for checkbox exemptions.
+A plugin calling an action safe or reversible does not prove its callback's effects. Untyped operations, deletes and external effects run on a fresh tap in confirmed mode; full-app choices launch directly. Relay's deliberate send sequence remains separate: compose.send never becomes a row, and Send needs a fresh tap after the draft is visible. Do not add a redundant review menu or make sends implicitly eligible for checkbox exemptions.
 
 ## 6. Collection, persistence and notifications
 

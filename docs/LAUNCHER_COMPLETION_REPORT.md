@@ -19,9 +19,22 @@ Authorities: `plans/028-launcher-completion.md` (scope), `docs/LAUNCHER_INTERACT
 (product decisions), `plans/028a-launcher-contract.md` (frozen implementation contract),
 `BUSSPEC.md` (wire), `docs/PLUGIN_SDK.md` (typed API), r17 mockup (`docs/mockups/glasses-home/`).
 
-## Current status (2026-10-24)
+## Current status (2026-10-25)
 
 This section supersedes the status paragraphs above, which are kept as history.
+
+- **Immediate launcher actions (2026-10-25, `fx/noconfirm`).** One fresh tap on a focused
+  activity command, plugin page row or Open app now executes immediately. The confirmation and
+  launch panels, their screens and their focus/step handling are removed; the route Display
+  page stays. Quick eligibility still selects quick wire mode; every other ordinary action uses
+  confirmed mode. Provider epoch, shown revision, pending-command, offline and link-loss guards
+  stay in force. Activities command focus now includes the live sequence in its draw token, so
+  an update needs a redraw and a new press before it can act. Plugin access drops the two
+  quick-action family switches without changing stored approvals, their wire or phone validation.
+  Old-phone page actions invoke on a fresh tap in confirmed mode, bound to the drawn revision.
+  Native apps and Camera in Applications also require a fresh press. Composer Send and its
+  visible-draft fresh-press rule are unchanged. Device verification belongs to the integrating orchestrator;
+  this lane performs no install or ADB action.
 
 - **Integrated with main.** `origin/main` at `a66f55e1` (Nexus 1.8.1, Relay 1.3.0, the
   `/core/files` explorer, independent speech languages) is merged into `dev/launcher-rework`. The
@@ -99,11 +112,11 @@ trees.
 | Owner-scoped destination (declared page + bounded params) and explicit first activation (`destination` / `commands` / summary) | `S/ActivitySurfaceContract.kt` (`destination`, `activation`, `defaultActionId`, `destinationAllowed`), `B/InteractiveModels.kt`, `B/NexusPluginClient.kt`; glasses `G/session/SessionReducer.kt` `activate()` | `ActivityInteractiveContractTest`, `NexusLauncherInteractiveTest`, `LauncherInteractiveTest`, `RouteNavigationTest` | Done |
 | Destination-first card opens the plugin page inside the session (no detail/menu/immersion) | `G/session/SessionReducer.kt` (`activate`, `openFrame`), `G/session/RootStops.kt` | `LauncherInteractiveTest`, `TodoActivityTest` (sample), host `LauncherHostLinkLossTest` | Done |
 | Quick-command card: first tap focuses Play/Pause, one swipe axis prev/play-pause/next, tap executes, Back exits | `G/session/LauncherInteractive.kt` (`ActivityCommands`, focus), `G/page/LauncherControls.kt` | `LauncherInteractiveTest`, `LauncherRenderingTest` | Done |
-| Hub-owned explicit Open app outside the 3-action plugin budget, labelled launch kept | `G/session/LauncherInteractive.kt` (`withOpenAppRows`, `OPEN_APP_KEY`), `G/session/SessionReducer.kt` (`OpenApp`, launch step) | `LauncherInteractiveTest`, `RouteNavigationTest` | Done |
+| Hub-owned Open app outside the 3-action plugin budget; card slot, page row and Applications launch on one fresh tap | `G/session/LauncherInteractive.kt` (`withOpenAppRows`, `OPEN_APP_KEY`), `G/session/SessionReducer.kt` (`launch`) | `LauncherInteractiveTest`, `RouteNavigationTest`, `SessionPagesTest`, `NexusSessionRuntimeTest` | Done |
 | Page bodies for conversation, media, route (not stubs) | `S/PageTemplate.kt` (Conversation/Media/Route, decode/encode, limits), `G/session/TypedPageItems.kt`, `G/session/SessionScreens.kt`, `G/page/ConversationView.kt`, `G/page/LauncherBlocks.kt`, `G/page/RouteMapPainter.kt` | `PageInteractiveContractTest`, `RouteGeometryContractTest`, `ComposerSessionTest`, `RouteNavigationTest`, `LauncherRenderingTest` | Done |
 | Collection: 8 entries over the bundle vs 2 ambient/v1 slots; deterministic membership, overflow and frozen root order | `G/ActivityController.kt` (`ActivityState.setCapacity`, eviction order, `onLauncherNegotiated`), `G/session/RootStops.kt` | `ActivityCollectionTest`, `ActivityStateMachineTest`, host test (five entries kept through outage, trimmed to two by an older phone) | Done |
 | Enabled/pinned preferences separate from live binding and action authority; inert offline snapshot; disable/uninstall/revoke clears; fresh register/link revalidates | `P/PhoneActivityPreferences.kt`, `P/PhoneActivitySnapshotStore.kt`, `P/PhoneActivityState.kt`, `P/PhoneActivityRouter.kt`; hub stamps `state`/`userPinned`/`knownAtWallMs` | `PhoneActivityLauncherTest`, `PhoneLauncherStoresTest` | Done |
-| Typed quick actions under hub-owned per-plugin approval; current pages always confirm; old/unknown plugins confirmed; compose.send never quick | `S/PageActionType.kt` (`PageActionType`, `QuickActionPolicyContract`), `P/PluginQuickActionPolicyStore.kt`, `P/PluginPermissionsActivity.kt`, `/core/policy/quick-actions`; glasses `QuickPolicyState`, `LauncherQuickGate` | `PageActionTypeTest`, `PhoneLauncherStoresTest`, `LauncherInteractiveTest` | Done |
+| Every ordinary action runs on a fresh tap; retained policy selects quick or confirmed wire mode; Plugin access has no quick-action switches; compose.send stays composer-only | `S/PageActionType.kt` (`PageActionType`, `QuickActionPolicyContract`), `P/PluginQuickActionPolicyStore.kt`, `P/PluginPermissionsActivity.kt`, `/core/policy/quick-actions`; glasses `QuickPolicyState`, `LauncherQuickGate`, `SessionReducer` | `PageActionTypeTest`, `PhoneLauncherStoresTest`, `PluginPermissionsActivityTest`, `LauncherInteractiveTest`, `SessionPagesTest`, `ComposerSessionTest` | Done |
 | Owner/grant/registration/visible revision/lease/fresh invocation/contact checks kept | `P/PhonePageBroker.kt`, `P/PhoneActivityState.kt` (pending invocation/deadline), glasses reducer | `PhonePageBrokerLauncherTest`, `SessionReducerTest`, `ComposerSessionTest` | Done |
 | No public `/core/native-apps`, `/core/remote-input`, `/core/navigation`, `/core/pointer` capability | `S/plugin/PathRules.kt`, `S/plugin/PluginCapability.kt` | `LauncherPathAndDescriptorTest` | Done |
 
@@ -324,3 +337,191 @@ A pre-existing `bus-client` `NexusPageTest` timing flake failed once in a parall
 No device, ADB, install, push, tag, release or API use was part of the historical
 verification in this section. Subsequent authorized device work is recorded in the
 [2026-10-18 smoke report](LAUNCHER_DEVICE_SMOKE_20261018.md).
+
+## Immediate-action validation (2026-10-25)
+
+Lane: `E:\Tools\Rokid\RokidNexus-fx-noconfirm`, branch `fx/noconfirm`, baseline `f651994c`.
+The implementation is in `5db942ff` (glasses) and `0cfa3a8c` (phone UI).
+Both hub commands ran without `-PskipCxrGlobal`, with output redirected to `build/noconfirm-*.log`.
+
+```powershell
+.\gradlew.bat :glasses-hub:testDebugUnitTest :glasses-hub:assembleDebug --console=plain
+.\gradlew.bat :phone-hub:testDebugUnitTest :phone-hub:assembleDebug --console=plain
+```
+
+The initial successful glasses run observed 1,281 tests, zero failures, errors or skips. Its real tail:
+
+```text
+BUILD SUCCESSFUL in 1m 35s
+116 actionable tasks: 3 executed, 113 up-to-date
+```
+
+The initial phone run observed 1,029 tests, zero failures, errors or skips. Its real tail:
+
+```text
+BUILD SUCCESSFUL in 1m 47s
+134 actionable tasks: 25 executed, 20 from cache, 89 up-to-date
+```
+
+Before the successful glasses run, the first run observed `1281 tests completed, 1 failed`:
+the Navigation Open app test lacked its draw acknowledgement. Adding that acknowledgement
+fixed the fixture; the fresh-contact guard stayed intact.
+
+After restoring the mutation, both full commands passed again. Gradle restored the identical
+implementation's compiled classes and successful test results from its build cache; XML totals
+were again 1,281 glasses and 1,029 phone tests, with zero failures, errors or skips. Real tails:
+
+```text
+Glasses:
+BUILD SUCCESSFUL in 13s
+116 actionable tasks: 2 executed, 5 from cache, 109 up-to-date
+Phone:
+BUILD SUCCESSFUL in 15s
+134 actionable tasks: 2 executed, 5 from cache, 127 up-to-date
+```
+
+Mutation checks temporarily restored the eight changed glasses production files and the phone
+activity from `f651994c`, keeping the new regression tests. The baseline `PageItem.Launch`
+constructor accepted an unused optional label solely to compile the renamed resolver assertions;
+its old behavior, including every dialog, was unchanged. All source bytes were restored in a
+`finally` block, verified against the implementation commits with `git diff --exit-code`.
+The commands executed by the temporary PowerShell runner were:
+
+```powershell
+.\gradlew.bat :glasses-hub:testDebugUnitTest --console=plain --tests '*.LauncherInteractiveTest' --tests '*.SessionPagesTest' --tests '*.SessionReducerTest' --tests '*.RouteNavigationTest' --tests '*.NexusSessionRuntimeTest' --tests '*.ComposerSessionTest'
+.\gradlew.bat :phone-hub:testDebugUnitTest --console=plain --tests '*.PluginPermissionsActivityTest'
+```
+
+Observed mutation results: **169 glasses tests, 19 failed** (`BUILD FAILED in 43s`,
+`87 actionable tasks: 5 executed, 82 up-to-date`); **one phone test, one failed**
+(`BUILD FAILED in 23s`, `101 actionable tasks: 4 executed, 2 from cache, 95 up-to-date`).
+`ComposerSessionTest` had no mutation failures. The failing test names were:
+
+```text
+LauncherInteractiveTest:
+  a confirmed command is inert offline and reports NotAvailable when the link is lost
+  an action the phone did not stamp quick is confirmed even when the policy approves
+  a confirmed command waits for the new card revision to be drawn and a fresh press
+  an Applications launch enters Launching on one fresh tap
+  an old phone keeps the v1 card and a tap invokes a page action in confirmed mode
+  without the policy a single fresh tap sends the focused command in confirmed mode
+  Open app launches directly from a card slot on one fresh press
+  the Activities page lists every entry and a row acts like its card
+  a typed page row without a stamp or policy runs confirmed on one fresh tap
+NexusSessionRuntimeTest:
+  Applications lists the catalog and tries to launch an unchanged plugin on one tap
+RouteNavigationTest:
+  the real Navigation page shape lists one full-app row under the hub's commands
+  Commands opens the command list in sections and Back returns to the page with Commands selected
+SessionPagesTest:
+  a plugin row tap sends exactly one confirmed action without a panel
+  a page revision needs to be drawn before a new fresh press can invoke it
+  a pages plugin entered from Applications ends with one hub Open app that launches on a fresh tap
+  a page opened from a provider's own row, or for an owner with no full app, gets no hub Open app
+  typed rows map local hub actions and keep provider ones in check
+  an immersion row launches directly and a hub action from a provider does nothing
+SessionReducerTest:
+  rule 11 the default resolver invokes plugin actions directly and keeps hub and immersion rows inert
+PluginPermissionsActivityTest:
+  activity choices omit quick action switches and keep existing approvals
+```
+
+The obsolete panel types and dialog strings have no matches under `glasses-hub/src/main`.
+All changes are inside the lane's allowed source/documentation globs. No build configuration,
+SDK, quick-action wire, phone validation or composer Send implementation changed. No push,
+merge, tag, ADB or device action was performed. Device checks remain with the orchestrator:
+focused transport/custom commands and checklist rows, all three Open app entry points,
+delayed ring presses after target changes, pending/offline/link-loss behavior, the phone's
+remaining activity switches, and a separate fresh Send after a visible conversation draft.
+
+### Immediate-action review fixes, round 2 (2026-10-25)
+
+The independent Opus review's F1–F5 findings are addressed in the same lane:
+
+- **F1:** plugin page actions require `SessionFocus.isFresh` even without the launcher bundle.
+  A delayed tap cannot invoke a replacement revision before its draw acknowledgement, use an
+  obsolete acknowledgement, or reuse a contact begun before that draw. The regression keeps
+  the row key while changing its action from check to uncheck, then verifies one fresh tap
+  sends the new action at revision 2 in confirmed mode.
+- **F2/F4:** Plugin access explains the activity preferences whenever its surfaces grant is
+  absent, independently of declared quick families; the obsolete one-tap wording is removed.
+  The typed resolver's KDoc now describes quick versus confirmed wire mode.
+- **F3:** native apps and Camera in Applications use the same fresh-press gate as plugin app
+  launches. The regression covers both rows before draw, at the draw timestamp, after draw
+  with an older contact (including a selection change), and with a fresh successful tap.
+- **F5:** the offline-command regression restores the link before the offline update and
+  verifies command focus survives. Its rejection now proves the offline guard independently
+  of link loss. Stored policy, phone validation, the wire and composer Send are unchanged.
+
+The focused `LauncherInteractiveTest`, `SessionPagesTest` and `SessionReducerTest` run passed:
+
+```text
+BUILD SUCCESSFUL in 48s
+87 actionable tasks: 5 executed, 82 up-to-date
+```
+
+Three independent mutations reverted only the relevant guard in `SessionReducer.kt`, keeping
+the regressions. Each selected test failed by assertion, with one test, one failure, zero
+errors and zero skips. The temporary runner restored the original source bytes in `finally`
+after each mutation and verified byte equality. Exact commands:
+
+```powershell
+.\gradlew.bat :glasses-hub:testDebugUnitTest --console=plain --tests '*.SessionPagesTest.without the launcher bundle a delayed row tap cannot invoke a replacement revision'
+.\gradlew.bat :glasses-hub:testDebugUnitTest --console=plain --tests '*.LauncherInteractiveTest.native and Camera launches require a press begun after the selected row was drawn'
+.\gradlew.bat :glasses-hub:testDebugUnitTest --console=plain --tests '*.LauncherInteractiveTest.a confirmed command is inert offline and reports NotAvailable when the link is lost'
+```
+
+Observed output excerpts, in the same order:
+
+```text
+1 test completed, 1 failed
+BUILD FAILED in 10s
+87 actionable tasks: 4 executed, 83 up-to-date
+
+1 test completed, 1 failed
+BUILD FAILED in 8s
+87 actionable tasks: 4 executed, 83 up-to-date
+
+1 test completed, 1 failed
+BUILD FAILED in 7s
+87 actionable tasks: 4 executed, 83 up-to-date
+```
+
+After restoring the guards, the full glasses command passed with 1,283 tests, zero failures,
+errors or skips, counted from the JUnit XML. Debug assembly passed in the same invocation:
+
+```powershell
+.\gradlew.bat :glasses-hub:testDebugUnitTest :glasses-hub:assembleDebug --console=plain
+```
+
+Real output tail (`build/noconfirm-round2-glasses.log`):
+
+```text
+BUILD SUCCESSFUL in 1m 45s
+116 actionable tasks: 7 executed, 109 up-to-date
+```
+
+The full phone command passed with 1,029 tests, zero failures, errors or skips, counted from
+the JUnit XML. Debug assembly passed in the same invocation:
+
+```powershell
+.\gradlew.bat :phone-hub:testDebugUnitTest :phone-hub:assembleDebug --console=plain
+```
+
+Real output tail (`build/noconfirm-round2-phone.log`):
+
+```text
+BUILD SUCCESSFUL in 1m 4s
+134 actionable tasks: 7 executed, 127 up-to-date
+```
+
+`git diff --check` passed; every changed file is within the contract's source/documentation
+globs. Searches found no obsolete dialog strings or removed panel references in
+`glasses-hub/src/main`. No build configuration, SDK, wire, phone validation, composer Send,
+push, merge, tag, ADB or device action changed or ran.
+
+There are no open implementation questions. The orchestrator must verify delayed ring/touchpad
+contacts across a page update with an older phone, native/Camera row changes in Applications,
+offline focused commands with the link up, and command taps on frequently updating Activities
+entries. The review's F6 wording in out-of-scope READMEs and the policy-store KDoc remains for
+integration; quick mode still depends on approvals retained from earlier builds.

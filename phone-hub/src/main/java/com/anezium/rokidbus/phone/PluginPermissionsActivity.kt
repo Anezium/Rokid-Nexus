@@ -16,7 +16,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
-import com.anezium.rokidbus.shared.QuickActionFamily
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.skills.SkillEffect
 import com.anezium.rokidbus.shared.skills.SkillOperation
@@ -190,11 +189,10 @@ class PluginPermissionsActivity : Activity() {
                     card.addView(row, NexusUi.block())
                     card.addView(BusTheme.gap(this, 8))
                 }
-            } else if (capability == PluginCapability.SURFACES && live && principal.descriptor.quickActionFamilies.isNotEmpty()) {
-                // The activity and one-tap choices still exist, they just cannot apply: say why
-                // the rows are gone instead of leaving a plugin that declares them with none.
+            } else if (capability == PluginCapability.SURFACES && live) {
+                // Activity preferences apply only while the surfaces grant is selected.
                 card.addView(
-                    NexusUi.cardBody(this, "Allow \"Show on your glasses\" to manage its activity and one-tap actions."),
+                    NexusUi.cardBody(this, "Allow \"Show on your glasses\" to manage its activity."),
                     NexusUi.block(),
                 )
                 card.addView(BusTheme.gap(this, 8))
@@ -263,16 +261,15 @@ class PluginPermissionsActivity : Activity() {
     }
 
     /**
-     * The everyday choices under the `surfaces` grant: whether this plugin's activity shows,
-     * whether it is pinned, and which declared quick-action families run on one tap. None of
-     * them goes through [applyDecision]: that path tears the plugin down, these only re-send its
-     * activity and the glasses' quick-action policy.
+     * The everyday choices under the `surfaces` grant: whether this plugin's activity shows and
+     * whether it is pinned. Neither goes through [applyDecision]: that path tears the plugin
+     * down, these only re-send its activity.
      */
     private fun activityRows(principal: PhonePluginPrincipal): List<LinearLayout> {
         val key = principal.grantKey()
         val preferences = PhoneActivityPreferences.shared(applicationContext)
         val preference = preferences.preferenceFor(key)
-        val rows = mutableListOf(
+        return listOf(
             switchRow(
                 title = "Show its activity on the glasses",
                 note = "Its live card among the glasses activities. Off ends the one it shows now and refuses new ones.",
@@ -290,24 +287,6 @@ class PluginPermissionsActivity : Activity() {
                 BusHubService.onActivityPreferencesChanged(key)
             },
         )
-        val quickPolicy = PluginQuickActionPolicyStore.shared(applicationContext)
-        val approved = quickPolicy.approvedFamilies(key)
-        principal.descriptor.quickActionFamilies.sortedBy { it.wireValue }.forEach { family ->
-            val title = when (family) {
-                QuickActionFamily.CHECKLIST -> "Check tasks with one tap"
-                QuickActionFamily.MEDIA -> "Play, pause and skip with one tap"
-            }
-            rows += switchRow(
-                title = title,
-                note = QUICK_ACTION_NOTE,
-                checked = family in approved,
-            ) { checked ->
-                if (quickPolicy.setApproved(principal, family, checked)) {
-                    BusHubService.onQuickActionPolicyChanged(key)
-                }
-            }
-        }
-        return rows
     }
 
     private fun switchRow(
@@ -695,9 +674,6 @@ class PluginPermissionsActivity : Activity() {
         private const val EXTRA_PLUGIN_ID = "plugin_id"
         private const val PREFERENCES = "plugin_access_ui"
         private const val KEY_DEVELOPER_DETAILS = "developer_details"
-        private const val QUICK_ACTION_NOTE =
-            "Off, each tap on the glasses asks to confirm first. On, it runs at once: Nexus checks " +
-                "which plugin asked and what kind of action it is, but not what the plugin then does."
 
         fun intent(context: Context, target: PluginGrantTarget): Intent =
             Intent(context, PluginPermissionsActivity::class.java)

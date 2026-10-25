@@ -345,10 +345,6 @@ internal class SessionScreens(
     }
 
     private fun root(state: SessionState.Root, statusText: String?, facts: CommandFacts): SessionScreen {
-        state.panel?.let { step ->
-            val owner = state.stops.firstOrNull { it.id == state.focus?.stopId }?.label ?: NEXUS
-            return panel(step, owner, owner, statusText)
-        }
         val blocks = state.stops.mapIndexed { index, stop ->
             val selected = index == state.selected
             when (stop.kind) {
@@ -491,7 +487,7 @@ internal class SessionScreens(
         val parent = state.frames.getOrNull(state.frames.lastIndex - 1)?.let { titleOfFrame(it) } ?: "root"
         val title = titleOfFrame(frame)
         val back = "back $parent"
-        frame.panel?.let { return panel(it, title, titleOf(frame.pageId), statusText) }
+        frame.panel?.let { return panel(it, titleOf(frame.pageId), statusText) }
         val outcomeText = frame.outcome?.let(::outcomeText)
         return when (val status = frame.status) {
             is FrameStatus.Loading -> {
@@ -745,9 +741,8 @@ internal class SessionScreens(
             else -> when (selectedRow?.item) {
                 null, PageItem.Inert -> if (rows.size > 1) "swipe choose" else null
                 is PageItem.OpenPage, is PageItem.Activity, is PageItem.Notification -> "tap open"
-                is PageItem.Confirm, is PageItem.Invoke -> "tap choose"
-                is PageItem.Quick -> "tap run"
-                is PageItem.LaunchPrompt, is PageItem.Launch, is PageItem.LocalLaunch -> "tap open"
+                is PageItem.PluginAction, is PageItem.Invoke, is PageItem.Quick -> "tap run"
+                is PageItem.Launch, is PageItem.LocalLaunch -> "tap open"
                 else -> null
             }
         }
@@ -848,23 +843,19 @@ internal class SessionScreens(
                 // Hub commands first, unlabelled; then the plugin's actions; the full app last.
                 val next = when (row.item) {
                     is PageItem.RouteView, PageItem.RouteFullScreen, is PageItem.RouteDisplay -> null
-                    is PageItem.LaunchPrompt -> RoutePresentation.APP
+                    is PageItem.Launch -> RoutePresentation.APP
                     else -> RoutePresentation.PLUGIN_ACTIONS
                 }
                 if (next != null && next != section) blocks += ScreenBlock.Text("section:$next", next, TextRole.SECTION)
                 section = next
-                val sub = row.sub ?: when (row.item) {
-                    is PageItem.Confirm -> RoutePresentation.CONFIRM_SUB
-                    else -> null
-                }
-                blocks += rowBlock(index, row, sub)
+                blocks += rowBlock(index, row, row.sub)
             }
             if (tombstone != null && commands.none { it.index == frame.selected }) blocks += tombstone
             val action = when (selectedRow?.item) {
                 null, PageItem.Inert -> if (commands.size > 1) "swipe choose" else null
-                PageItem.RouteFullScreen, is PageItem.RouteDisplay, is PageItem.LaunchPrompt, is PageItem.Launch -> "swipe choose · tap open"
-                is PageItem.RouteView, is PageItem.Confirm, is PageItem.Invoke -> "swipe choose · tap choose"
-                is PageItem.Quick -> "swipe choose · tap run"
+                PageItem.RouteFullScreen, is PageItem.RouteDisplay, is PageItem.Launch -> "swipe choose · tap open"
+                is PageItem.RouteView -> "swipe choose · tap choose"
+                is PageItem.PluginAction, is PageItem.Invoke, is PageItem.Quick -> "swipe choose · tap run"
                 else -> null
             }
             val position = commands.indexOfFirst { it.index == frame.selected } + 1
@@ -1071,28 +1062,7 @@ internal class SessionScreens(
         else -> false
     }
 
-    /** [owner] is who will act: the page's plugin for a page action, the activity's for a command. */
-    private fun panel(panel: FramePanel, title: String, owner: String, statusText: String?): SessionScreen = when (panel) {
-        is FramePanel.Confirm -> confirmScreen(title, panel.label, owner, panel.selected, statusText)
-        is FramePanel.ConfirmCommand -> {
-            val name = pluginLabel(panel.ownerPluginId) ?: owner
-            confirmScreen(name, panel.label, name, panel.selected, statusText)
-        }
-        is FramePanel.Launch -> {
-            val name = pluginLabel(panel.pluginId) ?: panel.label
-            SessionScreen(
-                ScreenHeader(name.uppercase(), "back: cancel"),
-                listOf(
-                    ScreenBlock.Text("name", name, TextRole.TITLE, centered = true),
-                    ScreenBlock.Text("explain", LAUNCH_EXPLANATION, TextRole.CAPTION, centered = true),
-                    ScreenBlock.Row("open", OPEN, selected = panel.selected == FramePanel.OPEN, centered = true),
-                    ScreenBlock.Row("dismiss", CANCEL, selected = panel.selected == FramePanel.DISMISS, centered = true),
-                ),
-                ScreenHint("swipe choose · tap open", "back cancel"),
-                statusText,
-                if (panel.selected == FramePanel.OPEN) "open" else "dismiss",
-            )
-        }
+    private fun panel(panel: FramePanel, owner: String, statusText: String?): SessionScreen = when (panel) {
         // The hub's display page: the owner's island size, previewed on swipe, saved on tap (r17 3.8).
         is FramePanel.Display -> {
             val name = pluginLabel(panel.ownerPluginId) ?: owner
@@ -1112,19 +1082,6 @@ internal class SessionScreens(
             )
         }
     }
-
-    private fun confirmScreen(title: String, label: String, owner: String, selected: Int, statusText: String?) = SessionScreen(
-        ScreenHeader("${title.uppercase()} · CONFIRM", "back: cancel"),
-        listOf(
-            ScreenBlock.Text("question", "$label?", TextRole.TITLE, centered = true),
-            ScreenBlock.Text("explain", "$owner will do this.", TextRole.CAPTION, centered = true),
-            ScreenBlock.Row("cancel", CANCEL, selected = selected == FramePanel.CANCEL, centered = true),
-            ScreenBlock.Row("confirm", CONFIRM, selected = selected == FramePanel.CONFIRM, centered = true),
-        ),
-        ScreenHint("swipe choose · tap confirm", "back cancel"),
-        statusText,
-        if (selected == FramePanel.CANCEL) "cancel" else "confirm",
-    )
 
     /** A retained snapshot drawn while it is being revalidated: readable, never selectable. */
     private fun summaryOf(snapshot: Snapshot, frame: Frame, readable: Boolean): List<ScreenBlock> {
@@ -1195,14 +1152,10 @@ internal class SessionScreens(
         /** Retained text being read: a tap only reaches Retry and Back, it never retries by itself. */
         const val TAP_RETRY_BACK = "tap for Retry / Back"
         const val BACK = "Back"
-        const val CANCEL = "Cancel"
-        const val CONFIRM = "Confirm"
-        const val OPEN = "Open"
         const val COMMANDS = "COMMANDS"
 
         /** BACK from the rows of read text returns to the text before it leaves the page. */
         const val BACK_TO_TEXT = "back text"
-        const val LAUNCH_EXPLANATION = "Opens the app over the glasses screen. BACK leaves it."
 
         /** Command focus on a card (plan 028a §9). */
         const val FOCUS_HINT = "swipe choose · tap run"
