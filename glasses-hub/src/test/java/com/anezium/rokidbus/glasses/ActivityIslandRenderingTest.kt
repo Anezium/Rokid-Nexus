@@ -266,6 +266,25 @@ class ActivityIslandRenderingTest {
     }
 
     @Test
+    fun `a measure that shrinks mid-travel keeps the flare's title where it stands`() {
+        val longest = "Teardrop (Mad Professor remix) · Massive"
+        show(content(headline = longest, measure = "12345678"), ActivityPresentation.CHIP)
+        island.showFlare(urgent = false)
+        idle()
+        val line = find<OverflowLineView>(requireNotNull(island.currentForm)).single { it.isShown }
+        idle(OverflowScroll.HOLD_MS + 3_000)
+        val before = line.scrollX
+        assertTrue(before > 0)
+
+        island.render(item(content(headline = longest, measure = "9"), ActivityPresentation.CHIP), guidance = null)
+        idle()
+        assertTrue(line.scrolling)
+        val shrunk = line.overflowPx()
+        assertTrue("${line.scrollX} after $before, end $shrunk", line.scrollX >= minOf(before, shrunk) - 1)
+        assertTrue(line.scrollX <= shrunk)
+    }
+
+    @Test
     fun `a flare never outlives its bound, whatever its title still needs`() {
         assertEquals(0, ActivityOverlayRenderer.flareHoldMs(titleLeftMs = 0, nowMs = 1_000, foldByMs = 15_000))
         assertEquals(2_000, ActivityOverlayRenderer.flareHoldMs(titleLeftMs = 2_000, nowMs = 1_000, foldByMs = 15_000))

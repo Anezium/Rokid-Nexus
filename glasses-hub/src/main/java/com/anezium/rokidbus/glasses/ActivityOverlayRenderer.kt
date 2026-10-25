@@ -228,12 +228,17 @@ internal object ActivityOverlayRenderer {
         )
         island.bringToFront()
         island.showFlare(urgent = item.urgent)
-        val foldByMs = SystemClock.uptimeMillis() + MAX_FLARE_MS
         val collapse = object : Runnable {
+            // Fixed at the usual fold: one pass of the title as it stands then, and a little more.
+            private var foldByMs = Long.MAX_VALUE
+
             override fun run() {
                 if (generation != flareGeneration) return
                 // A title still crossing the flare is read to its end before the flare folds.
-                val hold = flareHoldMs(island.flareTitleLeftMs(), SystemClock.uptimeMillis(), foldByMs)
+                val now = SystemClock.uptimeMillis()
+                val left = island.flareTitleLeftMs()
+                if (foldByMs == Long.MAX_VALUE) foldByMs = now + left + FLARE_GRACE_MS
+                val hold = flareHoldMs(left, now, foldByMs)
                 if (hold > 0) {
                     main.postDelayed(this, hold)
                     return
@@ -823,8 +828,8 @@ internal object ActivityOverlayRenderer {
     private const val URGENT_BEAT_DP = 10
     private const val URGENT_BEAT_DELAY_MS = 380L
 
-    /** A flare's whole life, from shown to folded: one pass of the longest title with its measure. */
-    private const val MAX_FLARE_MS = 15_000L
+    /** What a flare may stay past its title's pass as first measured, for a measure that grew. */
+    private const val FLARE_GRACE_MS = 2_000L
     private const val GLYPH_DP = 48
     private const val PROGRESS_HEIGHT_DP = 4
     private const val PRIMARY_SP = ACTIVITY_PRIMARY_MAX_SP

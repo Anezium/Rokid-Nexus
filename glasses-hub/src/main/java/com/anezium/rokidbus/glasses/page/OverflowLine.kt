@@ -38,6 +38,27 @@ internal object OverflowScroll {
             else -> overflowPx
         }
     }
+
+    /**
+     * The elapsed time that keeps a line's place when its hidden part changes from [from] to
+     * [to] pixels: the same point of the hold, the same pixel of the travel, clamped at a nearer
+     * end, the rest of the end hold, and the passes already made.
+     */
+    fun rebase(elapsedMs: Long, from: Int, to: Int): Long {
+        if (from <= 0 || to <= 0 || from == to) return elapsedMs
+        val elapsed = elapsedMs.coerceAtLeast(0)
+        val passes = elapsed / cycleMs(from)
+        val t = elapsed % cycleMs(from)
+        val phase = when {
+            t < HOLD_MS -> t
+            t < HOLD_MS + travelMs(from) -> {
+                val offset = offsetAt(t, from)
+                if (offset >= to) HOLD_MS + travelMs(to) else HOLD_MS + offset * 1_000L / PX_PER_S
+            }
+            else -> HOLD_MS + travelMs(to) + (t - HOLD_MS - travelMs(from))
+        }
+        return passes * cycleMs(to) + phase
+    }
 }
 
 /**
@@ -122,6 +143,7 @@ internal class OverflowLineView(context: Context) : TextView(context) {
 
     private var startedAtMs = 0L
     private var startedText = ""
+    private var startedOverflow = 0
     private var startedContinuity: String? = null
     private var startedRoom = 0
     private var hiddenSinceStart = false
@@ -132,7 +154,7 @@ internal class OverflowLineView(context: Context) : TextView(context) {
                 stop()
                 return
             }
-            scrollTo(OverflowScroll.offsetAt(SystemClock.uptimeMillis() - startedAtMs, overflowPx()), 0)
+            scrollTo(offsetNow(), 0)
             postDelayed(this, OverflowScroll.FRAME_MS)
         }
     }
@@ -168,7 +190,21 @@ internal class OverflowLineView(context: Context) : TextView(context) {
         if (!scrolling) return 0
         val overflow = overflowPx()
         if (overflow <= 0) return 0
+        keepPlace(overflow, nowMs)
         return (startedAtMs + OverflowScroll.cycleMs(overflow) - nowMs).coerceAtLeast(0)
+    }
+
+    /** Where the line stands now, its place kept through a text that continues it ([continuity]). */
+    private fun offsetNow(nowMs: Long = SystemClock.uptimeMillis()): Int {
+        val overflow = overflowPx()
+        keepPlace(overflow, nowMs)
+        return OverflowScroll.offsetAt(nowMs - startedAtMs, overflow)
+    }
+
+    private fun keepPlace(overflow: Int, nowMs: Long) {
+        if (overflow == startedOverflow) return
+        startedAtMs = nowMs - OverflowScroll.rebase(nowMs - startedAtMs, startedOverflow, overflow)
+        startedOverflow = overflow
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
@@ -218,7 +254,7 @@ internal class OverflowLineView(context: Context) : TextView(context) {
      */
     override fun onPreDraw(): Boolean {
         val proceed = super.onPreDraw()
-        if (scrolling) scrollTo(OverflowScroll.offsetAt(SystemClock.uptimeMillis() - startedAtMs, overflowPx()), 0)
+        if (scrolling) scrollTo(offsetNow(), 0)
         return proceed
     }
 
@@ -249,6 +285,7 @@ internal class OverflowLineView(context: Context) : TextView(context) {
         startedText = value
         startedContinuity = continuity
         startedRoom = room
+        startedOverflow = overflowPx()
         // Laid out at its full width so the text past the line exists to scroll to.
         setHorizontallyScrolling(true)
         ellipsize = null
