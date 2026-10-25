@@ -2180,8 +2180,11 @@ template as the fallback. `ink` stays reserved, and there is no Ink page body.
   page already showed (marked `HANDED_OFF` if you like). The glasses keep their
   own bubble for it on that page until a revision carries such a message, so a
   revision you computed before recording the reply, or one bringing someone
-  else's message, does not make it vanish. A page answered later (the thread
-  opened again, a new registration of your plugin) shows only what you put in it.
+  else's message, does not make it vanish. Keep each `OURS` message you showed in
+  its place; you may give it another `id` (replacing your record of a reply with
+  the app's own copy), and the glasses never take it for a later reply in the same
+  words. A page answered later (the thread opened again, a new registration of your
+  plugin) shows only what you put in it.
 - `ConversationComposer(recipient, sendActionId, maxChars, replyable, ...)`
   offers the hub composer (Dictate, Type, Send). `sendActionId` must name one of
   the page's actions typed `NexusActionType.ComposeSend`, and no row may target

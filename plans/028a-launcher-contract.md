@@ -314,7 +314,10 @@ tap (draft, back to reading, nothing sent) or Back (cancelled, old draft kept). 
 focus and the fresh-contact rule. Results: `done` -> bubble `handed to the app`, draft cleared;
 the sent text stays on the frame it was sent from, through revisions computed before the provider
 recorded it or bringing other messages, until that page carries it (an ours message with the same
-text after the newest message shown when it was sent, one per reply); it ends with that frame, an
+text after the newest message shown when it was sent, one per reply; ours messages already in that
+text when it was sent may take another id in their place, so the newest message shown is the
+newest of the others and the first messages in that text after it stand for those earlier ones,
+never for the new reply); it ends with that frame, an
 answer from another provider registration, or the owner's purge or invalidation, and a page
 answered later says what the provider knows;
 `authority_lost` code or the composer's `replyable=false` -> text kept, Send withheld,
