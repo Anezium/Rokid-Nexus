@@ -88,7 +88,8 @@ public class RenderedMapJourneyFeedbackTest {
             },
             task -> { main.post(task); return Unit.INSTANCE; }, () -> Unit.INSTANCE,
             Executors.newSingleThreadExecutor(), SystemClock::elapsedRealtime, System::currentTimeMillis,
-            (key, body, line) -> { throw new AssertionError("The pending cancelled response must not be decoded"); });
+            (key, body, line) -> { throw new AssertionError("The pending cancelled response must not be decoded"); },
+            message -> Unit.INSTANCE);
         ReflectionHelpers.setField(journey, "tracker", tracker);
         ReflectionHelpers.setField(journey, "basemap", loader);
         NavControl.INSTANCE.setMapDemandListener(ReflectionHelpers.getField(journey, "mapDemand"));
