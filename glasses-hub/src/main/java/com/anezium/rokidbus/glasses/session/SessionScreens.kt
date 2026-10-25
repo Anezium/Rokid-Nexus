@@ -955,12 +955,15 @@ internal class SessionScreens(
             ?.takeIf { it.generation == identity.sessionGeneration && it.frameIndex == identity.frameIndex && it.pageId == frame.pageId }
         val view = ComposerRules.view(owner, body, facts.draft, facts.micUnavailable, facts.pendingSend)
         val draft = view?.threadDraft
-        val sending = facts.pendingSend?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey } != null
+        val pending = facts.pendingSend?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey }
+        val sending = pending != null
         val drawn = bubbles(body.messages).toMutableList()
-        facts.handoff?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey && it.revision == status.revision }?.let {
+        // The reply just sent stays on screen through every revision until its page shows it.
+        facts.handoff?.takeIf { it.ownerPluginId == owner && it.threadKey == body.threadKey && status.revision >= it.revision }?.let {
             drawn += Bubble(HANDOFF_BUBBLE, BubbleSide.RIGHT, it.text, meta = HANDED_TO_APP)
         }
-        if (draft != null && capture == null) {
+        val carried = pending != null && ComposerRules.carries(body, pending.text, pending.shownIds)
+        if (draft != null && capture == null && !carried) {
             val meta = when {
                 sending -> PENDING
                 draft.state == DraftState.READY -> DRAFT_NOT_SENT

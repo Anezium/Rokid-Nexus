@@ -312,6 +312,9 @@ ready draft for this thread exists; Type after an unconfirmed send or an unavail
 Step along the inline buttons (no wrap) -> Enter starts the capture or sends -> capture ends on
 tap (draft, back to reading, nothing sent) or Back (cancelled, old draft kept). Send needs a new
 focus and the fresh-contact rule. Results: `done` -> bubble `handed to the app`, draft cleared;
+the sent text stays on the thread's page through every revision, also one computed before the
+provider recorded it, until a revision shows a message id the sent-from revision did not show
+(the reply as ours, or anything newer), and the provider's page then says what it knows;
 `authority_lost` code or the composer's `replyable=false` -> text kept, Send withheld,
 `Reply unavailable here`; `stale` -> draft kept, new Send needed after the new revision is shown;
 no result in time -> `unconfirmed · check on the phone`, text kept, next focus on Type; never an

@@ -10,6 +10,7 @@ import com.anezium.rokidbus.shared.ComposeTypeDone
 import com.anezium.rokidbus.shared.ComposeTypeText
 import com.anezium.rokidbus.shared.ConversationComposer
 import com.anezium.rokidbus.shared.ConversationMessage
+import com.anezium.rokidbus.shared.ConversationMessageStatus
 import com.anezium.rokidbus.shared.ConversationRole
 import com.anezium.rokidbus.shared.PageActionType
 import com.anezium.rokidbus.shared.PageActionTypeContract
@@ -146,7 +147,7 @@ class ComposerSessionTest {
         send(SessionEvent.PageResult(JSONObject().put("invocationId", action.invocationId).put("status", "done"), 5_500))
         assertNull(model.draft)
         assertNull(model.pendingSend)
-        assertEquals(Handoff("relay", "t1", "see you", 1), model.handoff)
+        assertEquals(Handoff("relay", "t1", "see you", 1, setOf("m1", "m2", "m3")), model.handoff)
         assertEquals(HistoryState.HANDED_OFF, model.history.entries.single().state)
         assertNull(top().outcome)
         val bubble = conversationBlock().bubbles.single { it.key == SessionScreens.HANDOFF_BUBBLE }
@@ -158,6 +159,52 @@ class ComposerSessionTest {
         val drawn = screen().blocks.first() as ScreenBlock.Card
         assertEquals("RELAY · ${SessionScreens.REPLY_HANDED_OFF}", drawn.label)
         assertEquals(SessionScreens.HANDED_OFF_UNCONFIRMED, drawn.tertiary)
+    }
+
+    @Test
+    fun `the reply just sent stays on screen through every revision until its page shows it`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        val action = sendDraft(at = 5_000)
+        assertEquals(listOf(SessionScreens.PENDING), sentBubbles("see you"))
+
+        // A revision the provider computed before it recorded the reply: still sending.
+        respond(requestOf(), conversation("t1"), revision = 2, now = 5_300)
+        assertEquals(listOf(SessionScreens.PENDING), sentBubbles("see you"))
+
+        send(SessionEvent.PageResult(JSONObject().put("invocationId", action.invocationId).put("status", "done"), 5_500))
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+
+        // Another such revision lands after the result: the reply does not blink out.
+        respond(requestOf(), conversation("t1"), revision = 3, now = 5_700)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+        assertEquals(3L, (top().status as FrameStatus.Shown).revision)
+
+        // The revision carrying it takes over: one bubble, the provider's.
+        respond(requestOf(), withReply("t1", "h-1", "see you"), revision = 4, now = 5_900)
+        assertEquals(listOf(SessionScreens.HANDED_TO_APP), sentBubbles("see you"))
+        assertTrue(conversationBlock().bubbles.none { it.key == SessionScreens.HANDOFF_BUBBLE })
+        assertNull(model.handoff)
+
+        // Once taken over it never comes back, even when the page no longer shows the reply.
+        respond(requestOf(), conversation("t1"), revision = 5, now = 6_100)
+        assertTrue(sentBubbles("see you").isEmpty())
+    }
+
+    @Test
+    fun `a revision carrying the reply before its result shows it once`() {
+        openThread("t1", at = 1_000)
+        dictate("j'arrive", at = 3_000)
+        val action = sendDraft(at = 5_000)
+        // The same words were already ours on the page: only a new message of ours is the reply.
+        assertEquals(listOf(null, SessionScreens.PENDING), sentBubbles("j'arrive"))
+
+        respond(requestOf(), withReply("t1", "h-1", " j'arrive "), revision = 2, now = 5_300)
+        assertEquals(listOf(null, SessionScreens.HANDED_TO_APP), sentBubbles("j'arrive"))
+
+        send(SessionEvent.PageResult(JSONObject().put("invocationId", action.invocationId).put("status", "done"), 5_500))
+        assertNull(model.handoff)
+        assertEquals(listOf(null, SessionScreens.HANDED_TO_APP), sentBubbles("j'arrive"))
     }
 
     @Test
@@ -755,6 +802,14 @@ class ComposerSessionTest {
         caption = "captured 14:02",
         composer = ConversationComposer(recipient, "send", 500, replyable),
     )
+
+    /** The thread's page in a revision that carries a reply of ours, as its provider recorded it. */
+    private fun withReply(thread: String, id: String, text: String) = conversation(thread).let {
+        it.copy(messages = it.messages + ConversationMessage(id, ConversationRole.OURS, text, status = ConversationMessageStatus.HANDED_OFF))
+    }
+
+    /** The meta line of each bubble saying [text], in order. */
+    private fun sentBubbles(text: String): List<String?> = conversationBlock().bubbles.filter { it.text.trim() == text }.map { it.meta }
 
     private val sendAction: JSONObject
         get() = JSONObject().put("id", "send").put("label", "Send").put("kind", "plugin").put("confirm", false)

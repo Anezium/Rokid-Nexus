@@ -70,7 +70,9 @@ This section supersedes the status paragraphs above, which are kept as history.
   Media Deck no longer marks a new track or player as a significant update, so what plays stays
   below a running route (`MediaDeckActivityPublisherTest`; the hub's order rule is unchanged);
   a one-to-one conversation card no longer repeats its sender before each line, a group card
-  keeps its senders (`ComposerSessionTest`).
+  keeps its senders (`ComposerSessionTest`); the reply just sent no longer blinks out when a
+  revision computed before Relay recorded it lands after the result: the glasses keep it until
+  a revision shows a message the sent-from revision did not (`ComposerSessionTest`).
 - **What the tests prove, and what they do not.** Component tests (reducer, router, Relay with a
   fake hub) cover each fix above and were each observed to fail with the fix reverted. Production
   session-runtime tests (real `NexusSession`, real wall clock, the runner's own timer, a real

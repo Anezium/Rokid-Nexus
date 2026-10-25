@@ -1224,7 +1224,7 @@ internal class SessionReducer(
                 base.copy(
                     draft = DraftStore.handedOff(model.draft, send),
                     history = history,
-                    handoff = revision?.let { Handoff(send.ownerPluginId, send.threadKey, send.text, it) },
+                    handoff = (send.revision ?: revision)?.let { Handoff(send.ownerPluginId, send.threadKey, send.text, it, send.shownIds) },
                     state = model.state.mapRootStops { RootStops.withHistory(it, history, wallClock()) },
                 )
             }
@@ -1730,7 +1730,10 @@ internal class SessionReducer(
         val cleared = state.withTop(top.copy(composerFocus = null))
         val sent = invoke(model.copy(state = cleared), cleared, status, composer.sendActionId, nowMs, PageSurfaceContract.MODE_COMPOSE, draft.text)
         val invocationId = (sent.model.state as? SessionState.InPage)?.frames?.last()?.invocation?.invocationId ?: return keep(model)
-        return sent.copy(model = sent.model.copy(pendingSend = PendingSend(invocationId, draft.ownerPluginId, draft.threadKey, draft.text)))
+        val pending = PendingSend(
+            invocationId, draft.ownerPluginId, draft.threadKey, draft.text, status.revision, ComposerRules.messageIds(body),
+        )
+        return sent.copy(model = sent.model.copy(pendingSend = pending))
     }
 
     /**
@@ -1787,8 +1790,9 @@ internal class SessionReducer(
      * replyable conversation frame with the link up, and is cancelled at the phone as soon as it
      * does not (the earlier draft stays); a finished one whose text never came is given up. A send
      * whose frame stopped waiting for it will never hear its result here: its draft is unconfirmed.
-     * A page saying its thread cannot be replied to takes its draft's authority. A focused button
-     * that is gone returns the frame to reading.
+     * A page saying its thread cannot be replied to takes its draft's authority. A handed-off reply
+     * leaves its thread's page once that page shows a message it did not show when the reply was
+     * sent. A focused button that is gone returns the frame to reading.
      */
     private fun settleComposer(transition: SessionTransition, event: SessionEvent): SessionTransition {
         var after = transition.model
@@ -1811,6 +1815,13 @@ internal class SessionReducer(
         val page = after.state as? SessionState.InPage
         val top = page?.frames?.last()
         val conversation = top?.shownConversation()
+        after.handoff?.let { handoff ->
+            val (owner, body) = conversation ?: return@let
+            // Its page took over: it shows the reply, or has moved on without it.
+            if (owner == handoff.ownerPluginId && body.threadKey == handoff.threadKey && ComposerRules.movedOn(body, handoff.shownIds)) {
+                after = after.copy(handoff = null)
+            }
+        }
         val draft = after.draft
         if (conversation != null && draft != null) {
             val (owner, body) = conversation

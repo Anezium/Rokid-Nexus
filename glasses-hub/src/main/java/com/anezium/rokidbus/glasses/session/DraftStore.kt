@@ -31,19 +31,32 @@ internal data class Draft(
         this.ownerPluginId == ownerPluginId && this.threadKey == threadKey
 }
 
-/** One compose send awaiting its result; the text is the draft's as it was sent. */
+/**
+ * One compose send awaiting its result; the text is the draft's as it was sent, from [revision]
+ * of its thread's page, which showed the messages [shownIds].
+ */
 internal data class PendingSend(
     val invocationId: String,
     val ownerPluginId: String,
     val threadKey: String,
     val text: String,
+    val revision: Long? = null,
+    val shownIds: Set<String> = emptySet(),
 )
 
 /**
- * A reply handed to its app, shown on its thread's page until the page shows a newer revision
- * than the one it was sent from (the provider's page then says what it knows).
+ * A reply handed to its app, shown on its thread's page from the [revision] it was sent from
+ * until the page shows a message that revision did not ([shownIds]): the reply itself, or anything
+ * newer, and the provider's page then says what it knows. A newer revision computed before the
+ * provider recorded the reply shows neither, and the reply stays on screen through it.
  */
-internal data class Handoff(val ownerPluginId: String, val threadKey: String, val text: String, val revision: Long)
+internal data class Handoff(
+    val ownerPluginId: String,
+    val threadKey: String,
+    val text: String,
+    val revision: Long,
+    val shownIds: Set<String> = emptySet(),
+)
 
 /**
  * The draft's rules, apart from the reducer that applies them. The draft is replaced only when a

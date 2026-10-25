@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.shared.ComposeContract
+import com.anezium.rokidbus.shared.ConversationRole
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageDestination
 
@@ -108,6 +109,25 @@ internal object ComposerRules {
         check(ComposeContract.isValidCaptureId(id)) { "capture id out of contract" }
         return id
     }
+
+    /** The message ids a reply sent from [body] remembers, to tell what a later revision adds. */
+    fun messageIds(body: PageBody.Conversation): Set<String> = body.messages.mapTo(LinkedHashSet()) { it.id }
+
+    /** Whether [body] shows a message that the revision showing [shownIds] did not. */
+    fun movedOn(body: PageBody.Conversation, shownIds: Set<String>): Boolean = body.messages.any { it.id !in shownIds }
+
+    /**
+     * Whether [body] shows [text] as one of our messages that the revision showing [shownIds] did
+     * not: the provider's page now carries the reply. Spacing is the provider's to change.
+     */
+    fun carries(body: PageBody.Conversation, text: String, shownIds: Set<String>): Boolean {
+        val said = normalized(text)
+        return body.messages.any { it.id !in shownIds && it.role == ConversationRole.OURS && normalized(it.text) == said }
+    }
+
+    private fun normalized(text: String): String = text.trim().replace(WHITESPACE, " ")
+
+    private val WHITESPACE = Regex("\\s+")
 
     /** The phone keyboard's ceiling: the page composer's, within the contract's. */
     fun maxChars(body: PageBody.Conversation): Int =
