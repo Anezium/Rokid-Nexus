@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.plugin.nav
 
+import android.os.Handler
+import android.os.Looper
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -14,10 +16,12 @@ import android.util.Log
  * posted.
  */
 class NavNotificationListener : NotificationListenerService() {
+    private val main = Handler(Looper.getMainLooper())
     private val runtime by lazy { NavRuntime(applicationContext) }
     private val citymapper = CitymapperParser()
     private val guidanceKeys = mutableMapOf<NavSource, String>()
     private var activeSource: NavSource? = null
+    private var unreadableEnd: Runnable? = null
 
     override fun onListenerConnected() {
         super.onListenerConnected()
@@ -32,6 +36,7 @@ class NavNotificationListener : NotificationListenerService() {
     // The runtime ends its route while it is still the attached one; detached first, it would no
     // longer own the activity it has to end.
     override fun onListenerDisconnected() {
+        cancelUnreadableEnd()
         runtime.shutdown()
         NavControl.detach(this)
         NavState.listenerConnected = false
@@ -42,6 +47,7 @@ class NavNotificationListener : NotificationListenerService() {
     }
 
     override fun onDestroy() {
+        cancelUnreadableEnd()
         runtime.shutdown()
         NavControl.detach(this)
         NavState.listenerConnected = false
@@ -75,6 +81,7 @@ class NavNotificationListener : NotificationListenerService() {
      * picked up again from what the enabled apps have posted now.
      */
     internal fun resumeNotifications() {
+        cancelUnreadableEnd()
         guidanceKeys.clear()
         activeSource = null
         citymapper.reset()
@@ -86,11 +93,29 @@ class NavNotificationListener : NotificationListenerService() {
         if (source == NavSource.CITYMAPPER) citymapper.reset()
         runtime.onRouteEnded(source)
         if (activeSource == source) {
+            cancelUnreadableEnd()
             activeSource = null
             // The other app may still be guiding; it takes the route over now
             // rather than whenever it next happens to post.
             if (rescan) scanActive()
         }
+    }
+
+    private fun deferUnreadableEnd(source: NavSource) {
+        // Rewrites and reroutes can briefly lose readable text. Repeated unreadable
+        // posts must not extend the time we keep the last instruction.
+        if (unreadableEnd != null) return
+        val task = Runnable {
+            unreadableEnd = null
+            endRoute(source)
+        }
+        unreadableEnd = task
+        main.postDelayed(task, UNREADABLE_GRACE_MS)
+    }
+
+    private fun cancelUnreadableEnd() {
+        unreadableEnd?.let(main::removeCallbacks)
+        unreadableEnd = null
     }
 
     private fun scanActive() {
@@ -125,15 +150,10 @@ class NavNotificationListener : NotificationListenerService() {
         }
         if (guidance == null) {
             Log.i(TAG, "unreadable source=$source category=${notification.category} channel=${notification.channelId}")
-            // The route's own notification turned into something this version
-            // cannot read: show nothing rather than keep a step that is gone.
-            if (guidanceKeys[source] == sbn.key) {
-                guidanceKeys.remove(source)
-                runtime.onRouteEnded(source)
-                if (activeSource == source) activeSource = null
-            }
+            if (guidanceKeys[source] == sbn.key) deferUnreadableEnd(source)
             return
         }
+        cancelUnreadableEnd()
         guidanceKeys[source] = sbn.key
         activeSource = source
         runtime.onGuidance(guidance)
@@ -141,5 +161,6 @@ class NavNotificationListener : NotificationListenerService() {
 
     private companion object {
         const val TAG = "NexusNav"
+        const val UNREADABLE_GRACE_MS = 3_000L
     }
 }
