@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.anezium.rokidbus.shared.AmbientPreferencesContract
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -49,12 +50,27 @@ class PhoneActivityPreferences(private val storage: PluginGrantStorage) {
     @Synchronized
     fun setPinned(key: PluginGrantKey, pinned: Boolean) = edit(key) { it.copy(pinned = pinned) }
 
+    /**
+     * Keeps [key]'s island and pin off the glasses, or lets them back. Refused (false) when
+     * [canKeepOffGlasses] says there is no room: the glasses' policy names at most
+     * [AmbientPreferencesContract.MAX_HIDDEN_OWNERS] plugins, and a choice it cannot carry must be
+     * refused here rather than dropped from the policy while the switch still says off.
+     */
     @Synchronized
-    fun setFloating(key: PluginGrantKey, floating: Boolean) = edit(key) { it.copy(floating = floating) }
+    fun setFloating(key: PluginGrantKey, floating: Boolean): Boolean {
+        if (!floating && !canKeepOffGlasses(key)) return false
+        edit(key) { it.copy(floating = floating) }
+        return true
+    }
 
     /** The plugins whose island and pin the user keeps off the glasses. */
     @Synchronized
     fun keptOffGlasses(): Set<PluginGrantKey> = entries().filterValues { !it.floating }.keys
+
+    /** True when [key] is already kept off, or the other plugins kept off leave room for it. */
+    @Synchronized
+    fun canKeepOffGlasses(key: PluginGrantKey): Boolean =
+        (keptOffGlasses() - key).size < AmbientPreferencesContract.MAX_HIDDEN_OWNERS
 
     /** True when [key] had choices to drop. */
     @Synchronized

@@ -166,8 +166,8 @@ internal class PhoneAmbientSync(
     @Synchronized
     fun pushPolicy() {
         if (!launcherActive()) return
-        // One per approved plugin, so the cap is never reached in practice; it keeps the wire valid.
-        val hidden = hiddenOwners().sorted().take(AmbientPreferencesContract.MAX_HIDDEN_OWNERS).toSet()
+        // Within the wire's bound: PhoneActivityPreferences refuses to keep one more plugin off.
+        val hidden = hiddenOwners()
         val policy = AmbientPolicy(revision.incrementAndGet(), store.modes(), hidden)
         val error = send(AmbientPreferencesContract.POLICY_PATH, AmbientPreferencesContract.policyPayload(policy))
         log(

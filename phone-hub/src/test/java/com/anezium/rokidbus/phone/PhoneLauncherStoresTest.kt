@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import android.content.ComponentName
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
+import com.anezium.rokidbus.shared.AmbientPreferencesContract
 import com.anezium.rokidbus.shared.QuickActionFamily
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
@@ -127,6 +128,48 @@ class PhoneLauncherStoresTest {
         preferences.setFloating(other, false)
         assertEquals(setOf(other), preferences.retainOnly(emptySet()))
         assertTrue(preferences.preferenceFor(other).floating)
+    }
+
+    @Test
+    fun `a plugin past the most the glasses policy names is refused, never one already kept off`() {
+        val storage = MemoryStorage()
+        val preferences = PhoneActivityPreferences(storage)
+        fun key(id: String) = PluginGrantKey("dev.example.$id", id, "digest-$id")
+        val kept = (1..AmbientPreferencesContract.MAX_HIDDEN_OWNERS).map { key("plugin%02d".format(it)) }
+        kept.forEach { assertTrue(it.pluginId, preferences.setFloating(it, false)) }
+        val first = key("aaa")
+        val last = key("zzz")
+
+        // Refused whether it would sort before or after the others in the policy.
+        for (extra in listOf(first, last)) {
+            assertFalse(preferences.canKeepOffGlasses(extra))
+            assertFalse(preferences.setFloating(extra, false))
+            assertTrue(preferences.preferenceFor(extra).floating)
+        }
+        assertEquals(kept.toSet(), PhoneActivityPreferences(storage).keptOffGlasses())
+        val sent = mutableListOf<JSONObject>()
+        PhoneAmbientSync(
+            store = PhoneAmbientPreferencesStore(MemoryStorage()),
+            send = { _, payload -> sent += payload; null },
+            launcherActive = { true },
+            log = {},
+            hiddenOwners = { preferences.keptOffGlasses().mapTo(linkedSetOf()) { it.pluginId } },
+        ).pushPolicy()
+        assertEquals(
+            kept.mapTo(linkedSetOf()) { it.pluginId },
+            AmbientPreferencesContract.parsePolicy(sent.single())!!.hiddenOwners,
+        )
+
+        // One already off, or one going back on, always fits.
+        assertTrue(preferences.setFloating(kept.last(), false))
+        assertTrue(preferences.setFloating(kept.first(), true))
+        assertTrue(preferences.setFloating(first, false))
+        assertFalse(preferences.setFloating(last, false))
+        assertTrue(preferences.purge(kept[1]))
+        assertTrue(preferences.setFloating(last, false))
+        assertFalse(preferences.canKeepOffGlasses(kept.first()))
+        assertEquals(setOf(kept[2]), preferences.retainOnly(preferences.keptOffGlasses() - kept[2]))
+        assertTrue(preferences.canKeepOffGlasses(kept.first()))
     }
 
     @Test
