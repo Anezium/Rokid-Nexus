@@ -134,7 +134,7 @@ internal object ActivityOverlayRenderer {
         }
 
         val guidances = visible.associate { it.activity.surfaceId to guidanceOf(it) }
-        val budgets = foldedWidthBudgets(activeService, visible, guidances)
+        val budgets = foldedWidthBudgets(activeService, visible, guidances, PinController.presentablePin())
         var pendingFlare: Pair<ActivityRenderItem, ActivityIsland>? = null
         visible.forEach { item ->
             val island = nodes[item.activity.surfaceId] ?: ActivityIsland(activeService).also {
@@ -205,17 +205,16 @@ internal object ActivityOverlayRenderer {
 
     /**
      * Each island has a window-wide frame and places its forms by gravity, so none knows what its
-     * row's other corner takes: the widths are decided here, from what will be drawn.
+     * row's other corner takes: the widths are decided here, from what will be drawn, [pin] included.
      */
-    private fun foldedWidthBudgets(
+    internal fun foldedWidthBudgets(
         context: Context,
         visible: List<ActivityRenderItem>,
         guidances: Map<String, GuidanceIsland?>,
+        pin: NexusPinSurface?,
     ): Map<PinSurfacePosition, Int> {
         val occupants = mutableMapOf<PinSurfacePosition, Int?>()
-        PinController.presentablePin()?.let { pin ->
-            occupants[pin.content.position] = PinOverlayRenderer.drawnWidthPx(context, pin)
-        }
+        pin?.let { occupants[it.content.position] = PinOverlayRenderer.drawnWidthPx(context, it) }
         visible.forEach { item -> occupants[item.activity.corner] = guidances[item.activity.surfaceId]?.form?.widthPx }
         return rowBudgets(context.resources.displayMetrics.widthPixels, dp(context, EDGE_MARGIN_DP), occupants)
     }
