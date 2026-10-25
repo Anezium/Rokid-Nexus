@@ -22,6 +22,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
@@ -69,11 +70,11 @@ class ActivityIslandRenderingTest {
 
     @Test
     fun `folded without a measure it is the glyph beside the title over the secondary and nothing under`() {
-        show(content(headline = headline, secondary = "Massive Attack · Paused"), ActivityPresentation.CHIP)
+        show(content(headline = headline, secondary = "Paused · Massive Attack"), ActivityPresentation.CHIP)
 
         val compact = island.folded as ActivityOverlayRenderer.ActivityCompactView
         assertSame(compact, island.currentForm)
-        assertEquals(listOf(headline, "Massive Attack · Paused"), shownTexts(compact))
+        assertEquals(listOf(headline, "Paused · Massive Attack"), shownTexts(compact))
         val glyph = rectOf(compact, compact.glyph)
         val title = rectOf(compact, compact.title)
         val secondary = rectOf(compact, compact.secondary)
@@ -126,6 +127,28 @@ class ActivityIslandRenderingTest {
         val glyph = rectOf(compact, compact.glyph)
         val title = rectOf(compact, compact.title)
         assertTrue(title.top > glyph.top && title.bottom < glyph.bottom)
+    }
+
+    @Test
+    fun `folded, a byline too long for its line keeps the playback state that opens it, at any font scale`() {
+        try {
+            for (fontScale in listOf(1f, 1.5f)) {
+                RuntimeEnvironment.setFontScale(fontScale)
+                val compact = ActivityOverlayRenderer.ActivityCompactView(controller.get())
+                controller.get().setContentView(compact)
+                // Media Deck's longest bylines, for an artist called "Someone With A Long Band Name".
+                for ((state, byline) in listOf("Paused" to "Paused · Someone With A Lon…", "Stopped" to "Stopped · Someone With A Lo…")) {
+                    compact.render(headline, byline, GlyphDrawable(DISC))
+                    idle()
+                    assertEquals(288, compact.secondary.width)
+                    val layout = requireNotNull(compact.secondary.layout)
+                    assertTrue("the byline is cut at font scale $fontScale", layout.getEllipsisCount(0) > 0)
+                    assertTrue("$state is drawn whole at font scale $fontScale", layout.getEllipsisStart(0) >= state.length)
+                }
+            }
+        } finally {
+            RuntimeEnvironment.setFontScale(1f)
+        }
     }
 
     @Test

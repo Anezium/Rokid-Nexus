@@ -148,13 +148,13 @@ class MediaDeckActivityPublisherTest {
         val activity = port.activities.single()
         assertEquals(NexusActionType.MediaPlay, activity.actions[1].typed)
         assertEquals(activity.actions[1].id, activity.defaultActionId)
-        assertEquals("Player · Paused", activity.secondary)
+        assertEquals("Paused · Player", activity.secondary)
         // Its own mark, never a pause mark beside the glasses' media pill.
         assertEquals(MediaDeckActivityModel.GLYPH, activity.glyph)
     }
 
     @Test
-    fun `the headline is the title on one printable line of 40 and the state note keeps its room`() {
+    fun `the headline is the title on one printable line of 40 and the state note comes first in its room`() {
         fun activity(title: String, artist: String, phase: MediaPlaybackPhase) = requireNotNull(
             MediaDeckActivityModel.activity(MediaDeckState.Active(1, SESSION_B, track(title = title, artist = artist), phase, sessionChanged = false)),
         )
@@ -162,12 +162,12 @@ class MediaDeckActivityPublisherTest {
         assertEquals("A Very Long Title That Keeps On Going P…", long.headline)
         assertEquals(ActivitySurfaceContract.MAX_HEADLINE_CHARS, long.headline!!.length)
         assertEquals("A Very Long…", long.primary)
-        assertEquals("Someone With A Lon… · Paused", long.secondary)
+        assertEquals("Paused · Someone With A Lon…", long.secondary)
         assertTrue(long.secondary!!.length <= ActivitySurfaceContract.MAX_SECONDARY_CHARS)
 
         val controls = activity("Line\none\u0000two\tthree", "", MediaPlaybackPhase.STOPPED)
         assertEquals("Line one two three", controls.headline)
-        assertEquals("Player · Stopped", controls.secondary)
+        assertEquals("Stopped · Player", controls.secondary)
         assertEquals(MediaDeckActivityModel.GLYPH, controls.glyph)
 
         // The glyph is a mark Media Deck declares, so the glasses draw it rather than a dot.

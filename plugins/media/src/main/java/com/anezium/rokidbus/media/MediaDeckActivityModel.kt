@@ -114,7 +114,7 @@ internal object MediaDeckActivityModel {
         return NexusActivity(
             glyph = GLYPH,
             primary = MediaText.ellipsize(active.track.title, ActivitySurfaceContract.MAX_PRIMARY_CHARS),
-            secondary = listOfNotNull(MediaText.ellipsize(byline, room).takeIf(String::isNotBlank), note)
+            secondary = listOfNotNull(note, MediaText.ellipsize(byline, room).takeIf(String::isNotBlank))
                 .joinToString(NOTE_SEPARATOR)
                 .takeIf(String::isNotBlank),
             headline = MediaText.ellipsize(MediaText.printable(active.track.title), ActivitySurfaceContract.MAX_HEADLINE_CHARS),
@@ -126,7 +126,11 @@ internal object MediaDeckActivityModel {
         )
     }
 
-    /** What the second line adds while nothing plays; nothing while it does. */
+    /**
+     * What the second line starts with while nothing plays; nothing while it does. It is the
+     * activity's only playback state, so it comes first: a line too narrow on the glasses cuts
+     * the artist, never the state.
+     */
     private fun noteOf(phase: MediaPlaybackPhase): String? = when (phase) {
         MediaPlaybackPhase.PLAYING -> null
         MediaPlaybackPhase.PAUSED -> "Paused"
