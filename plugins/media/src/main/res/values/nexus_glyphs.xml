@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  "disc" is Media Deck's own mark (the geometry of its launcher icon), drawn by the
+  glasses beside the activity. It never says playing or paused: the glasses' own media
+  pill already does, and the activity says paused in words.
+-->
+<resources>
+    <string-array name="nexus_glyphs">
+        <item>disc|M3,12 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0 M9.5,12 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0</item>
+    </string-array>
+</resources>

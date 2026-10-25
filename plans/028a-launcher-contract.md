@@ -63,6 +63,11 @@ grants). Plugin opt-ins are descriptor metadata keys, ignored by older parsers.
 - `persistence`: `"session" | "ongoing"`, default `session`. `ongoing` declares a user-enabled
   standing entry (the plugin's own "Show in activities" setting is on): it survives owner
   disconnect as an inert offline snapshot (section 1.4).
+- `headline`: String, at most `MAX_HEADLINE_CHARS` (40), no ISO control character: the longer
+  form of `primary` (12, unchanged and still required) for the surfaces with room. The glasses
+  draw `headline ?: primary` on the card and in every island form, scrolling it in place when it
+  does not fit; a v1 pair never receives it. Presentation only: it does not count as an
+  interactive field for the id rule below.
 - Each action gains optional `typed` (section 3.1). Allowed for activities: `media.previous`,
   `media.play`, `media.pause`, `media.next`. Any other typed value on an activity action is
   `INVALID_ACTIVITY`.

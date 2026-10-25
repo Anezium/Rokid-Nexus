@@ -1088,9 +1088,14 @@ data class NexusActivityTrack(
  * the first action.
  * @property persistence Launcher bundle: [NexusActivityPersistence.ONGOING] only
  * while the user enabled this activity in the plugin's own settings.
+ * @property headline Launcher bundle: the longer form of [primary], at most 40
+ * printable characters, drawn where there is room for it (the launcher card,
+ * the island) and scrolled there when it is still too wide. [primary] stays
+ * required and is what every other surface, and every older hub, draws.
  *
- * Using any launcher-bundle field (or a typed action) also requires every action
- * id to be a safe id (printable ASCII without spaces, at most 128) and unique.
+ * Using a launcher-bundle field other than [headline] (or a typed action) also
+ * requires every action id to be a safe id (printable ASCII without spaces,
+ * at most 128) and unique. [headline] alone is presentation only.
  * Without [NexusPluginClient.supportsLauncherInteractive] these fields are
  * dropped before sending and the activity is an ordinary one.
  */
@@ -1111,6 +1116,7 @@ data class NexusActivity(
     val activation: NexusActivityActivation? = null,
     val defaultActionId: String? = null,
     val persistence: NexusActivityPersistence = NexusActivityPersistence.SESSION,
+    val headline: String? = null,
 ) {
     init {
         require(activation != NexusActivityActivation.DESTINATION || destination != null) {
@@ -1143,6 +1149,10 @@ data class NexusActivity(
         require(actions.size <= ActivitySurfaceContract.MAX_ACTIONS)
         require(badge == null || badge.trim().length <= ActivitySurfaceContract.MAX_BADGE_CHARS)
         require(measure == null || measure.trim().length <= ActivitySurfaceContract.MAX_MEASURE_CHARS)
+        require(
+            headline == null ||
+                headline.trim().let { it.length <= ActivitySurfaceContract.MAX_HEADLINE_CHARS && it.none(Char::isISOControl) },
+        ) { "headline must be at most ${ActivitySurfaceContract.MAX_HEADLINE_CHARS} printable characters" }
     }
 
     internal fun toStartPayload(): JSONObject = ActivitySurfaceContract.toPayload(
@@ -1179,5 +1189,6 @@ data class NexusActivity(
         activation = activation?.contract,
         defaultActionId = defaultActionId,
         persistence = persistence.contract,
+        headline = headline?.trim()?.takeIf { it.isNotEmpty() },
     )
 }

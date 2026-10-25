@@ -31,7 +31,7 @@ import com.anezium.rokidbus.glasses.session.HistoryEntry
 import com.anezium.rokidbus.glasses.session.HostScreen
 import com.anezium.rokidbus.glasses.page.SessionScreenView
 import com.anezium.rokidbus.glasses.session.ActivityFeed
-import com.anezium.rokidbus.glasses.session.ActivitySource
+import com.anezium.rokidbus.glasses.session.activitySourceOf
 import com.anezium.rokidbus.glasses.session.AppEntry
 import com.anezium.rokidbus.glasses.session.AppKind
 import com.anezium.rokidbus.glasses.session.FrameStatus
@@ -1766,53 +1766,12 @@ internal object NexusSession {
         onActivities(latestActivities)
     }
 
-    /**
-     * The whole collection reaches the session, offline entries included. The launcher-bundle
-     * fields are read only over a pair that negotiated it; a v1 pair gets v1 cards. Through a link
-     * loss the cards keep what the bundle validated, to read and to open inert, but never a
-     * command: until the phone announces again, nothing on them can be sent.
-     */
+    /** The whole collection reaches the session, offline entries included; see [activitySourceOf]. */
     private fun onActivities(render: ActivityRenderState) {
         latestActivities = render
         val interactive = GlassesHub.launcherInteractiveActive()
         val held = !interactive && GlassesHub.launcherBundleHeldThroughLoss()
-        val sources = render.collection.map { entry ->
-            val content = entry.content
-            val base = ActivitySource(
-                surfaceId = entry.surfaceId,
-                ownerPluginId = entry.ownerPluginId,
-                primary = entry.primary,
-                text = content.primary,
-                detail = content.secondary,
-                measure = content.eta ?: content.measure,
-                startedOrder = entry.startedOrder,
-                significantOrder = entry.lastSignificantOrder,
-                // The link is the hub's own fact: a v1 card shows its last-known state too.
-                stale = entry.stale,
-                knownAtWallMs = entry.knownAtWallMs.takeIf { entry.stale },
-            )
-            when {
-                interactive -> base.copy(
-                    userPinned = content.userPinned,
-                    offline = content.isOffline,
-                    knownAtWallMs = content.knownAtWallMs ?: base.knownAtWallMs,
-                    seq = entry.seq,
-                    destination = content.destination,
-                    activation = content.effectiveActivation,
-                    commands = if (content.isOffline) emptyList() else content.actions,
-                    defaultActionId = content.effectiveDefaultActionId,
-                )
-                held -> base.copy(
-                    userPinned = content.userPinned,
-                    offline = content.isOffline,
-                    knownAtWallMs = content.knownAtWallMs ?: base.knownAtWallMs,
-                    destination = content.destination,
-                    activation = content.effectiveActivation,
-                    held = true,
-                )
-                else -> base
-            }
-        }
+        val sources = render.collection.map { entry -> activitySourceOf(entry, interactive, held) }
         val events = activityFeed.update(sources)
         events.forEach(runner::dispatch)
         if (events.isNotEmpty()) {

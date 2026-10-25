@@ -14,6 +14,10 @@ The activity and its page need Nexus hubs 1.9.0; with older hubs Media Deck beha
   revoking notification access ends it; the setting itself is kept.
 - A new track or another player updates the activity quietly: it no longer lifts what plays
   above a running route or another activity in the glasses' stack.
+- The activity carries the whole title, up to 40 characters, for the glasses' card and island,
+  and is marked with Media Deck's own disc instead of a play or pause mark, which sat next to the
+  glasses' own media indicator and could contradict it. "Paused" or "Stopped" opens the artist's
+  line instead, so a narrow line cuts the artist rather than the state.
 - **Controls only reach the player you saw.** Every command, from the activity, its page or
   the full surface, is checked against that exact media session and its state: if another
   player took over or the state moved, it is refused as stale instead of reaching another app.

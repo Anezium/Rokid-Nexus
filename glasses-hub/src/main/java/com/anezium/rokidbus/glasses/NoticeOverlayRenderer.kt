@@ -26,6 +26,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.glasses.page.OverflowLineView
 import com.anezium.rokidbus.shared.ActivityTrack
 /**
  * The ROM sleeps the display five seconds after the last input (vendor-set
@@ -365,8 +366,10 @@ object NoticeOverlayRenderer {
         private val pageCountChanged: ((String, Long, Int) -> Unit)? = null,
         /** An activity island draws the band's outline itself. */
         chromeless: Boolean = false,
+        /** An activity's flare moves a title wider than the band; a notice's title is a plain row. */
+        movingTitle: OverflowLineView? = null,
     ) : LinearLayout(context) {
-        private val title = row(bold = true, sizeSp = TITLE_SP, color = BusTheme.phosphor)
+        private val title = row(bold = true, sizeSp = TITLE_SP, color = BusTheme.phosphor, view = movingTitle ?: TextView(context))
         private val image = NoticeImageView(context)
         private val body = NoticeBodyView(context) { count ->
             if (measuredPageCount != count && noticeIdentity != null) {
@@ -714,8 +717,8 @@ object NoticeOverlayRenderer {
             }
         }
 
-        private fun row(bold: Boolean, sizeSp: Float, color: Int) =
-            TextView(context).apply {
+        private fun row(bold: Boolean, sizeSp: Float, color: Int, view: TextView = TextView(context)) =
+            view.apply {
                 setTextColor(color)
                 textSize = sizeSp
                 typeface = Typeface.create(

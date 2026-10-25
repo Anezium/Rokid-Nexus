@@ -2,6 +2,7 @@ package com.anezium.rokidbus.glasses
 
 import android.content.Context
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.view.Gravity
@@ -11,6 +12,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusGlyphs
+import kotlin.math.ceil
 
 /** One drawable command in a [HudActionRowView], stripped of whose tier it came from. */
 internal data class HudActionChip(val glyph: String, val label: String)
@@ -26,14 +28,24 @@ internal data class HudActionChip(val glyph: String, val label: String)
  *
  * The row hides itself when there is nothing to offer, so a caller can render
  * unconditionally.
+ *
+ * With [wholeLabels] a label is never cut: the labels show only when every one
+ * of them fits whole in its share, and otherwise the row is glyphs alone.
  */
-internal class HudActionRowView(context: Context) : LinearLayout(context) {
+internal class HudActionRowView(
+    context: Context,
+    private val wholeLabels: Boolean = false,
+    private val glyphOf: (String) -> Drawable = builtInGlyphs(context),
+) : LinearLayout(context) {
     private val labels = mutableListOf<TextView>()
 
     init {
         orientation = HORIZONTAL
         gravity = Gravity.START
     }
+
+    /** Whether the labels are drawn; for tests. */
+    val labelsShown: Boolean get() = labels.isNotEmpty() && labels.all { it.visibility == View.VISIBLE }
 
     fun render(actions: List<HudActionChip>, selectedIndex: Int) {
         removeAllViews()
@@ -67,6 +79,13 @@ internal class HudActionRowView(context: Context) : LinearLayout(context) {
             val share = (available - gaps) / labels.size - chrome
             val ceiling = share.coerceAtLeast(BusTheme.dp(context, MIN_LABEL_DP))
             labels.forEach { it.maxWidth = ceiling }
+            if (wholeLabels) {
+                val fit = labels.all { ceil(it.paint.measureText(it.text.toString())).toInt() <= share }
+                labels.forEach { label ->
+                    val visibility = if (fit) View.VISIBLE else View.GONE
+                    if (label.visibility != visibility) label.visibility = visibility
+                }
+            }
         }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
@@ -88,11 +107,7 @@ internal class HudActionRowView(context: Context) : LinearLayout(context) {
             cornerRadius = BusTheme.dp(context, 5).toFloat()
         }
         addView(
-            ImageView(context).apply {
-                setImageDrawable(
-                    requireNotNull(context.getDrawable(NexusGlyphs.drawableFor(action.glyph))),
-                )
-            },
+            ImageView(context).apply { setImageDrawable(glyphOf(action.glyph)) },
             LayoutParams(
                 BusTheme.dp(context, ACTION_GLYPH_DP),
                 BusTheme.dp(context, ACTION_GLYPH_DP),
@@ -119,15 +134,19 @@ internal class HudActionRowView(context: Context) : LinearLayout(context) {
         ellipsize = TextUtils.TruncateAt.END
     }
 
-    private companion object {
-        const val ACTION_GLYPH_DP = 18
-        const val ACTION_LABEL_SP = 10f
-        const val CHIP_GAP_DP = 6
+    companion object {
+        /** The platform's own command glyphs, as every row draws them outside tests. */
+        fun builtInGlyphs(context: Context): (String) -> Drawable =
+            { glyph -> requireNotNull(context.getDrawable(NexusGlyphs.drawableFor(glyph))) }
+
+        private const val ACTION_GLYPH_DP = 18
+        private const val ACTION_LABEL_SP = 10f
+        private const val CHIP_GAP_DP = 6
 
         /** A chip's own width around the label: padding, glyph, and the gap after it. */
-        const val CHIP_CHROME_DP = 6 + ACTION_GLYPH_DP + 4 + 6
+        private const val CHIP_CHROME_DP = 6 + ACTION_GLYPH_DP + 4 + 6
 
         /** Below this the label reads as noise, so the row overflows rather than lie. */
-        const val MIN_LABEL_DP = 24
+        private const val MIN_LABEL_DP = 24
     }
 }

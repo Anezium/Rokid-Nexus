@@ -14,6 +14,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.glasses.page.OverflowLineView
 import com.anezium.rokidbus.shared.PinSurfaceEmphasis
 import com.anezium.rokidbus.shared.PinSurfacePosition
 import com.anezium.rokidbus.shared.PinSurfaceSize
@@ -139,8 +140,12 @@ object PinOverlayRenderer {
      * The shared medium chip geometry. Activities instantiate this same view;
      * the pin renderer continues to use it with no leading glyph.
      */
-    internal class PinPanelView(context: Context) : LinearLayout(context) {
-        private val title = row(bold = true)
+    internal class PinPanelView(
+        context: Context,
+        /** An activity's chip moves a title wider than its line; a pin's title is a plain row. */
+        movingTitle: OverflowLineView? = null,
+    ) : LinearLayout(context) {
+        private val title = row(bold = true, view = movingTitle ?: TextView(context))
         /**
          * An activity's measure, stacked under the title beside the glyph, in
          * the room the glyph leaves there. Pins never use it.
@@ -261,8 +266,8 @@ object PinOverlayRenderer {
             }
         }
 
-        private fun row(bold: Boolean = false) =
-            TextView(context).apply {
+        private fun row(bold: Boolean = false, view: TextView = TextView(context)) =
+            view.apply {
                 setTextColor(if (bold) BusTheme.phosphor else BusTheme.muted)
                 typeface = Typeface.create(
                     Typeface.MONOSPACE,

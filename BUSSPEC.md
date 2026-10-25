@@ -1445,15 +1445,22 @@ spring from one form's bounds to the next while the content of each form is
 revealed inside it. The outgoing content fades out first, so two forms never
 show at once. Every transition is glasses-local.
 
-- **chip** — the ambient corner form, delegated to the medium pin panel view:
-  glyph plus `primary` on the title row and `secondary` below.
+- **chip** — the ambient corner form. Without `measure`: the glyph, as tall as
+  the two lines beside it, then `primary` over `secondary`, and nothing under
+  them. With `measure`: the medium pin panel view, as described under
+  `measure`. Over a pair with the launcher bundle the glasses draw `headline`,
+  when sent, in place of `primary` in every form; a title wider than its line
+  scrolls to its end after a short hold and back, without changing the
+  island's size, and only while the island is shown on a lit display.
 - **panel** — the expanded form: large glyph, `primary` at up to 24sp,
   `secondary` at 13sp, trailing `eta`, progress when present, detail at 11sp,
   and the action row. It uses a pure-black background and the shared hairline
   border. `primary` is fitted rather than ellipsized: it shrinks to 20sp beside
   the ETA, and if it still does not fit, the ETA moves to the end of the
   secondary row and `primary` takes the largest size from 24sp down to 16sp
-  that fits alone.
+  that fits alone; a headline still too wide at 16sp scrolls. The action row
+  never cuts a label: labels show only when every one fits whole, otherwise
+  the row is glyphs alone.
 - **flare** — a significant update springs the island from its corner into
   the shared notice-band geometry in about 0.4 s, holds for about 3.5 s, and
   folds back into the activity's steady form.
@@ -1653,7 +1660,8 @@ the bundle is not negotiated.
 ```json
 {
   "surfaceId": "media:activity", "ownerPluginId": "media", "seq": 77,
-  "kind": "activity", "glyph": "music", "primary": "Teardrop",
+  "kind": "activity", "glyph": "music", "primary": "Teardrop (M…",
+  "headline": "Teardrop (Mad Professor remix)",
   "secondary": "Massive Attack",
   "actions": [
     {"id": "prev", "glyph": "previous", "label": "Previous", "typed": {"type": "media.previous"}},
@@ -1682,6 +1690,13 @@ Plugin fields, with patch semantics on `/activity/update` like the rest:
   Default: the first action.
 - `persistence` — `session` (default) or `ongoing`. `ongoing` declares a
   standing entry the user enabled in the plugin ("Show in activities").
+- `headline` — at most 40 characters, none of them a control character: the
+  longer form of `primary`, such as a whole track title, for the surfaces with
+  room for it. The glasses draw it instead of `primary` on the launcher card and
+  in every form of the island, and a headline still wider than its line scrolls
+  there in place. `primary` stays required, keeps its 12 characters, and is what
+  glasses without the bundle draw. A headline is presentation only: it does not
+  tighten the action-id rule below.
 - per action, `typed` — only `media.previous`, `media.play`, `media.pause` or
   `media.next`. Any other value, known or not, is `INVALID_ACTIVITY`.
 - Once any of these fields (or a typed action) is used, every action id must be

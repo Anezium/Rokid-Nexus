@@ -143,10 +143,12 @@ class PhoneActivityLauncherTest {
             .put("state", "offline")
             .put("userPinned", true)
             .put("knownAtWallMs", 5L)
+            .put("headline", "Teardrop (Mad Professor remix)")
         forged.getJSONArray("actions").getJSONObject(0).put("hubQuick", true)
         router.handleLocal(local(forged), hudSender("media"))
 
         val sent = sink.remote.single().payload
+        assertEquals("Teardrop (Mad Professor remix)", sent.getString("headline"))
         assertEquals("live", sent.getString("state"))
         assertFalse(sent.getBoolean("userPinned"))
         assertEquals(wall, sent.getLong("knownAtWallMs"))
@@ -178,11 +180,16 @@ class PhoneActivityLauncherTest {
             .put("destination", JSONObject().put("pageId", "maps:main"))
             .put("persistence", "ongoing")
             .put("defaultActionId", "open")
+            .put("headline", "Teardrop (Mad Professor remix)")
         router.handleLocal(local(payload), hudSender("maps"))
+        router.handleLocal(local(identity("maps").put("headline", "Angel"), BusPaths.ACTIVITY_UPDATE), hudSender("maps"))
 
-        val sent = sink.remote.single().payload
-        listOf("destination", "activation", "defaultActionId", "persistence", "state", "userPinned", "knownAtWallMs")
+        assertEquals(2, sink.remote.size)
+        val sent = sink.remote.first().payload
+        listOf("destination", "activation", "defaultActionId", "persistence", "headline", "state", "userPinned", "knownAtWallMs")
             .forEach { assertFalse(it, sent.has(it)) }
+        assertEquals("300 m", sent.getString("primary"))
+        assertFalse(sink.remote.last().payload.has("headline"))
         val actions = sent.getJSONArray("actions")
         (0 until actions.length()).forEach { index ->
             assertFalse(actions.getJSONObject(index).has("typed"))

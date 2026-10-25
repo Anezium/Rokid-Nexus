@@ -214,6 +214,32 @@ class NexusLauncherInteractiveTest {
     }
 
     @Test
+    fun `a headline reaches a capable hub only, beside the primary every hub reads`() {
+        val title = "Teardrop (Mad Professor remix)"
+        val activity = player().copy(headline = title)
+        val (capable, capableTransport) = client(LegacyCallbacks())
+        assertEquals(NexusSdkResult.SENT, capable.startActivity(activity))
+        assertEquals(NexusSdkResult.SENT, capable.updateActivity(activity, significant = true))
+        capableTransport.sends.forEach { (_, payload) ->
+            assertEquals(title, payload.getString("headline"))
+            assertEquals("Teardrop", payload.getString("primary"))
+        }
+
+        val (old, oldTransport) = client(LegacyCallbacks(), featureBits = BusCapabilityBits.ACTIVITY_SURFACE)
+        assertEquals(NexusSdkResult.SENT, old.startActivity(activity))
+        assertEquals(NexusSdkResult.SENT, old.updateActivity(activity, significant = true))
+        assertEquals(2, oldTransport.sends.size)
+        oldTransport.sends.forEach { (_, payload) ->
+            assertFalse(payload.has("headline"))
+            assertEquals("Teardrop", payload.getString("primary"))
+        }
+
+        assertThrows(IllegalArgumentException::class.java) { player().copy(headline = "x".repeat(41)) }
+        assertThrows(IllegalArgumentException::class.java) { player().copy(headline = "One\ntwo") }
+        assertEquals(40, player().copy(headline = " ${"x".repeat(40)} ").headline!!.trim().length)
+    }
+
+    @Test
     fun `a destination outside this plugin's pages is refused before sending`() {
         val (client, transport) = client(LegacyCallbacks())
         assertEquals(NexusSdkResult.INVALID_PAYLOAD, client.startActivity(player().copy(destination = NexusPageDestination("relay:main"))))

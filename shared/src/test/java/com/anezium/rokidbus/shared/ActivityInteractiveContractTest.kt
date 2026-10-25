@@ -136,7 +136,8 @@ class ActivityInteractiveContractTest {
         val content = valid(
             start().put("actions", JSONArray().put(action("play").put("typed", JSONObject().put("type", "media.play"))))
                 .put("destination", JSONObject().put("pageId", "media:main")).put("activation", "commands")
-                .put("defaultActionId", "play").put("persistence", "ongoing").put("badge", "38"),
+                .put("defaultActionId", "play").put("persistence", "ongoing").put("badge", "38")
+                .put("headline", "A title longer than twelve"),
         )
         val stamped = ActivitySurfaceContract.withHubStamps(
             ActivitySurfaceContract.toPayload("media:activity", content),
@@ -144,7 +145,7 @@ class ActivityInteractiveContractTest {
             setOf("play"),
         )
         val legacy = ActivitySurfaceContract.stripLauncherFields(stamped)
-        listOf("destination", "activation", "defaultActionId", "persistence", "state", "userPinned", "knownAtWallMs").forEach {
+        listOf("destination", "activation", "defaultActionId", "persistence", "headline", "state", "userPinned", "knownAtWallMs").forEach {
             assertFalse(it, legacy.has(it))
         }
         val legacyAction = legacy.getJSONArray("actions").getJSONObject(0)
@@ -156,9 +157,46 @@ class ActivityInteractiveContractTest {
     }
 
     @Test
+    fun `a headline holds 40 printable characters beside a primary that keeps its 12`() {
+        val title = "Internet Girl (Sped Up) - Single Mix"
+        val content = valid(start().put("primary", "Internet Gi…").put("headline", "  $title "))
+        assertEquals(title, content.headline)
+        assertEquals("Internet Gi…", content.primary)
+        assertEquals(content, valid(JSONObject(ActivitySurfaceContract.toPayload("media:activity", content).toString())))
+        assertEquals("x".repeat(40), valid(start().put("headline", "x".repeat(40))).headline)
+        assertNull(valid(start().put("headline", "  ")).headline)
+
+        invalid(start().put("headline", "x".repeat(41)))
+        invalid(start().put("headline", "Line one\nline two"))
+        invalid(start().put("headline", "Bell\u0007"))
+        invalid(start().put("headline", 42))
+        invalid(start().put("primary", "x".repeat(13)).put("headline", "x".repeat(13)))
+        assertTrue(ActivitySurfaceContract.validateUpdate(JSONObject().put("headline", "x".repeat(41))) is ActivitySurfacePatchResult.Invalid)
+        assertTrue(ActivitySurfaceContract.validateUpdate(JSONObject().put("headline", "Tab\there")) is ActivitySurfacePatchResult.Invalid)
+
+        // A full update states it, so dropping it clears it; a partial one keeps it.
+        val cleared = ActivitySurfaceContract.toUpdatePayload("media:activity", content.copy(headline = null), significant = false)
+        assertTrue(cleared.isNull("headline"))
+        val clear = (ActivitySurfaceContract.validateUpdate(cleared) as ActivitySurfacePatchResult.Valid).patch
+        assertNull(clear.applyTo(content).headline)
+        val keep = (ActivitySurfaceContract.validateUpdate(JSONObject().put("secondary", "Paused")) as ActivitySurfacePatchResult.Valid).patch
+        assertEquals(title, keep.applyTo(content).headline)
+
+        // Old glasses never see it, in a start or in an update.
+        val stamped = ActivitySurfaceContract.withHubStamps(ActivitySurfaceContract.toPayload("media:activity", content), ActivityHubStamps(), emptySet())
+        assertEquals(title, stamped.getString("headline"))
+        assertFalse(ActivitySurfaceContract.stripLauncherFields(stamped).has("headline"))
+        assertNull(valid(ActivitySurfaceContract.stripLauncherFields(stamped)).headline)
+        val update = ActivitySurfaceContract.toUpdatePayload("media:activity", content, significant = true)
+        assertFalse(ActivitySurfaceContract.stripLauncherFields(update).has("headline"))
+        // It is presentation, not interaction: loose v1 action ids stay allowed beside it.
+        assertFalse(valid(start().put("headline", title).put("actions", actions("a b"))).usesInteractiveFields)
+    }
+
+    @Test
     fun `a v1 activity serializes without any launcher field`() {
         val payload = ActivitySurfaceContract.toPayload("timer:activity", valid(start().put("actions", actions("stop"))))
-        listOf("destination", "activation", "defaultActionId", "persistence", "state", "userPinned", "knownAtWallMs").forEach {
+        listOf("destination", "activation", "defaultActionId", "persistence", "headline", "state", "userPinned", "knownAtWallMs").forEach {
             assertFalse(it, payload.has(it))
         }
         assertFalse(payload.getJSONArray("actions").getJSONObject(0).has("typed"))

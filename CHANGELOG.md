@@ -14,6 +14,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 - **Reply from the glasses.** A conversation page offers Dictate (the glasses' microphone) and Type (the phone keyboard). Send needs a fresh tap after you saw it, and the result says the reply was handed to the app, never that it was delivered or read. What you dictated or typed is kept if the link drops or the notification goes away; it is never sent on its own.
 - **Navigation on the glasses.** A route shows as text, a minimap, a panel or a full map you can open from its card, with the real streets around a walking route. GPS loss is said plainly and the map turns north-up instead of guessing. A map needs a route Nexus plans itself, such as a walk started from Navigation: guidance read from Google Maps or Citymapper shows as text, and the route's Display choice marks Minimap and Panel unavailable instead of saving a size that changes nothing.
 - **Activities over an app.** For each app on the glasses you choose what stays visible while it is in front: your activities, alerts only, or nothing.
+- **Whole titles.** What plays reads in full on its card and its island: a title too long for its line scrolls slowly to its end and back while it is on screen. Folded, an activity's island is now its mark beside two lines, the title over the artist, with nothing left empty under them; expanded, its commands are drawn as icons whenever their names would not fit whole, never as "Pre…".
 - With an older phone hub, or with the **Classic launcher** chosen, the glasses keep the 1.8 launcher, and activities keep their classic panel and chip instead of the new map islands.
 
 ### Phone hub
@@ -36,6 +37,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 - Activity actions are no longer deprecated. On a negotiated launcher they are selectable from the activity's card and page; islands themselves stay passive, and older hubs ignore them as before. Plugins still need a full-surface or notice fallback for hubs without the bundle.
 - Launcher taps use `QUICK` when the existing policy and phone stamp allow it, `CONFIRMED` otherwise. The SDK and wire are unchanged; `CONFIRMED` no longer implies a glasses confirmation panel.
 - `supportsRenderedMaps`, `renderedMapViews`, `clearRenderedMapDemand()` and `onRenderedMapsChanged()` expose bounded, expiring hub-issued map demand.
+- `NexusActivity.headline` (optional, at most 40 printable characters, launcher bundle only) is the longer form of `primary`, such as a whole track title, that the glasses draw on the activity's card and island, scrolled when it does not fit. `primary` keeps its 12 characters and is what older hubs draw; the SDK and the phone drop the headline for them.
 - `RouteGeometry.attribution` (optional, at most 40 printable characters) credits the source of a geometry's `street` and `major` paths. Older hubs ignore it.
 - Several model classes gained defaulted parameters. Source calls keep compiling; code built against 0.23.0 must be rebuilt against 0.24.0.
 

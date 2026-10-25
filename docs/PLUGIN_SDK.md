@@ -465,6 +465,7 @@ data class NexusActivity(
     val activation: NexusActivityActivation? = null,
     val defaultActionId: String? = null,
     val persistence: NexusActivityPersistence = NexusActivityPersistence.SESSION,
+    val headline: String? = null,
 )
 
 val supportsActivitySurface: Boolean
@@ -504,7 +505,9 @@ announce activity v1, so the same plugin APK remains safe with an old hub.
 The typed models enforce the wire caps in `init`: `primary` is required and at
 most 12 trimmed characters; `secondary` is optional and at most 28; `eta` is
 optional and at most 8; `detail` has at most two 32-character entries;
-percentage progress is `0..100`; and there are at most three actions.
+percentage progress is `0..100`; there are at most three actions; and the
+launcher-bundle `headline` is at most 40 trimmed characters with no control
+character.
 `maxDurationMs`, when present on start, is clamped by the hub to one minute
 through 12 hours. Without it the activity lasts until explicitly ended,
 replaced, or its owner disconnects. There is no TTL and no keep-alive loop.
@@ -671,7 +674,8 @@ nexusClient?.updateActivity(
 
 The expanded panel fits `primary` rather than cutting it: it shrinks first, and
 if the value still does not fit beside the ETA, the ETA moves to the secondary
-row. The 12-character cap is unchanged.
+row. The 12-character cap is unchanged; with the launcher bundle, send the
+longer form as `headline` (see "Interactive activities").
 
 By default, an idle expanded panel collapses to its chip after about 10 seconds.
 The wearer can keep the primary activity expanded from Nexus phone Settings.
@@ -792,6 +796,12 @@ same code runs against old hubs.
   fresh tap, in quick or confirmed wire mode (see "Actions" under Pages).
 - Using any of these fields also requires every action id to be a page-style id
   (printable ASCII without spaces, at most 128) and ids to be unique.
+- `headline` — at most 40 printable characters: the longer form of `primary`,
+  such as a whole track title, for the surfaces with room for it. The glasses
+  draw it instead of `primary` on the launcher card and in the activity island,
+  and scroll it in place when it is still too wide. `primary` stays required,
+  keeps its 12 characters, and is what older hubs draw. It is presentation only
+  and does not tighten the action-id rule.
 
 The user can also disable your activity on the phone (the hub then ends it and
 refuses your starts with an `ACTIVITY_DISABLED` error on `/error`) or pin it. In focus the wearer steps
@@ -832,6 +842,7 @@ class PlayerPluginService : NexusPluginService() {
     private fun playerActivity(state: PlayerState) = NexusActivity(
         glyph = "music",
         primary = state.title.take(12),
+        headline = state.title.take(40),
         secondary = state.artist?.take(28),
         actions = listOf(
             NexusActivityAction("prev", "previous", "Previous", NexusActionType.MediaPrevious),

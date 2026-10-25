@@ -6,6 +6,9 @@ internal object MediaText {
 
     fun oneLine(value: String): String = value.replace(Regex("\\s+"), " ").trim()
 
+    /** [value] with every control character a space, so it can only ever draw as text. */
+    fun printable(value: String): String = value.map { if (it.isISOControl()) ' ' else it }.joinToString("")
+
     /** [value] on one line in at most [limit] UTF-16 units, ending in an ellipsis when it was cut. */
     fun ellipsize(value: String, limit: Int): String {
         val line = oneLine(value)

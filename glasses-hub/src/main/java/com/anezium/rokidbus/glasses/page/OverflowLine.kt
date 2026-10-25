@@ -5,6 +5,7 @@ import android.graphics.Typeface
 import android.os.SystemClock
 import android.text.TextUtils
 import android.util.TypedValue
+import android.view.Display
 import android.widget.TextView
 import kotlin.math.ceil
 
@@ -84,9 +85,10 @@ internal class OverflowMemory {
 /**
  * A single line that keeps its whole text: at rest it is ellipsized like any line, and while
  * [active] it scrolls to its hidden end as [OverflowScroll] times it. It only ever moves while
- * it is attached, shown and actually wider than its line, and it stops by itself the moment any
- * of that ends, so a card that lost the selection, a hidden island form or a screen that went
- * away costs nothing. The text itself is never changed: a test or a reader sees the full value.
+ * it is attached, shown on a lit display and actually wider than its line, and it stops by itself
+ * the moment any of that ends, so a card that lost the selection, a hidden island form, a screen
+ * that went away or glasses that went dark cost nothing. The text itself is never changed: a
+ * test or a reader sees the full value.
  *
  * With a [memory] and a [memoryKey], a line rebuilt by its owner continues from where the one it
  * replaces was, as long as the text and the room are the same. The line itself only ever forgets
@@ -116,6 +118,7 @@ internal class OverflowLineView(context: Context) : TextView(context) {
     private var startedText = ""
     private var startedRoom = 0
     private var hiddenSinceStart = false
+    private var screenLit = true
     private val step = object : Runnable {
         override fun run() {
             if (!shouldScroll()) {
@@ -140,14 +143,25 @@ internal class OverflowLineView(context: Context) : TextView(context) {
         this.typeface = typeface
     }
 
-    /** The width the text may use. */
-    fun roomPx(): Int = (width - paddingLeft - paddingRight).coerceAtLeast(0)
+    /** The width the text may use, beside any glyph drawn in the line. */
+    fun roomPx(): Int = (width - compoundPaddingLeft - compoundPaddingRight).coerceAtLeast(0)
 
     /** How many pixels of the text lie past the line's width; 0 when it fits. */
     fun overflowPx(): Int {
         val room = roomPx()
         if (room <= 0) return 0
         return (ceil(paint.measureText(text.toString())).toInt() - room).coerceAtLeast(0)
+    }
+
+    /**
+     * How long until this line's first pass has reached its end and held it there; 0 when it
+     * fits, is still, or has already been read once.
+     */
+    fun firstPassLeftMs(nowMs: Long = SystemClock.uptimeMillis()): Long {
+        if (!scrolling) return 0
+        val overflow = overflowPx()
+        if (overflow <= 0) return 0
+        return (startedAtMs + OverflowScroll.cycleMs(overflow) - nowMs).coerceAtLeast(0)
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
@@ -157,6 +171,9 @@ internal class OverflowLineView(context: Context) : TextView(context) {
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        // A detached line hears no screen-state change: one that went dark, was taken off and is
+        // put back on lit glasses would otherwise wait for a next wake that may never come.
+        screenLit = display?.state != Display.STATE_OFF
         sync()
     }
 
@@ -179,6 +196,14 @@ internal class OverflowLineView(context: Context) : TextView(context) {
         }
     }
 
+    /** A dark display is not shown either: the line stops, and starts over once it is lit. */
+    override fun onScreenStateChanged(screenState: Int) {
+        super.onScreenStateChanged(screenState)
+        screenLit = screenState == SCREEN_STATE_ON
+        if (!screenLit && scrolling) hiddenSinceStart = true
+        sync()
+    }
+
     /**
      * TextView's own pre-draw brings a layout wider than the view back to its start, which
      * would draw a continued line at its first character once before the next tick moved it
@@ -190,7 +215,8 @@ internal class OverflowLineView(context: Context) : TextView(context) {
         return proceed
     }
 
-    private fun shouldScroll(): Boolean = active && isAttachedToWindow && isShown && overflowPx() > 0
+    private fun shouldScroll(): Boolean =
+        active && isAttachedToWindow && isShown && screenLit && display?.state != Display.STATE_OFF && overflowPx() > 0
 
     private fun sync() {
         // A moving line whose text or room changed under it reads its new value from the hold.
