@@ -9,6 +9,7 @@ import com.anezium.rokidbus.client.plugin.NexusPageDestination
 import com.anezium.rokidbus.media.session.MediaDeckCommand
 import com.anezium.rokidbus.media.session.MediaDeckControlOutcome
 import com.anezium.rokidbus.media.session.MediaDeckState
+import com.anezium.rokidbus.media.session.MediaPlaybackPhase
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 
 /** How the activity's owner reaches the hub. */
@@ -68,8 +69,12 @@ internal object MediaDeckActionIds {
 }
 
 internal object MediaDeckActivityModel {
-    const val GLYPH_PLAYING = "play"
-    const val GLYPH_PAUSED = "pause"
+    /**
+     * Media Deck's own mark (`res/values/nexus_glyphs.xml`), in every state. A play or pause mark
+     * here would sit beside the glasses' own media pill and could only ever agree with it or
+     * contradict it; the state is said in words on the second line instead.
+     */
+    const val GLYPH = "disc"
 
     fun status(enabled: Boolean, suspended: Boolean, state: MediaDeckState, bus: MediaDeckBus): MediaDeckActivityStatus = when {
         !enabled -> MediaDeckActivityStatus.DISABLED
@@ -89,6 +94,7 @@ internal object MediaDeckActivityModel {
      * The activity for [state], or null when there is nothing true to show: no session, no access,
      * or sessions that cannot be read. The card's first tap focuses the play/pause command for the
      * state shown (never a toggle); its destination, the media page, stays openable offline.
+     * The whole title rides as the headline for the surfaces with room for it.
      */
     fun activity(state: MediaDeckState): NexusActivity? {
         val active = state as? MediaDeckState.Active ?: return null
@@ -103,11 +109,15 @@ internal object MediaDeckActivityModel {
         }
         // A podcast or a video often has no artist; the app it plays in is still true.
         val byline = active.track.artist.ifBlank { active.track.sourceLabel }
+        val note = noteOf(active.phase)
+        val room = ActivitySurfaceContract.MAX_SECONDARY_CHARS - (note?.let { it.length + NOTE_SEPARATOR.length } ?: 0)
         return NexusActivity(
-            glyph = if (active.playing) GLYPH_PLAYING else GLYPH_PAUSED,
+            glyph = GLYPH,
             primary = MediaText.ellipsize(active.track.title, ActivitySurfaceContract.MAX_PRIMARY_CHARS),
-            secondary = MediaText.ellipsize(byline, ActivitySurfaceContract.MAX_SECONDARY_CHARS)
+            secondary = listOfNotNull(MediaText.ellipsize(byline, room).takeIf(String::isNotBlank), note)
+                .joinToString(NOTE_SEPARATOR)
                 .takeIf(String::isNotBlank),
+            headline = MediaText.ellipsize(MediaText.printable(active.track.title), ActivitySurfaceContract.MAX_HEADLINE_CHARS),
             actions = actions,
             destination = NexusPageDestination(MediaDeckPages.MAIN),
             activation = NexusActivityActivation.COMMANDS,
@@ -115,6 +125,15 @@ internal object MediaDeckActivityModel {
             persistence = NexusActivityPersistence.ONGOING,
         )
     }
+
+    /** What the second line adds while nothing plays; nothing while it does. */
+    private fun noteOf(phase: MediaPlaybackPhase): String? = when (phase) {
+        MediaPlaybackPhase.PLAYING -> null
+        MediaPlaybackPhase.PAUSED -> "Paused"
+        MediaPlaybackPhase.STOPPED -> "Stopped"
+    }
+
+    private const val NOTE_SEPARATOR = " · "
 
     fun glyphOf(command: MediaDeckCommand): String = when (command) {
         MediaDeckCommand.PREVIOUS -> "prev"
