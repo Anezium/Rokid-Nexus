@@ -21,6 +21,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.glasses.page.NavIslandView
+import com.anezium.rokidbus.glasses.page.OverflowLineView
 import com.anezium.rokidbus.shared.ActivityProgress
 import com.anezium.rokidbus.shared.ActivitySurfaceContent
 import com.anezium.rokidbus.shared.PinSurfaceLine
@@ -299,13 +300,22 @@ internal object ActivityOverlayRenderer {
     ).apply { gravity = Gravity.TOP or Gravity.START }
 
     /**
-     * One activity: the medium chip and the expanded panel at its corner, and
+     * One activity: its folded form and the expanded panel at its corner, and
      * the notice-band flare at the top, all drawn inside one island outline.
-     * The guidance form [nav] shares that outline.
+     * Folded, an activity with a measure keeps the pins' medium chip; any other
+     * is the two-line [compact] form. The guidance form [nav] shares that outline.
      */
-    internal class ActivityIsland(context: Context, private val nav: NavIslandView = NavIslandView(context)) : HudIslandView(context) {
+    internal class ActivityIsland(
+        context: Context,
+        private val nav: NavIslandView = NavIslandView(context),
+        /** An owner's activity glyph by name. */
+        private val glyphOf: (String, String) -> Drawable = { owner, glyph -> GlassesHub.activityGlyphDrawable(context, owner, glyph) },
+        /** A command's built-in glyph by name. */
+        actionGlyphOf: (String) -> Drawable = HudActionRowView.builtInGlyphs(context),
+    ) : HudIslandView(context) {
         private val chip = PinOverlayRenderer.PinPanelView(context).apply { dropChrome() }
-        private val panel = ActivityPanelView(context)
+        private val compact = ActivityCompactView(context)
+        private val panel = ActivityPanelView(context, actionGlyphOf)
         private val flare = NoticeOverlayRenderer.NoticeBandView(context, chromeless = true)
 
         private var renderedGuidance: GuidanceIsland? = null
@@ -314,6 +324,10 @@ internal object ActivityOverlayRenderer {
         var guided = false
             private set
         private val renderedKeys = mutableMapOf<View, Any?>()
+
+        /** The folded form the last render chose: [compact], or [chip] beside a measure. */
+        var folded: View = compact
+            private set
         var corner = PinSurfacePosition.TOP_LEFT
             private set
         private var topInsetDp = -1
@@ -322,6 +336,7 @@ internal object ActivityOverlayRenderer {
             nav.outlined = false
             val width = resources.displayMetrics.widthPixels
             addForm(chip, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+            addForm(compact, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
             addForm(panel, LayoutParams((width * PANEL_WIDTH_FRACTION).toInt(), LayoutParams.WRAP_CONTENT))
             addForm(nav, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
             addForm(
@@ -348,7 +363,7 @@ internal object ActivityOverlayRenderer {
                 PinSurfacePosition.BOTTOM_LEFT -> Gravity.BOTTOM or Gravity.START
                 PinSurfacePosition.BOTTOM_RIGHT -> Gravity.BOTTOM or Gravity.END
             }
-            listOf(chip, panel, nav).forEach { form ->
+            listOf(chip, compact, panel, nav).forEach { form ->
                 form.layoutParams = (form.layoutParams as LayoutParams).apply {
                     this.gravity = gravity
                     setMargins(edge, if (top) topEdge else edge, edge, edge)
@@ -364,23 +379,35 @@ internal object ActivityOverlayRenderer {
             // While the phone link is down the island says it is last known and offers no action.
             val content = GuidanceIslands.lastKnown(item)
             val owner = item.activity.ownerPluginId
-            update(chip, listOf(content.primary, content.measure, content.secondary, content.glyph)) {
-                chip.render(
-                    titleText = content.primary,
-                    // Folded, the measure sits under the primary beside the glyph:
-                    // "3 min" over "250 m", with the street still on the line below.
-                    subtitleText = content.measure,
-                    lineContent = content.secondary
-                        ?.let { listOf(PinSurfaceLine(it)) }
-                        .orEmpty(),
-                    size = PinSurfaceSize.MEDIUM,
-                    leadingGlyph = GlassesHub.activityGlyphDrawable(context, owner, content.glyph),
-                )
+            if (content.measure != null) {
+                folded = chip
+                update(chip, listOf(content.title, content.measure, content.secondary, content.glyph)) {
+                    chip.render(
+                        titleText = content.title,
+                        // Folded, the measure sits under the primary beside the glyph:
+                        // "3 min" over "250 m", with the street still on the line below.
+                        subtitleText = content.measure,
+                        lineContent = content.secondary
+                            ?.let { listOf(PinSurfaceLine(it)) }
+                            .orEmpty(),
+                        size = PinSurfaceSize.MEDIUM,
+                        leadingGlyph = glyphOf(owner, content.glyph),
+                    )
+                }
+            } else {
+                folded = compact
+                update(compact, listOf(content.title, content.secondary, content.glyph)) {
+                    compact.render(
+                        titleText = content.title,
+                        secondaryText = content.secondary,
+                        glyph = glyphOf(owner, content.glyph),
+                    )
+                }
             }
             update(panel, content to item.activity.selectedActionIndex) {
                 panel.render(
                     content = content,
-                    mainGlyph = GlassesHub.activityGlyphDrawable(context, owner, content.glyph),
+                    mainGlyph = glyphOf(owner, content.glyph),
                     selectedActionIndex = item.activity.selectedActionIndex,
                 )
             }
@@ -393,7 +420,7 @@ internal object ActivityOverlayRenderer {
                     }.joinToString("  •  ").takeIf(String::isNotEmpty),
                     footerText = content.eta,
                     leadingGlyph = content.badge?.let { ActivityBadgeDrawable(context, it) }
-                        ?: GlassesHub.activityGlyphDrawable(context, owner, content.glyph),
+                        ?: glyphOf(owner, content.glyph),
                     track = content.track,
                 )
             }
@@ -426,7 +453,7 @@ internal object ActivityOverlayRenderer {
                 when {
                     guided -> nav
                     presentation == ActivityPresentation.PANEL -> panel
-                    else -> chip
+                    else -> folded
                 },
             )
         }
@@ -459,10 +486,74 @@ internal object ActivityOverlayRenderer {
         }
     }
 
+    /**
+     * An activity folded without a measure: its glyph beside two lines, the title over the
+     * secondary, and nothing under them. The glyph is as tall as the two lines, so a missing
+     * secondary leaves the title centred beside it and the form keeps its height. A title wider
+     * than its line scrolls to its end while the form is shown, inside the width it already has.
+     */
+    internal class ActivityCompactView(context: Context) : LinearLayout(context) {
+        val glyph = ImageView(context)
+        val title = OverflowLineView(context).apply {
+            textSize = COMPACT_TITLE_SP
+            setTextColor(BusTheme.phosphor)
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            softEdges()
+            active = true
+        }
+        val secondary = TextView(context).apply {
+            textSize = COMPACT_SECONDARY_SP
+            setTextColor(BusTheme.muted)
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            includeFontPadding = false
+            maxLines = 1
+            isSingleLine = true
+            ellipsize = TextUtils.TruncateAt.END
+        }
+
+        init {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(context, 8), dp(context, 6), dp(context, 8), dp(context, 6))
+            val glyphPx = title.lineHeight + dp(context, COMPACT_LINE_GAP_DP) + secondary.lineHeight
+            addView(glyph, LayoutParams(glyphPx, glyphPx).apply { marginEnd = dp(context, COMPACT_GLYPH_GAP_DP) })
+            addView(
+                LinearLayout(context).apply {
+                    orientation = VERTICAL
+                    addView(title, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+                    addView(
+                        secondary,
+                        LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                            topMargin = dp(context, COMPACT_LINE_GAP_DP)
+                        },
+                    )
+                },
+                LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT),
+            )
+        }
+
+        fun render(titleText: String, secondaryText: String?, glyph: Drawable) {
+            val maxWidthPx = (resources.displayMetrics.widthPixels * COMPACT_TEXT_WIDTH_FRACTION).toInt()
+            this.glyph.setImageDrawable(glyph)
+            title.maxWidth = maxWidthPx
+            title.text = titleText
+            secondary.maxWidth = maxWidthPx
+            secondary.text = secondaryText.orEmpty()
+            secondary.visibility = if (secondaryText == null) View.GONE else View.VISIBLE
+        }
+    }
+
     /** The platform-owned expanded geometry; no plugin field controls it. */
-    private class ActivityPanelView(context: Context) : LinearLayout(context) {
+    private class ActivityPanelView(context: Context, actionGlyphOf: (String) -> Drawable) : LinearLayout(context) {
         private val glyph = ImageView(context)
-        private val primary = text(PRIMARY_SP, BusTheme.phosphor, bold = true)
+        // A headline still too wide at the smallest fitting size scrolls rather than lose its end.
+        private val primary = OverflowLineView(context).apply {
+            textSize = PRIMARY_SP
+            setTextColor(BusTheme.phosphor)
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            softEdges()
+            active = true
+        }
         private val eta = text(ETA_SP, BusTheme.muted)
         // The contract allows 28 characters, about 21 of which fit one line of
         // the text column; a stop or street name wraps rather than losing its end.
@@ -483,7 +574,7 @@ internal object ActivityOverlayRenderer {
         }
         private val track = ActivityTrackView(context)
         private val details = List(2) { text(DETAIL_SP, BusTheme.muted) }
-        private val actions = HudActionRowView(context)
+        private val actions = HudActionRowView(context, wholeLabels = true, glyphOf = actionGlyphOf)
         private val secondaryRow = LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
@@ -648,9 +739,19 @@ internal object ActivityOverlayRenderer {
             if (visible) View.VISIBLE else View.GONE
     }
 
-    /** Expanded, the measure stands beside the primary: "3 min - 250 m". */
+    /** The headline where the owner sent one, else the primary; an island has room for either. */
+    private val ActivitySurfaceContent.title: String
+        get() = headline ?: primary
+
+    /** Expanded, the measure stands beside the title: "3 min - 250 m". */
     private fun ActivitySurfaceContent.primaryWithMeasure(): String =
-        measure?.let { "$primary - $it" } ?: primary
+        measure?.let { "$title - $it" } ?: title
+
+    /** A scrolling line fades into the island's black at the side its text runs past, never cut mid-letter. */
+    private fun OverflowLineView.softEdges() {
+        isHorizontalFadingEdgeEnabled = true
+        setFadingEdgeLength(dp(context, FADING_EDGE_DP))
+    }
 
     /** Forms draw no border of their own; the island draws the only one. */
     private fun View.dropChrome() {
@@ -682,4 +783,12 @@ internal object ActivityOverlayRenderer {
     private const val SECONDARY_MAX_LINES = 2
     private const val ETA_SP = 13f
     private const val DETAIL_SP = 11f
+    private const val COMPACT_TITLE_SP = 14f
+    private const val COMPACT_SECONDARY_SP = 12f
+    private const val COMPACT_LINE_GAP_DP = 2
+    private const val COMPACT_GLYPH_GAP_DP = 6
+    private const val FADING_EDGE_DP = 14
+
+    /** The pins' medium text width, so a folded activity reads as far as a medium pin. */
+    private const val COMPACT_TEXT_WIDTH_FRACTION = 0.60f
 }

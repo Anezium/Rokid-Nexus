@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.GlyphDrawable
+import com.anezium.rokidbus.glasses.ActivityEntry
 import com.anezium.rokidbus.glasses.ActivityOverlayRenderer
 import com.anezium.rokidbus.glasses.AmbientPreferencesSnapshot
 import com.anezium.rokidbus.glasses.Foreground
@@ -41,6 +42,8 @@ import com.anezium.rokidbus.glasses.session.ScreenHint
 import com.anezium.rokidbus.glasses.session.SessionEvent
 import com.anezium.rokidbus.glasses.session.SessionScreen
 import com.anezium.rokidbus.glasses.session.StatusLineStyle
+import com.anezium.rokidbus.glasses.session.activitySourceOf
+import com.anezium.rokidbus.shared.ActivitySurfaceContent
 import com.anezium.rokidbus.shared.AmbientSize
 import com.anezium.rokidbus.shared.MediaPlaybackState
 import com.anezium.rokidbus.shared.PinSurfacePosition
@@ -785,6 +788,43 @@ class LauncherRenderingTest {
         assertEquals(requireNotNull(ribbon.vehicleY), ribbon.cutY, 0.01f)
         assertTrue(texts(view.blockViews.getValue("ribbon")).containsAll(listOf("RER B", "exit Jardin · then walk 3 min")))
         assertTrue(visibleInViewport("ribbon"))
+    }
+
+    @Test
+    @Config(qualifiers = "w320dp-h640dp-hdpi")
+    fun `a card draws a 30-character headline whole across its width and the selected one scrolls it`() {
+        val headline = "Teardrop (Mad Professor remix)"
+        val content = ActivitySurfaceContent(
+            glyph = "disc", primary = "Teardrop (M…", secondary = "Massive Attack", progress = null, eta = null,
+            detail = emptyList(), actions = emptyList(), maxDurationMs = null, headline = headline,
+        )
+        val entry = ActivityEntry("media:activity", "media", 1, content, primary = true, startedOrder = 1, lastSignificantOrder = null)
+        // A v1 pair keeps the 12-character primary; the bundle, live or held through a loss, the headline.
+        assertEquals("Teardrop (M…", activitySourceOf(entry, interactive = false, held = false).text)
+        assertEquals(headline, activitySourceOf(entry, interactive = false, held = true).text)
+        val text = activitySourceOf(entry, interactive = true, held = false).text
+        assertEquals(headline, text)
+        assertEquals("Teardrop (M…", activitySourceOf(entry.copy(content = content.copy(headline = null)), interactive = true, held = false).text)
+
+        val controller = Robolectric.buildActivity(Activity::class.java).create().start().resume()
+        try {
+            controller.get().setContentView(view)
+            controller.visible()
+            val card = ScreenBlock.Card("media:activity", "MEDIA DECK", "14:09", text, "Massive Attack", null, figure = true, ended = false, selected = true, icon = IconRef.Plugin("media"))
+            view.show(SessionScreen(ScreenHeader("NEXUS"), listOf(card), ScreenHint("tap choose", "back cards"), focusKey = "media:activity"))
+            shadowOf(Looper.getMainLooper()).idle()
+            val block = view.blockViews.getValue("media:activity") as ViewGroup
+            val primary = find<OverflowLineView>(block).single { it.text.toString() == headline }
+            // The line has the card's whole inner width: nothing shares its row.
+            assertEquals(block.width - block.paddingLeft - block.paddingRight, primary.width)
+            assertTrue(primary.overflowPx() > 0)
+            assertTrue(primary.scrolling)
+            assertEquals(0, requireNotNull(primary.layout).getEllipsisCount(0))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(OverflowScroll.HOLD_MS + OverflowScroll.travelMs(primary.overflowPx()) + OverflowScroll.FRAME_MS))
+            assertEquals(primary.overflowPx(), primary.scrollX)
+        } finally {
+            controller.pause().stop().destroy()
+        }
     }
 
     @Test
