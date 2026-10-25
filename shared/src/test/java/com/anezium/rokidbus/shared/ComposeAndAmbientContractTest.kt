@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.shared
 
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -93,5 +94,21 @@ class ComposeAndAmbientContractTest {
             AmbientPolicy(1, emptyMap()),
             AmbientPreferencesContract.parsePolicy(JSONObject().put("revision", 1).put("modes", JSONObject().put("com.example.app", "dim"))),
         )
+    }
+
+    @Test
+    fun `the owners kept off the glasses round trip, and an older phone's policy hides nobody`() {
+        val policy = AmbientPolicy(3, mapOf("com.spotify.music" to ForegroundAmbientMode.NOTHING), setOf("nav", "media"))
+        val payload = JSONObject(AmbientPreferencesContract.policyPayload(policy).toString())
+        assertEquals(listOf("media", "nav"), (0 until payload.getJSONArray("hiddenOwners").length()).map { payload.getJSONArray("hiddenOwners").getString(it) })
+        assertEquals(policy, AmbientPreferencesContract.parsePolicy(payload))
+
+        val older = JSONObject().put("revision", 4).put("modes", JSONObject())
+        assertEquals(AmbientPolicy(4, emptyMap(), emptySet()), AmbientPreferencesContract.parsePolicy(older))
+        assertEquals(emptySet<String>(), AmbientPreferencesContract.parsePolicy(older.put("hiddenOwners", JSONArray()))?.hiddenOwners)
+        assertNull(AmbientPreferencesContract.parsePolicy(JSONObject(older.toString()).put("hiddenOwners", "nav")))
+        assertNull(AmbientPreferencesContract.parsePolicy(JSONObject(older.toString()).put("hiddenOwners", JSONArray().put("Bad Id"))))
+        val tooMany = JSONArray().apply { repeat(AmbientPreferencesContract.MAX_HIDDEN_OWNERS + 1) { put("plugin$it") } }
+        assertNull(AmbientPreferencesContract.parsePolicy(JSONObject(older.toString()).put("hiddenOwners", tooMany)))
     }
 }

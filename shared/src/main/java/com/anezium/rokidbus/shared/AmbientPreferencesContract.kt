@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.shared
 
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** How large one owner's ambient island is drawn. Absent means the hub's automatic choice. */
@@ -36,8 +37,15 @@ data class AmbientSizeEdit(val ownerPluginId: String, val size: AmbientSize?)
 /** Phone to glasses: every owner's stored size, authoritative. */
 data class AmbientSizes(val revision: Long, val sizes: Map<String, AmbientSize>)
 
-/** Phone to glasses: per-app modes; an app absent from [modes] gets [AmbientPreferencesContract.defaultMode]. */
-data class AmbientPolicy(val revision: Long, val modes: Map<String, ForegroundAmbientMode>)
+/**
+ * Phone to glasses: per-app modes; an app absent from [modes] gets [AmbientPreferencesContract.defaultMode].
+ * [hiddenOwners] are the plugins the user keeps off the glasses' home and apps: no island, no pin.
+ */
+data class AmbientPolicy(
+    val revision: Long,
+    val modes: Map<String, ForegroundAmbientMode>,
+    val hiddenOwners: Set<String> = emptySet(),
+)
 
 /**
  * Ambient presentation preferences, between the two hubs only (`/core/ambient/...`). The phone
@@ -45,7 +53,8 @@ data class AmbientPolicy(val revision: Long, val modes: Map<String, ForegroundAm
  * `sizes/set` (queued while offline, latest per owner, sent before the next phone snapshot is
  * applied); the phone answers every link-up and change with the full map. The full-map excursion
  * never writes a size. Entries with a value this build does not know are dropped, which leaves
- * that owner or app on its default.
+ * that owner or app on its default. The policy also names the owners the user keeps off the
+ * glasses (`hiddenOwners`); an older phone omits it and older glasses ignore it, so all show.
  */
 object AmbientPreferencesContract {
     /** Only Navigation currently offers wearer-selected forms; other plugins own their layout. */
@@ -57,6 +66,7 @@ object AmbientPreferencesContract {
 
     const val MAX_SIZE_ENTRIES = 64
     const val MAX_POLICY_ENTRIES = 128
+    const val MAX_HIDDEN_OWNERS = 64
     const val MAX_PACKAGE_CHARS = 255
 
     private val packagePattern = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
@@ -106,6 +116,7 @@ object AmbientPreferencesContract {
     fun policyPayload(policy: AmbientPolicy): JSONObject = JSONObject()
         .put("revision", policy.revision)
         .put("modes", JSONObject().apply { policy.modes.toSortedMap().forEach { (app, mode) -> put(app, mode.wireValue) } })
+        .put("hiddenOwners", JSONArray(policy.hiddenOwners.sorted()))
 
     fun parsePolicy(payload: JSONObject): AmbientPolicy? {
         val revision = nonnegativeLong(payload.opt("revision")) ?: return null
@@ -117,7 +128,16 @@ object AmbientPreferencesContract {
             val wire = map.opt(app) as? String ?: return null
             ForegroundAmbientMode.fromWireValue(wire)?.let { modes[app] = it }
         }
-        return AmbientPolicy(revision, modes)
+        // Absent from an older phone, which offers no such choice: every owner shows.
+        val hidden = linkedSetOf<String>()
+        if (payload.has("hiddenOwners")) {
+            val owners = payload.opt("hiddenOwners") as? JSONArray ?: return null
+            if (owners.length() > MAX_HIDDEN_OWNERS) return null
+            for (index in 0 until owners.length()) {
+                hidden += (owners.opt(index) as? String)?.takeIf(PluginDescriptor::isValidId) ?: return null
+            }
+        }
+        return AmbientPolicy(revision, modes, hidden)
     }
 
     private fun nonnegativeLong(value: Any?): Long? = when (value) {
