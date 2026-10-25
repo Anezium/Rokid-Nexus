@@ -102,6 +102,54 @@ class PhoneLauncherStoresTest {
     }
 
     @Test
+    fun `a plugin kept off the glasses stays so across restarts until its grant goes`() {
+        val storage = MemoryStorage()
+        val preferences = PhoneActivityPreferences(storage)
+        val key = PluginGrantKey("dev.example.nav", "nav", "digest-nav")
+        val other = PluginGrantKey("dev.example.todo", "todo", "digest-todo")
+        assertTrue(preferences.preferenceFor(key).floating)
+        assertTrue(preferences.keptOffGlasses().isEmpty())
+
+        preferences.setFloating(key, false)
+        preferences.setPinned(other, true)
+        val reloaded = PhoneActivityPreferences(storage)
+        assertEquals(PhoneActivityPreference(floating = false), reloaded.preferenceFor(key))
+        assertEquals(setOf(key), reloaded.keptOffGlasses())
+
+        // Back on is the default again, so nothing is left behind for it.
+        preferences.setFloating(key, true)
+        assertFalse(storage.value.orEmpty().contains("\"nav\""))
+        preferences.setFloating(key, false)
+
+        assertTrue(preferences.purge(key))
+        assertFalse(preferences.purge(key))
+        assertTrue(PhoneActivityPreferences(storage).keptOffGlasses().isEmpty())
+        preferences.setFloating(other, false)
+        assertEquals(setOf(other), preferences.retainOnly(emptySet()))
+        assertTrue(preferences.preferenceFor(other).floating)
+    }
+
+    @Test
+    fun `an entry stored before the floating choice existed still floats`() {
+        val storage = MemoryStorage()
+        storage.value = JSONObject()
+            .put("version", 1)
+            .put(
+                "entries",
+                org.json.JSONArray().put(
+                    JSONObject().put("package", "dev.example.nav").put("pluginId", "nav")
+                        .put("signingDigestSha256", "digest-nav").put("enabled", true).put("pinned", true),
+                ),
+            )
+            .toString()
+
+        assertEquals(
+            PhoneActivityPreference(enabled = true, pinned = true, floating = true),
+            PhoneActivityPreferences(storage).preferenceFor(PluginGrantKey("dev.example.nav", "nav", "digest-nav")),
+        )
+    }
+
+    @Test
     fun `the snapshot store keeps at most eight, the most recently known`() {
         val storage = MemoryStorage()
         val store = PhoneActivitySnapshotStore(storage)

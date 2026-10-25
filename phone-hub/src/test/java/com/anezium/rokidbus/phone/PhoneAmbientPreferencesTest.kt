@@ -16,12 +16,14 @@ class PhoneAmbientPreferencesTest {
     private val store = PhoneAmbientPreferencesStore(storage)
     private val sent = mutableListOf<Pair<String, JSONObject>>()
     private var launcherActive = true
+    private var hidden = emptySet<String>()
     private val sync = PhoneAmbientSync(
         store = store,
         send = { path, payload -> sent += path to payload; null },
         launcherActive = { launcherActive },
         log = {},
         initialRevision = 1_000L,
+        hiddenOwners = { hidden },
     )
 
     @Test
@@ -170,6 +172,28 @@ class PhoneAmbientPreferencesTest {
 
         assertTrue(sent.isEmpty())
         assertEquals(AmbientSize.TEXT, store.sizeFor("relay"))
+    }
+
+    @Test
+    fun `the plugins kept off the glasses ride every policy, on announce and on change`() {
+        hidden = setOf("nav")
+        sync.onGlassesAnnounced()
+        assertEquals(setOf("nav"), AmbientPreferencesContract.parsePolicy(sent.last().second)!!.hiddenOwners)
+
+        hidden = setOf("nav", "media")
+        sync.pushPolicy()
+        assertEquals(setOf("media", "nav"), AmbientPreferencesContract.parsePolicy(sent.last().second)!!.hiddenOwners)
+
+        // Back on, or its grant gone: the next policy names nobody, so the glasses show it again.
+        hidden = emptySet()
+        sync.pushPolicy()
+        assertEquals(emptySet<String>(), AmbientPreferencesContract.parsePolicy(sent.last().second)!!.hiddenOwners)
+
+        launcherActive = false
+        hidden = setOf("nav")
+        val before = sent.size
+        sync.onGlassesAnnounced()
+        assertEquals(before, sent.size)
     }
 
     private class MemoryStorage : PluginGrantStorage {

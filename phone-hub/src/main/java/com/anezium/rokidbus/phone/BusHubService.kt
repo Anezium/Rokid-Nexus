@@ -1134,6 +1134,7 @@ class BusHubService : Service() {
             send = { path, payload -> sendRemote(BusEnvelope(path = path, payload = payload)) },
             launcherActive = { remoteLauncherInteractiveVersion?.let(LauncherInteractiveContract::isActive) == true },
             log = ::log,
+            hiddenOwners = ::ownersKeptOffGlasses,
         )
         ComposeKeyboardPrompt.sink = object : ComposeKeyboardSink {
             override fun onText(captureId: String, text: String) =
@@ -5820,6 +5821,17 @@ class BusHubService : Service() {
         }.orElse(null)
     }
 
+    /**
+     * The plugins whose island and pin the user keeps off the glasses: only a choice made under
+     * the grant the owner holds now, since a stale key's choice is about to be purged.
+     */
+    private fun ownersKeptOffGlasses(): Set<String> {
+        if (!::activityPreferences.isInitialized) return emptySet()
+        return activityPreferences.keptOffGlasses()
+            .filter { key -> surfaceOwnerFor(key.pluginId)?.grantKey() == key }
+            .mapTo(linkedSetOf()) { it.pluginId }
+    }
+
     /** Mirrors the activity tier's offline entries into their store, keyed by each owner's grant. */
     private fun persistOfflineActivities(snapshots: List<Pair<String, JSONObject>>) {
         if (!::activitySnapshotStore.isInitialized) return
@@ -5854,7 +5866,10 @@ class BusHubService : Service() {
     private fun retainActivityChoices(principals: List<PhonePluginPrincipal>) {
         if (!::activityPreferences.isInitialized || !::quickActionPolicyStore.isInitialized) return
         val approved = principals.filter { pluginGrantStore.stateFor(it) is PluginGrantState.Approved }
-        activityPreferences.retainOnly(approved.mapTo(linkedSetOf()) { it.grantKey() })
+        // A plugin kept off the glasses that lost its grant must not stay hidden there if approved again.
+        if (activityPreferences.retainOnly(approved.mapTo(linkedSetOf()) { it.grantKey() }).isNotEmpty()) {
+            ambientExecutor.execute { pushAmbient(sizes = false) }
+        }
         if (quickActionPolicyStore.retainOnly(approved)) pushQuickActionPolicy()
     }
 
@@ -5871,7 +5886,7 @@ class BusHubService : Service() {
         if (!::activityPreferences.isInitialized || !::quickActionPolicyStore.isInitialized) return
         val principal = installedPluginPrincipals().singleOrNull { it.grantKey() == key }
         if (principal != null && pluginGrantStore.stateFor(principal) is PluginGrantState.Approved) return
-        activityPreferences.purge(key)
+        if (activityPreferences.purge(key)) ambientExecutor.execute { pushAmbient(sizes = false) }
         if (quickActionPolicyStore.purge(key)) executor.execute { pushQuickActionPolicy() }
     }
 
@@ -6073,7 +6088,10 @@ class BusHubService : Service() {
             activeInstance?.let { hub -> hub.ambientExecutor.execute { hub.pushAmbient(sizes = true) } }
         }
 
-        /** The user changed an app's ambient mode on the phone; the glasses get the full policy again. */
+        /**
+         * The user changed an app's ambient mode, or kept a plugin off the glasses or let it back,
+         * on the phone; the glasses get the full policy again.
+         */
         internal fun onAmbientPolicyChanged() {
             activeInstance?.let { hub -> hub.ambientExecutor.execute { hub.pushAmbient(sizes = false) } }
         }

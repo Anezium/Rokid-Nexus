@@ -289,6 +289,7 @@ class PluginPermissionsActivity : Activity() {
                 preferences.setPinned(key, checked)
                 BusHubService.onActivityPreferencesChanged(key)
             },
+            floatingRow(key, preferences, preference),
         )
         val quickPolicy = PluginQuickActionPolicyStore.shared(applicationContext)
         val approved = quickPolicy.approvedFamilies(key)
@@ -308,6 +309,23 @@ class PluginPermissionsActivity : Activity() {
             }
         }
         return rows
+    }
+
+    /**
+     * Whether this plugin's island and pin float over the glasses' home and apps. Like the rows
+     * above it never goes through [applyDecision]: it only re-sends the glasses' ambient policy.
+     */
+    private fun floatingRow(
+        key: PluginGrantKey,
+        preferences: PhoneActivityPreferences,
+        preference: PhoneActivityPreference,
+    ): LinearLayout = switchRow(
+        title = "Float over the glasses",
+        note = "Its island and pin over the home and your apps. Off hides only those: its card, pages and notifications stay.",
+        checked = preference.floating,
+    ) { checked ->
+        preferences.setFloating(key, checked)
+        BusHubService.onAmbientPolicyChanged()
     }
 
     private fun switchRow(
