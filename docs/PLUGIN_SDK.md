@@ -686,6 +686,10 @@ islands; see "Interactive activities" below.
 
 Activity islands take no input: they are passive, and native apps and surfaces
 keep every key. A tap on an island neither opens your plugin nor runs an action.
+On the new launcher the wearer may also keep your plugin's island and pin off
+the glasses' home and apps (**Plugin access → Float over the glasses**). Your
+calls still succeed and your activity, card and pages are unchanged; no API
+reports the choice, so never rely on an island being seen.
 Your actions are reached only inside the wearer's Nexus session, between hubs
 that negotiated the launcher bundle, where they arrive on
 `onNexusActivityCommand` (and, through its default, `onNexusActivityAction`).

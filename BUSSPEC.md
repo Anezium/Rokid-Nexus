@@ -2512,7 +2512,18 @@ the draft never goes to another recipient.
   (accessibility window events, with Nexus overlays and input methods excluded)
   tells home from apps; over an app the hub caps islands at `text`. Islands stay
   passive, and native apps and surfaces keep their input.
-- Both preferences apply only to the `SESSION` launcher over a phone whose last
+- Per-plugin "Float over the glasses", on the phone's Plugin access page (on by
+  default), stored with that plugin's other activity choices and dropped with
+  its grant. The policy carries the plugins turned off as `hiddenOwners:
+  [pluginId]` (at most 64; absent from an older phone, ignored by older
+  glasses, both meaning every plugin shows). The phone sends it with the policy
+  on link-up, on every change and when such a plugin's grant goes. On the
+  glasses such an owner gets no island (no chip, panel, flare or display wake,
+  over the home or any app) and its held pin is not drawn; its collection entry,
+  card, pages and notices are unchanged, it stays the collection's primary when
+  it is, and the other owners' islands expand in its place. Turned back on, the
+  current island and the held pin show again without the plugin sending.
+- These preferences apply only to the `SESSION` launcher over a phone whose last
   announcement negotiated the bundle (a link loss keeps them, as it keeps the
   backend). With an older phone or the `LEGACY` backend, islands are presented
   as before the bundle: automatic sizes, no foreground mode, an app in front

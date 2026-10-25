@@ -17,6 +17,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 ### Phone hub
 
 - Settings → Glasses display: **Glasses launcher** (Default, New launcher, Classic launcher), the Navigation display size, and per-app behaviour over native apps.
+- Plugin access: **Float over the glasses** turns a plugin's island and pin off on the glasses' home and over apps, while its card, pages and notifications stay; on by default, and it needs the new launcher.
 - Plugin access: **Show its activity on the glasses**, **Pin its activity**, and one-tap quick actions per plugin (**Check tasks with one tap**, **Play, pause and skip with one tap**). Off, each tap on the glasses asks to confirm first.
 - **Type your reply.** When you choose Type on the glasses, the phone shows its keyboard, or a notification that opens it.
 - A plugin that is revoked, disabled, uninstalled or re-signed leaves the glasses' notification history, even if the glasses were away at the time.

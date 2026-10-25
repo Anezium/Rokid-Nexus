@@ -79,6 +79,11 @@ This section supersedes the status paragraphs above, which are kept as history.
   Media Deck 1.0.4 (5), Sample 1.0.6 (7); SDK notes for 0.24.0 are in `CHANGELOG.md`. The SDK
   dependency pins in `README.md` and the SDK guide stay on `sdk-v0.23.0` until that tag exists.
   This replaces release gate F3 below.
+- **Float over the glasses** (owner request, 2026-10-24): a per-plugin switch on Plugin access keeps
+  that plugin's island and pin off the glasses' home and apps, carried as the ambient policy's
+  `hiddenOwners`; its card, pages and notifications are unchanged. Covered by
+  `KeptOffGlassesPresentationTest` (hub ingress to islands and pin), `KeptOffGlassesHubTest`
+  (phone send and purge), each observed to fail with its fix reverted; not yet seen on hardware.
 - **Still open.** Hardware acceptance beyond the bounded 2026-10-18 smoke and the 2026-10-23 device
   pass (see the device reports); the review nits A6-A12; withdrawals queued on a phone that dies are
   still lost (purges are durable).
@@ -137,6 +142,7 @@ trees.
 | Text / minimap / panel / full-map views, swap and full-map excursion, per-owner preference | `G/session/RouteNavigation.kt`, `G/session/TypedPageItems.kt` (route rows), `G/page/RouteMapPainter.kt`, `G/page/RouteMapMath.kt`, `G/page/NavIslandView.kt` | `RouteNavigationTest`, `RouteMapMathTest`, `LauncherRenderingTest` | Done |
 | Bounded vector/street/route/heading data, three sizes, transit stop ribbon, honest GPS-loss north-up/degraded | `S/RouteGeometryContract.kt`, `G/RouteLive.kt`, `G/page/RibbonView.kt`; providers `plugins/nav/.../NavMapProjection.kt`, `NavMapPublisher.kt`, `NavRoute*.kt`, `TransitousPlanner.kt`, `plugins/transit/.../TransitJourney*.kt` | `RouteGeometryContractTest`, `RouteLiveTest`, `NavMapProjectionTest`, `NavMapPublisherTest`, `NavRouteTest`, `TransitJourneyGuideTest` | Done |
 | Foreground ambient policy and preference editor sync; passive islands; native-app input untouched | `S/AmbientPreferencesContract.kt`, `G/AmbientPreferences.kt`, `G/ForegroundResolver.kt`, `G/ActivityPresentationPolicy.kt`, `P/PhoneAmbientPreferences.kt`, `P/AmbientChoiceRow.kt`, `P/NativeAppsActivity.kt` | `AmbientForegroundPolicyTest`, `AmbientPreferencesMirrorTest`, `PhoneAmbientPreferencesTest` | Done |
+| Per-plugin "Float over the glasses": no island, flare, wake or drawn pin for a kept-off owner, card and pages kept, other islands expand; purged with the grant | `S/AmbientPreferencesContract.kt` (`hiddenOwners`), `P/PhoneActivityPreferences.kt`, `P/PluginPermissionsActivity.kt`, `P/BusHubService.kt`, `G/ActivityController.kt`, `G/PinController.kt`, `G/AmbientPreferences.kt` | `ComposeAndAmbientContractTest`, `PhoneLauncherStoresTest`, `PhoneAmbientPreferencesTest`, `KeptOffGlassesHubTest`, `ActivityStateMachineTest`, `AmbientPreferencesMirrorTest`, `KeptOffGlassesPresentationTest` | Done (device pending) |
 | Full-map return keeps preference and base context | `G/session/RouteNavigation.kt`, reducer full-map modes | `RouteNavigationTest` | Done |
 | Root/apps/notifications/activities icons; 480x640 black/outlined UI; measured list viewport and follow-selection | `G/page/HudIcons.kt`, `G/page/PageStyle.kt`, `G/page/SessionScreenView.kt`, `G/page/LauncherBlocks.kt` | `LauncherRenderingTest`, `SessionScreenViewTest`, `ReadingRunnerTest`, `DocumentPagingRunnerTest` | Done (Robolectric layout; optics pending) |
 | Canonical touchpad/ring/accessibility selection through one arbiter | `G/input/InputArbiter.kt`, `G/RokidBusAccessibilityService.kt` (`NexusInput`) | `InputArbiterTest` | Done |
