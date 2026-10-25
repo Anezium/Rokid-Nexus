@@ -971,6 +971,35 @@ class ComposerSessionTest {
     }
 
     @Test
+    fun `a sender's name is matched as written, never as a pattern, and only before a whole message`() {
+        fun lines(title: String, vararg said: String) = conversationNotice("t1", title, "").copy(body = null, lines = said.toList()).message
+
+        // Characters that mean something in a pattern are only characters.
+        assertEquals("hi there", lines("Ana (work) [x]*", "Ana (work) [x]*: hi", "Ana (work) [x]*: there"))
+        assertEquals("Ana work: hi", lines("Ana (work)", "Ana work: hi"))
+        assertEquals("A.na: hi", lines("Ana", "A.na: hi"))
+        // A bare or cut prefix is not a sender before a message: every line stays as it came.
+        assertEquals("Mika: hi Mika:", lines("Mika", "Mika: hi", "Mika:"))
+        assertEquals("Mika:", lines("Mika", "Mika:"))
+        assertEquals("Mik: hi", lines("Mika", "Mik: hi"))
+        assertEquals("Mika:hi", lines("Mika", "Mika:hi"))
+        // Nothing to say is no preview, and an empty title strips nothing.
+        assertNull(lines("Mika", "", "  "))
+        assertNull(conversationNotice("t1", "Mika", "  ").message)
+        assertEquals(": hi", lines("", ": hi"))
+        assertEquals("Mika: hi", lines("  ", "Mika: hi"))
+    }
+
+    @Test
+    fun `a one-to-one card from another conversation owner drops the repeated sender too`() {
+        arrive(conversationNotice("t1", "Mika", "", owner = "chat").copy(body = null, lines = listOf("Mika: build is green", "Mika: merging")))
+        openRoot(at = 1_000)
+        val drawn = screen().blocks.first() as ScreenBlock.Card
+        assertEquals("Mika", drawn.primary)
+        assertEquals("build is green merging", drawn.secondary)
+    }
+
+    @Test
     fun `several live threads of one owner make an aggregate opening its main page`() {
         arrive(conversationNotice("t1", "Ana", "hi"))
         arrive(conversationNotice("t2", "Bo", "hello"))
