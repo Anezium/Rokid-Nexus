@@ -242,6 +242,38 @@ class ActivityIslandRenderingTest {
     }
 
     @Test
+    fun `a measure ticking every second keeps the flare's title moving to its end`() {
+        val longest = "Teardrop (Mad Professor remix) · Massive"
+        show(content(headline = longest, measure = "950 m"), ActivityPresentation.CHIP)
+        island.showFlare(urgent = false)
+        idle()
+        val line = find<OverflowLineView>(requireNotNull(island.currentForm)).single { it.isShown }
+        val overflow = line.overflowPx()
+        // Measured once a second, the end shows within the tick after one pass.
+        val bound = OverflowScroll.cycleMs(overflow) + 1_000
+        var meters = 950
+        var elapsed = 0L
+        while (island.flareTitleLeftMs() > 0 && elapsed <= bound) {
+            idle(1_000)
+            elapsed += 1_000
+            meters -= 10
+            island.render(item(content(headline = longest, measure = "$meters m"), ActivityPresentation.CHIP), guidance = null)
+            idle()
+            assertEquals("$longest - $meters m", line.text.toString())
+        }
+        assertEquals("the title was read once within one pass", 0, island.flareTitleLeftMs())
+        assertTrue("$elapsed ms past $bound ms", elapsed <= bound)
+    }
+
+    @Test
+    fun `a flare never outlives its bound, whatever its title still needs`() {
+        assertEquals(0, ActivityOverlayRenderer.flareHoldMs(titleLeftMs = 0, nowMs = 1_000, foldByMs = 15_000))
+        assertEquals(2_000, ActivityOverlayRenderer.flareHoldMs(titleLeftMs = 2_000, nowMs = 1_000, foldByMs = 15_000))
+        assertEquals(1_000, ActivityOverlayRenderer.flareHoldMs(titleLeftMs = 5_000, nowMs = 14_000, foldByMs = 15_000))
+        assertEquals(0, ActivityOverlayRenderer.flareHoldMs(titleLeftMs = 5_000, nowMs = 15_000, foldByMs = 15_000))
+    }
+
+    @Test
     fun `after an older phone announces, every island names the activity by its primary`() {
         val bundled = content(headline = headline, measure = "250 m")
         val kept = ActivityOverlayRenderer.islandStateOf(ActivityRenderState(listOf(item(bundled, ActivityPresentation.CHIP))), bundle = true)
