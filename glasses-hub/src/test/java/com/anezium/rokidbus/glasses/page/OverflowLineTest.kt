@@ -34,6 +34,28 @@ class OverflowLineTest {
     private val long = "Gare de Fontainebleau, Essonne-Sud, Île-de-France"
 
     @Test
+    fun `a line whose hidden part changes keeps its place, its end hold and its passes`() {
+        val hold = OverflowScroll.HOLD_MS
+        // Shrunk mid-travel past the new end: it stands at that end and holds it.
+        val shrunk = OverflowScroll.rebase(10_000, from = 342, to = 248)
+        assertEquals(309, OverflowScroll.offsetAt(10_000, 342))
+        assertEquals(248, OverflowScroll.offsetAt(shrunk, 248))
+        assertEquals(hold + OverflowScroll.travelMs(248), shrunk)
+        // Grown or shrunk before that end: the same pixel, give or take the rounding.
+        val at = hold + 3_000
+        val before = OverflowScroll.offsetAt(at, 248)
+        assertTrue(kotlin.math.abs(OverflowScroll.offsetAt(OverflowScroll.rebase(at, 248, 342), 342) - before) <= 1)
+        assertTrue(kotlin.math.abs(OverflowScroll.offsetAt(OverflowScroll.rebase(at, 342, 248), 248) - before) <= 1)
+        // Still in the first hold, or in the end hold: the same time into it.
+        assertEquals(500, OverflowScroll.rebase(500, 342, 248))
+        val endHold = hold + OverflowScroll.travelMs(342) + 300
+        assertEquals(hold + OverflowScroll.travelMs(248) + 300, OverflowScroll.rebase(endHold, 342, 248))
+        // A pass already made stays made.
+        assertEquals(OverflowScroll.cycleMs(248) + 500, OverflowScroll.rebase(OverflowScroll.cycleMs(342) + 500, 342, 248))
+        assertEquals(1_234, OverflowScroll.rebase(1_234, 342, 342))
+    }
+
+    @Test
     fun `the timing holds, travels at a reading pace, holds at the end, then starts again`() {
         val overflow = 180
         assertEquals(0, OverflowScroll.offsetAt(0, overflow))
