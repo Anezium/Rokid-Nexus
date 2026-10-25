@@ -1093,8 +1093,9 @@ data class NexusActivityTrack(
  * the island) and scrolled there when it is still too wide. [primary] stays
  * required and is what every other surface, and every older hub, draws.
  *
- * Using any launcher-bundle field (or a typed action) also requires every action
- * id to be a safe id (printable ASCII without spaces, at most 128) and unique.
+ * Using a launcher-bundle field other than [headline] (or a typed action) also
+ * requires every action id to be a safe id (printable ASCII without spaces,
+ * at most 128) and unique. [headline] alone is presentation only.
  * Without [NexusPluginClient.supportsLauncherInteractive] these fields are
  * dropped before sending and the activity is an ordinary one.
  */

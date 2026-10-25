@@ -159,7 +159,7 @@ data class ActivitySurfaceContent(
     val effectiveDefaultActionId: String?
         get() = defaultActionId?.takeIf { id -> actions.any { it.id == id } } ?: actions.firstOrNull()?.id
 
-    /** Whether this content uses any launcher-bundle field, which tightens the action-id rule. */
+    /** Whether this content uses a launcher-bundle field other than the headline, which tightens the action-id rule. */
     val usesInteractiveFields: Boolean
         get() = destination != null || activation != null || defaultActionId != null ||
             persistence == ActivityPersistence.ONGOING || actions.any { it.typed != null }
