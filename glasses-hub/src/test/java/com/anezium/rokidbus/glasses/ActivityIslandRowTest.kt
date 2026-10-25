@@ -22,6 +22,7 @@ import com.anezium.rokidbus.shared.PinSurfaceSize
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -169,6 +170,77 @@ class ActivityIslandRowTest {
     }
 
     @Test
+    fun `a folded island beside a guidance panel keeps only its glyph, and its text when the guidance shrinks or ends`() {
+        val media = item("media", PinSurfacePosition.TOP_LEFT, content(headline = headline, secondary = "Kid Loco"))
+        val nav = item("nav", PinSurfacePosition.TOP_RIGHT, content(primary = "120 m"))
+        val street = IslandContent.Guidance("turn-left", "120 m", street = "Rue de Rivoli")
+        val islands = mutableMapOf<String, ActivityOverlayRenderer.ActivityIsland>()
+        val (mediaIsland, navIsland) = draw(listOf(media to null, nav to GuidanceIsland(IslandForm.PANEL, street)), islands = islands)
+
+        assertEquals("the route keeps its panel", IslandForm.PANEL.widthPx, navIsland.currentForm!!.width)
+        assertGivesWay(mediaIsland, navIsland, budgetPx = 480 - 3 * edgePx - IslandForm.PANEL.widthPx)
+
+        draw(listOf(media to null, nav to GuidanceIsland(IslandForm.TEXT, street)), islands = islands)
+        val compact = mediaIsland.currentForm as ActivityOverlayRenderer.ActivityCompactView
+        assertApart(rectOf(compact), rectOf(navIsland.currentForm!!))
+        assertDrawnWhole(compact.title, headline, compact)
+
+        draw(listOf(media to null, nav to GuidanceIsland(IslandForm.PANEL, street)), islands = islands)
+        assertGivesWay(mediaIsland, navIsland, budgetPx = 480 - 3 * edgePx - IslandForm.PANEL.widthPx)
+        // The route ends: the island is alone in its row again, at its own widths.
+        container.removeView(navIsland)
+        draw(listOf(media to null), islands = islands)
+        assertEquals((480 * 0.60f).toInt(), (mediaIsland.currentForm as ActivityOverlayRenderer.ActivityCompactView).title.width)
+    }
+
+    @Test
+    fun `a measured chip beside a guidance panel keeps only its glyph, and its text when the guidance shrinks`() {
+        val transit = item("transit", PinSurfacePosition.TOP_LEFT, content(headline = headline, measure = "3 min", secondary = "Gare de Lyon"))
+        val nav = item("nav", PinSurfacePosition.TOP_RIGHT, content(primary = "120 m"))
+        val street = IslandContent.Guidance("turn-left", "120 m", street = "Rue de Rivoli")
+        val islands = mutableMapOf<String, ActivityOverlayRenderer.ActivityIsland>()
+        val (transitIsland, navIsland) = draw(listOf(transit to null, nav to GuidanceIsland(IslandForm.PANEL, street)), islands = islands)
+
+        assertGivesWay(transitIsland, navIsland, budgetPx = 480 - 3 * edgePx - IslandForm.PANEL.widthPx)
+
+        draw(listOf(transit to null, nav to GuidanceIsland(IslandForm.MINIMAP, street)), islands = islands)
+        val chip = transitIsland.currentForm!!
+        assertTrue(chip is PinOverlayRenderer.PinPanelView)
+        assertApart(rectOf(chip), rectOf(navIsland.currentForm!!))
+        assertDrawnWhole(find<OverflowLineView>(chip).single(), headline, chip)
+    }
+
+    @Test
+    fun `an island with no room for its glyph is not drawn, and comes back by itself`() {
+        val media = item("media", PinSurfacePosition.TOP_LEFT, content(headline = headline, secondary = "Kid Loco"))
+        val island = ActivityOverlayRenderer.ActivityIsland(activity, glyphOf = { _, _ -> GlyphDrawable(DISC) }, actionGlyphOf = { GlyphDrawable(DISC) })
+        container.addView(island, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        island.place(media.activity.corner, 0)
+        val drawWithin = { budgetPx: Int? ->
+            island.render(media, null, budgetPx)
+            island.showSteady(media.presentation)
+            idle()
+        }
+        drawWithin(null)
+        val glyphPx = glyphSizePx(island)
+
+        drawWithin(glyphPx - 1)
+        assertNotDrawn(island)
+
+        drawWithin(glyphPx)
+        assertTrue(island.currentForm is ActivityOverlayRenderer.ActivityGlyphView)
+        assertEquals(glyphPx, island.currentForm!!.width)
+        assertEquals(1f, island.currentForm!!.alpha)
+
+        drawWithin(glyphPx - 1)
+        assertNotDrawn(island)
+        drawWithin(null)
+        val compact = island.currentForm as ActivityOverlayRenderer.ActivityCompactView
+        assertEquals(1f, compact.alpha)
+        assertEquals((480 * 0.60f).toInt(), compact.title.width)
+    }
+
+    @Test
     fun `fixed widths are kept and only folded islands are bounded`() {
         val room = 480 - 3 * 18
         assertEquals(18, edgePx)
@@ -189,25 +261,66 @@ class ActivityIslandRowTest {
         )
     }
 
-    /** Draws each item in its own full-screen island, sized as the renderer sizes them. */
+    /**
+     * Draws each item in its own full-screen island, sized as the renderer sizes them; an island
+     * already in [islands] is drawn again, as the renderer redraws its nodes.
+     */
     private fun draw(
         items: List<Pair<ActivityRenderItem, GuidanceIsland?>>,
         pin: NexusPinSurface? = null,
+        islands: MutableMap<String, ActivityOverlayRenderer.ActivityIsland> = mutableMapOf(),
     ): List<ActivityOverlayRenderer.ActivityIsland> {
         val guidances = items.associate { (item, guidance) -> item.activity.surfaceId to guidance }
         val budgets = ActivityOverlayRenderer.foldedWidthBudgets(activity, items.map { it.first }, guidances, pin)
         return items.map { (item, guidance) ->
-            ActivityOverlayRenderer.ActivityIsland(
-                activity,
-                glyphOf = { _, _ -> GlyphDrawable(DISC) },
-                actionGlyphOf = { GlyphDrawable(DISC) },
-            ).also { island ->
-                container.addView(island, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            islands.getOrPut(item.activity.surfaceId) {
+                ActivityOverlayRenderer.ActivityIsland(
+                    activity,
+                    glyphOf = { _, _ -> GlyphDrawable(DISC) },
+                    actionGlyphOf = { GlyphDrawable(DISC) },
+                ).also { container.addView(it, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)) }
+            }.also { island ->
                 island.place(item.activity.corner, 0)
                 island.render(item, guidance, budgets[item.activity.corner])
                 island.showSteady(item.presentation)
             }
         }.also { idle() }
+    }
+
+    /**
+     * [folded] had [budgetPx] beside [neighbour]: its glyph alone when that fits, apart from the
+     * neighbour by the edge margin, or nothing at all.
+     */
+    private fun assertGivesWay(folded: ActivityOverlayRenderer.ActivityIsland, neighbour: ActivityOverlayRenderer.ActivityIsland, budgetPx: Int) {
+        val glyphPx = glyphSizePx(folded)
+        if (budgetPx < glyphPx) {
+            assertNotDrawn(folded)
+            return
+        }
+        val form = folded.currentForm
+        assertTrue("$form is the glyph alone", form is ActivityOverlayRenderer.ActivityGlyphView)
+        assertTrue(folded.folded === form && !folded.withheld)
+        assertEquals(glyphPx, form!!.width)
+        assertEquals(1f, form.alpha)
+        assertTrue("$glyphPx px fits $budgetPx px", form.width <= budgetPx)
+        assertApart(rectOf(form), rectOf(neighbour.currentForm!!))
+    }
+
+    /** Nothing of [island] is drawn: no form, its outline folded away. */
+    private fun assertNotDrawn(island: ActivityOverlayRenderer.ActivityIsland) {
+        assertTrue(island.withheld)
+        assertNull(island.currentForm)
+        for (index in 0 until island.childCount) {
+            val form = island.getChildAt(index)
+            assertTrue("$form is hidden", form.visibility != View.VISIBLE && form.alpha == 0f)
+        }
+    }
+
+    /** The glyph-only form's width, which the island decides by, as measured. */
+    private fun glyphSizePx(island: ActivityOverlayRenderer.ActivityIsland): Int {
+        val glyph = find<ActivityOverlayRenderer.ActivityGlyphView>(island).single()
+        assertEquals((glyph.layoutParams as FrameLayout.LayoutParams).width, glyph.sizePx)
+        return glyph.sizePx
     }
 
     /** Side by side in one row, apart by at least the edge margin, each inside the screen's. */
