@@ -90,6 +90,11 @@ class NavPluginService : NexusPluginService() {
             scheduled?.let(main::removeCallbacks)
             scheduled = null
         },
+        retryAfterRefusalMs = {
+            if (NavControl.renderedFrames.awaitingAcknowledgment(nexusClient?.renderedMapFrames.orEmpty(), NavPages.MAIN)) {
+                nexusClient?.renderedMapLeaseRemainingMs ?: 0L
+            } else null
+        },
     )
 
     override fun onCreate() {
@@ -155,7 +160,8 @@ class NavPluginService : NexusPluginService() {
     override fun onNexusActivityClosed(reason: String) = NavControl.activityClosed(reason)
     override fun onNexusRenderedMapsChanged() {
         NavControl.mapDemandChanged()
-        pages.onRenderedMapsChanged()
+        // The journey posts demand reconciliation; catch up from its refreshed street layer.
+        main.post { pages.onRenderedMapsChanged() }
     }
 
     override fun onDestroy() {

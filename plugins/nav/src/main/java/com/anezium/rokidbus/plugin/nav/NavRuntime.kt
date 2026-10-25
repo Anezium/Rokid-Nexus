@@ -41,12 +41,14 @@ internal class NavRuntime(context: Context) {
     private var startedGeneration = NO_GENERATION
     private var lastSentAtMs = 0L
     private val sendDeferred = Runnable { flushDeferred() }
-    private val sendMap = Runnable { map.flush() }
+    private val sendMap = Runnable { if (NavControl.owns(this)) flushMap() }
     private val releaseIdle = Runnable { if (NavControl.owns(this)) NavControl.releaseBus(appContext) }
     private val map = NavMapPublisher(
         supported = { client?.supportsLauncherInteractive() == true },
         sendGeometry = { revision, geometry ->
             if (NavControl.renderedFrames.awaitingAcknowledgment(client?.renderedMapFrames.orEmpty())) {
+                main.removeCallbacks(sendMap)
+                main.postDelayed(sendMap, client?.renderedMapLeaseRemainingMs ?: 0L)
                 NexusSdkResult.CAPABILITY_NOT_AVAILABLE
             } else {
                 client?.publishActivityGeometry(revision, geometry) ?: NexusSdkResult.NOT_REGISTERED
@@ -85,10 +87,10 @@ internal class NavRuntime(context: Context) {
     }
 
     private fun flushMap() {
-        val delay = map.geometryDelayMs()
-        map.flush()
         main.removeCallbacks(sendMap)
+        val delay = map.geometryDelayMs()
         delay?.let { main.postDelayed(sendMap, it) }
+        map.flush()
     }
 
     /** The app withdrew its guidance, or it stayed unreadable past the listener's grace. */

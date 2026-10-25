@@ -122,6 +122,7 @@ class NavPagesTest {
         val published = mutableListOf<Long>()
         var scheduled: Pair<Long, () -> Unit>? = null
         var accept = NexusSdkResult.SENT
+        var retryAfterRefusalMs: Long? = null
         var journey: Long? = null
         val visibility = mutableListOf<Boolean>()
         val provider = NavPageProvider<Request>(
@@ -138,6 +139,7 @@ class NavPagesTest {
             cancelScheduled = { scheduled = null },
             journey = { journey },
             visibilityChanged = { visibility += it },
+            retryAfterRefusalMs = { retryAfterRefusalMs },
         )
 
         fun runScheduled() {
@@ -146,6 +148,40 @@ class NavPagesTest {
             clock += delay
             task()
         }
+    }
+
+    @Test
+    fun `a held source-gone page retries once its rendered lease expires without another event`() {
+        val harness = Harness()
+        harness.guidance = walking
+        harness.provider.onRequest(Harness.Request(NavPages.MAIN))
+        harness.provider.onVisibility(NavPages.MAIN, true)
+        harness.accept = NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        harness.retryAfterRefusalMs = 2_700L
+        harness.guidance = null
+        harness.provider.guidanceChanged()
+        assertTrue(harness.published.isEmpty())
+        assertEquals(2_700L, harness.scheduled?.first)
+        harness.accept = NexusSdkResult.SENT
+        harness.retryAfterRefusalMs = null
+        harness.runScheduled()
+        assertEquals(1, harness.published.size)
+        assertNull(harness.scheduled)
+    }
+
+    @Test
+    fun `closing a held page cancels its lease retry`() {
+        val harness = Harness()
+        harness.guidance = walking
+        harness.provider.onRequest(Harness.Request(NavPages.MAIN))
+        harness.provider.onVisibility(NavPages.MAIN, true)
+        harness.accept = NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        harness.retryAfterRefusalMs = 2_700L
+        harness.guidance = null
+        harness.provider.guidanceChanged()
+        harness.provider.onClosed(NavPages.MAIN)
+        assertNull(harness.scheduled)
+        assertTrue(harness.published.isEmpty())
     }
 
     @Test

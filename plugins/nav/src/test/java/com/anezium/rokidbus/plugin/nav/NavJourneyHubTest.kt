@@ -129,6 +129,7 @@ class NavJourneyHubTest {
             NavControl.detachJourney(it)
         }
         service?.destroy()
+        NavControl.mapDemandListener = null
         NavState.guidance = null
         NavState.journey = null
         idleFor(0)
@@ -225,6 +226,8 @@ class NavJourneyHubTest {
         openPage()
         feedback("page")
         val opened = SystemClock.elapsedRealtime()
+        val pagePublications = hub.sent.count { it.first == BusPaths.PAGE_RESPONSE }
+        val geometryPublications = hub.sent.count { it.first == BusPaths.ACTIVITY_GEOMETRY }
         repeat(35) { second ->
             move(second + 1)
             // The capture's return path grows from near zero to over one publication interval.
@@ -238,10 +241,92 @@ class NavJourneyHubTest {
             assertStreets(latest(BusPaths.PAGE_RESPONSE).getJSONObject("body").getJSONObject("follow"))
         }
         assertTrue("exercise the phone's current-revision gate", rejectedFeedback > 0)
+        assertTrue("page updates must keep flowing under delay",
+            hub.sent.count { it.first == BusPaths.PAGE_RESPONSE } - pagePublications >= 16)
+        assertTrue("geometry updates must keep flowing under delay",
+            hub.sent.count { it.first == BusPaths.ACTIVITY_GEOMETRY } - geometryPublications >= 16)
+        // A new fix replaces the held snapshot and reaches the page within the next round trip.
+        feedback("page")
+        idleFor(NavPageProvider.MIN_INTERVAL_MS)
+        val before = latest(BusPaths.PAGE_RESPONSE).getLong("revision")
+        move(100, latitudeOffset = 0.0001)
+        val expected = NavMapProjection.geometry(NavState.journey!!, NavMapView.FOLLOW).paths.filter { it.role == RoutePathRole.ROUTE }
+        feedback("page", delayMs = 1_500L)
+        idleFor(1_500L)
+        assertTrue("latest fix published within one return trip", latest(BusPaths.PAGE_RESPONSE).getLong("revision") > before)
+        val received = RouteGeometryContract.parseOrNull(latest(BusPaths.PAGE_RESPONSE).getJSONObject("body").getJSONObject("follow"))!!
+        assertEquals(expected, received.paths.filter { it.role == RoutePathRole.ROUTE })
         feedback("page", visible = false)
         feedback("ambient")
         idleFor(NavMapPublisher.MIN_GEOMETRY_INTERVAL_MS)
         assertStreets(latest(BusPaths.ACTIVITY_GEOMETRY).getJSONObject("geometry"))
+    }
+
+    @Test
+    fun `a dirty held page catches up from reconciled streets in the acknowledging turn`() {
+        hub.features = BusCapabilityBits.ACTIVITY_SURFACE or BusCapabilityBits.LAUNCHER_INTERACTIVE or BusCapabilityBits.RENDERED_MAP
+        startJourney(bearing = null)
+        val runtime = journey!!
+        val initial = NavState.journey!!
+        val tiles = NavMapProjection.tiles(initial, NavMapView.FOLLOW, NavJourneyService.BASEMAP_SOURCE).associateWith { key ->
+            LocalTile(key, listOf(LocalLine(StreetClass.STREET, doubleArrayOf(-200.0, 200.0), doubleArrayOf(30.0, 30.0))), emptyList())
+        }
+        val streets = NavBasemapTiles(OsmShortbreadSource.attribution, OsmShortbreadSource.maxZoom, tiles)
+        openPage()
+        feedback("page")
+        idleFor(1_000)
+        fun update(progress: Double) {
+            val snapshot = initial.copy(progressMeters = progress, position = initial.route.line.pointAt(progress),
+                atMs = SystemClock.elapsedRealtime(), positionAtMs = SystemClock.elapsedRealtime())
+            NavState.journey = snapshot
+            runtime.onJourney(snapshot)
+            idleFor(0)
+        }
+        update(110.0)
+        idleFor(NavPageProvider.MIN_INTERVAL_MS)
+        update(120.0)
+        val before = hub.sent.count { it.first == BusPaths.PAGE_RESPONSE }
+        NavControl.mapDemandListener = {
+            android.os.Handler(Looper.getMainLooper()).post {
+                val restored = NavState.journey!!.copy(basemap = streets)
+                NavState.journey = restored
+                NavState.basemapState = BasemapState.READY
+                runtime.onJourney(restored)
+            }
+        }
+        feedback("page")
+        val released = hub.sent.filter { it.first == BusPaths.PAGE_RESPONSE }.drop(before)
+        assertEquals("release only the reconciled page", 1, released.size)
+        assertStreets(released.single().second.getJSONObject("body").getJSONObject("follow"))
+    }
+
+    @Test
+    fun `a lost ambient ack retries the latest map at lease expiry without another journey event`() {
+        hub.features = BusCapabilityBits.ACTIVITY_SURFACE or BusCapabilityBits.LAUNCHER_INTERACTIVE or BusCapabilityBits.RENDERED_MAP
+        startJourney(bearing = null)
+        feedback("ambient")
+        idleFor(1_000)
+        val runtime = journey!!
+        val initial = NavState.journey!!
+        fun update(progress: Double): NavRouteSnapshot {
+            val snapshot = initial.copy(progressMeters = progress, position = initial.route.line.pointAt(progress),
+                atMs = SystemClock.elapsedRealtime(), positionAtMs = SystemClock.elapsedRealtime())
+            runtime.onJourney(snapshot)
+            idleFor(0)
+            return snapshot
+        }
+        update(110.0)
+        val latestFix = update(130.0)
+        idleFor(NavMapPublisher.MIN_GEOMETRY_INTERVAL_MS)
+        val before = hub.sent.count { it.first == BusPaths.ACTIVITY_GEOMETRY }
+        val remaining = NavControl.serviceClient!!.renderedMapLeaseRemainingMs!!
+        idleFor(remaining - 1)
+        assertEquals(before, hub.sent.count { it.first == BusPaths.ACTIVITY_GEOMETRY })
+        idleFor(1)
+        assertEquals(before + 1, hub.sent.count { it.first == BusPaths.ACTIVITY_GEOMETRY })
+        val received = RouteGeometryContract.parseOrNull(latest(BusPaths.ACTIVITY_GEOMETRY).getJSONObject("geometry"))!!
+        val expected = NavMapProjection.geometry(latestFix, NavMapView.FOLLOW)
+        assertEquals(expected.paths, received.paths)
     }
 
     @Test
@@ -316,9 +401,9 @@ class NavJourneyHubTest {
         idleFor(0)
     }
 
-    private fun move(second: Int) {
+    private fun move(second: Int, latitudeOffset: Double = second % 2 * 0.00002) {
         walking!!.get().onLocationChanged(Location(LocationManager.GPS_PROVIDER).apply {
-            latitude = 48.0 + second % 2 * 0.00002
+            latitude = 48.0 + latitudeOffset
             longitude = 2.0
             accuracy = 5f
             elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
@@ -430,7 +515,7 @@ class NavJourneyHubTest {
                 bearing = bearing,
                 quality = RouteQuality.TRACKING,
                 atMs = now,
-            ),
+            ).also { NavState.journey = it },
         )
         idleFor(0)
     }
