@@ -34,7 +34,9 @@ HUD surface, and forwards only play/pause/previous/next transport commands.
   always be turned off.
 - While it is on, Media Deck keeps watching the active media sessions through its notification
   listener, even with the full surface closed, and publishes a now-playing activity: the title
-  (12 characters, ellipsized) and the artist (or the app's name), Previous, Play or Pause, and
+  (12 characters, ellipsized, and whole up to 40 as the launcher headline) and the artist (or
+  the app's name, followed by "Paused" or "Stopped" when nothing plays), marked with Media
+  Deck's own `disc` glyph rather than a play or pause mark, Previous, Play or Pause, and
   Next as typed `media.*` commands, Play/Pause focused first, `ONGOING` persistence and the
   `media:main` page as its destination. It is updated only when the session, the item or
   playing/paused changes, never for the position, and nothing polls.
