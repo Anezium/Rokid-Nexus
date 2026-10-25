@@ -10,7 +10,9 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.client.PluginRegistrationResult
@@ -39,6 +41,19 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     private var sessionOpen = false
     private var audioSessionActive = false
     private var ongoingWorkHeld = false
+    private var sessionForegroundActive = false
+    private val foregroundHandler = Handler(Looper.getMainLooper())
+    private val foregroundExpiry = Runnable { refreshSessionForeground() }
+
+    private fun refreshSessionForeground() {
+        foregroundHandler.removeCallbacks(foregroundExpiry)
+        if (client?.hasForegroundDemand == true) {
+            if (!sessionForegroundActive) promoteNexusSessionForeground()
+            client?.foregroundLeaseRemainingMs?.let { foregroundHandler.postDelayed(foregroundExpiry, it) }
+        } else if (!sessionOpen && !audioSessionActive && !ongoingWorkHeld) {
+            stopNexusSessionForeground()
+        }
+    }
 
     protected val nexusClient: NexusPluginClient?
         get() = client
@@ -72,7 +87,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
                     try {
                         callbacks.onAudioStopped(reason)
                     } finally {
-                        if (!sessionOpen) stopNexusSessionForeground()
+                        refreshSessionForeground()
                     }
                 }
             },
@@ -109,6 +124,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             callbacks = this,
             hubTarget = hubTarget,
         ).also { created ->
+            created.foregroundDemandChanged = ::refreshSessionForeground
             created.ownSkillCatalog = loadOwnSkillCatalog(descriptor)
             created.connect()
         }
@@ -117,6 +133,8 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     override fun onBind(intent: Intent?): IBinder = localBinder
 
     override fun onDestroy() {
+        client?.foregroundDemandChanged = null
+        foregroundHandler.removeCallbacks(foregroundExpiry)
         client?.releaseAudioSession()
         client?.releaseSpeechSession()
         client?.releaseTtsSession()
@@ -147,7 +165,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             onNexusClose()
         } finally {
             sessionOpen = false
-            if (!ongoingWorkHeld) stopNexusSessionForeground()
+            refreshSessionForeground()
         }
     }
 
@@ -159,7 +177,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         try {
             onNexusBackground()
         } finally {
-            if (!audioSessionActive && !ongoingWorkHeld) stopNexusSessionForeground()
+            refreshSessionForeground()
         }
     }
 
@@ -196,7 +214,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         try {
             onNexusRegistrationState(result)
         } finally {
-            if (!ongoingWorkHeld) stopNexusSessionForeground()
+            refreshSessionForeground()
         }
     }
     final override fun onAssistantTakeover(enabled: Boolean) = onNexusAssistantTakeover(enabled)
@@ -209,7 +227,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     final override fun onMessage(path: String, id: String, payload: JSONObject) =
         onNexusMessage(path, id, payload)
 
-    // Pages never touch the immersion: no open, no foreground promotion, no released session.
+    // Page demand shares the session notification without opening or closing an immersion.
     final override fun onPageRequest(request: NexusPageRequest): NexusPage = onNexusPageRequest(request)
     final override fun onPageAction(action: NexusPageAction): NexusPageResult = onNexusPageAction(action)
     final override fun onPageVisibility(visibility: NexusPageVisibility) = onNexusPageVisibility(visibility)
@@ -334,9 +352,9 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         additionalTypes: Int = 0,
         onFailure: ((Throwable) -> Unit)? = null,
     ): Boolean {
-        if (!sessionOpen && !audioSessionActive && !ongoingWorkHeld) return false
-        createSessionNotificationChannel()
+        if (!sessionOpen && !audioSessionActive && !ongoingWorkHeld && client?.hasForegroundDemand != true) return false
         return runCatching {
+            createSessionNotificationChannel()
             val notification = buildSessionNotification()
             when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
@@ -352,7 +370,10 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
                 else -> startForeground(SESSION_NOTIFICATION_ID, notification)
             }
         }.fold(
-            onSuccess = { true },
+            onSuccess = {
+                sessionForegroundActive = true
+                true
+            },
             onFailure = { failure ->
                 if (onFailure != null) {
                     onFailure(failure)
@@ -386,7 +407,11 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected fun releaseNexusOngoingWork() {
         if (!ongoingWorkHeld) return
         ongoingWorkHeld = false
-        if (sessionOpen || audioSessionActive) promoteNexusSessionForeground() else stopNexusSessionForeground()
+        if (sessionOpen || audioSessionActive || client?.hasForegroundDemand == true) {
+            promoteNexusSessionForeground()
+        } else {
+            stopNexusSessionForeground()
+        }
         stopSelf()
     }
 
@@ -394,6 +419,8 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         get() = ongoingWorkHeld
 
     protected fun stopNexusSessionForeground() {
+        if (client?.hasForegroundDemand == true) return
+        sessionForegroundActive = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {

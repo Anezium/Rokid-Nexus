@@ -73,7 +73,22 @@ class NexusPluginClient internal constructor(
     /** Discard this plugin's feedback, for example when its journey is replaced. */
     fun clearRenderedMapDemand() = renderedMaps.clear()
     // A page answer is current or it is nothing: it never waits in the reconnect queue.
-    private val pages = NexusPageChannel(pluginId, monotonicClockMs) { path, id, payload ->
+    internal var foregroundDemandChanged: (() -> Unit)? = null
+    internal val hasForegroundDemand: Boolean
+        get() = !closed && isApproved && (
+            synchronized(activityCommandLock) { activeActivityCommands > 0 } ||
+                pages.hasForegroundDemand || foregroundLeaseRemainingMs != null
+            )
+    internal val foregroundLeaseRemainingMs: Long?
+        get() {
+            val commandLease = synchronized(activityCommandLock) {
+                foregroundCommands.entries.removeAll { it.value <= monotonicClockMs() }
+                foregroundCommands.values.minOrNull()?.minus(monotonicClockMs())?.coerceAtLeast(1L)
+            }
+            return listOfNotNull(commandLease, pages.foregroundLeaseRemainingMs).minOrNull()
+        }
+
+    private val pages = NexusPageChannel(pluginId, monotonicClockMs, { foregroundDemandChanged?.invoke() }) { path, id, payload ->
         !closed && isApproved && transport.sendImmediate(path, id, payload)
     }
     private val seenEventIds = ArrayDeque<String>()
@@ -83,6 +98,8 @@ class NexusPluginClient internal constructor(
     private val activityCommandLock = Any()
     private val seenActivityInvocations = linkedSetOf<String>()
     private val answeredActivityCommands = linkedSetOf<String>()
+    private val foregroundCommands = mutableMapOf<String, Long>()
+    private var activeActivityCommands = 0
     // Correlates a surface request's id to the callback that wants to know if
     // the hub rejects it after accepting the Binder call — see watchForSurfaceError.
     private val pendingSurfaceErrors = mutableMapOf<String, (String) -> Unit>()
@@ -551,10 +568,15 @@ class NexusPluginClient internal constructor(
         if (!supportsLauncherInteractive()) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
         if (command.activityId != ownActivityId) return NexusSdkResult.INVALID_PAYLOAD
         if (!rememberOnce(answeredActivityCommands, command.invocationId)) return NexusSdkResult.INVALID_PAYLOAD
-        return if (transport.sendImmediate(BusPaths.ACTIVITY_RESULT, UUID.randomUUID().toString(), activityResultPayload(command, result))) {
-            NexusSdkResult.SENT
-        } else {
-            NexusSdkResult.NOT_REGISTERED
+        return try {
+            if (transport.sendImmediate(BusPaths.ACTIVITY_RESULT, UUID.randomUUID().toString(), activityResultPayload(command, result))) {
+                NexusSdkResult.SENT
+            } else {
+                NexusSdkResult.NOT_REGISTERED
+            }
+        } finally {
+            synchronized(activityCommandLock) { foregroundCommands.remove(command.invocationId) }
+            foregroundDemandChanged?.invoke()
         }
     }
 
@@ -899,6 +921,7 @@ class NexusPluginClient internal constructor(
         if (closed) return
         renderedMaps.clear()
         // A new registration holds no page work; the hub announces its page support afresh.
+        synchronized(activityCommandLock) { foregroundCommands.clear() }
         pages.onRegistrationReset()
         registrationGeneration++
         clearNoticeContext()
@@ -929,6 +952,7 @@ class NexusPluginClient internal constructor(
             }
         }
         if (result != PluginRegistrationResult.APPROVED) {
+            synchronized(activityCommandLock) { foregroundCommands.clear() }
             renderedMaps.clear()
             approvedCapabilities = emptySet()
             skillsVersion = 0
@@ -1281,10 +1305,24 @@ class NexusPluginClient internal constructor(
             seq = parsed.seq,
             typed = parsed.typed?.toNexus(),
         )
-        val result = runCatching { callbacks.onActivityCommand(command) }
-            .getOrElse { NexusActivityCommandResult.rejected() } ?: return
-        if (!rememberOnce(answeredActivityCommands, command.invocationId)) return
-        transport.sendImmediate(BusPaths.ACTIVITY_RESULT, UUID.randomUUID().toString(), activityResultPayload(command, result))
+        synchronized(activityCommandLock) {
+            foregroundCommands[command.invocationId] = monotonicClockMs() + ActivitySurfaceContract.COMMAND_DEADLINE_MS
+            activeActivityCommands++
+        }
+        foregroundDemandChanged?.invoke()
+        try {
+            val result = runCatching { callbacks.onActivityCommand(command) }
+                .getOrElse { NexusActivityCommandResult.rejected() } ?: return
+            if (!rememberOnce(answeredActivityCommands, command.invocationId)) return
+            try {
+                transport.sendImmediate(BusPaths.ACTIVITY_RESULT, UUID.randomUUID().toString(), activityResultPayload(command, result))
+            } finally {
+                synchronized(activityCommandLock) { foregroundCommands.remove(command.invocationId) }
+            }
+        } finally {
+            synchronized(activityCommandLock) { activeActivityCommands-- }
+            foregroundDemandChanged?.invoke()
+        }
     }
 
     /** Page callbacks need no open: approval, the `surfaces` grant, announced support and a usable link do. */

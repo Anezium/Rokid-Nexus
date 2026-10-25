@@ -188,6 +188,7 @@ class NexusPageClosed internal constructor(
 internal class NexusPageChannel(
     private val pluginId: String,
     private val clock: () -> Long,
+    private val demandChanged: () -> Unit,
     private val send: (path: String, id: String, payload: JSONObject) -> Boolean,
 ) {
     private data class FrameKey(val generation: Long, val frameIndex: Int)
@@ -213,12 +214,33 @@ internal class NexusPageChannel(
         var shownComposer: ConversationComposer? = null,
         var visible: Boolean = false,
         var leaseExpiresAt: Long? = null,
+        var foregroundUntil: Long? = null,
     )
 
     private val lock = Any()
     private val frames = linkedMapOf<FrameKey, FrameContext>()
     private val seenRequests = ArrayDeque<String>()
     private val seenInvocations = ArrayDeque<String>()
+    private var activeDeliveries = 0
+
+    internal val foregroundLeaseRemainingMs: Long?
+        get() = synchronized(lock) {
+            frames.values.mapNotNull { it.foregroundUntil?.minus(clock())?.takeIf { remaining -> remaining > 0 } }.minOrNull()
+        }
+
+    internal val hasForegroundDemand: Boolean
+        get() = synchronized(lock) { activeDeliveries > 0 || foregroundLeaseRemainingMs != null }
+
+    private inline fun withForegroundDelivery(block: () -> Unit) {
+        synchronized(lock) { activeDeliveries++ }
+        demandChanged()
+        try {
+            block()
+        } finally {
+            synchronized(lock) { activeDeliveries-- }
+            demandChanged()
+        }
+    }
 
     /** The registration epoch the hub stamped on this client's page work; anchored until it re-registers. */
     private var epoch: String? = null
@@ -244,26 +266,33 @@ internal class NexusPageChannel(
             launcherInteractiveVersion = if (sessionVersion == 0) 0 else launcher
             if (sessionVersion == 0) frames.clear()
         }
+        demandChanged()
     }
 
     /** A new registration, a revoked one, or a closed client: every frame, publisher and the epoch are void. */
-    fun onRegistrationReset() = synchronized(lock) {
-        sessionVersion = 0
-        launcherInteractiveVersion = 0
-        epoch = null
-        frames.clear()
-        seenRequests.clear()
-        seenInvocations.clear()
+    fun onRegistrationReset() {
+        synchronized(lock) {
+            sessionVersion = 0
+            launcherInteractiveVersion = 0
+            epoch = null
+            frames.clear()
+            seenRequests.clear()
+            seenInvocations.clear()
+        }
+        demandChanged()
     }
 
     /**
      * No usable transport to the glasses: every lease there is void, and support only returns
      * with the hub's next owner-scoped capability update. The registration and its epoch remain.
      */
-    fun onLinkUnusable() = synchronized(lock) {
-        sessionVersion = 0
-        launcherInteractiveVersion = 0
-        frames.clear()
+    fun onLinkUnusable() {
+        synchronized(lock) {
+            sessionVersion = 0
+            launcherInteractiveVersion = 0
+            frames.clear()
+        }
+        demandChanged()
     }
 
     fun onRequest(payload: JSONObject, callbacks: NexusPluginCallbacks) {
@@ -299,9 +328,13 @@ internal class NexusPageChannel(
                 frames[key] = FrameContext(pageId, request.requestId)
                 while (frames.size > PageSurfaceContract.MAX_FRAMES) frames.remove(frames.keys.first())
             }
+            frames.getValue(key).foregroundUntil = existing?.leaseExpiresAt?.takeIf { it > clock() }
+                ?: (clock() + PageSurfaceContract.PAGE_TIMEOUT_MS)
         }
-        val page = runCatching { callbacks.onPageRequest(request) }.getOrElse { NexusPage.Unavailable }
-        respond(request, page)
+        withForegroundDelivery {
+            val page = runCatching { callbacks.onPageRequest(request) }.getOrElse { NexusPage.Unavailable }
+            respond(request, page)
+        }
     }
 
     fun onAction(payload: JSONObject, callbacks: NexusPluginCallbacks) {
@@ -338,31 +371,33 @@ internal class NexusPageChannel(
             text = parsed.text,
             typed = typed?.toNexus(),
         )
-        val result = runCatching { callbacks.onPageAction(action) }.getOrElse { NexusPageResult.rejected() }
-        val correlation = PageCorrelation(requestId, parsed.sessionGeneration, parsed.frameIndex, parsed.pageId)
-        synchronized(lock) {
-            val context = frames[key]?.takeIf { it.pageId == parsed.pageId }
-            // A replacement must be newer than what the wearer acted on and than anything sent since.
-            val replacement = result.replacement
-            val replacementAllowed = replacement == null || (
-                context != null && replacement.revision > parsed.revision &&
-                    replacement.revision > (context.highestRevision ?: Long.MIN_VALUE)
-                )
-            val outgoing = resultPayload(action.invocationId, result, correlation)
-                ?.takeIf { replacementAllowed && PageSurfaceContract.validateBoundedResult(it) is PageSurfaceValidationResult.Valid }
-                ?: resultPayload(action.invocationId, NexusPageResult.rejected(), correlation)
-                ?: return
-            val sentReplacement = outgoing.optJSONObject("replacement")
-            if (replacement != null && context != null && sentReplacement != null) {
-                context.highestRevision = replacement.revision
-                if (send(BusPaths.PAGE_RESULT, UUID.randomUUID().toString(), outgoing)) {
-                    context.shownRevision = replacement.revision
-                    recordShown(context, sentReplacement)
-                    // The replacement is now the page: whether it is live decides publishing, as for an answer.
-                    context.publishable = sentReplacement.optBoolean("live")
+        withForegroundDelivery {
+            val result = runCatching { callbacks.onPageAction(action) }.getOrElse { NexusPageResult.rejected() }
+            val correlation = PageCorrelation(requestId, parsed.sessionGeneration, parsed.frameIndex, parsed.pageId)
+            synchronized(lock) {
+                val context = frames[key]?.takeIf { it.pageId == parsed.pageId }
+                // A replacement must be newer than what the wearer acted on and than anything sent since.
+                val replacement = result.replacement
+                val replacementAllowed = replacement == null || (
+                    context != null && replacement.revision > parsed.revision &&
+                        replacement.revision > (context.highestRevision ?: Long.MIN_VALUE)
+                    )
+                val outgoing = resultPayload(action.invocationId, result, correlation)
+                    ?.takeIf { replacementAllowed && PageSurfaceContract.validateBoundedResult(it) is PageSurfaceValidationResult.Valid }
+                    ?: resultPayload(action.invocationId, NexusPageResult.rejected(), correlation)
+                    ?: return
+                val sentReplacement = outgoing.optJSONObject("replacement")
+                if (replacement != null && context != null && sentReplacement != null) {
+                    context.highestRevision = replacement.revision
+                    if (send(BusPaths.PAGE_RESULT, UUID.randomUUID().toString(), outgoing)) {
+                        context.shownRevision = replacement.revision
+                        recordShown(context, sentReplacement)
+                        // The replacement is now the page: whether it is live decides publishing, as for an answer.
+                        context.publishable = sentReplacement.optBoolean("live")
+                    }
+                } else {
+                    send(BusPaths.PAGE_RESULT, UUID.randomUUID().toString(), outgoing)
                 }
-            } else {
-                send(BusPaths.PAGE_RESULT, UUID.randomUUID().toString(), outgoing)
             }
         }
     }
@@ -382,7 +417,9 @@ internal class NexusPageChannel(
             val context = frames[key]?.takeIf { it.pageId == parsed.pageId } ?: return
             context.visible = parsed.visible && lease != null
             context.leaseExpiresAt = lease?.let { clock() + it }
+            context.foregroundUntil = context.leaseExpiresAt
         }
+        demandChanged()
         runCatching {
             callbacks.onPageVisibility(NexusPageVisibility(parsed.pageId, key.generation, key.frameIndex, parsed.visible, lease))
         }
@@ -397,6 +434,7 @@ internal class NexusPageChannel(
             if (frames[key]?.pageId != parsed.pageId) return
             frames.remove(key)
         }
+        demandChanged()
         runCatching { callbacks.onPageClosed(NexusPageClosed(parsed.pageId, key.generation, key.frameIndex, parsed.reason)) }
     }
 
@@ -448,8 +486,13 @@ internal class NexusPageChannel(
             if (answer != null && content != null) {
                 context.highestRevision = maxOf(context.highestRevision ?: content.revision, content.revision)
             }
-            if (!send(BusPaths.PAGE_RESPONSE, UUID.randomUUID().toString(), payload)) return
-            if (answer == null || content == null) return
+            val sent = send(BusPaths.PAGE_RESPONSE, UUID.randomUUID().toString(), payload)
+            if (!sent || answer == null || content == null) {
+                context.foregroundUntil = null
+                return
+            }
+            context.foregroundUntil = context.leaseExpiresAt?.takeIf { it > clock() }
+                ?: (clock() + PageSurfaceContract.PAGE_TIMEOUT_MS)
             context.shownRevision = content.revision
             recordShown(context, answer)
             context.actionable = true
