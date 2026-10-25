@@ -962,11 +962,11 @@ internal class SessionScreens(
         val echoes = ComposerRules.Echoes(body)
         facts.handoffs
             .filter { it.ownerPluginId == owner && it.threadKey == body.threadKey && it.from.isFrame(identity.sessionGeneration, identity.frameIndex, frame) }
-            .filter { echoes.take(it.text, it.from.shownIds) == null }
+            .filter { echoes.take(it.text, it.from.shown) == null }
             .forEachIndexed { index, it ->
                 drawn += Bubble(if (index == 0) HANDOFF_BUBBLE else "$HANDOFF_BUBBLE $index", BubbleSide.RIGHT, it.text, meta = HANDED_TO_APP)
             }
-        val carried = draft != null && (pending?.from?.shownIds ?: draft.sentIds)?.let { echoes.take(draft.text, it) } != null
+        val carried = draft != null && (pending?.from?.shown ?: draft.sent)?.let { echoes.take(draft.text, it) } != null
         if (draft != null && capture == null && !carried) {
             val meta = when {
                 sending -> PENDING

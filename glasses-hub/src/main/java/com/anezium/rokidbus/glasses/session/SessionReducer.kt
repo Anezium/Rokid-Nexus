@@ -1737,7 +1737,7 @@ internal class SessionReducer(
         val cleared = state.withTop(top.copy(composerFocus = null))
         val sent = invoke(model.copy(state = cleared), cleared, status, composer.sendActionId, nowMs, PageSurfaceContract.MODE_COMPOSE, draft.text)
         val invocationId = (sent.model.state as? SessionState.InPage)?.frames?.last()?.invocation?.invocationId ?: return keep(model)
-        val from = SentFrom(model.generation, state.frames.size, top.pageId, top.providerEpoch, ComposerRules.messageIds(body))
+        val from = SentFrom(model.generation, state.frames.size, top.pageId, top.providerEpoch, ComposerRules.shown(body, draft.text))
         val pending = PendingSend(invocationId, draft.ownerPluginId, draft.threadKey, draft.text, from)
         return sent.copy(model = sent.model.copy(pendingSend = pending))
     }
@@ -1868,18 +1868,19 @@ internal class SessionReducer(
         val claimed = LinkedHashSet<String>()
         val held = model.handoffs.mapNotNull { handoff ->
             if (owner != handoff.ownerPluginId || body.threadKey != handoff.threadKey) return@mapNotNull null
-            val shown = handoff.from.shownIds + claimed
+            val shown = echoes.behind(handoff.from.shown, handoff.text, claimed)
             val echo = echoes.take(handoff.text, shown)
             if (echo != null) claimed += echo
-            handoff.takeIf { echo == null }?.copy(from = handoff.from.copy(shownIds = shown))
+            handoff.takeIf { echo == null }?.copy(from = handoff.from.copy(shown = shown))
         }
         if (claimed.isEmpty()) return model.copy(handoffs = held)
         val pending = model.pendingSend?.takeIf { it.from.sameFrameAs(from) }
-        val draft = model.draft?.takeIf { it.sentIds != null && it.isFor(owner, body.threadKey) }
+        val draft = model.draft?.takeIf { it.isFor(owner, body.threadKey) }
+            ?.let { draft -> draft.sent?.let { draft.copy(sent = echoes.behind(it, draft.text, claimed)) } }
         return model.copy(
             handoffs = held,
-            pendingSend = pending?.copy(from = pending.from.copy(shownIds = pending.from.shownIds + claimed)) ?: model.pendingSend,
-            draft = draft?.copy(sentIds = draft.sentIds.orEmpty() + claimed) ?: model.draft,
+            pendingSend = pending?.copy(from = pending.from.copy(shown = echoes.behind(pending.from.shown, pending.text, claimed))) ?: model.pendingSend,
+            draft = draft ?: model.draft,
         )
     }
 

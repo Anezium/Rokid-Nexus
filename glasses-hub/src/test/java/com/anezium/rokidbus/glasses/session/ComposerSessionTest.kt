@@ -148,7 +148,7 @@ class ComposerSessionTest {
         assertNull(model.draft)
         assertNull(model.pendingSend)
         assertEquals(
-            listOf(Handoff("relay", "t1", "see you", SentFrom(model.generation, 1, "relay:thread", null, setOf("m1", "m2", "m3")))),
+            listOf(Handoff("relay", "t1", "see you", SentFrom(model.generation, 1, "relay:thread", null, ShownMessages(setOf("m1", "m2", "m3"))))),
             model.handoffs,
         )
         assertEquals(HistoryState.HANDED_OFF, model.history.entries.single().state)
@@ -274,6 +274,65 @@ class ComposerSessionTest {
 
         respond(requestOf(), thread("t1", extra = listOf(ours("h-1", "ok"), ours("h-2", "ok"))), revision = 3, now = 8_900)
         assertEquals(listOf("m:h-1", "m:h-2"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+    }
+
+    @Test
+    fun `an earlier reply's copy taking another id is never the next identical reply's, in flight or handed off`() {
+        openThread("t1", at = 1_000)
+        dictate("ok", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-1", "ok"))), revision = 2, now = 5_700)
+        assertEquals(listOf("m:h-1"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+
+        dictate("ok", at = 6_000)
+        val second = sendDraft(at = 8_000)
+        assertEquals(listOf("m:h-1", SessionScreens.DRAFT_BUBBLE), sentKeys("ok"))
+
+        // Computed before Relay recorded the second reply: the app's own copy of the first one
+        // replaces Relay's record of it, in its place, under another id.
+        val firstCopied = listOf(ours("m-first-ok", "ok", status = null))
+        respond(requestOf(), thread("t1", extra = firstCopied), revision = 3, now = 8_200)
+        assertEquals(listOf("m:m-first-ok", SessionScreens.DRAFT_BUBBLE), sentKeys("ok"))
+        assertEquals(listOf(null, SessionScreens.PENDING), sentBubbles("ok"))
+
+        result(second, "done", now = 8_500)
+        assertEquals(listOf("m:m-first-ok", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+
+        respond(requestOf(), thread("t1", extra = firstCopied), revision = 4, now = 8_700)
+        assertEquals(listOf("m:m-first-ok", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+
+        // The second reply's own copy takes over once, and keeps doing so under the app's id.
+        respond(requestOf(), thread("t1", extra = firstCopied + ours("h-2", "ok")), revision = 5, now = 8_900)
+        assertEquals(listOf("m:m-first-ok", "m:h-2"), sentKeys("ok"))
+        assertTrue(model.handoffs.isEmpty())
+
+        respond(requestOf(), thread("t1", extra = firstCopied + ours("m-second-ok", "ok", status = null)), revision = 6, now = 9_100)
+        assertEquals(listOf("m:m-first-ok", "m:m-second-ok"), sentKeys("ok"))
+    }
+
+    @Test
+    fun `a claimed copy taking another id is never the next identical reply's`() {
+        openThread("t1", at = 1_000)
+        dictate("ok", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+        dictate("ok", at = 6_000)
+        result(sendDraft(at = 8_000), "done", now = 8_500)
+        assertEquals(listOf(SessionScreens.HANDOFF_BUBBLE, "${SessionScreens.HANDOFF_BUBBLE} 1"), sentKeys("ok"))
+
+        respond(requestOf(), thread("t1", extra = listOf(ours("h-1", "ok"))), revision = 2, now = 8_700)
+        assertEquals(listOf("m:h-1", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+
+        val firstCopied = listOf(ours("m-first-ok", "ok", status = null))
+        respond(requestOf(), thread("t1", extra = firstCopied), revision = 3, now = 8_900)
+        assertEquals(listOf("m:m-first-ok", SessionScreens.HANDOFF_BUBBLE), sentKeys("ok"))
+        assertEquals(1, model.handoffs.size)
+
+        respond(requestOf(), thread("t1", extra = firstCopied + ours("h-2", "ok")), revision = 4, now = 9_100)
+        assertEquals(listOf("m:m-first-ok", "m:h-2"), sentKeys("ok"))
         assertTrue(model.handoffs.isEmpty())
     }
 

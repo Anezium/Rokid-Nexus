@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.shared.ComposeContract
+import com.anezium.rokidbus.shared.ConversationMessage
 import com.anezium.rokidbus.shared.ConversationRole
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageDestination
@@ -110,29 +111,48 @@ internal object ComposerRules {
         return id
     }
 
-    /** The message ids a reply sent from [body] remembers, to tell its page's own copy of it later. */
-    fun messageIds(body: PageBody.Conversation): Set<String> = body.messages.mapTo(LinkedHashSet()) { it.id }
+    /** What a reply [text] sent from [body] remembers of it, to tell its page's own copy of it later. */
+    fun shown(body: PageBody.Conversation, text: String): ShownMessages =
+        Echoes(body).behind(ShownMessages(emptySet()), text, body.messages.map { it.id })
 
     /**
      * [body]'s own copies of replies sent from its thread. A reply's copy is a message of ours with
      * the same words, spacing aside, after the newest message its page showed when it was sent:
      * the provider records a reply after what it answered, so a message that was merely older, or
-     * anyone else's, never stands for it. Each copy stands for one reply, taken oldest reply first.
+     * anyone else's, never stands for it. The page's earlier messages of ours in those words keep
+     * their place but not always their id (Relay replaces its record of a reply with the app's own
+     * copy), so the newest message shown is the newest of the others, and the messages in those
+     * words after it stand first for the earlier ones it was followed by. Each copy stands for one
+     * reply, taken oldest reply first.
      */
     class Echoes(private val body: PageBody.Conversation) {
         private val taken = HashSet<String>()
 
-        /** The id of [body]'s copy of the reply [text] sent from a page showing [shownIds], now taken; null when none. */
-        fun take(text: String, shownIds: Set<String>): String? {
+        /** The id of [body]'s copy of the reply [text] sent from a page that showed [shown], now taken; null when none. */
+        fun take(text: String, shown: ShownMessages): String? {
             val messages = body.messages
             val said = normalized(text)
-            val echo = messages.subList(messages.indexOfLast { it.id in shownIds } + 1, messages.size)
-                .firstOrNull { it.id !in taken && it.role == ConversationRole.OURS && normalized(it.text) == said }
+            val anchor = messages.indexOfLast { it.id in shown.ids && it.id !in shown.twins }
+            val anchorId = messages.getOrNull(anchor)?.id
+            val earlier = shown.ids.reversed().takeWhile { it != anchorId }.count { it in shown.twins }
+            val echo = messages.subList(anchor + 1, messages.size)
+                .filter { it.says(said) }
+                .drop(earlier)
+                .firstOrNull { it.id !in taken }
                 ?: return null
             taken += echo.id
             return echo.id
         }
+
+        /** [shown], with [ids] of [body] shown too, as the reply [text] counts them. */
+        fun behind(shown: ShownMessages, text: String, ids: Collection<String>): ShownMessages {
+            val said = normalized(text)
+            val twins = body.messages.filter { it.id in ids && it.says(said) }.map { it.id }
+            return ShownMessages(shown.ids + ids, shown.twins + twins)
+        }
     }
+
+    private fun ConversationMessage.says(said: String): Boolean = role == ConversationRole.OURS && normalized(text) == said
 
     private fun normalized(text: String): String = text.trim().replace(WHITESPACE, " ")
 
