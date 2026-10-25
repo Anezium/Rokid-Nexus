@@ -131,6 +131,11 @@ data class ActivitySurfaceContent(
     /** Launcher bundle: the command focused first; null means the first action. */
     val defaultActionId: String? = null,
     val persistence: ActivityPersistence = ActivityPersistence.SESSION,
+    /**
+     * Launcher bundle: the longer form of [primary] for the surfaces with room for it, such as a
+     * whole track title; where only [primary] fits, [primary] is drawn.
+     */
+    val headline: String? = null,
     /** Hub stamp: null on anything a plugin sent. */
     val state: ActivityState? = null,
     /** Hub stamp: the user pinned this owner's entry on the phone. */
@@ -188,6 +193,7 @@ data class ActivitySurfacePatch(
     val activation: ActivityField<ActivityActivation?>? = null,
     val defaultActionId: ActivityField<String?>? = null,
     val persistence: ActivityField<ActivityPersistence>? = null,
+    val headline: ActivityField<String?>? = null,
     val state: ActivityField<ActivityState?>? = null,
     val userPinned: ActivityField<Boolean>? = null,
     val knownAtWallMs: ActivityField<Long?>? = null,
@@ -207,6 +213,7 @@ data class ActivitySurfacePatch(
         activation = if (activation != null) activation.value else content.activation,
         defaultActionId = if (defaultActionId != null) defaultActionId.value else content.defaultActionId,
         persistence = if (persistence != null) persistence.value else content.persistence,
+        headline = if (headline != null) headline.value else content.headline,
         state = if (state != null) state.value else content.state,
         userPinned = if (userPinned != null) userPinned.value else content.userPinned,
         knownAtWallMs = if (knownAtWallMs != null) knownAtWallMs.value else content.knownAtWallMs,
@@ -295,6 +302,7 @@ object ActivitySurfaceContract {
     const val EMPTY_ASSERT_OWNER_PLUGIN_ID = "@nexus-hub"
 
     const val MAX_PRIMARY_CHARS = 12
+    const val MAX_HEADLINE_CHARS = 40
     const val MAX_SECONDARY_CHARS = 28
     const val MAX_ETA_CHARS = 8
     const val MAX_DETAIL_LINES = 2
@@ -345,12 +353,13 @@ object ActivitySurfaceContract {
     private const val FIELD_ACTIVATION = "activation"
     private const val FIELD_DEFAULT_ACTION_ID = "defaultActionId"
     private const val FIELD_PERSISTENCE = "persistence"
+    private const val FIELD_HEADLINE = "headline"
     private const val FIELD_STATE = "state"
     private const val FIELD_USER_PINNED = "userPinned"
     private const val FIELD_KNOWN_AT_WALL_MS = "knownAtWallMs"
 
     /** Plugin-side launcher fields on the activity object. */
-    private val launcherFields = listOf(FIELD_DESTINATION, FIELD_ACTIVATION, FIELD_DEFAULT_ACTION_ID, FIELD_PERSISTENCE)
+    private val launcherFields = listOf(FIELD_DESTINATION, FIELD_ACTIVATION, FIELD_DEFAULT_ACTION_ID, FIELD_PERSISTENCE, FIELD_HEADLINE)
 
     /** Hub stamps on the activity object; per action there is also `hubQuick`. */
     private val stampFields = listOf(FIELD_STATE, FIELD_USER_PINNED, FIELD_KNOWN_AT_WALL_MS)
@@ -467,6 +476,11 @@ object ActivitySurfaceContract {
             is ReadResult.Invalid -> return invalid(result.reason)
             ReadResult.Absent -> ActivityPersistence.SESSION
         }
+        val headline = when (val result = readHeadline(payload)) {
+            is ReadResult.Present -> result.value
+            is ReadResult.Invalid -> return invalid(result.reason)
+            ReadResult.Absent -> null
+        }
         val stamps = if (hubStamps) {
             when (val result = readStamps(payload)) {
                 is ReadResult.Present -> result.value
@@ -494,6 +508,7 @@ object ActivitySurfaceContract {
             activation = activation,
             defaultActionId = defaultActionId,
             persistence = persistence,
+            headline = headline,
             state = stamps.state?.value,
             userPinned = stamps.userPinned?.value ?: false,
             knownAtWallMs = stamps.knownAtWallMs?.value,
@@ -600,6 +615,11 @@ object ActivitySurfaceContract {
             is ReadResult.Invalid -> return patchInvalid(result.reason)
             ReadResult.Absent -> null
         }
+        val headline = when (val result = readHeadline(payload)) {
+            is ReadResult.Present -> ActivityField(result.value)
+            is ReadResult.Invalid -> return patchInvalid(result.reason)
+            ReadResult.Absent -> null
+        }
         val stamps = if (hubStamps) {
             when (val result = readStamps(payload)) {
                 is ReadResult.Present -> result.value
@@ -627,6 +647,7 @@ object ActivitySurfaceContract {
             activation = activation,
             defaultActionId = defaultActionId,
             persistence = persistence,
+            headline = headline,
             state = stamps.state,
             userPinned = stamps.userPinned,
             knownAtWallMs = stamps.knownAtWallMs,
@@ -709,7 +730,7 @@ object ActivitySurfaceContract {
 
     /**
      * A copy without anything of the launcher bundle, for glasses that did not negotiate it:
-     * destination, activation, default action, persistence, every hub stamp, and the actions'
+     * destination, activation, default action, persistence, headline, every hub stamp, and the actions'
      * `typed` and `hubQuick`. What is left is a v1 (and extras) activity.
      */
     fun stripLauncherFields(payload: JSONObject): JSONObject = stripHubStamps(payload).apply {
@@ -743,6 +764,7 @@ object ActivitySurfaceContract {
             content.activation?.let { put(FIELD_ACTIVATION, it.wireValue) }
             content.defaultActionId?.let { put(FIELD_DEFAULT_ACTION_ID, it) }
             if (content.persistence != ActivityPersistence.SESSION) put(FIELD_PERSISTENCE, content.persistence.wireValue)
+            content.headline?.let { put(FIELD_HEADLINE, it) }
             content.state?.let { put(FIELD_STATE, it.wireValue) }
             if (content.userPinned) put(FIELD_USER_PINNED, true)
             content.knownAtWallMs?.let { put(FIELD_KNOWN_AT_WALL_MS, it) }
@@ -774,6 +796,7 @@ object ActivitySurfaceContract {
         .put(FIELD_ACTIVATION, content.activation?.wireValue ?: JSONObject.NULL)
         .put(FIELD_DEFAULT_ACTION_ID, content.defaultActionId ?: JSONObject.NULL)
         .put(FIELD_PERSISTENCE, content.persistence.wireValue)
+        .put(FIELD_HEADLINE, content.headline ?: JSONObject.NULL)
         .apply {
             if (significant) put("significant", true)
             if (urgent) put("tone", TONE_URGENT)
@@ -982,6 +1005,15 @@ object ActivitySurfaceContract {
             null
         }
         return ReadResult.Present(StampRead(state, userPinned, knownAt))
+    }
+
+    /** [readText] with no control character: a headline is one drawn line. */
+    private fun readHeadline(payload: JSONObject): ReadResult<String?> {
+        val result = readText(payload, FIELD_HEADLINE, MAX_HEADLINE_CHARS)
+        if (result is ReadResult.Present && result.value?.any(Char::isISOControl) == true) {
+            return ReadResult.Invalid("$FIELD_HEADLINE must be printable")
+        }
+        return result
     }
 
     private fun readGlyph(
