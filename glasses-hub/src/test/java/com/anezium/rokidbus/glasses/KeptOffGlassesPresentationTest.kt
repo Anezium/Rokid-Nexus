@@ -140,7 +140,7 @@ class KeptOffGlassesPresentationTest {
     }
 
     @Test
-    fun `the classic launcher ignores the choice, like the other ambient preferences`() {
+    fun `the classic launcher and an older phone ignore the choice, like the other ambient preferences`() {
         startActivity(OWNER)
         showPin()
         policy(hidden = setOf(OWNER))
@@ -156,6 +156,11 @@ class KeptOffGlassesPresentationTest {
         idle()
         assertNull(island(OWNER))
         assertNull(drawnPin)
+
+        // An older phone cannot change the choice, so the glasses do not apply it either.
+        announce(phone(bundle = false))
+        assertNotNull(island(OWNER))
+        assertEquals(PIN_ID, drawnPin?.surfaceId)
     }
 
     @Test
