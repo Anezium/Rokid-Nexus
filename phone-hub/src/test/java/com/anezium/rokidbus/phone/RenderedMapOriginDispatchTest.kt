@@ -112,6 +112,7 @@ class RenderedMapOriginDispatchTest {
         val sink = object : PhoneHudRouteSink by recording {
             override fun capabilities(): Int = liveSink.capabilities()
             override fun activitiesSupported(): Boolean = liveSink.activitiesSupported()
+            override fun pinLinkUp(): Boolean = liveSink.pinLinkUp()
         }
         val router = PhoneActivityRouter(PhoneActivityState(nowMs = { 1L }, launcherVersion = { 1 }), sink,
             nowMs = { 1L }, postExpiry = {}, cancelExpiry = {}, launcher = object : PhoneActivityLauncherHost {

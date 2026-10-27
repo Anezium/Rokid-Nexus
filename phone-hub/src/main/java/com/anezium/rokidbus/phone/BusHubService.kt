@@ -3577,9 +3577,13 @@ class BusHubService : Service() {
         }
     }
 
-    /** Whether a pin envelope can go out right now. State is kept either way. */
+    /**
+     * Whether a pin envelope can go out right now. State is kept either way. Only the two transport
+     * bits of [linkState] matter, so the bonded-device lookup it also does is skipped: callers run
+     * under the activity router's wire lock.
+     */
     private fun pinLinkUp(): Boolean =
-        linkState() and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0
+        isCxrUp() || (sppSession != null && socket?.isConnected == true)
 
     private fun acquireAudioLease(
         envelope: BusEnvelope,

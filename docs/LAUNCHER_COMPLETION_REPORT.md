@@ -87,6 +87,9 @@ This section supersedes the status paragraphs above, which are kept as history.
   and fails when the old lookup is restored. Before these follow-ups, all hub
   and plugin suites passed (4,474 tests); on the release device the Whole route
   kept its streets from 36 s to 81 s after the start with no stale-revision report.
+  After the follow-ups (pin link check without the bonded-device lookup, the
+  learned window kept across a new step or quality), all suites pass with 4,486
+  tests; their device check is still to do.
 
 - **Immediate launcher actions (2026-10-25, `fx/noconfirm`).** One fresh tap on a focused
   activity command, plugin page row or Open app now executes immediately. The confirmation and

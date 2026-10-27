@@ -223,7 +223,8 @@ class NavMapPublisherTest {
         frames.remember(3, live(300.0), NavPages.MAIN)
         assertEquals(4_000L, frames.acknowledgmentDelayMs(drawn, 4_000, NavPages.MAIN))
         now += 4_000
-        assertEquals("expiry does not reopen the bootstrap race", 1_000L,
+        // The next step keeps the 7.5 s the backed-off link decayed to after one fast acknowledgment.
+        assertEquals("expiry does not reopen the bootstrap race", 3_500L,
             frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
     }
 
@@ -281,6 +282,25 @@ class NavMapPublisherTest {
                 assertTrue("adaptive pacing cannot authorize demand", frames.keys(emptySet()).isEmpty())
             }
         }
+    }
+
+    @Test
+    fun `a new step or quality keeps the window the link has learned`() {
+        val frames = NavRenderedFrames(now = { now })
+        frames.remember(1, live(100.0), NavPages.MAIN)
+        now += 5_000
+        frames.remember(2, live(100.0), NavPages.MAIN)
+        var revision = 2L
+        repeat(4) {
+            now += 8_000
+            frames.acknowledgmentDelayMs(setOf(NexusRenderedMap(NexusRenderedMapView.OVERVIEW, revision, NavPages.MAIN)), 5_000, NavPages.MAIN)
+            frames.remember(++revision, live(100.0), NavPages.MAIN)
+        }
+        val learned = frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN)!!
+        assertTrue("the slow link was learned: $learned", learned > 5_000)
+
+        frames.remember(++revision, live(100.0).copy(quality = RouteQuality.STALE), NavPages.MAIN)
+        assertEquals(learned, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
     }
 
     @Test

@@ -28,10 +28,12 @@ internal class NavRenderedFrames(
     fun remember(revision: Long, snapshot: NavRouteSnapshot, pageId: String? = null) {
         val at = now()
         val identity = identity(snapshot)
-        val previous = latest[pageId]?.takeIf { it.identity == identity }
+        val last = latest[pageId]
+        val previous = last?.takeIf { it.identity == identity }
+        // The learned window belongs to the link, so a new step or quality keeps it.
         val window = if (previous != null && !previous.acknowledged && at - previous.atMs >= previous.windowMs) {
             (previous.windowMs * 2).coerceAtMost(MAX_ACK_WINDOW_MS)
-        } else previous?.windowMs ?: RenderedMapContract.LEASE_MS
+        } else last?.windowMs ?: RenderedMapContract.LEASE_MS
         latest[pageId] = Publication(revision, at, identity, window)
         for (view in NavMapView.entries) {
             if (pageId == null && view != NavMapView.FOLLOW) continue
