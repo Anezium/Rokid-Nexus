@@ -144,7 +144,13 @@ class PhoneActivityLauncherTest {
             assertFalse("feedback completes before the send", pending.isDone)
             resume.countDown()
             pending.get(5, TimeUnit.SECONDS)
-            if (geometrySend) assertEquals(8L, sink.local.last().payload.getLong("revision"))
+            if (geometrySend) {
+                assertEquals("an early report is never replayed", 1, sink.local.size)
+                // The next draw renewal can acknowledge the now-forwarded revision.
+                reader.submit { concurrentRouter.handleRenderedMap(JSONObject(report.toString()).put("revision", 8)) }
+                    .get(1, TimeUnit.SECONDS)
+                assertEquals(8L, sink.local.last().payload.getLong("revision"))
+            }
         } finally {
             resume.countDown()
             writer.shutdownNow()
@@ -175,7 +181,7 @@ class PhoneActivityLauncherTest {
     }
 
     @Test
-    fun `hiding an in flight geometry draw cancels its deferred acknowledgment`() {
+    fun `hiding a geometry during its write cannot replay an early draw`() {
         sink.capabilityBits = sink.capabilityBits or BusCapabilityBits.RENDERED_MAP
         router.handleLocal(local(start("nav")), hudSender("nav"))
         host.beforeSend = { envelope ->

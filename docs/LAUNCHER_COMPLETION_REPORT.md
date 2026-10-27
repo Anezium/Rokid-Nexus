@@ -79,8 +79,9 @@ This section supersedes the status paragraphs above, which are kept as history.
   canonical-state snapshot independently of outbound ordering, so neither
   activity nor geometry writes block feedback; local activity publication also
   checks negotiated activity support without full-capability discovery.
-  A report for in-flight geometry waits for write success without blocking the
-  reader, and a matching hidden report cancels that deferred acknowledgment.
+  A report for geometry whose write has not succeeded is refused immediately;
+  the next glasses draw renewal can acknowledge it after success. Early reports
+  are never replayed, including after a view is hidden.
   A service regression forbids Bluetooth discovery during page/ambient dispatch
   and checks negotiation/socket loss,
   and fails when the old lookup is restored. Before these follow-ups, all hub

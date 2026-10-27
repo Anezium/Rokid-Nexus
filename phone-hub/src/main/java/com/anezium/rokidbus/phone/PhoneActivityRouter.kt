@@ -61,8 +61,6 @@ internal class PhoneActivityRouter(
     /** Guarded by state, alongside the owner and sequence, never across a transport write. */
     private data class GeometryPublication(val revision: Long, val atMs: Long)
     private val geometryPublications = mutableMapOf<String, GeometryPublication>()
-    private data class GeometryWrite(val owner: String, val publication: GeometryPublication, var feedback: JSONObject? = null)
-    private var geometryWrite: GeometryWrite? = null
     private val mapDiagnostics = MapFeedbackDiagnostics(nowMs, sink::log)
     private val headingWindows = mutableMapOf<String, ArrayDeque<Long>>()
     private val commandBindings = mutableMapOf<String, String>()
@@ -244,12 +242,10 @@ internal class PhoneActivityRouter(
         val supported = sink.renderedMapsSupported()
         val dataPlaneUp = launcher.dataPlaneUp()
         val registrations = owner?.let(launcher::registrationCount) ?: 0
-        var deferred = false
         val (reason, sample) = synchronized(state) {
             val geometry = geometryPublications[owner]
             val currentRevision = geometry?.revision ?: -1
             val currentSeq = owner?.let(state::activitySequence) ?: -1
-            val writing = geometryWrite?.takeIf { visible && it.owner == owner && it.publication.revision == context?.revision }
             val sample = MapFeedbackDiagnostics.Sample.from(payload).copy(
                 currentRevision = currentRevision, currentSeq = currentSeq,
                 ageMs = geometry?.let { nowMs() - it.atMs } ?: -1,
@@ -263,21 +259,11 @@ internal class PhoneActivityRouter(
                 visible && !state.isLive(owner) -> Reason.STALE
                 visible && currentSeq != context.seq -> Reason.SEQUENCE
                 registrations != 1 -> Reason.REGISTRATION
-                visible && currentRevision != context.revision && writing == null -> Reason.REVISION
+                visible && currentRevision != context.revision -> Reason.REVISION
                 else -> null
-            }
-            if (reason == null && writing != null) {
-                // A draw can return before its write completes. Keep one report and revalidate
-                // after success; a failed write must never issue rendered authority.
-                writing.feedback = JSONObject(payload.toString())
-                deferred = true
-            } else if (reason == null && !visible) {
-                geometryWrite?.takeIf { it.owner == owner && it.feedback?.optString("token") == payload.optString("token") }
-                    ?.feedback = null
             }
             reason to sample
         }
-        if (deferred) return
         if (reason != null) {
             mapDiagnostics.record(Gate.PHONE_AMBIENT, Verdict.DROP, reason, sample)
             return
@@ -495,18 +481,13 @@ internal class PhoneActivityRouter(
         )
         sink.recordLocalRoute(outgoing, sender.uid, pluginId, PluginBusJournal.Verdict.OK)
         // The outbound lock preserves send order; the state monitor stays available to RX.
-        val writing = GeometryWrite(pluginId, GeometryPublication(update.revision, nowMs()))
-        synchronized(state) { geometryWrite = writing }
+        val publication = GeometryPublication(update.revision, nowMs())
         val error = launcher.sendDataPlane(outgoing)
-        val feedback = synchronized(state) {
-            geometryWrite = null
-            if (error == null) geometryPublications[pluginId] = writing.publication
-            writing.feedback.takeIf { error == null }
-        }
-        if (error != null) {
+        if (error == null) {
+            synchronized(state) { geometryPublications[pluginId] = publication }
+        } else {
             sink.log("activity geometry dropped owner=$pluginId code=$error")
         }
-        feedback?.let(::handleRenderedMap)
     }
 
     private fun handleHeading(envelope: BusEnvelope, sender: PhoneHudRouteSender, pluginId: String) {
