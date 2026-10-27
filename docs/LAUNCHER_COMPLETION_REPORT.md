@@ -51,7 +51,14 @@ This section supersedes the status paragraphs above, which are kept as history.
   during a hold, a 10.5-second return delay, and a serial 730 ms/report queue with
   a ten-second initial backlog. Mutation checks reject the removed bypass,
   doubled delay evaluation, fixed retry window, missing cap and missing reset.
-  Device verification and hub-suite execution remain with the parent.
+  Phone report dispatch and both inner routers now use the live rendered-map
+  negotiation directly, avoiding repeated full-capability/Bluetooth discovery
+  on the SPP reader and inside router locks. Dispatch stays synchronous and
+  retains the exact-revision checks. A service regression forbids Bluetooth
+  discovery during page/ambient dispatch and checks negotiation/socket loss;
+  its compile/run is blocked here by the missing sibling CxrGlobal dependency.
+  The plugin suite passes all 262 tests; device verification and hub-suite
+  execution remain with the parent.
 
 - **Immediate launcher actions (2026-10-25, `fx/noconfirm`).** One fresh tap on a focused
   activity command, plugin page row or Open app now executes immediately. The confirmation and

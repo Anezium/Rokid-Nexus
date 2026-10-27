@@ -269,6 +269,7 @@ class BusHubService : Service() {
     @Volatile private var snapshotCaptureJob: Job? = null
     private val hudRouteSink: PhoneHudRouteSink = object : PhoneHudRouteSink {
         override fun capabilities(): Int = this@BusHubService.capabilities()
+        override fun renderedMapsSupported(): Boolean = this@BusHubService.renderedMapsSupported()
         override fun pinLinkUp(): Boolean = this@BusHubService.pinLinkUp()
         override fun log(message: String) = this@BusHubService.log(message)
         override fun sendRemote(envelope: BusEnvelope): String? = this@BusHubService.sendRemote(envelope)
@@ -476,8 +477,7 @@ class BusHubService : Service() {
     private val pageProviderCache = ConcurrentHashMap<String, java.util.Optional<PhonePluginPrincipal>>()
     private val pageBroker: PhonePageBroker = PhonePageBroker(
         host = object : PhonePageHost {
-            override fun renderedMapsSupported(): Boolean =
-                RenderedMapContract.supported(capabilities())
+            override fun renderedMapsSupported(): Boolean = this@BusHubService.renderedMapsSupported()
             override fun nowMs(): Long = SystemClock.uptimeMillis()
             override fun pageProvider(pluginId: String): PhonePluginPrincipal? = pageProviderFor(pluginId)
             override fun registrations(principal: PhonePluginPrincipal): List<PageRegistration> =
@@ -1834,7 +1834,7 @@ class BusHubService : Service() {
     private fun routeRemote(envelope: BusEnvelope, renderedMapOrigin: PhoneRenderedMapNegotiation.Origin?) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
         if (envelope.path == RenderedMapContract.PATH) {
-            val supported = RenderedMapContract.supported(capabilities())
+            val supported = renderedMapsSupported()
             mapDiagnostics.record(MapFeedbackDiagnostics.Gate.PHONE_CAPABILITY,
                 if (supported) MapFeedbackDiagnostics.Verdict.PASS else MapFeedbackDiagnostics.Verdict.DROP,
                 if (supported) MapFeedbackDiagnostics.Reason.CURRENT else MapFeedbackDiagnostics.Reason.CAPABILITY,
@@ -5617,6 +5617,13 @@ class BusHubService : Service() {
             },
         )
 
+    // Render reports run on the SPP reader and under the page/activity lock. Full capabilities
+    // also resolve camera grants and repeatedly discover bonded devices through Bluetooth IPC.
+    private fun renderedMapsSupported(): Boolean = RenderedMapContract.supported(
+        renderedMapNegotiation.featureBits(remoteLauncherInteractiveVersion,
+            if (sppSession != null && socket?.isConnected == true) LinkStateBits.SPP_DATA_UP else 0),
+    )
+
     private fun capabilities(): Int {
         var capabilities =
             PhoneAssistedSetupCapabilityPolicy.advertised(baseCameraCapabilities())
@@ -5659,7 +5666,7 @@ class BusHubService : Service() {
         // hubs negotiated the bundle, so a plugin never sends its fields to glasses that drop them.
         if (remoteLauncherInteractiveVersion?.let(LauncherInteractiveContract::isActive) == true) {
             capabilities = capabilities or BusCapabilityBits.LAUNCHER_INTERACTIVE
-            capabilities = capabilities or renderedMapNegotiation.featureBits(remoteLauncherInteractiveVersion, linkState())
+            if (renderedMapsSupported()) capabilities = capabilities or BusCapabilityBits.RENDERED_MAP
         }
         // Same reasoning as the notice gate above: a card opened to type into is a
         // live interactive moment, not state a plugin can just resend once the

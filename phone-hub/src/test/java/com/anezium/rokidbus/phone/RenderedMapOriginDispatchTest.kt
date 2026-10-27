@@ -2,6 +2,7 @@ package com.anezium.rokidbus.phone
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
@@ -9,10 +10,13 @@ import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.LauncherInteractiveContract
+import com.anezium.rokidbus.shared.RenderedMapContext
+import com.anezium.rokidbus.shared.RenderedMapContract
 import com.anezium.rokidbus.shared.SppAuthProtocol
 import com.example.cxrglobal.CXRLink
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,7 +26,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.Implementation
+import org.robolectric.annotation.Implements
 import org.robolectric.annotation.LooperMode
+import org.robolectric.shadows.ShadowBluetoothAdapter
+import org.robolectric.shadows.ShadowLog
 import org.robolectric.util.ReflectionHelpers
 import org.robolectric.util.ReflectionHelpers.ClassParameter
 import java.lang.reflect.Proxy
@@ -36,6 +44,64 @@ import java.util.concurrent.TimeUnit
 @Config(manifest = Config.NONE, sdk = [32])
 @LooperMode(LooperMode.Mode.PAUSED)
 class RenderedMapOriginDispatchTest {
+    @Implements(BluetoothAdapter::class)
+    class GuardedBluetoothAdapter : ShadowBluetoothAdapter() {
+        var forbidDiscovery = false
+
+        @Implementation
+        override fun getBondedDevices(): Set<BluetoothDevice> {
+            check(!forbidDiscovery) { "Render feedback must not discover bonded Bluetooth devices" }
+            return super.getBondedDevices()
+        }
+    }
+
+    @Test
+    @Config(shadows = [GuardedBluetoothAdapter::class])
+    fun `page and ambient report dispatch use live negotiation without Bluetooth discovery`() {
+        shadowOf(RuntimeEnvironment.getApplication()).grantPermissions(Manifest.permission.BLUETOOTH_CONNECT)
+        val adapter = shadowOf(BluetoothAdapter.getDefaultAdapter()) as GuardedBluetoothAdapter
+        adapter.setState(BluetoothAdapter.STATE_ON)
+        val hub = Robolectric.buildService(BusHubService::class.java).get()
+        val executor = ReflectionHelpers.getField<ExecutorService>(hub, "executor")
+        ReflectionHelpers.setField(hub, "executor", QueuedExecutor())
+        ReflectionHelpers.setField(hub, "hubEnabled", false)
+        var fixtureSocket: BluetoothSocket? = null
+        try {
+            val (socket, session) = connect(hub)
+            fixtureSocket = socket
+            dispatchSpp(hub, session, peer(true))
+            adapter.forbidDiscovery = true
+            assertTrue(ReflectionHelpers.callInstanceMethod(hub, "renderedMapsSupported"))
+            for (kind in listOf("page", "ambient")) {
+                val event = RenderedMapContext(kind, if (kind == "page") "nav:main" else "nav:activity", 1,
+                    seq = 1, sessionGeneration = 1, frameIndex = 1, requestId = "r1").toPayload()
+                    .put("visible", true).put("view", "follow").put("token", "drawn")
+                ReflectionHelpers.callInstanceMethod<Unit>(hub, "routeSpp",
+                    ClassParameter.from(BusEnvelope::class.java, BusEnvelope(RenderedMapContract.PATH, payload = event)),
+                    ClassParameter.from(SppAuthProtocol.Session::class.java, session))
+            }
+            val logs = ShadowLog.getLogsForTag("ROKIDBUS-PHONE").map { it.msg }
+            assertTrue("page validation must run after the fast capability gate",
+                logs.any { it.contains("gate=PHONE_PAGE verdict=DROP reason=FRAME") })
+            assertTrue("ambient validation must run after the fast capability gate",
+                logs.any { it.contains("gate=PHONE_AMBIENT verdict=DROP reason=IDENTITY") })
+            val negotiation = ReflectionHelpers.getField<PhoneRenderedMapNegotiation>(hub, "renderedMapNegotiation")
+            negotiation.lost()
+            assertFalse("retirement immediately disables support", ReflectionHelpers.callInstanceMethod(hub, "renderedMapsSupported"))
+            negotiation.sessionStarted(session)
+            assertFalse("replacement needs fresh negotiation", ReflectionHelpers.callInstanceMethod(hub, "renderedMapsSupported"))
+            negotiation.announce(GlassesHubCapabilitiesContract.parse(peer(true)), PhoneRenderedMapNegotiation.Origin.Spp(session))
+            assertTrue(ReflectionHelpers.callInstanceMethod(hub, "renderedMapsSupported"))
+            ReflectionHelpers.setField(hub, "socket", null)
+            assertFalse("a session without a live socket is insufficient", ReflectionHelpers.callInstanceMethod(hub, "renderedMapsSupported"))
+        } finally {
+            adapter.forbidDiscovery = false
+            close(hub, null)
+            fixtureSocket?.close()
+            executor.shutdownNow()
+        }
+    }
+
     @Test
     fun `old reader announcement paused in service dispatch cannot authorize a replacement while CXR stays up`() {
         shadowOf(RuntimeEnvironment.getApplication()).grantPermissions(Manifest.permission.BLUETOOTH_CONNECT)

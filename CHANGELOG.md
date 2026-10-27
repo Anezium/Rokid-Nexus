@@ -21,6 +21,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 
 ### Phone hub
 
+- Map-render reports use live map negotiation directly, avoiding repeated Bluetooth-device discovery while preserving the current-revision checks.
 - Request a fresh plugin connection before delivering a launcher command or page action, and keep it bound until its answer or deadline. Whether this wakes an already-frozen plugin still needs device verification. A refused keep-alive bind still allows a live plugin to answer; losing that connection no longer ends its activity.
 - Settings → Glasses display: **Glasses launcher** (Default, New launcher, Classic launcher), the Navigation display size, and per-app behaviour over native apps.
 - Plugin access: **Show its activity on the glasses** and **Pin its activity**. The per-plugin one-tap switches are removed; retained quick-action approvals and wire validation are unchanged.

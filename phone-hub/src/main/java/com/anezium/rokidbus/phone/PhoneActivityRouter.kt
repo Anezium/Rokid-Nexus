@@ -247,7 +247,7 @@ internal class PhoneActivityRouter(
             ageMs = geometrySentAtMs[owner]?.let { nowMs() - it } ?: -1,
         )
         val reason = when {
-            !RenderedMapContract.supported(sink.capabilities()) -> Reason.CAPABILITY
+            !sink.renderedMapsSupported() -> Reason.CAPABILITY
             !launcher.dataPlaneUp() -> Reason.DATA_PLANE
             !RenderedMapContract.validEvent(payload) || context == null -> Reason.MALFORMED
             context.kind != RenderedMapContract.AMBIENT || payload.optString("view") != RenderedMapContract.FOLLOW -> Reason.KIND_VIEW
