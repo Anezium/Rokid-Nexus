@@ -49,7 +49,7 @@ class RenderedMapOriginDispatchTest {
         var forbidDiscovery = false
 
         @Implementation
-        override fun getBondedDevices(): Set<BluetoothDevice> {
+        override fun getBondedDevices(): Set<BluetoothDevice>? {
             check(!forbidDiscovery) { "Render feedback must not discover bonded Bluetooth devices" }
             return super.getBondedDevices()
         }
