@@ -46,6 +46,109 @@ class NavBasemapLayerTest {
     }
 
     @Test
+    fun `dense multi tile overview retains streets as every demanded tile arrives`() {
+        val route = route(GeoPoint(48.8712, 2.3610), GeoPoint(48.8809, 2.3553))
+        val snapshot = tracking(route, 0.0)
+        val window = NavMapProjection.window(snapshot, NavMapView.OVERVIEW)
+        val keys = NavMapProjection.tiles(snapshot, NavMapView.OVERVIEW, OsmShortbreadSource)
+        assertEquals(listOf(TileKey(14, 8298, 5634), TileKey(14, 8299, 5634), TileKey(14, 8298, 5635), TileKey(14, 8299, 5635)), keys)
+        val loaded = linkedMapOf<TileKey, LocalTile>()
+        val alone = NavMapProjection.geometry(snapshot, NavMapView.OVERVIEW)
+        keys.forEachIndexed { index, key ->
+            val x = window.center.x + (if (index % 2 == 0) -0.25 else 0.25) * window.spanMeters
+            val y = window.center.y + (if (index < 2) -0.25 else 0.25) * window.spanMeters
+            // Enough decoded input to overflow preparation; duplicate ways still draw little output.
+            val roads = List(1500) {
+                LocalLine(StreetClass.STREET, doubleArrayOf(x - 60, x - 20, x + 20, x + 60), DoubleArray(4) { y })
+            }
+            loaded[key] = LocalTile(key, roads, emptyList())
+            val streets = snapshot.copy(basemap = NavBasemapTiles(OsmShortbreadSource.attribution, 14, loaded.toMap()))
+            assertEquals(keys, NavMapProjection.tiles(streets, NavMapView.OVERVIEW, OsmShortbreadSource))
+            val drawn = NavMapProjection.geometry(streets, NavMapView.OVERVIEW)
+            assertEquals(alone.paths, drawn.paths.take(alone.paths.size))
+            assertEquals(OsmShortbreadSource.attribution, drawn.attribution)
+            assertTrue(RouteGeometryContract.isValid(drawn))
+            assertTrue(bytes(drawn) <= bytes(alone) + NavBasemapLayer.MAX_BASEMAP_BYTES)
+            val quadrants = strokes(drawn).map { (a, b) -> ((a.x + b.x) / 2 >= 500) to ((a.y + b.y) / 2 >= 500) }.toSet()
+            assertEquals("loaded=${loaded.size}", loaded.size, quadrants.size)
+        }
+        assertFalse(NavBasemapLayer.withinWorkBudget(loaded.values.toList()))
+        // A loaded tile outside the agreed cover must never become drawable input.
+        val foreign = TileKey(14, 100, 100)
+        val unrelated = LocalTile(foreign, listOf(LocalLine(StreetClass.MAJOR, doubleArrayOf(-100.0, 100.0), doubleArrayOf(0.0, 0.0))), emptyList())
+        val basemap = NavBasemapTiles(OsmShortbreadSource.attribution, 14, loaded.toMap())
+        assertEquals(NavMapProjection.geometry(snapshot.copy(basemap = basemap), NavMapView.OVERVIEW),
+            NavMapProjection.geometry(snapshot.copy(basemap = NavBasemapTiles(basemap.attribution, 14, loaded + (foreign to unrelated))), NavMapView.OVERVIEW))
+    }
+
+    @Test
+    fun `bounded detail preserves spatial coverage and caps aggregate work for every cover size`() {
+        val roads = buildList {
+            for (row in 0 until 8) for (column in 0 until 8) repeat(100) { index ->
+                val x = column * 100.0 + index * 0.1
+                val y = row * 100.0
+                add(LocalLine(StreetClass.STREET, doubleArrayOf(x, x + 10, x + 20), DoubleArray(3) { y }))
+            }
+            // Below the vertex cap by itself, but too expensive to simplify at any cover size.
+            add(LocalLine(StreetClass.MAJOR, DoubleArray(1000), DoubleArray(1000)))
+        }
+        val names = roads.take(200).map { LocalLine(it.streetClass, it.xs, it.ys, "Street") }
+        val tile = LocalTile(sampleKey, roads, names)
+        assertFalse(NavBasemapLayer.withinWorkBudget(listOf(tile)))
+        for (count in 1..NavBasemapLayer.OVERVIEW_MAX_TILES) {
+            val detail = tile.detail(count)
+            assertTrue(detail.streets.isNotEmpty())
+            assertTrue(detail.names.isNotEmpty())
+            assertTrue(detail.vertices * count <= NavBasemapLayer.MAX_PREPARE_VERTICES)
+            assertTrue(detail.simplifyWork * count <= NavBasemapLayer.MAX_SIMPLIFY_WORK)
+            assertTrue(detail.streets.all { it.xs.size == 3 })
+            val cells = detail.streets.map { (it.minX / 100).toInt() to (it.minY / 100).toInt() }.toSet()
+            assertEquals("cover=$count", 64, cells.size)
+        }
+    }
+
+    @Test
+    fun `expensive simplification leaves affordable streets in follow and overview`() {
+        val route = gateRoute()
+        val snapshot = tracking(route, 120.0)
+        val center = route.line.metersAt(120.0)
+        val local = LocalTile(sampleKey, listOf(
+            LocalLine(StreetClass.MAJOR, DoubleArray(1000) { center.x }, DoubleArray(1000) { center.y }),
+            LocalLine(StreetClass.STREET, doubleArrayOf(center.x - 50, center.x + 50), doubleArrayOf(center.y - 20, center.y - 20)),
+        ), emptyList())
+        assertTrue(local.vertices < NavBasemapLayer.MAX_PREPARE_VERTICES)
+        assertTrue(local.simplifyWork > NavBasemapLayer.MAX_SIMPLIFY_WORK)
+        for (view in NavMapView.entries) {
+            val loaded = snapshot.copy(basemap = NavBasemapTiles(OsmShortbreadSource.attribution, 14, mapOf(sampleKey to local)))
+            val drawn = NavMapProjection.geometry(loaded, view)
+            assertTrue("$view", strokes(drawn).isNotEmpty())
+            assertTrue(RouteGeometryContract.isValid(drawn))
+        }
+    }
+
+    @Test
+    fun `streets still fit when only the optional label reserve exceeds the byte budget`() {
+        val route = gateRoute()
+        val snapshot = tracking(route, 120.0)
+        val center = route.line.metersAt(120.0)
+        val local = LocalTile(sampleKey, listOf(
+            LocalLine(StreetClass.STREET, doubleArrayOf(center.x - 50, center.x + 50), doubleArrayOf(center.y - 20, center.y - 20)),
+        ), emptyList())
+        val loaded = snapshot.copy(basemap = NavBasemapTiles(OsmShortbreadSource.attribution, 14, mapOf(sampleKey to local)))
+        for (view in NavMapView.entries) {
+            val alone = NavMapProjection.geometry(snapshot, view)
+            val limit = bytes(alone) + 150
+            val drawn = NavMapProjection.geometry(loaded, view, NavMapBudget(maxBytes = limit))
+            assertEquals(alone.paths, drawn.paths.take(alone.paths.size))
+            assertTrue("$view", strokes(drawn).isNotEmpty())
+            assertTrue(bytes(drawn) <= limit)
+            assertTrue(RouteGeometryContract.isValid(drawn))
+            val full = NavMapProjection.geometry(loaded, view, NavMapBudget(maxBytes = bytes(alone)))
+            assertEquals(alone, full)
+        }
+    }
+
+    @Test
     fun `real streets and names from the public tile are drawn under the route in both views`() {
         val route = gateRoute()
         val snapshot = tracking(route, 120.0).copy(basemap = tiles(route, sampleKey to ShortbreadTiles.decode(sampleKey, MvtReaderTest.sample())))

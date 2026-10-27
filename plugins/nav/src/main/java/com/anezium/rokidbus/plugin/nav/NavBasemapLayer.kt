@@ -27,9 +27,13 @@ internal class LocalLine(val streetClass: StreetClass, val xs: DoubleArray, val 
  * Mercator coordinates.
  */
 internal class LocalTile(val key: TileKey, val streets: List<LocalLine>, val names: List<LocalLine>) {
-    // Computed on the decoding worker. The view rejects excess work before clipping or allocating.
-    val vertices: Long = streets.sumOf { it.xs.size.toLong() } + names.sumOf { it.xs.size.toLong() }
-    val simplifyWork: Long = streets.sumOf { 4L * it.xs.size * it.xs.size }
+    private val full = LocalTileDetail(streets, names)
+    // Computed on the decoding worker. Dense covers use bounded detail before clipping or allocating.
+    private val details = full.boundedDetails()
+    val vertices: Long get() = full.vertices
+    val simplifyWork: Long get() = full.simplifyWork
+
+    fun detail(tileCount: Int): LocalTileDetail = details[tileCount - 1]
 
     companion object {
         fun of(tile: BasemapTile, line: RouteLine): LocalTile {
@@ -132,9 +136,10 @@ internal object NavBasemapLayer {
     fun draw(route: RouteGeometry, window: NavMapWindow, line: RouteLine, view: NavMapView, budget: NavMapBudget, basemap: NavBasemapTiles): RouteGeometry {
         if (basemap.tiles.isEmpty()) return route
         val cover = cover(window, line, view, basemap.maxZoom) ?: return route
-        val tiles = cover.keys.mapNotNull(basemap.tiles::get)
-        if (tiles.isEmpty()) return route
-        if (!withinWorkBudget(tiles)) return route
+        val loaded = cover.keys.mapNotNull(basemap.tiles::get)
+        if (loaded.isEmpty()) return route
+        val tileCount = if (withinWorkBudget(loaded)) 1 else cover.keys.size
+        val tiles = loaded.map { it.detail(tileCount) }
         val field = FocusField(route)
         val edges = edges(tiles, window, field)
         if (edges.isEmpty()) return route
@@ -147,29 +152,32 @@ internal object NavBasemapLayer {
         val bytesLimit = min(budget.maxBytes, bytes(route) + MAX_BASEMAP_BYTES)
 
         // Sized without encoding: each street path adds its own JSON and the comma before it.
-        fun attempt(count: Int): Pair<List<RoutePath>, List<Edge>>? {
+        fun attempt(count: Int, reserveBytes: Int): Pair<List<RoutePath>, List<Edge>>? {
             val packed = pack(edges.subList(0, count), pathsLeft)
             val paths = packed.first
             if (paths.sumOf { it.points.size } > pointsLeft) return null
             val added = paths.sumOf { pathBytes(it) + 1 } - if (route.paths.isEmpty() && paths.isNotEmpty()) 1 else 0
-            return packed.takeIf { creditedBytes + added + LABEL_RESERVE_BYTES <= bytesLimit }
+            return packed.takeIf { creditedBytes + added + reserveBytes <= bytesLimit }
         }
 
         // The largest count of the best edges that fits: more edges only ever cost more points and bytes.
-        var low = 0
-        var high = min(edges.size, pointsLeft)
-        var best: Pair<List<RoutePath>, List<Edge>>? = null
-        while (low < high) {
-            val middle = (low + high + 1) / 2
-            val candidate = attempt(middle)
-            if (candidate != null) {
-                best = candidate
-                low = middle
-            } else {
-                high = middle - 1
+        fun fit(reserveBytes: Int): Pair<List<RoutePath>, List<Edge>>? {
+            var low = 0
+            var high = min(edges.size, pointsLeft)
+            var best: Pair<List<RoutePath>, List<Edge>>? = null
+            while (low < high) {
+                val middle = (low + high + 1) / 2
+                val candidate = attempt(middle, reserveBytes)
+                if (candidate != null) {
+                    best = candidate
+                    low = middle
+                } else {
+                    high = middle - 1
+                }
             }
+            return best
         }
-        val (paths, drawn) = best ?: return route
+        val (paths, drawn) = fit(LABEL_RESERVE_BYTES) ?: fit(0) ?: return route
         if (drawn.isEmpty()) return route
         val geometry = credited.copy(paths = route.paths + paths)
         val named = geometry.copy(labels = route.labels + names(tiles, window, field, drawn, route.labels))
@@ -190,7 +198,7 @@ internal object NavBasemapLayer {
     private fun pointOf(vertex: Int): RoutePoint = RoutePoint(vertex / (EXTENT + 1), vertex % (EXTENT + 1))
 
     /** Every visible street segment once, best first: duplicates from shared ways or tile edges merged. */
-    private fun edges(tiles: List<LocalTile>, window: NavMapWindow, field: FocusField): List<Edge> {
+    private fun edges(tiles: List<LocalTileDetail>, window: NavMapWindow, field: FocusField): List<Edge> {
         val half = window.spanMeters / 2.0
         val left = window.center.x - half
         val right = window.center.x + half
@@ -349,7 +357,7 @@ internal object NavBasemapLayer {
      * A few real street names, where the named street is drawn, near the route, and away from the
      * labels already there. They come last: the hub keeps the route's own labels first.
      */
-    private fun names(tiles: List<LocalTile>, window: NavMapWindow, field: FocusField, drawn: List<Edge>, existing: List<RouteLabel>): List<RouteLabel> {
+    private fun names(tiles: List<LocalTileDetail>, window: NavMapWindow, field: FocusField, drawn: List<Edge>, existing: List<RouteLabel>): List<RouteLabel> {
         val room = RouteGeometryContract.MAX_LABELS - existing.size
         if (room <= 0) return emptyList()
         val streets = SegmentIndex(drawn)

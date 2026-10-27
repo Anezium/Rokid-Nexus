@@ -4,6 +4,10 @@
 
 Street maps and render feedback need Nexus hubs 1.9.0; older hubs keep route-only guidance.
 
+- Keep streets in dense Whole route views as more tiles load. Prepare spatially
+  spread detail on the decoding worker within the existing aggregate work limits,
+  without changing the visible tile cover. Allow streets without optional names
+  when the label reserve alone would exceed the geometry's byte budget.
 - Give the first rendered-map acknowledgment a quiet publication window, including
   after lease loss, so one-second GPS updates cannot indefinitely starve Follow
   or Whole route of streets. Coalesce fixes until feedback or the five-second

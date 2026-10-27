@@ -178,3 +178,140 @@ drains the observed return-path backlog on the release builds. The capture does
 not locate its specific slow handler, measure cold-start duration, or prove the
 fixed on-device behavior. The five-second quiet window is bounded pacing, not a
 promise of continuous leases across return-path delays exceeding their lifetime.
+
+## Round 2: dense Overview preparation overflow (2026-10-27)
+
+Base: `dev/launcher-rework` at `c28d85e0`; branch `fx/nav-overview-streets-r2`.
+The parent's release-device observations show that round 1 restored positive
+Overview acknowledgment/delivery/correlation, but streets disappear after more
+tiles load. The supplied `whole-route-fix-phone.log` confirms continuing positive
+Overview gates and `keys=4`; it contains no tile identities or route window.
+No device access was used for this investigation.
+
+The exact Transitous polyline is not in those counts-only captures. For a
+reproducible window, use only the supplied public fake start (48.8712, 2.3610)
+and a public Gare du Nord entrance (48.8809, 2.3553), with a synthetic straight
+route between them. Production `NavMapProjection.window` gives center
+`(-208.446007, -539.295750)` local metres and span **1,348.239375 m**.
+Production `NavBasemapLayer.cover` selects zoom **14**, with the four keys below.
+This reproduces the reported key count; the capture cannot prove its exact span
+or fetch order. Route curvature within these bounds does not change that cover.
+
+One identified HTTP GET per key against
+`https://vector.openstreetmap.org/shortbread_v1/{z}/{x}/{y}.mvt` returned 200.
+Decode/projection used this worktree's unmodified production classes, default
+`MvtLimits`, `ShortbreadTiles.decode`, and `LocalTile.of`. Live results:
+
+| Key | Gzip bytes | Inflated bytes | Street lines | Name lines | Vertices | Simplify work |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 14/8298/5634 | 305,924 | 560,332 | 2,477 | 592 | 12,449 | 263,908 |
+| 14/8299/5634 | 226,240 | 438,320 | 2,614 | 330 | 11,014 | 203,936 |
+| 14/8298/5635 | 314,063 | 588,711 | 2,536 | 469 | 11,555 | 229,904 |
+| 14/8299/5635 | 292,790 | 549,868 | 2,626 | 517 | 11,810 | 214,216 |
+| **Total** | **1,139,017** | **2,137,231** | **10,253** | **1,908** | **46,828** | **911,964** |
+
+The vertex count includes names, before viewport clipping. Preparation is
+**2.93 times** its 16,000-vertex cap; simplification remains below 2,000,000.
+Each tile individually fits. Loading in the listed order reproduces the
+partial-to-empty transition exactly: one tile produces 11 street paths / 207
+street points / 2,050 geometry bytes; two, three and four tiles produce zero
+street paths and the same 228-byte route-only geometry. The all-or-nothing
+`withinWorkBudget` exit causes this without throwing, so no decoder rejection
+warning is expected. This is a second defect independent of acknowledgment
+starvation, not evidence that the round-1 fix failed.
+
+Evidence: ignored `overview-r2-live-before.log`, `OverviewProbe.java`, and
+`run-overview-probe.ps1` in this directory. The probe uses compiled production
+JARs plus the already-installed JSON/Kotlin/Android dependencies. Downloaded
+bodies are ignored `14-*.mvt.gz` files here; no private location or device
+identity is used. Re-running the probe reuses those bodies without HTTP.
+
+The baseline requested Navigation task succeeded in 14 s using the existing
+`ANDROID_HOME`; its test task was FROM-CACHE, so it is setup evidence, not a
+fresh test execution. `local.properties` is absent and was not created.
+
+### Round-2 implementation and verification
+
+`LocalTileDetail.kt` prepares spatially spread, class-prioritized subsets on the
+existing decoding worker, once per tile. It round-robins an 8-by-8 grid so a
+dense corner cannot consume every retained line. For each possible cover size
+1 through 9, a tile receives at most `16,000 / count` vertices and
+`2,000,000 / count` estimated simplification work. Names share the vertex cap;
+up to a quarter is reserved for them when present. An individually over-budget
+line is skipped, not allowed to suppress affordable neighbouring streets.
+Subsets reference existing lines/coordinate arrays; they do not copy geometry.
+
+`NavBasemapLayer.draw` keeps the full detail when the aggregate input fits;
+otherwise it chooses the prepared share for the **entire selected cover**,
+including keys still loading. Summing at most that many shares preserves both
+original work caps before viewport clipping/simplification/name scanning.
+`NavMapProjection.tiles` and `draw` still use exactly the same `cover`, zoom and
+keys. No demand, acknowledged-cover, lease or network authorization changes
+are needed. Normal Follow detail remains unchanged when its input fits; all
+map forms use this projection. Existing Follow/Overview tests still verify
+street location, names, nearest/class ranking, clipping and wire limits.
+
+The other avoidable route-only exit was the mandatory 320-byte name reserve.
+Packing now retries without that optional reserve if no streets fit with it;
+final encoded bytes, attribution, path and point limits remain enforced. If
+all names would overflow, the already-existing unnamed-geometry fallback keeps
+the streets. Other exits are intentional: no authorized/loaded streets, no
+visible nondegenerate segments, a route that leaves no wire capacity, or a
+window too wide for the supported residential zoom range (minimum 12). That
+last case still requests nothing; fetching unrelated tiles would not fix it.
+No protective limit was increased.
+
+Reusing the same four live bodies with the fixed production classes:
+
+| Loaded tiles | Prepared vertices | Prepared simplify work | Street paths | Street points | Geometry bytes |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 12,449 | 263,908 | 11 | 207 | 2,050 |
+| 2 | 7,998 | 166,464 | 23 | 276 | 3,156 |
+| 3 | 11,998 | 250,152 | 23 | 283 | 3,205 |
+| 4 | 15,998 | 329,264 | 23 | 705 | 6,705 |
+
+Every geometry passes `RouteGeometryContract.isValid`. Evidence:
+`overview-r2-live-after.log`. This is an offline production-code reproduction,
+not a claim of device verification or the exact captured fetch order.
+
+Four new regressions cover progressive dense four-tile Overview loading,
+unchanged demand/foreign-tile exclusion, all 1-to-9-cover work caps and spatial
+coverage, affordable neighbours of an expensive simplification, and the optional
+label reserve. Route paths remain intact, and output bytes remain bounded.
+The existing 300,000-vertex adversarial input remains route-only.
+
+Three mutations were applied individually and reverted byte-for-byte in a
+`finally` block (`mutate-overview-r2.py`, ignored):
+
+- Restore the original aggregate work gate: **15 tests, 2 failed**, dense
+  progressive Overview and expensive simplification with affordable neighbours.
+- Restore the mandatory label reserve: **15 tests, 1 failed**, tight-byte streets.
+- Bypass all bounded detail: **15 tests, 1 failed**, aggregate work/spatial test.
+
+See `overview-r2-mutation-results.log` and the three
+`overview-r2-mutation-*.log` files. These are observed assertion failures, not
+compile/setup failures. An initial mutation runner invocation omitted the
+explicit Windows `./` batch path and never ran Gradle; that invocation was
+corrected and is not counted as a mutation result.
+
+Final requested suite, with execution forced after restoring production:
+
+```powershell
+.\gradlew.bat :plugin-nav:testDebugUnitTest --rerun -PskipCxrGlobal=true --console=plain
+```
+
+XML: **258 tests, zero failures/errors/skips**. Real tail from
+`overview-r2-verified-tests.log`:
+
+```text
+BUILD SUCCESSFUL in 14s
+64 actionable tasks: 3 executed, 1 from cache, 60 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.5.1/userguide/configuration_cache_enabling.html
+```
+
+`git diff --check` passes. Only Navigation production/tests, its changelog, the
+behaviour paragraph in the launcher completion report, and this diagnosis are
+changed. Shared is untouched, so its suite was not run. Phone/glasses tests and
+assemble suites were not run: `../CxrGlobal` is absent, and the parent owns them.
+No push, merge, tag, ADB, build-configuration, SDK/cache or `local.properties`
+change was made. The parent still needs a release-device Whole route check.
