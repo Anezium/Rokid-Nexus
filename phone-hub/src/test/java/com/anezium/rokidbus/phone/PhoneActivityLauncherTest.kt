@@ -175,6 +175,23 @@ class PhoneActivityLauncherTest {
     }
 
     @Test
+    fun `hiding an in flight geometry draw cancels its deferred acknowledgment`() {
+        sink.capabilityBits = sink.capabilityBits or BusCapabilityBits.RENDERED_MAP
+        router.handleLocal(local(start("nav")), hudSender("nav"))
+        host.beforeSend = { envelope ->
+            val report = com.anezium.rokidbus.shared.RenderedMapContext("ambient", "nav:activity",
+                envelope.payload.getLong("revision"), state.activitySequence("nav")!!).toPayload()
+                .put("token", "drawn").put("visible", true).put("view", "follow")
+            router.handleRenderedMap(report)
+            assertTrue("a write in progress grants no lease", sink.local.isEmpty())
+            router.handleRenderedMap(JSONObject(report.toString()).put("visible", false))
+        }
+        router.handleLocal(geometry("nav", 7), hudSender("nav"))
+        assertEquals(1, sink.local.size)
+        assertFalse("write completion cannot revive a hidden draw", sink.local.single().payload.getBoolean("visible"))
+    }
+
+    @Test
     fun `render feedback is authenticated against live owner sequence and forwarded geometry revision`() {
         sink.capabilityBits = sink.capabilityBits or BusCapabilityBits.RENDERED_MAP
         router.handleLocal(local(start("nav")), hudSender("nav"))

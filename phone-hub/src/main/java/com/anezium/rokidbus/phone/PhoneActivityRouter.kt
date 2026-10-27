@@ -271,6 +271,9 @@ internal class PhoneActivityRouter(
                 // after success; a failed write must never issue rendered authority.
                 writing.feedback = JSONObject(payload.toString())
                 deferred = true
+            } else if (reason == null && !visible) {
+                geometryWrite?.takeIf { it.owner == owner && it.feedback?.optString("token") == payload.optString("token") }
+                    ?.feedback = null
             }
             reason to sample
         }
