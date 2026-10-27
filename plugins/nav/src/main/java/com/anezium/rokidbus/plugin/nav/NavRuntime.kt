@@ -46,9 +46,10 @@ internal class NavRuntime(context: Context) {
     private val map = NavMapPublisher(
         supported = { client?.supportsLauncherInteractive() == true },
         sendGeometry = { revision, geometry ->
-            if (NavControl.renderedFrames.awaitingAcknowledgment(client?.renderedMapFrames.orEmpty())) {
+            val delay = NavControl.mapPublicationDelayMs()
+            if (delay != null) {
                 main.removeCallbacks(sendMap)
-                main.postDelayed(sendMap, client?.renderedMapLeaseRemainingMs ?: 0L)
+                main.postDelayed(sendMap, delay)
                 NexusSdkResult.CAPABILITY_NOT_AVAILABLE
             } else {
                 client?.publishActivityGeometry(revision, geometry) ?: NexusSdkResult.NOT_REGISTERED

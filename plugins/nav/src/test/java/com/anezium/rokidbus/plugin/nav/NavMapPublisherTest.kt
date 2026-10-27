@@ -188,18 +188,43 @@ class NavMapPublisherTest {
         val p = NexusRenderedMap(NexusRenderedMapView.FOLLOW, 100, NavPages.MAIN)
         frames.remember(100, live(100.0))
         frames.remember(100, live(100.0), NavPages.MAIN)
-        assertFalse(frames.awaitingAcknowledgment(setOf(a, p)))
-        assertFalse(frames.awaitingAcknowledgment(setOf(a, p), NavPages.MAIN))
+        assertNull(frames.acknowledgmentDelayMs(setOf(a, p), 5_000))
+        assertNull(frames.acknowledgmentDelayMs(setOf(a, p), 5_000, NavPages.MAIN))
         frames.remember(101, live(200.0), NavPages.MAIN)
-        assertTrue(frames.awaitingAcknowledgment(setOf(a, p), NavPages.MAIN))
-        assertFalse(frames.awaitingAcknowledgment(setOf(a, p)))
-        assertFalse(frames.awaitingAcknowledgment(setOf(a), NavPages.MAIN))
-        assertFalse(frames.awaitingAcknowledgment(setOf(p.copy(revision = 101)), NavPages.MAIN))
+        assertEquals(5_000L, frames.acknowledgmentDelayMs(setOf(a, p), 5_000, NavPages.MAIN))
+        assertNull(frames.acknowledgmentDelayMs(setOf(a, p), 5_000))
+        assertTrue(frames.acknowledgmentDelayMs(setOf(a), 5_000, NavPages.MAIN)!! > 0)
+        assertNull(frames.acknowledgmentDelayMs(setOf(p.copy(revision = 101)), 5_000, NavPages.MAIN))
         // A recreated provider can start a new revision sequence after registration loss.
         frames.remember(1, live(300.0), NavPages.MAIN)
-        assertFalse(frames.awaitingAcknowledgment(setOf(p.copy(revision = 1)), NavPages.MAIN))
+        assertNull(frames.acknowledgmentDelayMs(setOf(p.copy(revision = 1)), 5_000, NavPages.MAIN))
         frames.clear()
-        assertFalse(frames.awaitingAcknowledgment(setOf(a)))
+        assertNull(frames.acknowledgmentDelayMs(setOf(a), 5_000))
+    }
+
+    @Test
+    fun `the first acknowledgment and expiry recovery hold only until a bounded deadline`() {
+        val frames = NavRenderedFrames(now = { now })
+        assertNull(frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+        frames.remember(1, live(100.0), NavPages.MAIN)
+        assertEquals(5_000L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+        repeat(4) {
+            now += 1_000
+            assertEquals(4_000L - it * 1_000, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+        }
+        assertTrue("waiting is never tile authority", frames.keys(emptySet()).isEmpty())
+        now += 1_000
+        assertNull("missing feedback must allow a retry", frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+        frames.remember(2, live(200.0), NavPages.MAIN)
+        now += 1_000
+        assertEquals(4_000L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+        val drawn = setOf(NexusRenderedMap(NexusRenderedMapView.OVERVIEW, 2, NavPages.MAIN))
+        assertNull("first positive feedback releases immediately", frames.acknowledgmentDelayMs(drawn, 5_000, NavPages.MAIN))
+        frames.remember(3, live(300.0), NavPages.MAIN)
+        assertEquals(4_000L, frames.acknowledgmentDelayMs(drawn, 4_000, NavPages.MAIN))
+        now += 4_000
+        assertEquals("expiry does not reopen the bootstrap race", 1_000L,
+            frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
     }
 
     @Test

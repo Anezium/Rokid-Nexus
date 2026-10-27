@@ -6,6 +6,7 @@ import com.anezium.rokidbus.shared.MapFeedbackDiagnostics
 import com.anezium.rokidbus.shared.MapFeedbackDiagnostics.Gate
 import com.anezium.rokidbus.shared.MapFeedbackDiagnostics.Reason
 import com.anezium.rokidbus.shared.MapFeedbackDiagnostics.Verdict
+import com.anezium.rokidbus.shared.RenderedMapContract
 
 /** Owner-local covers of publications, never keys supplied by a feedback sender. */
 internal class NavRenderedFrames(
@@ -13,13 +14,14 @@ internal class NavRenderedFrames(
     private val now: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private data class Cover(val keys: List<TileKey>, val publishedAtMs: Long)
+    private data class Publication(val revision: Long, val atMs: Long)
     // A still-drawn publication can outlive many updates of another surface.
     private val covers = LinkedHashMap<NexusRenderedMap, Cover>(64, 0.75f, true)
-    private val latest = mutableMapOf<String?, Long>()
+    private val latest = mutableMapOf<String?, Publication>()
 
     @Synchronized
     fun remember(revision: Long, snapshot: NavRouteSnapshot, pageId: String? = null) {
-        latest[pageId] = revision
+        latest[pageId] = Publication(revision, now())
         for (view in NavMapView.entries) {
             if (pageId == null && view != NavMapView.FOLLOW) continue
             val frame = NexusRenderedMap(
@@ -44,24 +46,31 @@ internal class NavRenderedFrames(
         }.distinct()
     }
 
-    /** Let a drawn surface acknowledge its in-flight replacement before superseding it again. */
+    /** Give the first draw a quiet window too: no lease yet does not mean no report in flight. */
     @Synchronized
-    fun awaitingAcknowledgment(acknowledged: Set<NexusRenderedMap>, pageId: String? = null): Boolean {
+    fun acknowledgmentDelayMs(acknowledged: Set<NexusRenderedMap>, leaseRemainingMs: Long?, pageId: String? = null): Long? {
         val drawn = acknowledged.firstOrNull { it.pageId == pageId }
-        val held = drawn != null && latest[pageId]?.let { it != drawn.revision } == true
+        val publication = latest[pageId]
+        val delay = when {
+            publication == null || drawn?.revision == publication.revision -> null
+            drawn != null && leaseRemainingMs != null -> leaseRemainingMs.coerceAtLeast(1)
+            // Missing feedback (Text, Commands, loss or expiry) must not freeze publications.
+            else -> (publication.atMs + RenderedMapContract.LEASE_MS - now()).takeIf { it > 0 }
+        }
+        val held = delay != null
         val sample = drawn?.let(::sample) ?: MapFeedbackDiagnostics.Sample(
             kind = if (pageId == null) MapFeedbackDiagnostics.Kind.AMBIENT else MapFeedbackDiagnostics.Kind.PAGE,
-            currentRevision = latest[pageId] ?: -1,
+            currentRevision = publication?.revision ?: -1,
         )
         diagnostics?.record(Gate.NAV_PUBLICATION, if (held) Verdict.HOLD else Verdict.PASS,
             if (held) Reason.AWAITING_ACK else if (drawn == null) Reason.NO_LEASE else Reason.CURRENT, sample)
-        return held
+        return delay
     }
 
     private fun sample(frame: NexusRenderedMap) = MapFeedbackDiagnostics.Sample(
         kind = if (frame.pageId == null) MapFeedbackDiagnostics.Kind.AMBIENT else MapFeedbackDiagnostics.Kind.PAGE,
         view = if (frame.view == NexusRenderedMapView.FOLLOW) MapFeedbackDiagnostics.View.FOLLOW else MapFeedbackDiagnostics.View.OVERVIEW,
-        revision = frame.revision, currentRevision = latest[frame.pageId] ?: -1,
+        revision = frame.revision, currentRevision = latest[frame.pageId]?.revision ?: -1,
         ageMs = covers[frame]?.let { now() - it.publishedAtMs } ?: -1,
     )
 

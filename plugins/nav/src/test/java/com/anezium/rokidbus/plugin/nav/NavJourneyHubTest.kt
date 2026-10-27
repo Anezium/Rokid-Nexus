@@ -218,6 +218,85 @@ class NavJourneyHubTest {
     }
 
     @Test
+    fun `the first Follow page report survives one Hz fixes before any map lease exists`() {
+        assertColdPageFeedback("follow")
+    }
+
+    @Test
+    fun `the first Overview page report survives one Hz fixes before any map lease exists`() {
+        assertColdPageFeedback("overview")
+    }
+
+    private fun assertColdPageFeedback(view: String) {
+        val requests = startWalkingJourney()
+        move(0)
+        openPage()
+        val initialRevision = latest(BusPaths.PAGE_RESPONSE).getLong("revision")
+        repeat(35) { second ->
+            move(second)
+            // No immediate seed acknowledgment: even the first report returns after two fixes.
+            feedback("page", delayMs = 2_500, view = view)
+            idleFor(1_000)
+            if (second < 2) {
+                assertEquals("do not supersede the unacknowledged first page", initialRevision,
+                    latest(BusPaths.PAGE_RESPONSE).getLong("revision"))
+                assertTrue("a quiet publication window authorizes no requests", requests.isEmpty())
+            }
+            if (second >= 7) {
+                assertTrue("the selected page keeps a live lease at second $second",
+                    NavControl.serviceClient!!.renderedMapFrames.any { it.pageId == NavPages.MAIN && it.view.name.equals(view, true) })
+                assertStreets(latest(BusPaths.PAGE_RESPONSE).getJSONObject("body").getJSONObject(view))
+            }
+        }
+        assertTrue("first delayed feedback must start street demand", requests.isNotEmpty())
+        assertTrue("coalesced updates keep flowing", hub.sent.count { it.first == BusPaths.PAGE_RESPONSE } >= 10)
+        assertTrue("the page alone authorizes demand", NavControl.serviceClient!!.renderedMapFrames.none { it.pageId == null })
+    }
+
+    @Test
+    fun `a missing first page report retries the latest fix at its deadline without another event`() {
+        hub.features = BusCapabilityBits.ACTIVITY_SURFACE or BusCapabilityBits.LAUNCHER_INTERACTIVE or BusCapabilityBits.RENDERED_MAP
+        startJourney(bearing = null)
+        openPage()
+        val before = latest(BusPaths.PAGE_RESPONSE).getLong("revision")
+        idleFor(1_000)
+        val initial = NavState.journey!!
+        val moved = initial.copy(progressMeters = 130.0, position = initial.route.line.pointAt(130.0),
+            atMs = SystemClock.elapsedRealtime(), positionAtMs = SystemClock.elapsedRealtime())
+        NavState.journey = moved
+        journey!!.onJourney(moved)
+        idleFor(0)
+        val wait = NavControl.mapPublicationDelayMs(NavPages.MAIN)!!
+        assertEquals(4_000L, wait)
+        idleFor(wait - 1)
+        assertEquals(before, latest(BusPaths.PAGE_RESPONSE).getLong("revision"))
+        idleFor(1)
+        assertTrue(latest(BusPaths.PAGE_RESPONSE).getLong("revision") > before)
+        val received = RouteGeometryContract.parseOrNull(latest(BusPaths.PAGE_RESPONSE).getJSONObject("body").getJSONObject("follow"))!!
+        assertEquals(NavMapProjection.geometry(moved, NavMapView.FOLLOW).paths, received.paths)
+        assertTrue("retrying a publication grants no map lease", NavControl.serviceClient!!.renderedMapFrames.isEmpty())
+    }
+
+    @Test
+    fun `the first ambient report survives one Hz fixes without an immediate seed lease`() {
+        val requests = startWalkingJourney()
+        move(0)
+        val first = latest(BusPaths.ACTIVITY_GEOMETRY).getLong("revision")
+        repeat(12) { second ->
+            move(second)
+            feedback("ambient", delayMs = 1_500)
+            idleFor(1_000)
+            if (second == 0) {
+                assertEquals(first, latest(BusPaths.ACTIVITY_GEOMETRY).getLong("revision"))
+                assertTrue(requests.isEmpty())
+            }
+            if (second >= 4) assertStreets(latest(BusPaths.ACTIVITY_GEOMETRY).getJSONObject("geometry"))
+        }
+        assertTrue(requests.isNotEmpty())
+        assertTrue(NavControl.serviceClient!!.renderedMapFrames.any { it.pageId == null })
+    }
+
+    @Test
     fun `feedback delayed behind newer revisions cannot starve a drawn page of streets`() {
         startWalkingJourney()
         move(0)
@@ -301,7 +380,7 @@ class NavJourneyHubTest {
     }
 
     @Test
-    fun `a lost ambient ack retries the latest map at lease expiry without another journey event`() {
+    fun `a lost ambient ack retries the latest map at the acknowledgment deadline without another journey event`() {
         hub.features = BusCapabilityBits.ACTIVITY_SURFACE or BusCapabilityBits.LAUNCHER_INTERACTIVE or BusCapabilityBits.RENDERED_MAP
         startJourney(bearing = null)
         feedback("ambient")
@@ -323,6 +402,13 @@ class NavJourneyHubTest {
         idleFor(remaining - 1)
         assertEquals(before, hub.sent.count { it.first == BusPaths.ACTIVITY_GEOMETRY })
         idleFor(1)
+        // Expiry cannot supersede a replacement which is still inside its first-ack window.
+        val recoveryWait = NavControl.mapPublicationDelayMs() ?: 0L
+        if (recoveryWait > 0) {
+            idleFor(recoveryWait - 1)
+            assertEquals(before, hub.sent.count { it.first == BusPaths.ACTIVITY_GEOMETRY })
+            idleFor(1)
+        }
         assertEquals(before + 1, hub.sent.count { it.first == BusPaths.ACTIVITY_GEOMETRY })
         val received = RouteGeometryContract.parseOrNull(latest(BusPaths.ACTIVITY_GEOMETRY).getJSONObject("geometry"))!!
         val expected = NavMapProjection.geometry(latestFix, NavMapView.FOLLOW)
@@ -340,17 +426,21 @@ class NavJourneyHubTest {
         feedback("ambient", visible = false)
         idleFor(1_000)
         assertStreets(latest(BusPaths.PAGE_RESPONSE).getJSONObject("body").getJSONObject("follow"))
-        // Withdraw between ticks, with a free geometry slot; restore inside the next rate limit.
+        // Demand is withdrawn immediately; an unacknowledged publication may wait for its deadline.
         feedback("page", visible = false)
         idleFor(0)
         assertTrue(NavState.journey!!.basemap.tiles.isEmpty())
+        val asked = requests.size
+        idleFor(RenderedMapContract.LEASE_MS)
+        assertEquals("waiting without feedback requests no tiles", asked, requests.size)
         assertFalse(hasStreets(latest(BusPaths.PAGE_RESPONSE).getJSONObject("body").getJSONObject("follow")))
         assertFalse(hasStreets(latest(BusPaths.ACTIVITY_GEOMETRY).getJSONObject("geometry")))
-        val asked = requests.size
         idleFor(100)
         feedback("page")
         idleFor(NavPageProvider.MIN_INTERVAL_MS)
         assertStreets(latest(BusPaths.PAGE_RESPONSE).getJSONObject("body").getJSONObject("follow"))
+        // Returning to the island acknowledges its pending route-only publication as well.
+        feedback("ambient")
         idleFor(NavMapPublisher.MIN_GEOMETRY_INTERVAL_MS - NavPageProvider.MIN_INTERVAL_MS - 100)
         assertStreets(latest(BusPaths.ACTIVITY_GEOMETRY).getJSONObject("geometry"))
         val published = hub.sent.count { it.first == BusPaths.PAGE_RESPONSE }
@@ -383,7 +473,7 @@ class NavJourneyHubTest {
         idleFor(0)
     }
 
-    private fun feedback(kind: String, visible: Boolean = true, delayMs: Long = 0) {
+    private fun feedback(kind: String, visible: Boolean = true, delayMs: Long = 0, view: String = "follow") {
         val revision = latest(if (kind == "page") BusPaths.PAGE_RESPONSE else BusPaths.ACTIVITY_GEOMETRY).getLong("revision")
         val context = RenderedMapContext(kind, if (kind == "page") NavPages.MAIN else "nav:route", revision,
             seq = 1, sessionGeneration = 1, frameIndex = 1, requestId = "r1")
@@ -394,7 +484,7 @@ class NavJourneyHubTest {
                 rejectedFeedback++
             } else {
                 hub.deliver(RenderedMapContract.PATH, RenderedMapContract.delivery(context.toPayload()
-                    .put("token", "rendered-$kind").put("view", "follow").put("visible", visible), "nav"))
+                    .put("token", "rendered-$kind").put("view", view).put("visible", visible), "nav"))
             }
         }
         if (delayMs == 0L) deliver.run() else android.os.Handler(Looper.getMainLooper()).postDelayed(deliver, delayMs)

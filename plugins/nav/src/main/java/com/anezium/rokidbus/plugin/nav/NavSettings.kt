@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import com.anezium.rokidbus.shared.MapFeedbackDiagnostics
 import com.anezium.rokidbus.client.plugin.NexusPluginClient
@@ -89,7 +90,8 @@ internal class NavSettings(context: Context) {
  * and notification guidance resumes from what is posted at that moment once the journey ends.
  */
 internal object NavControl {
-    val renderedFrames = NavRenderedFrames(MapFeedbackDiagnostics({ System.nanoTime() / 1_000_000 }) { Log.i("NexusNav", it) })
+    val renderedFrames = NavRenderedFrames(MapFeedbackDiagnostics(SystemClock::elapsedRealtime) { Log.i("NexusNav", it) },
+        now = SystemClock::elapsedRealtime)
     @Volatile
     private var listener: NavNotificationListener? = null
 
@@ -170,6 +172,12 @@ internal object NavControl {
 
     fun mapDemandChanged() {
         mapDemandListener?.invoke()
+    }
+
+    fun mapPublicationDelayMs(pageId: String? = null): Long? {
+        val client = serviceClient ?: return null
+        if (!client.supportsRenderedMaps) return null
+        return renderedFrames.acknowledgmentDelayMs(client.renderedMapFrames, client.renderedMapLeaseRemainingMs, pageId)
     }
 
     private var busBinding: ServiceConnection? = null
