@@ -149,6 +149,41 @@ class NavRouteTest {
     }
 
     @Test
+    fun `accuracy hysteresis rejects threshold jitter and recovers only on a trusted fix`() {
+        val route = testRoute()
+        val tracker = NavRouteTracker(route)
+        val point = route.line.pointAt(100.0)
+        tracker.update(NavFix(point, 5.0, 0), 0)
+        val trusted = tracker.snapshot
+        for (second in 1..10) {
+            val accuracy = if (second % 2 == 1) 36.0 else 34.0
+            val snapshot = tracker.update(NavFix(route.line.pointAt(150.0), accuracy, second * 1_000L), second * 1_000L)
+            assertEquals(RouteQuality.INACCURATE, snapshot.quality)
+            assertEquals(trusted.position, snapshot.position)
+            assertEquals(trusted.progressMeters, snapshot.progressMeters, 0.001)
+            assertEquals(RoutePositionQuality.STALE, snapshot.positionQuality)
+        }
+        assertEquals(RouteQuality.TRACKING, tracker.update(NavFix(point, 30.0, 11_000), 11_000).quality)
+    }
+
+    @Test
+    fun `off route enters immediately and remains through threshold jitter until clearly on route`() {
+        val route = testRoute()
+        val tracker = NavRouteTracker(route)
+        val point = route.line.pointAt(100.0)
+        tracker.update(NavFix(point, 5.0, 0), 0)
+        fun beside(meters: Double) = GeoPoint(point.lat, point.lon + meters / (111_195.0 * kotlin.math.cos(Math.toRadians(point.lat))))
+        for (second in 1..10) {
+            val distance = if (second % 2 == 1) 51.0 else 49.0
+            val snapshot = tracker.update(NavFix(beside(distance), 5.0, second * 1_000L), second * 1_000L)
+            assertEquals(RouteQuality.OFF_ROUTE, snapshot.quality)
+            assertEquals(100.0, snapshot.progressMeters, 0.1)
+            assertEquals(RoutePositionQuality.LIVE, snapshot.positionQuality)
+        }
+        assertEquals(RouteQuality.TRACKING, tracker.update(NavFix(beside(39.0), 5.0, 11_000), 11_000).quality)
+    }
+
+    @Test
     fun `arrival needs two distinct accurate fixes at the endpoint`() {
         val route = testRoute()
         val tracker = NavRouteTracker(route)

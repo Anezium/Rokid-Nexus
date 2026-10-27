@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import android.os.IBinder
+import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.RenderedMapContract
 
@@ -12,6 +13,8 @@ import com.anezium.rokidbus.shared.RenderedMapContract
  */
 internal interface PhoneHudRouteSink {
     fun capabilities(): Int
+    /** Negotiated activity support, retained across link loss, without unrelated discovery. */
+    fun activitiesSupported(): Boolean = capabilities() and BusCapabilityBits.ACTIVITY_SURFACE != 0
     fun renderedMapsSupported(): Boolean = RenderedMapContract.supported(capabilities())
     fun pinLinkUp(): Boolean
     fun log(message: String)

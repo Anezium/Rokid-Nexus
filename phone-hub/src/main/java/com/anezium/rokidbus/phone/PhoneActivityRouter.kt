@@ -4,7 +4,6 @@ import com.anezium.rokidbus.shared.ActivityCloseReason
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.ActivitySurfacePatchResult
 import com.anezium.rokidbus.shared.ActivitySurfaceValidationResult
-import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.RenderedMapContract
@@ -56,12 +55,12 @@ internal class PhoneActivityRouter(
     private val cancelExpiry: () -> Unit,
     private val launcher: PhoneActivityLauncherHost = PhoneActivityLauncherHost.NONE,
 ) {
-    /** Serializes canonical mutation with its wire send, including reconnect batches. */
+    /** Orders outbound mutations and sends, including reconnect batches; feedback never takes it. */
     private val wireLock = Any()
 
-    /** Highest route geometry revision forwarded per owner; geometry is latest-wins. */
-    private val geometryRevisions = mutableMapOf<String, Long>()
-    private val geometrySentAtMs = mutableMapOf<String, Long>()
+    /** Guarded by state, alongside the owner and sequence, never across a transport write. */
+    private data class GeometryPublication(val revision: Long, val atMs: Long)
+    private val geometryPublications = mutableMapOf<String, GeometryPublication>()
     private val mapDiagnostics = MapFeedbackDiagnostics(nowMs, sink::log)
     private val headingWindows = mutableMapOf<String, ArrayDeque<Long>>()
     private val commandBindings = mutableMapOf<String, String>()
@@ -103,7 +102,7 @@ internal class PhoneActivityRouter(
             )
             return
         }
-        if (sink.capabilities() and BusCapabilityBits.ACTIVITY_SURFACE == 0) {
+        if (!sink.activitiesSupported()) {
             reject(
                 envelope,
                 sender,
@@ -236,31 +235,38 @@ internal class PhoneActivityRouter(
     }
 
     /** Feedback comes only from the authenticated peer, for a live owner and its current geometry. */
-    fun handleRenderedMap(payload: JSONObject): Unit = synchronized(wireLock) {
+    fun handleRenderedMap(payload: JSONObject) {
         val context = RenderedMapContract.context(payload)
         val visible = payload.optBoolean("visible")
         val owner = context?.let { state.ownerForActivity(it.id) }
-        val currentRevision = geometryRevisions[owner] ?: -1
-        val currentSeq = owner?.let(state::activitySequence) ?: -1
-        val sample = MapFeedbackDiagnostics.Sample.from(payload).copy(
-            currentRevision = currentRevision, currentSeq = currentSeq,
-            ageMs = geometrySentAtMs[owner]?.let { nowMs() - it } ?: -1,
-        )
-        val reason = when {
-            !sink.renderedMapsSupported() -> Reason.CAPABILITY
-            !launcher.dataPlaneUp() -> Reason.DATA_PLANE
-            !RenderedMapContract.validEvent(payload) || context == null -> Reason.MALFORMED
-            context.kind != RenderedMapContract.AMBIENT || payload.optString("view") != RenderedMapContract.FOLLOW -> Reason.KIND_VIEW
-            owner == null -> Reason.IDENTITY
-            visible && !state.isLive(owner) -> Reason.STALE
-            visible && currentSeq != context.seq -> Reason.SEQUENCE
-            launcher.registrationCount(owner) != 1 -> Reason.REGISTRATION
-            visible && currentRevision != context.revision -> Reason.REVISION
-            else -> null
+        val supported = sink.renderedMapsSupported()
+        val dataPlaneUp = launcher.dataPlaneUp()
+        val registrations = owner?.let(launcher::registrationCount) ?: 0
+        val (reason, sample) = synchronized(state) {
+            val geometry = geometryPublications[owner]
+            val currentRevision = geometry?.revision ?: -1
+            val currentSeq = owner?.let(state::activitySequence) ?: -1
+            val sample = MapFeedbackDiagnostics.Sample.from(payload).copy(
+                currentRevision = currentRevision, currentSeq = currentSeq,
+                ageMs = geometry?.let { nowMs() - it.atMs } ?: -1,
+            )
+            val reason = when {
+                !supported -> Reason.CAPABILITY
+                !dataPlaneUp -> Reason.DATA_PLANE
+                !RenderedMapContract.validEvent(payload) || context == null -> Reason.MALFORMED
+                context.kind != RenderedMapContract.AMBIENT || payload.optString("view") != RenderedMapContract.FOLLOW -> Reason.KIND_VIEW
+                owner == null || state.ownerForActivity(context.id) != owner -> Reason.IDENTITY
+                visible && !state.isLive(owner) -> Reason.STALE
+                visible && currentSeq != context.seq -> Reason.SEQUENCE
+                registrations != 1 -> Reason.REGISTRATION
+                visible && currentRevision != context.revision -> Reason.REVISION
+                else -> null
+            }
+            reason to sample
         }
         if (reason != null) {
             mapDiagnostics.record(Gate.PHONE_AMBIENT, Verdict.DROP, reason, sample)
-            return@synchronized
+            return
         }
         val delivered = sink.deliverLocal(BusEnvelope(path = RenderedMapContract.PATH,
             payload = RenderedMapContract.delivery(payload, checkNotNull(owner))))
@@ -336,7 +342,7 @@ internal class PhoneActivityRouter(
      * cleared and every entry resent with a new `seq`.
      */
     fun resendIfAvailable(): Unit = synchronized(wireLock) {
-        if (sink.capabilities() and BusCapabilityBits.ACTIVITY_SURFACE == 0) return
+        if (!sink.activitiesSupported()) return
         state.dropPendingCommands()
         val trimmed = state.trimToCapacity()
         trimmed.forEach { evicted ->
@@ -458,7 +464,7 @@ internal class PhoneActivityRouter(
             ?: return reject(envelope, sender, ActivitySurfaceContract.ERROR_INVALID_ACTIVITY)
         val drop = when {
             !state.isLive(pluginId) -> "ACTIVITY_GEOMETRY_IGNORED_NO_SESSION"
-            geometryRevisions[pluginId]?.let { update.revision <= it } == true -> "ACTIVITY_GEOMETRY_STALE"
+            synchronized(state) { geometryPublications[pluginId]?.let { update.revision <= it.revision } == true } -> "ACTIVITY_GEOMETRY_STALE"
             // Route geometry rides the data plane only; with CXR control alone it is dropped,
             // never queued, so text guidance never waits on it.
             !launcher.dataPlaneUp() -> "ACTIVITY_GEOMETRY_NO_DATA_PLANE"
@@ -474,10 +480,11 @@ internal class PhoneActivityRouter(
             payload = withOwner(pluginId, ActivitySurfaceContract.geometryPayload(update)),
         )
         sink.recordLocalRoute(outgoing, sender.uid, pluginId, PluginBusJournal.Verdict.OK)
+        // The outbound lock preserves send order; the state monitor stays available to RX.
+        val publication = GeometryPublication(update.revision, nowMs())
         val error = launcher.sendDataPlane(outgoing)
         if (error == null) {
-            geometryRevisions[pluginId] = update.revision
-            geometrySentAtMs[pluginId] = nowMs()
+            synchronized(state) { geometryPublications[pluginId] = publication }
         } else {
             sink.log("activity geometry dropped owner=$pluginId code=$error")
         }
@@ -533,8 +540,7 @@ internal class PhoneActivityRouter(
 
     /** Geometry and heading belong to one live session; an end or an offline entry drops them. */
     private fun clearTransient(pluginId: String) {
-        geometryRevisions.remove(pluginId)
-        geometrySentAtMs.remove(pluginId)
+        synchronized(state) { geometryPublications.remove(pluginId) }
         headingWindows.remove(pluginId)
     }
 

@@ -269,6 +269,7 @@ class BusHubService : Service() {
     @Volatile private var snapshotCaptureJob: Job? = null
     private val hudRouteSink: PhoneHudRouteSink = object : PhoneHudRouteSink {
         override fun capabilities(): Int = this@BusHubService.capabilities()
+        override fun activitiesSupported(): Boolean = remoteActivitySurfaceVersion == ActivitySurfaceContract.VERSION
         override fun renderedMapsSupported(): Boolean = this@BusHubService.renderedMapsSupported()
         override fun pinLinkUp(): Boolean = this@BusHubService.pinLinkUp()
         override fun log(message: String) = this@BusHubService.log(message)

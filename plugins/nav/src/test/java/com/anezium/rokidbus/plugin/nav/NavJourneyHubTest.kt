@@ -90,6 +90,7 @@ class NavJourneyHubTest {
     private var journey: NavRuntime? = null
     private var walking: ServiceController<NavJourneyService>? = null
     private var rejectedFeedback = 0
+    private val acceptedFeedback = mutableMapOf<String, MutableList<Pair<Long, Long>>>()
 
     private fun idleFor(ms: Long) = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ms))
 
@@ -303,6 +304,26 @@ class NavJourneyHubTest {
         assertTrue("a real acknowledgment starts street requests", requests.isNotEmpty())
         assertTrue("exercise exact-revision rejections before recovery", rejectedFeedback > 0)
         assertTrue("the accepted draw must publish loaded streets", streetsDrawn)
+    }
+
+    @Test
+    fun `page and ambient publications keep acknowledging under sustained eight second latency`() {
+        startWalkingJourney()
+        move(0)
+        openPage()
+        val started = SystemClock.elapsedRealtime()
+        repeat(90) { second ->
+            move(second)
+            feedback("ambient", delayMs = 8_000)
+            feedback("page", delayMs = 8_000, view = "overview")
+            idleFor(1_000)
+        }
+        for (kind in listOf("page", "ambient")) {
+            val acknowledged = acceptedFeedback[kind].orEmpty().filter { it.first >= started + 30_000 }.distinctBy { it.second }
+            assertTrue("$kind must acknowledge several consecutive revisions: $acknowledged", acknowledged.size >= 6)
+            assertTrue("$kind must not cycle through missed-ack backoff again: $acknowledged",
+                acknowledged.zipWithNext().all { (a, b) -> b.first - a.first in 8_000L..10_000L })
+        }
     }
 
     @Test
@@ -597,6 +618,7 @@ class NavJourneyHubTest {
             if (visible && revision != current) {
                 rejectedFeedback++
             } else {
+                if (visible) acceptedFeedback.getOrPut(kind) { mutableListOf() }.add(SystemClock.elapsedRealtime() to revision)
                 hub.deliver(RenderedMapContract.PATH, RenderedMapContract.delivery(context.toPayload()
                     .put("token", "rendered-$kind").put("view", view).put("visible", visible), "nav"))
             }

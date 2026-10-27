@@ -4,6 +4,8 @@ import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import com.anezium.rokidbus.shared.ActivityGeometryUpdate
+import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
@@ -12,6 +14,7 @@ import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
 import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.RenderedMapContext
 import com.anezium.rokidbus.shared.RenderedMapContract
+import com.anezium.rokidbus.shared.RouteGeometry
 import com.anezium.rokidbus.shared.SppAuthProtocol
 import com.example.cxrglobal.CXRLink
 import org.json.JSONObject
@@ -72,6 +75,7 @@ class RenderedMapOriginDispatchTest {
             dispatchSpp(hub, session, peer(true))
             adapter.forbidDiscovery = true
             assertTrue(ReflectionHelpers.callInstanceMethod(hub, "renderedMapsSupported"))
+            assertActivityPublicationWithoutDiscovery(hub)
             for (kind in listOf("page", "ambient")) {
                 val event = RenderedMapContext(kind, if (kind == "page") "nav:main" else "nav:activity", 1,
                     seq = 1, sessionGeneration = 1, frameIndex = 1, requestId = "r1").toPayload()
@@ -100,6 +104,37 @@ class RenderedMapOriginDispatchTest {
             fixtureSocket?.close()
             executor.shutdownNow()
         }
+    }
+
+    private fun assertActivityPublicationWithoutDiscovery(hub: BusHubService) {
+        val liveSink = ReflectionHelpers.getField<PhoneHudRouteSink>(hub, "hudRouteSink")
+        val recording = RecordingPhoneHudRouteSink()
+        val sink = object : PhoneHudRouteSink by recording {
+            override fun capabilities(): Int = liveSink.capabilities()
+            override fun activitiesSupported(): Boolean = liveSink.activitiesSupported()
+        }
+        val router = PhoneActivityRouter(PhoneActivityState(nowMs = { 1L }, launcherVersion = { 1 }), sink,
+            nowMs = { 1L }, postExpiry = {}, cancelExpiry = {}, launcher = object : PhoneActivityLauncherHost {
+                override fun dataPlaneUp() = true
+                override fun sendDataPlane(envelope: BusEnvelope): String? = null
+            })
+        val identity = JSONObject().put("surfaceId", "nav:activity").put("localSurfaceId", "activity").put("ownerPluginId", "nav")
+        val start = BusEnvelope(BusPaths.ACTIVITY_START, payload = JSONObject(identity.toString())
+            .put("kind", "activity").put("glyph", "straight").put("primary", "300 m"))
+        ReflectionHelpers.setField(hub, "remoteActivitySurfaceVersion", 0)
+        router.handleLocal(start, hudSender("nav"))
+        assertEquals(ActivitySurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE, recording.errors.single().second)
+        ReflectionHelpers.setField(hub, "remoteActivitySurfaceVersion", ActivitySurfaceContract.VERSION)
+        router.handleLocal(start, hudSender("nav"))
+        router.handleLocal(BusEnvelope(BusPaths.ACTIVITY_UPDATE,
+            payload = JSONObject(identity.toString()).put("primary", "200 m")), hudSender("nav"))
+        router.handleLocal(BusEnvelope(BusPaths.ACTIVITY_GEOMETRY, payload =
+            ActivitySurfaceContract.geometryPayload(ActivityGeometryUpdate(1, RouteGeometry(300.0, emptyList())))
+                .put("surfaceId", "nav:activity").put("localSurfaceId", "activity").put("ownerPluginId", "nav")), hudSender("nav"))
+        assertEquals(1, recording.errors.size)
+        assertEquals(2, recording.remote.size)
+        assertEquals(BusPaths.ACTIVITY_GEOMETRY, recording.localRoutes.last().path)
+        assertEquals(null, recording.localRoutes.last().reason)
     }
 
     @Test
