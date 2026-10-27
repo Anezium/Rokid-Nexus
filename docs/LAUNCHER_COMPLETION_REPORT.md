@@ -32,11 +32,14 @@ Authorities: `plans/028-launcher-completion.md` (scope), `docs/LAUNCHER_INTERACT
 
 This section supersedes the status paragraphs above, which are kept as history.
 
-- **Navigation map acknowledgment startup (2026-10-27, `fx/nav-overview-streets`).**
+- **Navigation map acknowledgment startup (2026-10-27, `fx/nav-overview-streets`,
+  follow-up `fx/nav-overview-streets-r1b`).**
   The publication gate now waits for the first draw acknowledgment too, rather
   than pacing only maps with an existing rendered lease. A five-second quiet
-  window coalesces GPS changes before that acknowledgment and after lease loss;
-  feedback releases the latest state immediately, while a missing report permits
+  window coalesces GPS changes before that acknowledgment and after lease loss,
+  backing off to ten and then at most twenty seconds on deadlines without an
+  acknowledgment. Positive feedback resets the window and releases the latest
+  state immediately, while a missing report permits
   a deadline retry for Text/Commands/hidden maps.
   Route-quality, maneuver and route-identity changes bypass that hold; ending a
   journey also releases the page immediately. The delay is evaluated once per
@@ -44,7 +47,11 @@ This section supersedes the status paragraphs above, which are kept as history.
   positive report superseded by a newer page or geometry revision. No hub wire
   fields, SDK types or network authorization rules change. Cold-start delayed
   Follow/Overview and ambient regressions complement the earlier seeded-lease
-  tests; device verification and hub-suite execution remain with the parent.
+  tests. Follow-up regressions cover quality/maneuver/reroute/arrival changes
+  during a hold, a 10.5-second return delay, and a serial 730 ms/report queue with
+  a ten-second initial backlog. Mutation checks reject the removed bypass,
+  doubled delay evaluation, fixed retry window, missing cap and missing reset.
+  Device verification and hub-suite execution remain with the parent.
 
 - **Immediate launcher actions (2026-10-25, `fx/noconfirm`).** One fresh tap on a focused
   activity command, plugin page row or Open app now executes immediately. The confirmation and

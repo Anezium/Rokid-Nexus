@@ -280,6 +280,67 @@ class NavJourneyHubTest {
         assertTrue("bypassing a hold cannot authorize map demand", NavControl.serviceClient!!.renderedMapFrames.isEmpty())
     }
 
+    @Test
+    fun `Overview recovers when the return delay exceeds both five and ten seconds`() {
+        val requests = startWalkingJourney()
+        move(0)
+        openPage()
+        var acknowledgedAt: Int? = null
+        var streetsDrawn = false
+        repeat(35) { second ->
+            move(second)
+            feedback("page", delayMs = 10_500, view = "overview")
+            idleFor(1_000)
+            streetsDrawn = streetsDrawn || hasStreets(latest(BusPaths.PAGE_RESPONSE).getJSONObject("body").getJSONObject("overview"))
+            if (NavControl.serviceClient!!.renderedMapFrames.any { it.pageId == NavPages.MAIN }) {
+                if (acknowledgedAt == null) acknowledgedAt = second + 1
+            } else if (acknowledgedAt == null) {
+                assertTrue("a retry window grants no street demand", requests.isEmpty())
+            }
+        }
+        assertTrue("a twenty-second retry window must admit the delayed draw, got $acknowledgedAt",
+            acknowledgedAt != null && acknowledgedAt!! <= 27)
+        assertTrue("a real acknowledgment starts street requests", requests.isNotEmpty())
+        assertTrue("exercise exact-revision rejections before recovery", rejectedFeedback > 0)
+        assertTrue("the accepted draw must publish loaded streets", streetsDrawn)
+    }
+
+    @Test
+    fun `page and ambient feedback recover through a loaded serial phone queue`() {
+        val requests = startWalkingJourney()
+        move(0)
+        openPage()
+        var nextReceive = SystemClock.elapsedRealtime() + 10_000L
+        val drawn = mutableMapOf<String, Long>()
+        var firstAck: Int? = null
+        var maxDelay = 0L
+        repeat(60) { second ->
+            move(second)
+            for (kind in listOf("ambient", "page")) {
+                val revision = latest(if (kind == "page") BusPaths.PAGE_RESPONSE else BusPaths.ACTIVITY_GEOMETRY).getLong("revision")
+                // A draw reports a changed revision; a stable map renews every two seconds.
+                if (drawn[kind] != revision || second % 2 == 0) {
+                    drawn[kind] = revision
+                    val at = SystemClock.elapsedRealtime()
+                    nextReceive = maxOf(nextReceive, at) + 730L
+                    val delay = nextReceive - at
+                    maxDelay = maxOf(maxDelay, delay)
+                    feedback(kind, delayMs = delay, view = if (kind == "page") "overview" else "follow")
+                }
+            }
+            idleFor(1_000)
+            if (firstAck == null && NavControl.serviceClient!!.renderedMapFrames.any { it.pageId == NavPages.MAIN }) {
+                firstAck = second + 1
+            }
+        }
+        assertTrue("model a return queue longer than the initial retry window", maxDelay > RenderedMapContract.LEASE_MS)
+        assertTrue("the loaded queue must admit a page acknowledgment, got $firstAck", firstAck != null && firstAck!! <= 35)
+        assertTrue(requests.isNotEmpty())
+        assertTrue("the phone must reject superseded reports", rejectedFeedback > 0)
+        assertTrue("coalesced publications keep flowing", hub.sent.count { it.first == BusPaths.PAGE_RESPONSE } >= 5)
+        assertStreets(latest(BusPaths.PAGE_RESPONSE).getJSONObject("body").getJSONObject("overview"))
+    }
+
     private fun assertColdPageFeedback(view: String) {
         val requests = startWalkingJourney()
         move(0)

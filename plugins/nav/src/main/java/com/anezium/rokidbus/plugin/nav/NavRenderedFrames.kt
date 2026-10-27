@@ -16,14 +16,23 @@ internal class NavRenderedFrames(
     private data class Cover(val keys: List<TileKey>, val publishedAtMs: Long)
     private data class Identity(val route: NavRoute, val quality: RouteQuality, val step: Int)
     private fun identity(snapshot: NavRouteSnapshot) = Identity(snapshot.route, snapshot.quality, snapshot.stepIndex)
-    private data class Publication(val revision: Long, val atMs: Long, val identity: Identity)
+    private data class Publication(
+        val revision: Long, val atMs: Long, val identity: Identity,
+        var windowMs: Long = RenderedMapContract.LEASE_MS, var acknowledged: Boolean = false,
+    )
     // A still-drawn publication can outlive many updates of another surface.
     private val covers = LinkedHashMap<NexusRenderedMap, Cover>(64, 0.75f, true)
     private val latest = mutableMapOf<String?, Publication>()
 
     @Synchronized
     fun remember(revision: Long, snapshot: NavRouteSnapshot, pageId: String? = null) {
-        latest[pageId] = Publication(revision, now(), identity(snapshot))
+        val at = now()
+        val identity = identity(snapshot)
+        val previous = latest[pageId]?.takeIf { it.identity == identity }
+        val window = if (previous != null && !previous.acknowledged && at - previous.atMs >= previous.windowMs) {
+            (previous.windowMs * 2).coerceAtMost(MAX_ACK_WINDOW_MS)
+        } else previous?.windowMs ?: RenderedMapContract.LEASE_MS
+        latest[pageId] = Publication(revision, at, identity, window)
         for (view in NavMapView.entries) {
             if (pageId == null && view != NavMapView.FOLLOW) continue
             val frame = NexusRenderedMap(
@@ -56,12 +65,16 @@ internal class NavRenderedFrames(
     ): Long? {
         val drawn = acknowledged.firstOrNull { it.pageId == pageId }
         val publication = latest[pageId]
+        if (publication != null && drawn != null && covers.containsKey(drawn)) {
+            publication.windowMs = RenderedMapContract.LEASE_MS
+            if (drawn.revision == publication.revision) publication.acknowledged = true
+        }
         val delay = when {
             publication == null || drawn?.revision == publication.revision -> null
             snapshot != null && identity(snapshot) != publication.identity -> null
             drawn != null && leaseRemainingMs != null -> leaseRemainingMs.coerceAtLeast(1)
             // Missing feedback (Text, Commands, loss or expiry) must not freeze publications.
-            else -> (publication.atMs + RenderedMapContract.LEASE_MS - now()).takeIf { it > 0 }
+            else -> (publication.atMs + publication.windowMs - now()).takeIf { it > 0 }
         }
         val held = delay != null
         val sample = drawn?.let(::sample) ?: MapFeedbackDiagnostics.Sample(
@@ -88,5 +101,6 @@ internal class NavRenderedFrames(
 
     private companion object {
         const val MAX_FRAMES = 48
+        const val MAX_ACK_WINDOW_MS = 20_000L
     }
 }
