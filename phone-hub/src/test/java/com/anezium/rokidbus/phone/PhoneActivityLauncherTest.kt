@@ -18,6 +18,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /** The phone's activity tier with the launcher bundle: stamps, collection, offline, commands, geometry. */
 class PhoneActivityLauncherTest {
@@ -29,6 +32,8 @@ class PhoneActivityLauncherTest {
         val boundCommands = mutableSetOf<String>()
         val releasedCommands = mutableListOf<String>()
         var bindAccepted = true
+        var beforeSend: (BusEnvelope) -> Unit = {}
+        var sendError: String? = null
 
         override fun registrationCount(pluginId: String): Int = registrations[pluginId] ?: 1
         override fun bindCommand(pluginId: String): Boolean {
@@ -43,6 +48,8 @@ class PhoneActivityLauncherTest {
         override fun dataPlaneUp(): Boolean = dataPlane
         override fun sendDataPlane(envelope: BusEnvelope): String? {
             if (!dataPlane) return "NO_DATA_PLANE"
+            beforeSend(envelope)
+            sendError?.let { return it }
             dataPlaneSent += envelope
             return null
         }
@@ -85,6 +92,87 @@ class PhoneActivityLauncherTest {
     private val state = newState()
     private val router = newRouter(state, orderedSink, host)
     private var nextExpiryDelay: Long? = null
+
+    @Test
+    fun `ambient feedback does not wait for a slow activity update send`() {
+        assertFeedbackDuringSend(geometrySend = false)
+    }
+
+    @Test
+    fun `ambient feedback does not wait for a slow geometry send`() {
+        assertFeedbackDuringSend(geometrySend = true)
+    }
+
+    private fun assertFeedbackDuringSend(geometrySend: Boolean) {
+        sink.capabilityBits = sink.capabilityBits or BusCapabilityBits.RENDERED_MAP
+        val entered = CountDownLatch(1)
+        val resume = CountDownLatch(1)
+        fun pause() {
+            entered.countDown()
+            check(resume.await(5, TimeUnit.SECONDS)) { "Slow send was not released" }
+        }
+        val slowSink = object : PhoneHudRouteSink by orderedSink {
+            override fun sendRemote(envelope: BusEnvelope): String? {
+                if (envelope.path == BusPaths.ACTIVITY_UPDATE) pause()
+                return orderedSink.sendRemote(envelope)
+            }
+        }
+        val concurrentRouter = newRouter(state, slowSink, host)
+        concurrentRouter.handleLocal(local(start("nav")), hudSender("nav"))
+        concurrentRouter.handleLocal(geometry("nav", 7), hudSender("nav"))
+        if (geometrySend) host.beforeSend = { pause() }
+        val writer = Executors.newSingleThreadExecutor()
+        val reader = Executors.newSingleThreadExecutor()
+        try {
+            val pending = writer.submit {
+                concurrentRouter.handleLocal(
+                    if (geometrySend) geometry("nav", 8) else local(identity("nav").put("primary", "200 m"), BusPaths.ACTIVITY_UPDATE),
+                    hudSender("nav"),
+                )
+            }
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            val report = com.anezium.rokidbus.shared.RenderedMapContext("ambient", "nav:activity",
+                7, state.activitySequence("nav")!!).toPayload()
+                .put("token", "drawn").put("visible", true).put("view", "follow")
+            reader.submit { concurrentRouter.handleRenderedMap(report) }.get(1, TimeUnit.SECONDS)
+            assertEquals(1, sink.local.count { it.path == com.anezium.rokidbus.shared.RenderedMapContract.PATH })
+            if (geometrySend) {
+                reader.submit { concurrentRouter.handleRenderedMap(JSONObject(report.toString()).put("revision", 8)) }
+                    .get(1, TimeUnit.SECONDS)
+                assertEquals("in-flight geometry grants nothing until write success", 1, sink.local.size)
+            }
+            assertFalse("feedback completes before the send", pending.isDone)
+            resume.countDown()
+            pending.get(5, TimeUnit.SECONDS)
+            if (geometrySend) assertEquals(8L, sink.local.last().payload.getLong("revision"))
+        } finally {
+            resume.countDown()
+            writer.shutdownNow()
+            reader.shutdownNow()
+            writer.awaitTermination(5, TimeUnit.SECONDS)
+            reader.awaitTermination(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    fun `a failed geometry write restores the last forwarded revision`() {
+        sink.capabilityBits = sink.capabilityBits or BusCapabilityBits.RENDERED_MAP
+        router.handleLocal(local(start("nav")), hudSender("nav"))
+        router.handleLocal(geometry("nav", 7), hudSender("nav"))
+        host.sendError = "WRITE_FAILED"
+        host.beforeSend = { envelope ->
+            router.handleRenderedMap(com.anezium.rokidbus.shared.RenderedMapContext("ambient", "nav:activity",
+                envelope.payload.getLong("revision"), state.activitySequence("nav")!!).toPayload()
+                .put("token", "drawn").put("visible", true).put("view", "follow"))
+        }
+        router.handleLocal(geometry("nav", 8), hudSender("nav"))
+        val report = com.anezium.rokidbus.shared.RenderedMapContext("ambient", "nav:activity", 7,
+            state.activitySequence("nav")!!).toPayload().put("token", "drawn").put("visible", true).put("view", "follow")
+        router.handleRenderedMap(JSONObject(report.toString()).put("revision", 8))
+        assertTrue(sink.local.isEmpty())
+        router.handleRenderedMap(report)
+        assertEquals(7L, sink.local.single().payload.getLong("revision"))
+    }
 
     @Test
     fun `render feedback is authenticated against live owner sequence and forwarded geometry revision`() {

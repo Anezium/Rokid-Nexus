@@ -65,7 +65,11 @@ This section supersedes the status paragraphs above, which are kept as history.
   Phone report dispatch and both inner routers now use the live rendered-map
   negotiation directly, avoiding repeated full-capability/Bluetooth discovery
   on the SPP reader and inside router locks. Dispatch stays synchronous and
-  retains the exact-revision checks. A service regression forbids Bluetooth
+  retains the exact-revision checks. Ambient validation now reads a short
+  canonical-state snapshot independently of outbound ordering, so neither
+  activity nor geometry writes block feedback; local activity publication also
+  checks negotiated activity support without full-capability discovery.
+  A service regression forbids Bluetooth
   discovery during page/ambient dispatch and checks negotiation/socket loss,
   and fails when the old lookup is restored. All hub and plugin suites pass
   (4,474 tests); on the release device the Whole route kept its streets from
