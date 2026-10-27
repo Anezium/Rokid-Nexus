@@ -239,7 +239,9 @@ internal class ActivityStateMachine {
             content = content,
             startedOrder = nextOrder,
             lastUpdatedOrder = nextOrder,
-            lastSignificantOrder = null,
+            // A new session is the latest thing to happen, so it goes above what was already running.
+            // Restarting a resident (a re-registration, a lost send) is not news and keeps its place.
+            lastSignificantOrder = if (previous == null) nextOrder else previous.lastSignificantOrder,
             lastFlareAtMs = null,
             lastUrgentAtMs = previous?.lastUrgentAtMs,
             collapseAtMs = nowMs + COLLAPSE_AFTER_MS,

@@ -1584,10 +1584,12 @@ per owner, while the corners still hold two; see "Interactive activities"
 below for its admission, eviction and order.
 
 Exactly one activity is primary because only one expanded panel can be shown.
-The activity with the latest significant update is primary; if none has a
-significant update, the oldest started activity is primary. Significant updates
-affect primary selection even when their flare is throttled to a pulse or hidden
-by the camera. Non-primary activities remain chips.
+The activity with the latest significant moment is primary. A significant
+update is one; the start of a new session is another, so a route started over
+playing media goes above it. Starting again a surface that is already resident
+(a re-registration, a lost send) keeps the moment it had. A start never flares
+or wakes the display. Significant updates affect primary selection even when
+their flare is throttled to a pulse or hidden by the camera. Non-primary activities remain chips.
 
 ### Actions and input arbitration
 
@@ -1723,7 +1725,8 @@ non-primary entries (least recently updated), then the unpinned primary, then
 pinned entries (least recently updated); evicted live owners get
 `closed(replaced)`. Only the primary plus one other get corner islands, and an
 offline entry never does. The glasses order the collection: user-pinned first,
-then live before offline, then primary, then the latest significant update,
+then live before offline, then primary, then the latest significant moment
+(update or new session start),
 then the earliest start, then owner id. The root promotes at most two entries,
 frozen per session; the Activities page lists them all.
 

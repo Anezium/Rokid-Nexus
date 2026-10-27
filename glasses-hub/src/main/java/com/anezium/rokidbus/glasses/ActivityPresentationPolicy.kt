@@ -144,9 +144,9 @@ internal fun canResolveActivityTap(
 /**
  * Selects the singular expanded activity.
  *
- * A significant update always wins. Before any activity has one, the first
- * still-live activity remains primary so merely starting a second process does
- * not make the HUD jump corners.
+ * The latest significant moment wins: a significant update, or the start of a
+ * new session, which the controller records the same way. Corners never move;
+ * only which island expands does. Without any, the first started stays primary.
  */
 internal fun selectPrimaryActivity(
     candidates: Collection<ActivityPrimaryCandidate>,

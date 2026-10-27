@@ -18,8 +18,6 @@ import com.anezium.rokidbus.shared.PageDestination
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PageTemplateContract
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -108,30 +106,50 @@ class ActivityCollectionTest {
     }
 
     @Test
-    fun `a running route stays above media through a new track, another player and the next session`() {
+    fun `a route started over playing media leads it through a new track, another player and the next session`() {
         state.setCapacity(8)
-        state.start("nav:activity", "nav", 1, content("Turn left on Rue de Rivoli"), now)
         state.start("media:activity", "media", 1, content("Song A"), now)
+        state.start("nav:activity", "nav", 1, content("Turn left on Rue de Rivoli"), now)
+        assertEquals(listOf("nav", "media"), nextSession())
+        assertEquals("nav:activity", state.primarySurfaceId())
+
+        // Media Deck starting again over the same registration (a lost send, a re-registration) is
+        // not a new session: it keeps its place.
+        state.start("media:activity", "media", 2, content("Song A"), now)
         assertEquals(listOf("nav", "media"), nextSession())
 
         // Media Deck sends a new track and a switch to another player as ordinary updates.
-        state.update("media:activity", 2, ActivitySurfacePatch(primary = ActivityField("Song B")), now)
+        state.update("media:activity", 3, ActivitySurfacePatch(primary = ActivityField("Song B")), now)
         assertEquals(listOf("nav", "media"), nextSession())
-        state.update("media:activity", 3, ActivitySurfacePatch(primary = ActivityField("Podcast"), glyph = ActivityField("podcast")), now)
+        state.update("media:activity", 4, ActivitySurfacePatch(primary = ActivityField("Podcast"), glyph = ActivityField("podcast")), now)
         assertEquals(listOf("nav", "media"), nextSession())
 
         // A real route event keeps its meaning: significant, and the route stays the primary.
         state.update("nav:activity", 2, ActivitySurfacePatch(primary = ActivityField("Turn right"), significant = true), now)
-        state.update("media:activity", 4, ActivitySurfacePatch(primary = ActivityField("Song C")), now)
+        state.update("media:activity", 5, ActivitySurfacePatch(primary = ActivityField("Song C")), now)
         assertEquals(listOf("nav", "media"), nextSession())
         val collection = snapshot(state).collection
-        assertNotNull(collection.single { it.ownerPluginId == "nav" }.lastSignificantOrder)
-        assertNull(collection.single { it.ownerPluginId == "media" }.lastSignificantOrder)
+        assertTrue(
+            collection.single { it.ownerPluginId == "nav" }.lastSignificantOrder!! >
+                collection.single { it.ownerPluginId == "media" }.lastSignificantOrder!!,
+        )
         assertEquals("nav:activity", state.primarySurfaceId())
 
         // The order rule itself is unchanged: a significant media update would still lead.
-        state.update("media:activity", 5, ActivitySurfacePatch(primary = ActivityField("Song D"), significant = true), now)
+        state.update("media:activity", 6, ActivitySurfacePatch(primary = ActivityField("Song D"), significant = true), now)
         assertEquals(listOf("media", "nav"), nextSession())
+    }
+
+    @Test
+    fun `media started over a running route leads it, as any new session does`() {
+        state.setCapacity(8)
+        state.start("nav:activity", "nav", 1, content("Turn left on Rue de Rivoli"), now)
+        state.start("media:activity", "media", 1, content("Song A"), now)
+        assertEquals(listOf("media", "nav"), nextSession())
+
+        // The route's next real event takes the lead back.
+        state.update("nav:activity", 2, ActivitySurfacePatch(primary = ActivityField("Turn right"), significant = true), now)
+        assertEquals(listOf("nav", "media"), nextSession())
     }
 
     private val feed = ActivityFeed(ownerLabel = { it }, pageIdFor = LocalPages::activityPageId, wallClock = { now })

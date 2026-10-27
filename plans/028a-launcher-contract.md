@@ -95,7 +95,7 @@ writes its own, like `ownerPluginId` and `seq`):
 - Glasses: the collection holds up to the capacity; only the primary plus one other get corner
   islands (`allocateActivityCorners` unchanged). Offline entries never get an island.
 - Ordering (glasses, deterministic): userPinned first; then live before offline; then primary;
-  then latest significant update; then earliest start; then owner id. Root promotes at most 2
+  then latest significant update or new session start; then earliest start; then owner id. Root promotes at most 2
   (`VISIBLE_ACTIVITY_STOPS`), membership frozen per session as today; the Activities page lists
   them all.
 

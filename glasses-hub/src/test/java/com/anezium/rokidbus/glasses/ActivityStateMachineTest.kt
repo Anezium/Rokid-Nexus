@@ -88,7 +88,8 @@ class ActivityStateMachineTest {
     fun `significant recency owns primary and flare budget is per activity`() {
         state.start("maps:activity", "maps", 1, content("300 m"), now)
         state.start("ride:activity", "ride", 2, content("4 min"), now)
-        assertEquals("maps:activity", state.primarySurfaceId())
+        // A new session is the latest thing to happen: it takes the primary.
+        assertEquals("ride:activity", state.primarySurfaceId())
 
         state.update(
             "ride:activity",
@@ -293,7 +294,7 @@ class ActivityStateMachineTest {
 
         assertEquals("alpha:activity", result.replacedSurfaceId)
         assertEquals(setOf("beta:activity", "gamma:activity"), state.surfaceIds())
-        assertEquals("beta:activity", state.primarySurfaceId())
+        assertEquals("gamma:activity", state.primarySurfaceId())
     }
 
     @Test
@@ -474,9 +475,9 @@ class ActivityStateMachineTest {
             ).presentation,
         )
         val render = state.snapshot(now, ActivityPresentationContext.IDLE_HOME, pinCorner = null, alwaysExpanded = false, keptOff = keptOff)
-        // The other owners take both islands; the first started expands in its place.
+        // The other owners take both islands; the latest started expands in its place.
         assertEquals(listOf("ride:activity", "todo:activity"), render.items.map { it.activity.surfaceId })
-        assertEquals("ride:activity", render.primary?.activity?.surfaceId)
+        assertEquals("todo:activity", render.primary?.activity?.surfaceId)
         assertEquals(ActivityPresentation.PANEL, render.primary?.presentation)
         assertEquals(setOf(PinSurfacePosition.TOP_LEFT, PinSurfacePosition.TOP_RIGHT), render.items.map { it.activity.corner }.toSet())
         // Its card stays, still the collection's primary.
@@ -485,7 +486,7 @@ class ActivityStateMachineTest {
         assertEquals(
             ActivityPresentation.PANEL,
             state.presentEvent(
-                "ride:activity", ActivityPresentationContext.IDLE_HOME, significant = false, urgent = false,
+                "todo:activity", ActivityPresentationContext.IDLE_HOME, significant = false, urgent = false,
                 nowMs = now, alwaysExpanded = false, keptOff = keptOff,
             ).presentation,
         )

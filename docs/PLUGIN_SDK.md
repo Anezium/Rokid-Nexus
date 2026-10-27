@@ -622,8 +622,9 @@ such as a maneuver change or arrival. The hub decides whether that becomes a
 flare and permits at most one flare per activity every 10 seconds; a throttled
 flare becomes a pulse and is never queued. Do not use `significant` for distance
 countdown ticks, nor for media moving to a new track: on a negotiated launcher
-the collection is ordered by each activity's latest significant update, so a
-significant track change would lift what plays above a running route.
+the collection is ordered by each activity's latest significant update or new
+session start, so a significant track change would lift what plays above a
+running route.
 
 #### Activity extras
 
@@ -682,8 +683,9 @@ The wearer can keep the primary activity expanded from Nexus phone Settings.
 That is a platform preference; no plugin API can read, set, or override it.
 
 The platform keeps at most two activity islands and one pin in stable corners.
-Exactly one activity is primary: the most recently significant one, or the
-oldest started one when none is significant. Only the primary activity shows
+Exactly one activity is primary: the one with the latest significant update
+or new session start, so a route started over playing media takes the lead.
+Starting again a surface that is still resident keeps its place. Only the primary activity shows
 the expanded panel. Without the launcher bundle the hubs hold two activities: a
 third start replaces the least-recently-updated non-primary activity, with the
 oldest start as the deterministic fallback when no non-primary candidate
