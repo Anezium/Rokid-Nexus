@@ -90,9 +90,11 @@ This section supersedes the status paragraphs above, which are kept as history.
   (Google Maps or Citymapper guidance) shows Minimap and Panel unavailable on its Display page and
   cannot save them, and phone Settings says maps need a route Nexus plans (`RouteNavigationTest`);
   Media Deck no longer marks a new track or player as a significant update, so what plays stays
-  below a running route (`MediaDeckActivityPublisherTest`; the hub's order rule is unchanged);
+  below a running route (`MediaDeckActivityPublisherTest`); the hub now puts a newly started activity above the running
+  ones, a restart of a resident keeps its place (`ActivityCollectionTest`);
   a one-to-one conversation card no longer repeats its sender before each line, a group card
-  keeps its senders (`ComposerSessionTest`); the reply just sent no longer blinks out when a
+  keeps its senders, and the notice band reads its lines the same way (`ComposerSessionTest`,
+  `NoticeStateMachineTest`); the reply just sent no longer blinks out when a
   revision computed before Relay recorded it lands after the result, nor when someone else's
   message arrives meanwhile: the glasses keep it on its page until that page carries a copy of
   it, and drop it with its page, a new provider registration or the owner's purge

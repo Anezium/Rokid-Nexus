@@ -309,7 +309,8 @@ entry (opens its exact `destination` directly; identity never swaps under focus;
 place to handed-off or removed); else the generic preview of the newest entry. A conversation
 card shows the entry's title over its message; when every line of the message starts
 `<title>: ` (a one-to-one thread) the card drops that prefix, and a group's lines keep their
-senders. The armed band (NoticeController) is unchanged.
+senders. The armed band (NoticeController) reads its lines the same way and is otherwise
+unchanged.
 
 ## 7. Composer (glasses-owned, generic, used by conversation pages)
 

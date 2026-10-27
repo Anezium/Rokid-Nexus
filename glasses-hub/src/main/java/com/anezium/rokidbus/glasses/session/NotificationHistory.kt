@@ -5,6 +5,19 @@ import com.anezium.rokidbus.shared.PageDestination
 import com.anezium.rokidbus.shared.PageTemplateContract
 import org.json.JSONObject
 
+/**
+ * [said] without the `<title>: ` that starts every one of its lines in a one-to-one thread, the
+ * name already shown above them; null when a line names someone else, as a group's do, or none
+ * names anyone. The card and the band both read a conversation this way.
+ */
+internal fun withoutRepeatedSender(title: String?, said: List<String>): List<String>? {
+    val name = title?.trim()?.takeIf(String::isNotEmpty) ?: return null
+    val prefix = "$name: "
+    val lines = said.map(String::trim).filter(String::isNotEmpty)
+    if (lines.isEmpty() || !lines.all { it.startsWith(prefix) && it.length > prefix.length }) return null
+    return lines.map { it.removePrefix(prefix).trim() }
+}
+
 /** The local state of a history entry (plan 028a §6.3); none of them is a delivery or read receipt. */
 internal enum class HistoryState { NEW, SEEN, HANDED_OFF, WITHDRAWN }
 
@@ -38,15 +51,11 @@ internal data class NoticeEntry(
      */
     val message: String?
         get() {
-            val name = title?.trim() ?: return null
-            val prefix = "$name: "
-            val said = (body?.lines() ?: lines).map(String::trim).filter(String::isNotEmpty)
-            val oneToOne = name.isNotEmpty() && said.isNotEmpty() && said.all { it.startsWith(prefix) && it.length > prefix.length }
-            val text = if (oneToOne) {
-                said.joinToString(if (body != null) "\n" else " ") { it.removePrefix(prefix).trim() }
-            } else {
-                body ?: lines.joinToString(" ")
-            }
+            if (title == null) return null
+            val text = withoutRepeatedSender(title, body?.lines() ?: lines)
+                ?.joinToString(if (body != null) "\n" else " ")
+                ?: body
+                ?: lines.joinToString(" ")
             return text.takeIf(String::isNotBlank)
         }
 

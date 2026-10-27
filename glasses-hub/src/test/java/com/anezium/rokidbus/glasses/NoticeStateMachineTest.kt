@@ -635,6 +635,30 @@ class NoticeStateMachineTest {
     }
 
     @Test
+    fun `a one-to-one band does not repeat its sender before each line, a group keeps every sender`() {
+        val oneToOne = NoticeSurfaceContent(
+            title = "Mika",
+            body = null,
+            footer = null,
+            lines = listOf("Mika: Can you check the build?", "Mika: Reply when you are ready."),
+        )
+        assertEquals("Can you check the build?\nReply when you are ready.", noticeBodyText(oneToOne))
+        assertEquals(
+            "Can you check the build?\nReply when you are ready.",
+            noticeBodyText(oneToOne.copy(lines = emptyList(), body = "Mika: Can you check the build?\nMika: Reply when you are ready.")),
+        )
+
+        val group = oneToOne.copy(title = "Build crew", lines = listOf("Mika: Can you check it?", "Léa: On it."))
+        assertEquals("Mika: Can you check it?\nLéa: On it.", noticeBodyText(group))
+        // A reply of ours in the thread names another sender too.
+        val answered = oneToOne.copy(lines = listOf("Mika: Can you check it?", "You: On it."))
+        assertEquals("Mika: Can you check it?\nYou: On it.", noticeBodyText(answered))
+        // A line that is only the name, or no title at all, leaves the text as sent.
+        assertEquals("Mika: ", noticeBodyText(oneToOne.copy(lines = listOf("Mika: "))))
+        assertEquals("Mika: hi", noticeBodyText(oneToOne.copy(title = null, lines = listOf("Mika: hi"))))
+    }
+
+    @Test
     fun `structured lines become hard breaks before measured page arithmetic`() {
         val lines = List(16) { index -> "message $index" }
         val content = NoticeSurfaceContent(

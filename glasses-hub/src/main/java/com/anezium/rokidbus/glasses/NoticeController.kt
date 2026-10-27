@@ -10,6 +10,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.view.KeyEvent
+import com.anezium.rokidbus.glasses.session.withoutRepeatedSender
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.ImageSurfaceContract
@@ -207,10 +208,14 @@ private const val MIN_IMAGE_PAGE_BODY_LINES = 3
  * The exact text handed to the real [android.text.StaticLayout]. A body is
  * returned untouched for pixel compatibility; structured lines use the one
  * platform-owned hard break between entries and otherwise rely on that same
- * layout for wrapping and measurement.
+ * layout for wrapping and measurement. A one-to-one thread's lines lose the
+ * sender the title already names, each still on its own line.
  */
-internal fun noticeBodyText(content: NoticeSurfaceContent): String? =
-    if (content.lines.isEmpty()) content.body else content.lines.joinToString("\n")
+internal fun noticeBodyText(content: NoticeSurfaceContent): String? {
+    val said = if (content.lines.isEmpty()) content.body?.lines().orEmpty() else content.lines
+    withoutRepeatedSender(content.title, said)?.let { return it.joinToString("\n") }
+    return if (content.lines.isEmpty()) content.body else content.lines.joinToString("\n")
+}
 
 internal fun noticeFooterText(notice: NexusNoticeSurface): String? =
     if (notice.deliveryUnconfirmed) "Delivery not confirmed" else notice.content.footer
