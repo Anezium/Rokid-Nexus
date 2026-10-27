@@ -66,10 +66,10 @@ This section supersedes the status paragraphs above, which are kept as history.
   negotiation directly, avoiding repeated full-capability/Bluetooth discovery
   on the SPP reader and inside router locks. Dispatch stays synchronous and
   retains the exact-revision checks. A service regression forbids Bluetooth
-  discovery during page/ambient dispatch and checks negotiation/socket loss;
-  its compile/run is blocked here by the missing sibling CxrGlobal dependency.
-  The plugin suite passes all 262 tests; device verification and hub-suite
-  execution remain with the parent.
+  discovery during page/ambient dispatch and checks negotiation/socket loss,
+  and fails when the old lookup is restored. All hub and plugin suites pass
+  (4,474 tests); on the release device the Whole route kept its streets from
+  36 s to 81 s after the start with no stale-revision report.
 
 - **Immediate launcher actions (2026-10-25, `fx/noconfirm`).** One fresh tap on a focused
   activity command, plugin page row or Open app now executes immediately. The confirmation and

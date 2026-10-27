@@ -29,8 +29,7 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 - **Type your reply.** When you choose Type on the glasses, the phone shows its keyboard, or a notification that opens it.
 - A plugin that is revoked, disabled, uninstalled or re-signed leaves the glasses' notification history, even if the glasses were away at the time.
 - Route maps report only what the glasses actually drew, under a short owner-scoped lease. Both hubs negotiate this feedback and in-map attribution together; Navigation keeps route-only guidance with an older peer.
-- Navigation publishes a new turn, route-quality change, reroute or arrival without waiting for the previous map's acknowledgment.
-- Navigation gives delayed map feedback a quiet window of five seconds, then ten and at most twenty after missed acknowledgments, resetting on feedback so queued reports can recover street rendering.
+- Rendered-map reports from the glasses are checked against the live negotiation instead of a full capability and Bluetooth lookup per report, so the phone keeps up with the glasses' feedback while a route page is open.
 - Builds against CXR-L client 1.1.2 through CxrGlobal 0.3.0, and tells Hi Rokid which client version it speaks.
 - If Hi Rokid ends the glasses session itself, the hub now reports the link down right away instead of believing it is still up, and the status notification says "Hi Rokid ended the glasses session; tap to reconnect". It does not reconnect on its own.
 - The assist button is left to Rokid while Hi Rokid reports a native scene such as a call, a recording, navigation, a payment, translation, an update or the camera on the glasses, so a press over that scene no longer triggers the takeover and its exit burst; a scene reported in the middle of a takeover stops the remaining exit shots. Only explicit reports count; anything Nexus cannot read keeps the button with Nexus as before.

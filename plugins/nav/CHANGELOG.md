@@ -10,8 +10,10 @@ Street maps and render feedback need Nexus hubs 1.9.0; older hubs keep route-onl
   when the label reserve alone would exceed the geometry's byte budget.
 - Give the first rendered-map acknowledgment a quiet publication window, including
   after lease loss, so one-second GPS updates cannot indefinitely starve Follow
-  or Whole route of streets. Coalesce fixes until feedback or the five-second
-  deadline; keep exact-revision checks and tile authorization unchanged.
+  or Whole route of streets. Coalesce fixes until feedback or a deadline of five
+  seconds, then ten and at most twenty after missed acknowledgments, reset on
+  feedback; a new turn, route-quality change, reroute or arrival is published at
+  once. Exact-revision checks and tile authorization are unchanged.
 - Keep acknowledged street-map covers through activity and page updates, and
   restore loaded streets on render feedback without waiting for the next GPS fix.
   Wait for a drawn map's pending update to be acknowledged before replacing it
