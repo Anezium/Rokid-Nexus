@@ -4,6 +4,11 @@
 
 Street maps and render feedback need Nexus hubs 1.9.0; older hubs keep route-only guidance.
 
+- Stabilize GPS quality around the 35 m accuracy and 50 m off-route thresholds.
+  Recovery requires accuracy at or below 30 m or distance back within 40 m of
+  the route, so threshold jitter cannot repeatedly bypass a map's acknowledgment
+  hold. Degradation and genuine off-route entry remain immediate; arrival and
+  reroutes keep their immediate publication bypass.
 - Keep streets in dense Whole route views as more tiles load. Prepare spatially
   spread detail on the decoding worker within the existing aggregate work limits,
   without changing the visible tile cover. Allow streets without optional names

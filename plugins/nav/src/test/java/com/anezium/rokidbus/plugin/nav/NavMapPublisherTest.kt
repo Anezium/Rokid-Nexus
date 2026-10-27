@@ -256,6 +256,36 @@ class NavMapPublisherTest {
     }
 
     @Test
+    fun `GPS threshold jitter bypasses a pending page and ambient publication only once`() {
+        for (pageId in listOf(null, NavPages.MAIN)) {
+            for (accuracyJitter in listOf(true, false)) {
+                val tracker = NavRouteTracker(route)
+                val point = route.line.pointAt(100.0)
+                val initial = tracker.update(NavFix(point, 5.0, now), now)
+                val frames = NavRenderedFrames(now = { now })
+                var revision = 1L
+                frames.remember(revision, initial, pageId)
+                repeat(20) { index ->
+                    now += 100
+                    val meters = if (index % 2 == 0) 51.0 else 49.0
+                    val position = if (accuracyJitter) point else GeoPoint(point.lat,
+                        point.lon + meters / (111_195.0 * kotlin.math.cos(Math.toRadians(point.lat))))
+                    val accuracy = if (!accuracyJitter) 5.0 else if (index % 2 == 0) 36.0 else 34.0
+                    val snapshot = tracker.update(NavFix(position, accuracy, now), now)
+                    val delay = frames.acknowledgmentDelayMs(emptySet(), null, pageId, snapshot)
+                    if (index == 0) {
+                        assertNull("a genuine degradation bypasses immediately", delay)
+                        frames.remember(++revision, snapshot, pageId)
+                    } else {
+                        assertTrue("threshold jitter must not supersede the report in flight", delay != null)
+                    }
+                }
+                assertEquals(2L, revision)
+            }
+        }
+    }
+
+    @Test
     fun `stale and missing positions are still drawn, degraded, with no heading`() {
         publisher.update(stale(100.0, bearing = 30), send = false)
         publisher.activityStarted()

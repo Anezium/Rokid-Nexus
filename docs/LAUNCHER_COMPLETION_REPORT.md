@@ -53,7 +53,11 @@ This section supersedes the status paragraphs above, which are kept as history.
   state immediately, while a missing report permits
   a deadline retry for Text/Commands/hidden maps.
   Route-quality, maneuver and route-identity changes bypass that hold; ending a
-  journey also releases the page immediately. The delay is evaluated once per
+  journey also releases the page immediately. GPS accuracy enters degradation
+  above 35 m and recovers at 30 m; off-route enters above 50 m and recovers
+  within 40 m. This hysteresis prevents threshold jitter from repeatedly
+  bypassing the hold and adds no entry delay for off-route or degradation.
+  The delay is evaluated once per
   page attempt, so HOLD diagnostics count each attempt once. The phone rejects every
   positive report superseded by a newer page or geometry revision. No hub wire
   fields, SDK types or network authorization rules change. Cold-start delayed

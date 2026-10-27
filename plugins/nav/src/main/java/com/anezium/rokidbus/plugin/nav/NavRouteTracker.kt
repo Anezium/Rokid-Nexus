@@ -118,6 +118,8 @@ internal class NavRouteTracker(private val route: NavRoute) {
         private set
     private var acceptedAtMs: Long? = null
     private var arrivalFixes = 0
+    private var inaccurate = false
+    private var offRoute = false
 
     fun update(fix: NavFix?, nowMs: Long): NavRouteSnapshot {
         if (snapshot.quality == RouteQuality.ARRIVED) {
@@ -128,7 +130,7 @@ internal class NavRouteTracker(private val route: NavRoute) {
         val degraded = when {
             fix == null -> RouteQuality.WAITING
             nowMs - fix.elapsedMs !in 0..STALE_AFTER_MS -> RouteQuality.STALE
-            !fix.accuracyMeters.isFinite() || fix.accuracyMeters !in 0.0..MAX_ACCURACY_METERS -> RouteQuality.INACCURATE
+            !acceptAccuracy(fix.accuracyMeters) -> RouteQuality.INACCURATE
             else -> null
         }
         if (degraded != null) {
@@ -151,7 +153,8 @@ internal class NavRouteTracker(private val route: NavRoute) {
         val atDestination = route.lengthMeters - progress <= 35.0 &&
             route.line.distance(fix.point, route.destination.point) <= ARRIVAL_RADIUS_METERS &&
             fix.accuracyMeters <= ARRIVAL_RADIUS_METERS
-        if (projected.distanceMeters > OFF_ROUTE_METERS && !atDestination) {
+        offRoute = !atDestination && projected.distanceMeters > if (offRoute) ON_ROUTE_METERS else OFF_ROUTE_METERS
+        if (offRoute) {
             arrivalFixes = 0
             // Where the wearer actually is, not a point snapped onto a route they left.
             snapshot = snapshot.copy(
@@ -178,10 +181,18 @@ internal class NavRouteTracker(private val route: NavRoute) {
         return snapshot
     }
 
+    private fun acceptAccuracy(meters: Double): Boolean {
+        val limit = if (inaccurate) RECOVER_ACCURACY_METERS else MAX_ACCURACY_METERS
+        inaccurate = !meters.isFinite() || meters !in 0.0..limit
+        return !inaccurate
+    }
+
     companion object {
         const val STALE_AFTER_MS = 30_000L
         const val MAX_ACCURACY_METERS = 35.0
+        private const val RECOVER_ACCURACY_METERS = 30.0
         const val OFF_ROUTE_METERS = 50.0
+        private const val ON_ROUTE_METERS = 40.0
         const val ARRIVAL_RADIUS_METERS = 20.0
     }
 }
