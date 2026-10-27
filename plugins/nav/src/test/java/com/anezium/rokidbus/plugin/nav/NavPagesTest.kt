@@ -122,7 +122,8 @@ class NavPagesTest {
         val published = mutableListOf<Long>()
         var scheduled: Pair<Long, () -> Unit>? = null
         var accept = NexusSdkResult.SENT
-        var retryAfterRefusalMs: Long? = null
+        var publicationDelayMs: Long? = null
+        var publicationDelayCalls = 0
         var journey: Long? = null
         val visibility = mutableListOf<Boolean>()
         val provider = NavPageProvider<Request>(
@@ -139,7 +140,7 @@ class NavPagesTest {
             cancelScheduled = { scheduled = null },
             journey = { journey },
             visibilityChanged = { visibility += it },
-            retryAfterRefusalMs = { retryAfterRefusalMs },
+            publicationDelayMs = { publicationDelayCalls++; publicationDelayMs },
         )
 
         fun runScheduled() {
@@ -157,13 +158,13 @@ class NavPagesTest {
         harness.provider.onRequest(Harness.Request(NavPages.MAIN))
         harness.provider.onVisibility(NavPages.MAIN, true)
         harness.accept = NexusSdkResult.CAPABILITY_NOT_AVAILABLE
-        harness.retryAfterRefusalMs = 2_700L
+        harness.publicationDelayMs = 2_700L
         harness.guidance = null
         harness.provider.guidanceChanged()
         assertTrue(harness.published.isEmpty())
         assertEquals(2_700L, harness.scheduled?.first)
         harness.accept = NexusSdkResult.SENT
-        harness.retryAfterRefusalMs = null
+        harness.publicationDelayMs = null
         harness.runScheduled()
         assertEquals(1, harness.published.size)
         assertNull(harness.scheduled)
@@ -176,11 +177,25 @@ class NavPagesTest {
         harness.provider.onRequest(Harness.Request(NavPages.MAIN))
         harness.provider.onVisibility(NavPages.MAIN, true)
         harness.accept = NexusSdkResult.CAPABILITY_NOT_AVAILABLE
-        harness.retryAfterRefusalMs = 2_700L
+        harness.publicationDelayMs = 2_700L
         harness.guidance = null
         harness.provider.guidanceChanged()
         harness.provider.onClosed(NavPages.MAIN)
         assertNull(harness.scheduled)
+        assertTrue(harness.published.isEmpty())
+    }
+
+    @Test
+    fun `a held publication evaluates its delay once and reuses it for the retry`() {
+        val harness = Harness()
+        harness.guidance = walking
+        harness.provider.onRequest(Harness.Request(NavPages.MAIN))
+        harness.provider.onVisibility(NavPages.MAIN, true)
+        harness.guidance = null
+        harness.publicationDelayMs = 2_700L
+        harness.provider.guidanceChanged()
+        assertEquals(1, harness.publicationDelayCalls)
+        assertEquals(2_700L, harness.scheduled?.first)
         assertTrue(harness.published.isEmpty())
     }
 

@@ -40,11 +40,7 @@ class NavPluginService : NexusPluginService() {
         pageIdOf = NexusPageRequest::pageId,
         floorOf = NexusPageRequest::minimumRevision,
         publish = { request, page ->
-            if (NavControl.mapPublicationDelayMs(NavPages.MAIN) != null) {
-                NexusSdkResult.CAPABILITY_NOT_AVAILABLE
-            } else {
-                nexusClient?.publishPage(request, page) ?: NexusSdkResult.NOT_REGISTERED
-            }
+            nexusClient?.publishPage(request, page) ?: NexusSdkResult.NOT_REGISTERED
         },
         state = {
             NavPageState(
@@ -90,7 +86,7 @@ class NavPluginService : NexusPluginService() {
             scheduled?.let(main::removeCallbacks)
             scheduled = null
         },
-        retryAfterRefusalMs = { NavControl.mapPublicationDelayMs(NavPages.MAIN) },
+        publicationDelayMs = { NavControl.mapPublicationDelayMs(NavPages.MAIN) },
     )
 
     override fun onCreate() {

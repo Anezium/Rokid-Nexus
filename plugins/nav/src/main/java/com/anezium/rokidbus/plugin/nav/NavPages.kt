@@ -131,7 +131,7 @@ internal class NavPageProvider<R : Any>(
     /** The main page came on screen or left it; its maps need street tiles only while it is there. */
     private val visibilityChanged: (Boolean) -> Unit = {},
     private val publication: (NexusPage.Content, NavPageState) -> Unit = { _, _ -> },
-    private val retryAfterRefusalMs: () -> Long? = { null },
+    private val publicationDelayMs: () -> Long? = { null },
 ) {
     private var revision = 0L
     private val shownJourneys = LinkedHashMap<Long, Long?>()
@@ -197,6 +197,11 @@ internal class NavPageProvider<R : Any>(
             return
         }
         val request = current ?: return
+        publicationDelayMs()?.let { delay ->
+            cancelScheduled()
+            schedule(delay) { guidanceChanged() }
+            return
+        }
         val page = if (candidate is NexusPage.Content) candidate.copy(revision = nextRevision(null)) else candidate
         when (publish(request, page)) {
             NexusSdkResult.SENT -> {
@@ -207,8 +212,7 @@ internal class NavPageProvider<R : Any>(
                 lastFootprint = footprint
                 lastContent?.let { remember(it.revision); publication(it, currentState) }
             }
-            // A held publication has no callback when its old rendered acknowledgment expires.
-            else -> retryAfterRefusalMs()?.let { delay -> schedule(delay) { guidanceChanged() } }
+            else -> Unit
         }
     }
 

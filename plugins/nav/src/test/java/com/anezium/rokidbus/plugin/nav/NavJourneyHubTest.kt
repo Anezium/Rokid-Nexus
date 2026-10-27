@@ -227,6 +227,120 @@ class NavJourneyHubTest {
         assertColdPageFeedback("overview")
     }
 
+    @Test
+    fun `a new maneuver bypasses unacknowledged page and ambient holds`() {
+        assertSignificantChange { it.copy(progressMeters = 230.0, position = it.route.line.pointAt(230.0)) }
+    }
+
+    @Test
+    fun `off route bypasses unacknowledged page and ambient holds`() {
+        assertSignificantChange { it.copy(quality = RouteQuality.OFF_ROUTE) }
+    }
+
+    @Test
+    fun `arrival bypasses unacknowledged page and ambient holds`() {
+        assertSignificantChange { it.copy(quality = RouteQuality.ARRIVED) }
+    }
+
+    @Test
+    fun `a replacement route bypasses unacknowledged page and ambient holds`() {
+        assertSignificantChange {
+            val points = listOf(GeoPoint(48.0, 2.0001), it.route.points.last())
+            val route = NavRoute(it.route.destination, points, 400,
+                listOf(RouteStep(RouteLine(points).lengthMeters, "ARRIVE", "Destination")))
+            it.copy(route = route)
+        }
+    }
+
+    private fun assertSignificantChange(change: (NavRouteSnapshot) -> NavRouteSnapshot) {
+        hub.features = BusCapabilityBits.ACTIVITY_SURFACE or BusCapabilityBits.LAUNCHER_INTERACTIVE or BusCapabilityBits.RENDERED_MAP
+        startJourney(bearing = null)
+        openPage()
+        val initial = NavState.journey!!
+        val pageBefore = latest(BusPaths.PAGE_RESPONSE).getLong("revision")
+        val geometryBefore = latest(BusPaths.ACTIVITY_GEOMETRY).getLong("revision")
+        idleFor(1_000)
+        val quiet = initial.copy(progressMeters = 110.0, position = initial.route.line.pointAt(110.0),
+            atMs = SystemClock.elapsedRealtime(), positionAtMs = SystemClock.elapsedRealtime())
+        NavState.journey = quiet
+        journey!!.onJourney(quiet)
+        idleFor(0)
+        assertEquals(pageBefore, latest(BusPaths.PAGE_RESPONSE).getLong("revision"))
+        assertEquals(geometryBefore, latest(BusPaths.ACTIVITY_GEOMETRY).getLong("revision"))
+        val significant = change(quiet)
+        NavState.journey = significant
+        journey!!.onJourney(significant)
+        idleFor(0)
+        assertTrue("significant page must not wait for an acknowledgment",
+            latest(BusPaths.PAGE_RESPONSE).getLong("revision") > pageBefore)
+        assertTrue("significant geometry must not wait for an acknowledgment",
+            latest(BusPaths.ACTIVITY_GEOMETRY).getLong("revision") > geometryBefore)
+        assertEquals(NavMapProjection.geometry(significant, NavMapView.FOLLOW),
+            RouteGeometryContract.parseOrNull(latest(BusPaths.ACTIVITY_GEOMETRY).getJSONObject("geometry")))
+        assertTrue("bypassing a hold cannot authorize map demand", NavControl.serviceClient!!.renderedMapFrames.isEmpty())
+    }
+
+    @Test
+    fun `Overview recovers when the return delay exceeds both five and ten seconds`() {
+        val requests = startWalkingJourney()
+        move(0)
+        openPage()
+        var acknowledgedAt: Int? = null
+        var streetsDrawn = false
+        repeat(35) { second ->
+            move(second)
+            feedback("page", delayMs = 10_500, view = "overview")
+            idleFor(1_000)
+            streetsDrawn = streetsDrawn || hasStreets(latest(BusPaths.PAGE_RESPONSE).getJSONObject("body").getJSONObject("overview"))
+            if (NavControl.serviceClient!!.renderedMapFrames.any { it.pageId == NavPages.MAIN }) {
+                if (acknowledgedAt == null) acknowledgedAt = second + 1
+            } else if (acknowledgedAt == null) {
+                assertTrue("a retry window grants no street demand", requests.isEmpty())
+            }
+        }
+        assertTrue("a twenty-second retry window must admit the delayed draw, got $acknowledgedAt",
+            acknowledgedAt != null && acknowledgedAt!! <= 27)
+        assertTrue("a real acknowledgment starts street requests", requests.isNotEmpty())
+        assertTrue("exercise exact-revision rejections before recovery", rejectedFeedback > 0)
+        assertTrue("the accepted draw must publish loaded streets", streetsDrawn)
+    }
+
+    @Test
+    fun `page and ambient feedback recover through a loaded serial phone queue`() {
+        val requests = startWalkingJourney()
+        move(0)
+        openPage()
+        var nextReceive = SystemClock.elapsedRealtime() + 10_000L
+        val drawn = mutableMapOf<String, Long>()
+        var firstAck: Int? = null
+        var maxDelay = 0L
+        repeat(60) { second ->
+            move(second)
+            for (kind in listOf("ambient", "page")) {
+                val revision = latest(if (kind == "page") BusPaths.PAGE_RESPONSE else BusPaths.ACTIVITY_GEOMETRY).getLong("revision")
+                // A draw reports a changed revision; a stable map renews every two seconds.
+                if (drawn[kind] != revision || second % 2 == 0) {
+                    drawn[kind] = revision
+                    val at = SystemClock.elapsedRealtime()
+                    nextReceive = maxOf(nextReceive, at) + 730L
+                    val delay = nextReceive - at
+                    maxDelay = maxOf(maxDelay, delay)
+                    feedback(kind, delayMs = delay, view = if (kind == "page") "overview" else "follow")
+                }
+            }
+            idleFor(1_000)
+            if (firstAck == null && NavControl.serviceClient!!.renderedMapFrames.any { it.pageId == NavPages.MAIN }) {
+                firstAck = second + 1
+            }
+        }
+        assertTrue("model a return queue longer than the initial retry window", maxDelay > RenderedMapContract.LEASE_MS)
+        assertTrue("the loaded queue must admit a page acknowledgment, got $firstAck", firstAck != null && firstAck!! <= 35)
+        assertTrue(requests.isNotEmpty())
+        assertTrue("the phone must reject superseded reports", rejectedFeedback > 0)
+        assertTrue("coalesced publications keep flowing", hub.sent.count { it.first == BusPaths.PAGE_RESPONSE } >= 5)
+        assertStreets(latest(BusPaths.PAGE_RESPONSE).getJSONObject("body").getJSONObject("overview"))
+    }
+
     private fun assertColdPageFeedback(view: String) {
         val requests = startWalkingJourney()
         move(0)

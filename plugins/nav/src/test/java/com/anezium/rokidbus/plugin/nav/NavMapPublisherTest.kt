@@ -217,7 +217,7 @@ class NavMapPublisherTest {
         assertNull("missing feedback must allow a retry", frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
         frames.remember(2, live(200.0), NavPages.MAIN)
         now += 1_000
-        assertEquals(4_000L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+        assertEquals(9_000L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
         val drawn = setOf(NexusRenderedMap(NexusRenderedMapView.OVERVIEW, 2, NavPages.MAIN))
         assertNull("first positive feedback releases immediately", frames.acknowledgmentDelayMs(drawn, 5_000, NavPages.MAIN))
         frames.remember(3, live(300.0), NavPages.MAIN)
@@ -225,6 +225,34 @@ class NavMapPublisherTest {
         now += 4_000
         assertEquals("expiry does not reopen the bootstrap race", 1_000L,
             frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+    }
+
+    @Test
+    fun `missing acknowledgments back off per surface with a cap and reset on feedback or clear`() {
+        val frames = NavRenderedFrames(now = { now })
+        frames.remember(1, live(100.0), NavPages.MAIN)
+        var revision = 1L
+        for (window in listOf(5_000L, 10_000L, 20_000L, 20_000L)) {
+            assertEquals(window, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+            now += window - 1
+            assertEquals(1L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+            now++
+            assertNull(frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+            frames.remember(++revision, live(100.0), NavPages.MAIN)
+        }
+        frames.remember(1, live(100.0))
+        assertEquals("ambient has its own retry window", 5_000L, frames.acknowledgmentDelayMs(emptySet(), null))
+        val ack = setOf(NexusRenderedMap(NexusRenderedMapView.OVERVIEW, revision, NavPages.MAIN))
+        assertNull(frames.acknowledgmentDelayMs(ack, 5_000, NavPages.MAIN))
+        frames.remember(++revision, live(110.0), NavPages.MAIN)
+        assertEquals("first acknowledgment resets backoff", 5_000L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+        assertTrue("backoff alone grants no tile demand", frames.keys(emptySet()).isEmpty())
+        now += 5_000
+        frames.remember(++revision, live(120.0), NavPages.MAIN)
+        assertEquals(10_000L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+        frames.clear()
+        frames.remember(1, live(100.0), NavPages.MAIN)
+        assertEquals("a new journey starts at five seconds", 5_000L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
     }
 
     @Test

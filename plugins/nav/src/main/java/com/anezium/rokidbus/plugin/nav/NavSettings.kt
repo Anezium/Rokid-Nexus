@@ -176,8 +176,9 @@ internal object NavControl {
 
     fun mapPublicationDelayMs(pageId: String? = null): Long? {
         val client = serviceClient ?: return null
+        val snapshot = NavState.journey ?: return null
         if (!client.supportsRenderedMaps) return null
-        return renderedFrames.acknowledgmentDelayMs(client.renderedMapFrames, client.renderedMapLeaseRemainingMs, pageId)
+        return renderedFrames.acknowledgmentDelayMs(client.renderedMapFrames, client.renderedMapLeaseRemainingMs, pageId, snapshot)
     }
 
     private var busBinding: ServiceConnection? = null
