@@ -227,6 +227,59 @@ class NavJourneyHubTest {
         assertColdPageFeedback("overview")
     }
 
+    @Test
+    fun `a new maneuver bypasses unacknowledged page and ambient holds`() {
+        assertSignificantChange { it.copy(progressMeters = 230.0, position = it.route.line.pointAt(230.0)) }
+    }
+
+    @Test
+    fun `off route bypasses unacknowledged page and ambient holds`() {
+        assertSignificantChange { it.copy(quality = RouteQuality.OFF_ROUTE) }
+    }
+
+    @Test
+    fun `arrival bypasses unacknowledged page and ambient holds`() {
+        assertSignificantChange { it.copy(quality = RouteQuality.ARRIVED) }
+    }
+
+    @Test
+    fun `a replacement route bypasses unacknowledged page and ambient holds`() {
+        assertSignificantChange {
+            val points = listOf(GeoPoint(48.0, 2.0001), it.route.points.last())
+            val route = NavRoute(it.route.destination, points, 400,
+                listOf(RouteStep(RouteLine(points).lengthMeters, "ARRIVE", "Destination")))
+            it.copy(route = route)
+        }
+    }
+
+    private fun assertSignificantChange(change: (NavRouteSnapshot) -> NavRouteSnapshot) {
+        hub.features = BusCapabilityBits.ACTIVITY_SURFACE or BusCapabilityBits.LAUNCHER_INTERACTIVE or BusCapabilityBits.RENDERED_MAP
+        startJourney(bearing = null)
+        openPage()
+        val initial = NavState.journey!!
+        val pageBefore = latest(BusPaths.PAGE_RESPONSE).getLong("revision")
+        val geometryBefore = latest(BusPaths.ACTIVITY_GEOMETRY).getLong("revision")
+        idleFor(1_000)
+        val quiet = initial.copy(progressMeters = 110.0, position = initial.route.line.pointAt(110.0),
+            atMs = SystemClock.elapsedRealtime(), positionAtMs = SystemClock.elapsedRealtime())
+        NavState.journey = quiet
+        journey!!.onJourney(quiet)
+        idleFor(0)
+        assertEquals(pageBefore, latest(BusPaths.PAGE_RESPONSE).getLong("revision"))
+        assertEquals(geometryBefore, latest(BusPaths.ACTIVITY_GEOMETRY).getLong("revision"))
+        val significant = change(quiet)
+        NavState.journey = significant
+        journey!!.onJourney(significant)
+        idleFor(0)
+        assertTrue("significant page must not wait for an acknowledgment",
+            latest(BusPaths.PAGE_RESPONSE).getLong("revision") > pageBefore)
+        assertTrue("significant geometry must not wait for an acknowledgment",
+            latest(BusPaths.ACTIVITY_GEOMETRY).getLong("revision") > geometryBefore)
+        assertEquals(NavMapProjection.geometry(significant, NavMapView.FOLLOW),
+            RouteGeometryContract.parseOrNull(latest(BusPaths.ACTIVITY_GEOMETRY).getJSONObject("geometry")))
+        assertTrue("bypassing a hold cannot authorize map demand", NavControl.serviceClient!!.renderedMapFrames.isEmpty())
+    }
+
     private fun assertColdPageFeedback(view: String) {
         val requests = startWalkingJourney()
         move(0)

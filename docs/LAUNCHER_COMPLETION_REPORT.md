@@ -37,7 +37,10 @@ This section supersedes the status paragraphs above, which are kept as history.
   than pacing only maps with an existing rendered lease. A five-second quiet
   window coalesces GPS changes before that acknowledgment and after lease loss;
   feedback releases the latest state immediately, while a missing report permits
-  a deadline retry for Text/Commands/hidden maps. The phone still rejects every
+  a deadline retry for Text/Commands/hidden maps.
+  Route-quality, maneuver and route-identity changes bypass that hold; ending a
+  journey also releases the page immediately. The delay is evaluated once per
+  page attempt, so HOLD diagnostics count each attempt once. The phone rejects every
   positive report superseded by a newer page or geometry revision. No hub wire
   fields, SDK types or network authorization rules change. Cold-start delayed
   Follow/Overview and ambient regressions complement the earlier seeded-lease
