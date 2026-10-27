@@ -178,3 +178,54 @@ drains the observed return-path backlog on the release builds. The capture does
 not locate its specific slow handler, measure cold-start duration, or prove the
 fixed on-device behavior. The five-second quiet window is bounded pacing, not a
 promise of continuous leases across return-path delays exceeding their lifetime.
+
+## Round 2: dense Overview preparation overflow (2026-10-27)
+
+Base: `dev/launcher-rework` at `c28d85e0`; branch `fx/nav-overview-streets-r2`.
+The parent's release-device observations show that round 1 restored positive
+Overview acknowledgment/delivery/correlation, but streets disappear after more
+tiles load. The supplied `whole-route-fix-phone.log` confirms continuing positive
+Overview gates and `keys=4`; it contains no tile identities or route window.
+No device access was used for this investigation.
+
+The exact Transitous polyline is not in those counts-only captures. For a
+reproducible window, use only the supplied public fake start (48.8712, 2.3610)
+and a public Gare du Nord entrance (48.8809, 2.3553), with a synthetic straight
+route between them. Production `NavMapProjection.window` gives center
+`(-208.446007, -539.295750)` local metres and span **1,348.239375 m**.
+Production `NavBasemapLayer.cover` selects zoom **14**, with the four keys below.
+This reproduces the reported key count; the capture cannot prove its exact span
+or fetch order. Route curvature within these bounds does not change that cover.
+
+One identified HTTP GET per key against
+`https://vector.openstreetmap.org/shortbread_v1/{z}/{x}/{y}.mvt` returned 200.
+Decode/projection used this worktree's unmodified production classes, default
+`MvtLimits`, `ShortbreadTiles.decode`, and `LocalTile.of`. Live results:
+
+| Key | Gzip bytes | Inflated bytes | Street lines | Name lines | Vertices | Simplify work |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 14/8298/5634 | 305,924 | 560,332 | 2,477 | 592 | 12,449 | 263,908 |
+| 14/8299/5634 | 226,240 | 438,320 | 2,614 | 330 | 11,014 | 203,936 |
+| 14/8298/5635 | 314,063 | 588,711 | 2,536 | 469 | 11,555 | 229,904 |
+| 14/8299/5635 | 292,790 | 549,868 | 2,626 | 517 | 11,810 | 214,216 |
+| **Total** | **1,139,017** | **2,137,231** | **10,253** | **1,908** | **46,828** | **911,964** |
+
+The vertex count includes names, before viewport clipping. Preparation is
+**2.93 times** its 16,000-vertex cap; simplification remains below 2,000,000.
+Each tile individually fits. Loading in the listed order reproduces the
+partial-to-empty transition exactly: one tile produces 11 street paths / 207
+street points / 2,050 geometry bytes; two, three and four tiles produce zero
+street paths and the same 228-byte route-only geometry. The all-or-nothing
+`withinWorkBudget` exit causes this without throwing, so no decoder rejection
+warning is expected. This is a second defect independent of acknowledgment
+starvation, not evidence that the round-1 fix failed.
+
+Evidence: ignored `overview-r2-live-before.log`, `OverviewProbe.java`, and
+`run-overview-probe.ps1` in this directory. The probe uses compiled production
+JARs plus the already-installed JSON/Kotlin/Android dependencies. Downloaded
+bodies are ignored `14-*.mvt.gz` files here; no private location or device
+identity is used. Re-running the probe reuses those bodies without HTTP.
+
+The baseline requested Navigation task succeeded in 14 s using the existing
+`ANDROID_HOME`; its test task was FROM-CACHE, so it is setup evidence, not a
+fresh test execution. `local.properties` is absent and was not created.
