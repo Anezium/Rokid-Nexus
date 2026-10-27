@@ -228,7 +228,7 @@ class NavMapPublisherTest {
     }
 
     @Test
-    fun `missing acknowledgments back off per surface with a cap and reset on feedback or clear`() {
+    fun `missing acknowledgments back off per surface with a cap and decay on feedback or clear`() {
         val frames = NavRenderedFrames(now = { now })
         frames.remember(1, live(100.0), NavPages.MAIN)
         var revision = 1L
@@ -245,14 +245,73 @@ class NavMapPublisherTest {
         val ack = setOf(NexusRenderedMap(NexusRenderedMapView.OVERVIEW, revision, NavPages.MAIN))
         assertNull(frames.acknowledgmentDelayMs(ack, 5_000, NavPages.MAIN))
         frames.remember(++revision, live(110.0), NavPages.MAIN)
-        assertEquals("first acknowledgment resets backoff", 5_000L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+        assertEquals("one fast acknowledgment sheds only part of the backoff", 15_000L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
         assertTrue("backoff alone grants no tile demand", frames.keys(emptySet()).isEmpty())
-        now += 5_000
+        now += 15_000
         frames.remember(++revision, live(120.0), NavPages.MAIN)
-        assertEquals(10_000L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+        assertEquals(20_000L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
         frames.clear()
         frames.remember(1, live(100.0), NavPages.MAIN)
         assertEquals("a new journey starts at five seconds", 5_000L, frames.acknowledgmentDelayMs(emptySet(), null, NavPages.MAIN))
+    }
+
+    @Test
+    fun `consecutive slow acknowledgments settle with headroom instead of restarting backoff`() {
+        for (pageId in listOf(null, NavPages.MAIN)) {
+            for ((latency, expectedWindow) in listOf(8_000L to 10_000L, 10_500L to 13_125L)) {
+                val frames = NavRenderedFrames(now = { now })
+                frames.remember(1, live(100.0), pageId)
+                now += 5_000
+                frames.remember(2, live(100.0), pageId)
+                now += 10_000
+                frames.remember(3, live(100.0), pageId)
+                var revision = 3L
+                repeat(8) { round ->
+                    now += latency - 1
+                    assertTrue("every report survives until its return, round=$round latency=$latency",
+                        frames.acknowledgmentDelayMs(emptySet(), null, pageId) != null)
+                    now++
+                    val drawn = setOf(NexusRenderedMap(NexusRenderedMapView.FOLLOW, revision, pageId))
+                    assertNull(frames.acknowledgmentDelayMs(drawn, 5_000, pageId))
+                    frames.remember(++revision, live(100.0), pageId)
+                    val window = frames.acknowledgmentDelayMs(emptySet(), null, pageId)!!
+                    assertTrue("retain a margin beyond the measured return latency", window > latency)
+                    if (round >= 2) assertEquals("shed excess backoff while keeping latency headroom", expectedWindow, window)
+                }
+                assertTrue("adaptive pacing cannot authorize demand", frames.keys(emptySet()).isEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun `an exceptionally late first draw cannot grow the learned window past twenty seconds`() {
+        val frames = NavRenderedFrames(now = { now })
+        frames.remember(1, live(100.0))
+        now += 30_000
+        assertNull(frames.acknowledgmentDelayMs(setOf(NexusRenderedMap(NexusRenderedMapView.FOLLOW, 1)), 5_000))
+        frames.remember(2, live(100.0))
+        assertEquals(20_000L, frames.acknowledgmentDelayMs(emptySet(), null))
+    }
+
+    @Test
+    fun `renewals and older covered frames cannot retrain a publication's latency`() {
+        val frames = NavRenderedFrames(now = { now })
+        frames.remember(1, live(100.0))
+        val drawn = setOf(NexusRenderedMap(NexusRenderedMapView.FOLLOW, 1))
+        now += 1_000
+        assertNull(frames.acknowledgmentDelayMs(drawn, 5_000))
+        now += 10_000
+        assertNull(frames.acknowledgmentDelayMs(drawn, 5_000))
+        frames.remember(2, live(100.0))
+        assertEquals("a late renewal is not a new RTT sample", 5_000L, frames.acknowledgmentDelayMs(emptySet(), null))
+        now += 5_000
+        frames.remember(3, live(100.0))
+        now += 10_000
+        frames.remember(4, live(100.0))
+        frames.acknowledgmentDelayMs(drawn, 5_000)
+        now += 5_000
+        assertEquals("an older covered frame cannot shorten the outstanding window", 15_000L,
+            frames.acknowledgmentDelayMs(emptySet(), null))
     }
 
     @Test

@@ -65,9 +65,14 @@ internal class NavRenderedFrames(
     ): Long? {
         val drawn = acknowledged.firstOrNull { it.pageId == pageId }
         val publication = latest[pageId]
-        if (publication != null && drawn != null && covers.containsKey(drawn)) {
-            publication.windowMs = RenderedMapContract.LEASE_MS
-            if (drawn.revision == publication.revision) publication.acknowledged = true
+        if (publication != null && drawn?.revision == publication.revision && covers.containsKey(drawn) && !publication.acknowledged) {
+            val roundTrip = (now() - publication.atMs).coerceAtLeast(0)
+            val target = (roundTrip + maxOf(ACK_MARGIN_MS, roundTrip / 4))
+                .coerceIn(RenderedMapContract.LEASE_MS, MAX_ACK_WINDOW_MS)
+            // Sample only the first exact acknowledgment, never an older lease or a renewal.
+            // Keep headroom under sustained delay, then shed excess backoff over several draws.
+            publication.windowMs = maxOf(target, publication.windowMs * 3 / 4)
+            publication.acknowledged = true
         }
         val delay = when {
             publication == null || drawn?.revision == publication.revision -> null
@@ -102,5 +107,6 @@ internal class NavRenderedFrames(
     private companion object {
         const val MAX_FRAMES = 48
         const val MAX_ACK_WINDOW_MS = 20_000L
+        const val ACK_MARGIN_MS = 1_000L
     }
 }

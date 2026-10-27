@@ -49,23 +49,29 @@ This section supersedes the status paragraphs above, which are kept as history.
   than pacing only maps with an existing rendered lease. A five-second quiet
   window coalesces GPS changes before that acknowledgment and after lease loss,
   backing off to ten and then at most twenty seconds on deadlines without an
-  acknowledgment. Positive feedback resets the window and releases the latest
-  state immediately, while a missing report permits
-  a deadline retry for Text/Commands/hidden maps.
+  acknowledgment. The first exact acknowledgment trains the next window from
+  its measured round trip plus 25% (at least one second), clamped to five through
+  twenty seconds; excess backoff decays by a quarter per acknowledgment.
+  Renewals and older leases do not retrain it. Positive feedback releases the latest
+  state immediately, while a missing report permits a deadline retry for
+  Text/Commands/hidden maps. A return trip longer than the fixed five-second
+  lease can still leave lease gaps between changing revisions: adaptive pacing
+  neither extends that lease nor accepts a superseded report.
   Route-quality, maneuver and route-identity changes bypass that hold; ending a
   journey also releases the page immediately. GPS accuracy enters degradation
   above 35 m and recovers at 30 m; off-route enters above 50 m and recovers
   within 40 m. This hysteresis prevents threshold jitter from repeatedly
   bypassing the hold and adds no entry delay for off-route or degradation.
-  The delay is evaluated once per
-  page attempt, so HOLD diagnostics count each attempt once. The phone rejects every
-  positive report superseded by a newer page or geometry revision. No hub wire
+  The delay is evaluated once per page attempt, so HOLD diagnostics count each
+  attempt once. The phone rejects every positive report superseded by a newer
+  page or geometry revision. No hub wire
   fields, SDK types or network authorization rules change. Cold-start delayed
   Follow/Overview and ambient regressions complement the earlier seeded-lease
   tests. Follow-up regressions cover quality/maneuver/reroute/arrival changes
-  during a hold, a 10.5-second return delay, and a serial 730 ms/report queue with
-  a ten-second initial backlog. Mutation checks reject the removed bypass,
-  doubled delay evaluation, fixed retry window, missing cap and missing reset.
+  during a hold, sustained eight-second and 10.5-second return delays, and a
+  serial 730 ms/report queue with a ten-second initial backlog. Mutation checks
+  also reject resetting to five seconds, missing latency headroom or decay,
+  retraining on renewals, and an unbounded learned window.
   Phone report dispatch and both inner routers now use the live rendered-map
   negotiation directly, avoiding repeated full-capability/Bluetooth discovery
   on the SPP reader and inside router locks. Dispatch stays synchronous and
@@ -73,11 +79,13 @@ This section supersedes the status paragraphs above, which are kept as history.
   canonical-state snapshot independently of outbound ordering, so neither
   activity nor geometry writes block feedback; local activity publication also
   checks negotiated activity support without full-capability discovery.
-  A service regression forbids Bluetooth
-  discovery during page/ambient dispatch and checks negotiation/socket loss,
-  and fails when the old lookup is restored. All hub and plugin suites pass
-  (4,474 tests); on the release device the Whole route kept its streets from
-  36 s to 81 s after the start with no stale-revision report.
+  A report for in-flight geometry waits for write success without blocking the
+  reader, and a matching hidden report cancels that deferred acknowledgment.
+  A service regression forbids Bluetooth discovery during page/ambient dispatch
+  and checks negotiation/socket loss,
+  and fails when the old lookup is restored. Before these follow-ups, all hub
+  and plugin suites passed (4,474 tests); on the release device the Whole route
+  kept its streets from 36 s to 81 s after the start with no stale-revision report.
 
 - **Immediate launcher actions (2026-10-25, `fx/noconfirm`).** One fresh tap on a focused
   activity command, plugin page row or Open app now executes immediately. The confirmation and
