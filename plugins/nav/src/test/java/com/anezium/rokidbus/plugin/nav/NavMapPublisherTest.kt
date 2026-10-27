@@ -183,7 +183,7 @@ class NavMapPublisherTest {
 
     @Test
     fun `publication pacing is independent per surface and follows a fresh page sequence`() {
-        val frames = NavRenderedFrames()
+        val frames = NavRenderedFrames(now = { now })
         val a = NexusRenderedMap(NexusRenderedMapView.FOLLOW, 100)
         val p = NexusRenderedMap(NexusRenderedMapView.FOLLOW, 100, NavPages.MAIN)
         frames.remember(100, live(100.0))
@@ -193,7 +193,7 @@ class NavMapPublisherTest {
         frames.remember(101, live(200.0), NavPages.MAIN)
         assertEquals(5_000L, frames.acknowledgmentDelayMs(setOf(a, p), 5_000, NavPages.MAIN))
         assertNull(frames.acknowledgmentDelayMs(setOf(a, p), 5_000))
-        assertTrue(frames.acknowledgmentDelayMs(setOf(a), 5_000, NavPages.MAIN)!! > 0)
+        assertEquals(5_000L, frames.acknowledgmentDelayMs(setOf(a), 5_000, NavPages.MAIN))
         assertNull(frames.acknowledgmentDelayMs(setOf(p.copy(revision = 101)), 5_000, NavPages.MAIN))
         // A recreated provider can start a new revision sequence after registration loss.
         frames.remember(1, live(300.0), NavPages.MAIN)

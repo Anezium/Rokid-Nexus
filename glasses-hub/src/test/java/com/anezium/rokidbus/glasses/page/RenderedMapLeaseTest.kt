@@ -119,23 +119,26 @@ class RenderedMapLeaseTest {
 
     @Test
     fun `content revisions retain the attached map and replace its acknowledgment without a hide`() {
-        for (size in listOf(MapSize.COMPACT, MapSize.FULL)) {
+        for (size in listOf(MapSize.COMPACT, MapSize.FULL)) for (mapView in listOf(MapView.FOLLOW, MapView.OVERVIEW)) {
             events.clear()
             val controller = Robolectric.buildActivity(Activity::class.java).create().start().resume()
             val view = SessionScreenView(controller.get(), leaseFactory = factory)
             val authority = RenderedMapContext("page", "nav:main", 4, sessionGeneration = 1, frameIndex = 1, requestId = "r1")
             fun screen(revision: Long) = SessionScreen(null, listOf(ScreenBlock.Map("map", geometry,
-                size = size, renderContext = authority.copy(revision = revision))), null, chromeless = size == MapSize.FULL)
+                size = size, view = mapView, renderContext = authority.copy(revision = revision))), null, chromeless = size == MapSize.FULL)
             view.show(screen(4))
             attach(controller, view)
             draw(view)
             val child = view.blockViews.getValue("map")
             val token = events.last().getString("token")
+            val beforeBind = events.size
             view.show(screen(5))
+            assertEquals("binding must not vouch for undrawn content", beforeBind, events.size)
             assertTrue(events.none { !it.getBoolean("visible") })
             if (size == MapSize.COMPACT) assertSame(child, view.blockViews.getValue("map"))
             draw(view)
             assertEquals(5L, events.last().getLong("revision"))
+            assertEquals(mapView.name.lowercase(), events.last().getString("view"))
             assertEquals(token, events.last().getString("token"))
             repeat(3) {
                 now += 2_000
@@ -145,6 +148,10 @@ class RenderedMapLeaseTest {
             }
             view.show(SessionScreen(null, emptyList(), null))
             assertFalse(events.last().getBoolean("visible"))
+            val afterRemoval = events.size
+            now += 2_000
+            draw(view)
+            assertEquals("a removed map cannot renew its lease", afterRemoval, events.size)
             controller.pause().stop().destroy()
         }
     }

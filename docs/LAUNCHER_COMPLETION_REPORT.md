@@ -32,6 +32,17 @@ Authorities: `plans/028-launcher-completion.md` (scope), `docs/LAUNCHER_INTERACT
 
 This section supersedes the status paragraphs above, which are kept as history.
 
+- **Navigation map acknowledgment startup (2026-10-27, `fx/nav-overview-streets`).**
+  The publication gate now waits for the first draw acknowledgment too, rather
+  than pacing only maps with an existing rendered lease. A five-second quiet
+  window coalesces GPS changes before that acknowledgment and after lease loss;
+  feedback releases the latest state immediately, while a missing report permits
+  a deadline retry for Text/Commands/hidden maps. The phone still rejects every
+  positive report superseded by a newer page or geometry revision. No hub wire
+  fields, SDK types or network authorization rules change. Cold-start delayed
+  Follow/Overview and ambient regressions complement the earlier seeded-lease
+  tests; device verification and hub-suite execution remain with the parent.
+
 - **Immediate launcher actions (2026-10-25, `fx/noconfirm`).** One fresh tap on a focused
   activity command, plugin page row or Open app now executes immediately. The confirmation and
   launch panels, their screens and their focus/step handling are removed; the route Display

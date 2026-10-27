@@ -266,9 +266,9 @@ class NavJourneyHubTest {
         NavState.journey = moved
         journey!!.onJourney(moved)
         idleFor(0)
-        val wait = NavControl.mapPublicationDelayMs(NavPages.MAIN)!!
+        val wait = NavControl.mapPublicationDelayMs(NavPages.MAIN)
         assertEquals(4_000L, wait)
-        idleFor(wait - 1)
+        idleFor(checkNotNull(wait) - 1)
         assertEquals(before, latest(BusPaths.PAGE_RESPONSE).getLong("revision"))
         idleFor(1)
         assertTrue(latest(BusPaths.PAGE_RESPONSE).getLong("revision") > before)
