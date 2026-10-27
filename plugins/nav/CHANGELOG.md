@@ -4,6 +4,10 @@
 
 Street maps and render feedback need Nexus hubs 1.9.0; older hubs keep route-only guidance.
 
+- Give the first rendered-map acknowledgment a quiet publication window, including
+  after lease loss, so one-second GPS updates cannot indefinitely starve Follow
+  or Whole route of streets. Coalesce fixes until feedback or the five-second
+  deadline; keep exact-revision checks and tile authorization unchanged.
 - Keep acknowledged street-map covers through activity and page updates, and
   restore loaded streets on render feedback without waiting for the next GPS fix.
   Wait for a drawn map's pending update to be acknowledged before replacing it
