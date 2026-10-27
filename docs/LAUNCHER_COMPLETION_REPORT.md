@@ -32,6 +32,16 @@ Authorities: `plans/028-launcher-completion.md` (scope), `docs/LAUNCHER_INTERACT
 
 This section supersedes the status paragraphs above, which are kept as history.
 
+- **Dense Navigation overview (2026-10-27, `fx/nav-overview-streets-r2`).**
+  The public Paris reproduction's four tiles contain 46,828 vertices, exceeding
+  the unchanged 16,000-vertex preparation cap. The decoder now also prepares
+  spatially spread detail for each possible cover size; an overflowing view uses
+  those bounded subsets instead of dropping every street. Demand and drawing
+  keep the same tile keys and zoom, with unchanged render authority. Streets
+  can use the optional label reserve when otherwise no street would fit the byte
+  budget. The offline four-tile reproduction now draws 23 street paths with
+  15,998 preparation vertices; release-device confirmation remains with the parent.
+
 - **Navigation map acknowledgment startup (2026-10-27, `fx/nav-overview-streets`).**
   The publication gate now waits for the first draw acknowledgment too, rather
   than pacing only maps with an existing rendered lease. A five-second quiet
