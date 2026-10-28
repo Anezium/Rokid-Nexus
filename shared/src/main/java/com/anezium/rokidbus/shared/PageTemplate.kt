@@ -231,7 +231,7 @@ object PageTemplateContract {
     // Route.
     const val MAX_GLYPH_CHARS = 32
     const val MAX_DISTANCE_CHARS = 16
-    const val MAX_STREET_CHARS = 64
+    const val MAX_STREET_CHARS = 120
     const val MAX_ETA_CHARS = 32
     const val MAX_ROUTE_FACTS = 6
     const val MAX_LINE_CHARS = 16

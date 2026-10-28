@@ -12,14 +12,14 @@ import org.junit.Test
 /**
  * Another app's long place name, from its accepted notification to the two places it is read:
  * the activity line keeps the contract's 28 characters, cut at a word, and the route page's
- * street field keeps the app's whole name within its own 64. A name past 64 is bounded there
- * too; guidance without a retained name falls back to the bounded line. Nothing here widens
- * the activity, and the island's scroll only ever shows the bounded line it received.
+ * street field keeps the app's whole name within its own 120. A name past 120 is bounded there
+ * too; guidance without a retained name falls back to the bounded line. The activity carries
+ * the whole name beside its bounded line for the glasses to scroll.
  */
 class NavLongNamePageTest {
     private val text = NavPageText(noAccess = "Allow access", off = "Switched off", idle = "Start navigating")
     private val name = "Gare de Fontainebleau, Essonne-Sud"
-    private val longer = "Gare de Fontainebleau, Essonne-Sud, Île-de-France, terminus ligne R direction Montereau"
+    private val longer = "Gare de Fontainebleau, Essonne-Sud, Île-de-France, terminus ligne R direction Montereau, via Melun, Bois-le-Roi et Fontainebleau-Avon, quai 2"
 
     private fun page(guidance: NavGuidance): PageBody.Route {
         val state = NavPageState(guidance, listenerConnected = true, enabled = true, updatedAt = "12:24", extended = true)

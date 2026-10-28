@@ -704,6 +704,16 @@ class LauncherRenderingTest {
     }
 
     @Test
+    fun `a route page keeps a long place whole on one line that scrolls`() {
+        val place = "Gare du Nord, Paris 10e Arrondissement, Quartier Saint-Vincent-de-Paul"
+        render(SessionScreen(ScreenHeader("NAVIGATION"), listOf(ScreenBlock.Maneuver("maneuver", "straight", "1.3 km", place, "~18 min")), null))
+        val street = find<OverflowLineView>(view.blockViews.getValue("maneuver")).single()
+        assertEquals(place, street.text.toString())
+        assertTrue(street.active)
+        assertEquals(1, street.maxLines)
+    }
+
+    @Test
     fun `the chromeless full map is drawn under the whole HUD with its furniture clear of the overlay`() {
         val geometry = RouteGeometry(
             spanMeters = 500.0,

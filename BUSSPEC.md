@@ -2060,7 +2060,7 @@ The bundle bodies have rules of their own:
   `defaultControl` is one of them. Controls are the hub's command strip, not
   rows.
 - `route`: `maneuver.glyph` is at most 32 lowercase letters, digits and hyphens;
-  `distance` at most 16 characters, `street` 64, `eta` 32. `follow` and
+  `distance` at most 16 characters, `street` 120, `eta` 32. `follow` and
   `overview` follow the "Route geometry" schema. `ribbon` is `{line?, stops,
   between?, note?}`: `line` at most 16 characters, up to 16 `stops` of `{name
   (32), time? (8), state}` with `state` `passed`, `upcoming` or `alight`,

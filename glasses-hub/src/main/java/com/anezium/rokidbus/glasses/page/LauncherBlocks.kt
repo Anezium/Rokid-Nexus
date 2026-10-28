@@ -98,8 +98,18 @@ internal object LauncherBlocks {
             LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(PageStyle.text(context, distance, scale.distancePx, if (block.approximate) PageStyle.muted else PageStyle.phosphor, PageStyle.monoBold))
+                // One line that scrolls a long place to its end, as the island's street does, so the
+                // map under it keeps its place whatever the step names.
                 block.street?.takeIf(String::isNotBlank)?.let {
-                    addView(PageStyle.text(context, it, scale.streetPx, PageStyle.ink, PageStyle.sans).apply { setPadding(0, 3, 0, 0) })
+                    addView(
+                        OverflowLineView(context).apply {
+                            text = it
+                            style(scale.streetPx, PageStyle.ink, PageStyle.sans)
+                            setPadding(0, 3, 0, 0)
+                            active = true
+                        },
+                        LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
+                    )
                 }
                 block.eta?.takeIf(String::isNotBlank)?.let {
                     addView(PageStyle.text(context, it, PageStyle.ASIDE_PX, PageStyle.muted, PageStyle.sans).apply { setPadding(0, 3, 0, 0) })
