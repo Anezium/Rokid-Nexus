@@ -89,7 +89,11 @@ This section supersedes the status paragraphs above, which are kept as history.
   kept its streets from 36 s to 81 s after the start with no stale-revision report.
   After the follow-ups (pin link check without the bonded-device lookup, the
   learned window kept across a new step or quality), all suites pass with 4,486
-  tests; their device check is still to do.
+  tests. On the release device (build `d9a4c21b`) the route page showed streets
+  at 15 s and the Whole route from its first frame at 37 s to 81 s; the filmed
+  walk kept streets on the page, Follow, Whole route, Minimap and Panel. The only
+  drops were one revision superseded 105 ms after publication and frames of
+  pages already closed.
 
 - **Immediate launcher actions (2026-10-25, `fx/noconfirm`).** One fresh tap on a focused
   activity command, plugin page row or Open app now executes immediately. The confirmation and
