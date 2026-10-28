@@ -73,6 +73,16 @@ internal class SessionScreenView(
     var fullMap: MapInput? = null
         private set
 
+    /** The full map's glide, shared with any full map drawn before this screen. */
+    private var fullMotion: MapMotion? = null
+
+    /** Whether the pending draw only advances the full map's glide; such frames report nothing new. */
+    private var fullGliding = false
+    private val fullGlide = Runnable {
+        fullGliding = true
+        invalidate()
+    }
+
     /** The views of the blocks last drawn, by block key; for tests and focus. */
     val blockViews = linkedMapOf<String, View>()
 
@@ -142,7 +152,14 @@ internal class SessionScreenView(
         fullMap = full?.let { MapInput(it.geometry, MapForm.FULL, it.view, it.headingDeg, it.degraded,
             fullMap?.insets ?: MapInsets(), renderContext = it.renderContext) }
         renderedLease.bind(fullMap?.renderContext, fullMap?.view ?: MapView.FOLLOW)
+        fullMotion = fullMap?.let { input ->
+            MapMotion.of(MapForm.FULL, input.view).also {
+                it.arrive(input.geometry)
+                it.aim(input.headingDeg)
+            }
+        }
         fullMapPlan = null
+        fullGliding = false
         val nextViews = screen.blocks.associate { block ->
             // The full map is the backdrop; its place in the column is an empty mark that keeps its key.
             val view = when {
@@ -181,7 +198,9 @@ internal class SessionScreenView(
     fun fullMapPlan(): MapPlan? {
         val input = fullMap ?: return null
         if (width <= 0 || height <= 0) return null
-        return fullMapPlan ?: fullMapPainter.plan(input, width.toFloat(), height.toFloat()).also { fullMapPlan = it }
+        val pose = fullMotion?.pose(input.geometry)
+        fullMapPlan?.takeIf { it.pose == pose }?.let { return it }
+        return fullMapPainter.plan(input, width.toFloat(), height.toFloat(), pose).also { fullMapPlan = it }
     }
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
@@ -207,12 +226,17 @@ internal class SessionScreenView(
     override fun dispatchDraw(canvas: Canvas) {
         fullMap?.let { input -> fullMapPlan()?.let {
             fullMapPainter.draw(canvas, input, it, width.toFloat(), height.toFloat())
-            renderedLease.drawn()
+            // A glide frame draws the geometry already reported; only a render or a reveal reports.
+            if (!fullGliding) renderedLease.drawn()
         } }
+        fullGliding = false
+        removeCallbacks(fullGlide)
+        if (fullMap != null && fullMotion?.moving() == true) postDelayed(fullGlide, FULL_GLIDE_FRAME_MS)
         super.dispatchDraw(canvas)
     }
 
     override fun onDetachedFromWindow() {
+        removeCallbacks(fullGlide)
         renderedLease.detach()
         super.onDetachedFromWindow()
     }
@@ -247,6 +271,8 @@ internal class SessionScreenView(
     }
 
     private companion object {
+        /** About 30 frames a second while the full map moves, and none once it rests. */
+        const val FULL_GLIDE_FRAME_MS = 33L
         /** The roles of a card's moving lines, in their memory keys. */
         val CARD_LINES = listOf("primary", "secondary", "tertiary")
     }

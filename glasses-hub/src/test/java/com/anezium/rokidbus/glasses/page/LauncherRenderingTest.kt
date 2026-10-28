@@ -819,6 +819,22 @@ class LauncherRenderingTest {
         shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(2_600))
         assertEquals(500f, requireNotNull(moving.planNow()).transform.centerX, 0.01f)
         assertFalse(requireNotNull(moving.motion).moving())
+
+        // The chromeless full map is drawn by the screen itself, and glides the same way.
+        fun full(eastDm: Int) = SessionScreen(
+            ScreenHeader("NAVIGATION · FOLLOW", "1/2"),
+            listOf(ScreenBlock.Map("map", walk(eastDm), headingDeg = 0f, size = MapSize.FULL, view = MapView.FOLLOW)),
+            ScreenHint("swipe next view · tap commands", "back page"),
+            focusKey = "map",
+            chromeless = true,
+        )
+        render(full(0))
+        assertEquals(500f, requireNotNull(view.fullMapPlan()).transform.centerX, 0.01f)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(5_000))
+        render(full(70))
+        assertEquals(465f, requireNotNull(view.fullMapPlan()).transform.centerX, 0.5f)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(2_500))
+        assertEquals(482.5f, requireNotNull(view.fullMapPlan()).transform.centerX, 0.5f)
         MapMotion.reset()
     }
 
