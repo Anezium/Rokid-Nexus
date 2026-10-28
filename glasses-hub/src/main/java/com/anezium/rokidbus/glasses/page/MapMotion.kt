@@ -15,8 +15,10 @@ internal data class MapPose(val x: Float, val y: Float, val headingDeg: Float?)
 /**
  * Glides a map between the geometries a provider publishes a few seconds apart, so the wearer
  * moves across it instead of jumping. A new geometry starts a glide from wherever the wearer is
- * drawn now to where it puts them, over the time the previous one took to come: one glide ends
- * as the next begins, and walking draws as steady motion one publication behind. The heading
+ * drawn now to where it puts them, over the time geometries usually take to come: one glide ends
+ * about as the next begins, and walking draws as steady motion one publication behind. Arrivals
+ * are irregular (five seconds, then two, then five), so a glide lasts the usual interval even
+ * after a short one; one cut short by the next geometry simply continues from where it is. The heading
  * eases toward each sample the same way. Only frames sharing an anchor's frame glide; anything
  * else (no anchor, a new route, a new zoom, a jump past a third of the frame, a long silence,
  * motion turned off) is drawn where it says at once.
@@ -39,6 +41,8 @@ internal class MapMotion(private val clock: () -> Long = SystemClock::uptimeMill
     private var durationMs = 0L
     private var arrivedMs: Long? = null
     private var hasPosition = false
+    /** The usual time between two geometries, smoothed; 0 before the first glide. */
+    private var typicalMs = 0L
 
     private var headingTarget: Float? = null
     private var heading: Float? = null
@@ -78,12 +82,15 @@ internal class MapMotion(private val clock: () -> Long = SystemClock::uptimeMill
             fromX = shownX
             fromY = shownY
             startMs = now
-            durationMs = (now - previousArrival!!).coerceIn(MIN_GLIDE_MS, MAX_GLIDE_MS)
+            val interval = now - previousArrival!!
+            typicalMs = if (typicalMs == 0L) interval else (typicalMs * 3 + interval * 2) / 5
+            durationMs = maxOf(interval, typicalMs).coerceIn(MIN_GLIDE_MS, MAX_GLIDE_MS)
         } else {
             fromX = targetX
             fromY = targetY
             startMs = now
             durationMs = 0L
+            typicalMs = 0L
         }
     }
 

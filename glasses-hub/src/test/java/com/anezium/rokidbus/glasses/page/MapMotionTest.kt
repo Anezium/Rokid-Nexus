@@ -57,10 +57,16 @@ class MapMotionTest {
         now += 2_000 // halfway: 2 m east of the origin
         val third = follow(80)
         motion.arrive(third)
-        // From 2 m to 8 m over the 2 s since the last arrival.
+        // From 2 m to 8 m over the usual interval, 3.2 s (4 s then 2 s, smoothed), not the last 2 s.
         assertEquals(500f - 6f * 1000f / 200f, motion.pose(third)!!.x, 0.01f)
-        now += 1_000
+        now += 1_600
         assertEquals(500f - 3f * 1000f / 200f, motion.pose(third)!!.x, 0.01f)
+        // A short interval after longer ones does not leave the map standing still before the next.
+        now += 1_000
+        assertTrue(motion.moving())
+        now += 600
+        assertEquals(500f, motion.pose(third)!!.x, 0.01f)
+        assertFalse(motion.moving())
     }
 
     @Test
