@@ -4,6 +4,9 @@
 
 Street maps and render feedback need Nexus hubs 1.9.0; older hubs keep route-only guidance.
 
+- Stop reporting "GPS signal lost" while you stand still. A walk asked Android
+  for a fix only after two metres of movement, so waiting at a crossing let the
+  last fix age past 30 seconds; fixes now keep coming every second.
 - Send long destinations, streets and instructions whole. On Nexus hubs 1.9.0
   the glasses scroll them instead of ending them in an ellipsis ("Gare du Nord,
   Paris 10e…"); older hubs keep the bounded lines.

@@ -353,7 +353,9 @@ class NavJourneyService : Service(), LocationListener {
         private const val NOTIFICATION_ID = 41
         private const val MAX_NAME_CHARS = 160
         private const val FIX_INTERVAL_MS = 1_000L
-        private const val FIX_DISTANCE_M = 2f
+        // No distance filter: a wearer who stopped still gets a fix a second, or the last one
+        // ages past STALE_AFTER_MS and the journey reads "GPS signal lost" at a red light.
+        private const val FIX_DISTANCE_M = 0f
         private const val MIN_BEARING_SPEED = 0.5f
         private const val PREFER_TRUSTED_FIX_MS = 10_000L
 

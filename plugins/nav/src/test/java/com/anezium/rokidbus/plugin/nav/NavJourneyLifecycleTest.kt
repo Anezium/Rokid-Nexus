@@ -173,6 +173,19 @@ class NavJourneyLifecycleTest {
     }
 
     @Test
+    fun `a wearer standing still keeps receiving fixes`() {
+        startJourney()
+        val manager = shadowOf(app.getSystemService(LocationManager::class.java))
+        // A distance filter sends nothing to someone who stopped, and the fix then reads as lost.
+        val requests = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).flatMap(manager::getLocationRequests)
+        assertTrue(manager.getLocationRequests(LocationManager.GPS_PROVIDER).isNotEmpty())
+        requests.forEach { request ->
+            assertEquals(0f, request.minUpdateDistanceMeters)
+            assertEquals(1_000L, request.intervalMillis)
+        }
+    }
+
+    @Test
     fun `End from the glasses stops the running journey, and only a running one`() {
         assertFalse(NavControl.stopJourney("Journey ended from the glasses"))
         startJourney()
