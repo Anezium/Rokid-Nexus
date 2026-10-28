@@ -130,6 +130,7 @@ internal class NavIslandView(
         this.form = form
         // No street to continue: a departure, or guidance without one, starts the next afresh.
         if ((content as? IslandContent.Guidance)?.street == null) overflowMemory.clear()
+        if ((content as? IslandContent.Guidance)?.then == null) overflowMemory.forget(THEN_LINE)
         removeAllViews()
         mapView = null
         mapRule = null
@@ -282,8 +283,15 @@ internal class NavIslandView(
                     rightMargin = sidePad
                     topMargin = 8
                 })
+                // Kept whole like the street: one line that scrolls rather than two that end cut.
                 addView(
-                    PageStyle.text(context, strong(then, content.thenStrong), PageStyle.ASIDE_PX, PageStyle.muted, PageStyle.sans, 2),
+                    OverflowLineView(context).apply {
+                        text = strong(then, content.thenStrong)
+                        style(PageStyle.ASIDE_PX, PageStyle.muted, PageStyle.sans)
+                        memory = overflowMemory
+                        memoryKey = THEN_LINE
+                        active = true
+                    },
                     LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                         leftMargin = sidePad
                         rightMargin = sidePad
@@ -321,8 +329,17 @@ internal class NavIslandView(
             }
             addView(PageStyle.text(context, figure, 22f, if (content.approximate) PageStyle.muted else PageStyle.phosphor, PageStyle.monoBold, 1))
             content.street?.let {
-                addView(PageStyle.text(context, it, PageStyle.BODY_PX, PageStyle.ink, PageStyle.sans, 1).apply { setPadding(8, 0, 0, 0) },
-                    LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+                addView(
+                    OverflowLineView(context).apply {
+                        text = it
+                        style(PageStyle.BODY_PX, PageStyle.ink, PageStyle.sans)
+                        setPadding(8, 0, 0, 0)
+                        memory = overflowMemory
+                        memoryKey = COMPACT_STREET_LINE
+                        active = true
+                    },
+                    LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f),
+                )
             }
         }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         val footStatus = content.foot?.left?.takeIf(String::isNotBlank)
@@ -420,6 +437,8 @@ internal class NavIslandView(
     companion object {
         const val RADIUS_PX = 14f
         private const val STREET_LINE = "street"
+        private const val THEN_LINE = "then"
+        private const val COMPACT_STREET_LINE = "compact-street"
 
         /** Room for the 1.5 px outline, so the map inside meets it without covering it. */
         const val BORDER_INSET_PX = 2

@@ -1699,6 +1699,16 @@ Plugin fields, with patch semantics on `/activity/update` like the rest:
   there in place. `primary` stays required, keeps its 12 characters, and is what
   glasses without the bundle draw. A headline is presentation only: it does not
   tighten the action-id rule below.
+- `wholeSecondary` — at most 120 characters, none of them a control character:
+  `secondary` uncut, such as a whole destination or street name. The lines that
+  scroll a text wider than their room draw it instead of `secondary`: the
+  launcher card, the folded island, and the guidance island's street.
+  `wholeDetail` — up to two entries of at most 120 characters: `detail` uncut,
+  drawn instead of it where a line scrolls, such as the panel's next
+  instruction. Both are presentation only, like `headline`, and glasses without
+  the bundle draw `secondary` and `detail`. An update that sets `secondary` or
+  `detail` without its whole form clears that whole form, so a line never
+  scrolls a text its bounded form no longer says.
 - per action, `typed` — only `media.previous`, `media.play`, `media.pause` or
   `media.next`. Any other value, known or not, is `INVALID_ACTIVITY`.
 - Once any of these fields (or a typed action) is used, every action id must be

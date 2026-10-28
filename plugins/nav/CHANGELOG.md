@@ -4,6 +4,9 @@
 
 Street maps and render feedback need Nexus hubs 1.9.0; older hubs keep route-only guidance.
 
+- Send long destinations, streets and instructions whole. On Nexus hubs 1.9.0
+  the glasses scroll them instead of ending them in an ellipsis ("Gare du Nord,
+  Paris 10e…"); older hubs keep the bounded lines.
 - Stabilize GPS quality around the 35 m accuracy and 50 m off-route thresholds.
   Recovery requires accuracy at or below 30 m or distance back within 40 m of
   the route, so threshold jitter cannot repeatedly bypass a map's acknowledgment

@@ -194,9 +194,56 @@ class ActivityInteractiveContractTest {
     }
 
     @Test
+    fun `whole lines hold 120 characters beside the bounded ones and never outlive them`() {
+        val place = "Gare du Nord, Paris 10e Arrondissement, Quartier Saint-Vincent-de-Paul"
+        val instruction = "Follow the route to $place"
+        val content = valid(
+            start().put("secondary", "Gare du Nord, Paris 10e…")
+                .put("detail", JSONArray().put("Follow the route to Gare du…"))
+                .put("wholeSecondary", "  $place ")
+                .put("wholeDetail", JSONArray().put(instruction)),
+        )
+        assertEquals(place, content.wholeSecondary)
+        assertEquals(listOf(instruction), content.wholeDetail)
+        assertEquals("Gare du Nord, Paris 10e…", content.secondary)
+        assertEquals(content, valid(JSONObject(ActivitySurfaceContract.toPayload("nav:activity", content).toString())))
+        assertEquals("x".repeat(120), valid(start().put("wholeSecondary", "x".repeat(120))).wholeSecondary)
+
+        invalid(start().put("wholeSecondary", "x".repeat(121)))
+        invalid(start().put("wholeSecondary", "Line one\nline two"))
+        invalid(start().put("wholeDetail", JSONArray().put("x".repeat(121))))
+        invalid(start().put("wholeDetail", JSONArray().put("a").put("b").put("c")))
+        assertTrue(ActivitySurfaceContract.validateUpdate(JSONObject().put("wholeSecondary", "x".repeat(121))) is ActivitySurfacePatchResult.Invalid)
+
+        // A full update states them; a partial one that changes a bounded line drops its whole
+        // form, so the old place is never drawn under a new street, while other changes keep it.
+        val full = ActivitySurfaceContract.toUpdatePayload("nav:activity", content, significant = false)
+        assertEquals(content, (ActivitySurfaceContract.validateUpdate(full) as ActivitySurfacePatchResult.Valid).patch.applyTo(content))
+        fun patched(update: JSONObject) = (ActivitySurfaceContract.validateUpdate(update) as ActivitySurfacePatchResult.Valid).patch.applyTo(content)
+        val street = patched(JSONObject().put("secondary", "Rue La Fayette"))
+        assertNull(street.wholeSecondary)
+        assertEquals(listOf(instruction), street.wholeDetail)
+        val step = patched(JSONObject().put("detail", JSONArray().put("Turn left")))
+        assertEquals(emptyList<String>(), step.wholeDetail)
+        assertEquals(place, step.wholeSecondary)
+        assertEquals(place, patched(JSONObject().put("eta", "~17 min")).wholeSecondary)
+
+        // Old glasses never see them, and they are presentation, not interaction.
+        val stamped = ActivitySurfaceContract.withHubStamps(ActivitySurfaceContract.toPayload("nav:activity", content), ActivityHubStamps(), emptySet())
+        val legacy = ActivitySurfaceContract.stripLauncherFields(stamped)
+        assertFalse(legacy.has("wholeSecondary"))
+        assertFalse(legacy.has("wholeDetail"))
+        assertFalse(ActivitySurfaceContract.stripLauncherFields(full).has("wholeSecondary"))
+        assertFalse(valid(start().put("wholeSecondary", place).put("actions", actions("a b"))).usesInteractiveFields)
+    }
+
+    @Test
     fun `a v1 activity serializes without any launcher field`() {
         val payload = ActivitySurfaceContract.toPayload("timer:activity", valid(start().put("actions", actions("stop"))))
-        listOf("destination", "activation", "defaultActionId", "persistence", "headline", "state", "userPinned", "knownAtWallMs").forEach {
+        listOf(
+            "destination", "activation", "defaultActionId", "persistence", "headline", "wholeSecondary", "wholeDetail",
+            "state", "userPinned", "knownAtWallMs",
+        ).forEach {
             assertFalse(it, payload.has(it))
         }
         assertFalse(payload.getJSONArray("actions").getJSONObject(0).has("typed"))

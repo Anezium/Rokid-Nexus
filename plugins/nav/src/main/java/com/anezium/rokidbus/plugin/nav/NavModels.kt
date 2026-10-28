@@ -78,7 +78,7 @@ internal data class NavGuidance(
     val track: NavTrack? = null,
     /**
      * The place [secondary] names, as the app wrote it and before the activity line's bound:
-     * for the route page's wider street field, never for the activity.
+     * for the route page's wider street field and the activity's whole line, which scrolls.
      */
     val street: String? = null,
     /** A second quantity for [primary]: the distance of a walk timed in minutes. */
@@ -91,6 +91,8 @@ internal data class NavGuidance(
     val arrived: Boolean = false,
     /** The whole instruction, for the plugin's own card where there is room for it. */
     val instruction: String? = null,
+    /** [detail] before its bound, for the activity's lines that scroll. */
+    val wholeDetail: List<String> = emptyList(),
 )
 
 /** Stops or stages of a ride, mirroring the SDK track without depending on it in parsers. */

@@ -136,6 +136,13 @@ data class ActivitySurfaceContent(
      * whole track title; where only [primary] fits, [primary] is drawn.
      */
     val headline: String? = null,
+    /**
+     * Launcher bundle: [secondary] uncut, for the lines that scroll what is wider than their
+     * room; where it is absent, [secondary] is drawn.
+     */
+    val wholeSecondary: String? = null,
+    /** Launcher bundle: [detail] uncut, drawn instead of it where a line scrolls. */
+    val wholeDetail: List<String> = emptyList(),
     /** Hub stamp: null on anything a plugin sent. */
     val state: ActivityState? = null,
     /** Hub stamp: the user pinned this owner's entry on the phone. */
@@ -194,6 +201,8 @@ data class ActivitySurfacePatch(
     val defaultActionId: ActivityField<String?>? = null,
     val persistence: ActivityField<ActivityPersistence>? = null,
     val headline: ActivityField<String?>? = null,
+    val wholeSecondary: ActivityField<String?>? = null,
+    val wholeDetail: ActivityField<List<String>>? = null,
     val state: ActivityField<ActivityState?>? = null,
     val userPinned: ActivityField<Boolean>? = null,
     val knownAtWallMs: ActivityField<Long?>? = null,
@@ -214,6 +223,17 @@ data class ActivitySurfacePatch(
         defaultActionId = if (defaultActionId != null) defaultActionId.value else content.defaultActionId,
         persistence = if (persistence != null) persistence.value else content.persistence,
         headline = if (headline != null) headline.value else content.headline,
+        // A short form changed without its whole form must not keep drawing the old one.
+        wholeSecondary = when {
+            wholeSecondary != null -> wholeSecondary.value
+            secondary != null -> null
+            else -> content.wholeSecondary
+        },
+        wholeDetail = when {
+            wholeDetail != null -> wholeDetail.value
+            detail != null -> emptyList()
+            else -> content.wholeDetail
+        },
         state = if (state != null) state.value else content.state,
         userPinned = if (userPinned != null) userPinned.value else content.userPinned,
         knownAtWallMs = if (knownAtWallMs != null) knownAtWallMs.value else content.knownAtWallMs,
@@ -307,6 +327,8 @@ object ActivitySurfaceContract {
     const val MAX_ETA_CHARS = 8
     const val MAX_DETAIL_LINES = 2
     const val MAX_DETAIL_CHARS = 32
+    /** Launcher bundle: a whole secondary or detail line, which the glasses scroll. */
+    const val MAX_WHOLE_CHARS = 120
     const val MAX_ACTIONS = 3
 
     /** The v1 capacity, kept as the floor every pair without the launcher bundle runs. */
@@ -354,12 +376,16 @@ object ActivitySurfaceContract {
     private const val FIELD_DEFAULT_ACTION_ID = "defaultActionId"
     private const val FIELD_PERSISTENCE = "persistence"
     private const val FIELD_HEADLINE = "headline"
+    private const val FIELD_WHOLE_SECONDARY = "wholeSecondary"
+    private const val FIELD_WHOLE_DETAIL = "wholeDetail"
     private const val FIELD_STATE = "state"
     private const val FIELD_USER_PINNED = "userPinned"
     private const val FIELD_KNOWN_AT_WALL_MS = "knownAtWallMs"
 
     /** Plugin-side launcher fields on the activity object. */
-    private val launcherFields = listOf(FIELD_DESTINATION, FIELD_ACTIVATION, FIELD_DEFAULT_ACTION_ID, FIELD_PERSISTENCE, FIELD_HEADLINE)
+    private val launcherFields = listOf(FIELD_DESTINATION, FIELD_ACTIVATION, FIELD_DEFAULT_ACTION_ID, FIELD_PERSISTENCE, FIELD_HEADLINE,
+        FIELD_WHOLE_SECONDARY, FIELD_WHOLE_DETAIL,
+    )
 
     /** Hub stamps on the activity object; per action there is also `hubQuick`. */
     private val stampFields = listOf(FIELD_STATE, FIELD_USER_PINNED, FIELD_KNOWN_AT_WALL_MS)
@@ -481,6 +507,16 @@ object ActivitySurfaceContract {
             is ReadResult.Invalid -> return invalid(result.reason)
             ReadResult.Absent -> null
         }
+        val wholeSecondary = when (val result = readWholeLine(payload)) {
+            is ReadResult.Present -> result.value
+            is ReadResult.Invalid -> return invalid(result.reason)
+            ReadResult.Absent -> null
+        }
+        val wholeDetail = when (val result = readDetail(payload, FIELD_WHOLE_DETAIL, MAX_WHOLE_CHARS)) {
+            is ReadResult.Present -> result.value.orEmpty()
+            is ReadResult.Invalid -> return invalid(result.reason)
+            ReadResult.Absent -> emptyList()
+        }
         val stamps = if (hubStamps) {
             when (val result = readStamps(payload)) {
                 is ReadResult.Present -> result.value
@@ -509,6 +545,8 @@ object ActivitySurfaceContract {
             defaultActionId = defaultActionId,
             persistence = persistence,
             headline = headline,
+            wholeSecondary = wholeSecondary,
+            wholeDetail = wholeDetail,
             state = stamps.state?.value,
             userPinned = stamps.userPinned?.value ?: false,
             knownAtWallMs = stamps.knownAtWallMs?.value,
@@ -620,6 +658,16 @@ object ActivitySurfaceContract {
             is ReadResult.Invalid -> return patchInvalid(result.reason)
             ReadResult.Absent -> null
         }
+        val wholeSecondary = when (val result = readWholeLine(payload)) {
+            is ReadResult.Present -> ActivityField(result.value)
+            is ReadResult.Invalid -> return patchInvalid(result.reason)
+            ReadResult.Absent -> null
+        }
+        val wholeDetail = when (val result = readDetail(payload, FIELD_WHOLE_DETAIL, MAX_WHOLE_CHARS)) {
+            is ReadResult.Present -> ActivityField(result.value.orEmpty())
+            is ReadResult.Invalid -> return patchInvalid(result.reason)
+            ReadResult.Absent -> null
+        }
         val stamps = if (hubStamps) {
             when (val result = readStamps(payload)) {
                 is ReadResult.Present -> result.value
@@ -648,6 +696,8 @@ object ActivitySurfaceContract {
             defaultActionId = defaultActionId,
             persistence = persistence,
             headline = headline,
+            wholeSecondary = wholeSecondary,
+            wholeDetail = wholeDetail,
             state = stamps.state,
             userPinned = stamps.userPinned,
             knownAtWallMs = stamps.knownAtWallMs,
@@ -730,7 +780,7 @@ object ActivitySurfaceContract {
 
     /**
      * A copy without anything of the launcher bundle, for glasses that did not negotiate it:
-     * destination, activation, default action, persistence, headline, every hub stamp, and the actions'
+     * destination, activation, default action, persistence, headline, whole lines, every hub stamp, and the actions'
      * `typed` and `hubQuick`. What is left is a v1 (and extras) activity.
      */
     fun stripLauncherFields(payload: JSONObject): JSONObject = stripHubStamps(payload).apply {
@@ -765,6 +815,8 @@ object ActivitySurfaceContract {
             content.defaultActionId?.let { put(FIELD_DEFAULT_ACTION_ID, it) }
             if (content.persistence != ActivityPersistence.SESSION) put(FIELD_PERSISTENCE, content.persistence.wireValue)
             content.headline?.let { put(FIELD_HEADLINE, it) }
+            content.wholeSecondary?.let { put(FIELD_WHOLE_SECONDARY, it) }
+            if (content.wholeDetail.isNotEmpty()) put(FIELD_WHOLE_DETAIL, detailJson(content.wholeDetail))
             content.state?.let { put(FIELD_STATE, it.wireValue) }
             if (content.userPinned) put(FIELD_USER_PINNED, true)
             content.knownAtWallMs?.let { put(FIELD_KNOWN_AT_WALL_MS, it) }
@@ -797,6 +849,8 @@ object ActivitySurfaceContract {
         .put(FIELD_DEFAULT_ACTION_ID, content.defaultActionId ?: JSONObject.NULL)
         .put(FIELD_PERSISTENCE, content.persistence.wireValue)
         .put(FIELD_HEADLINE, content.headline ?: JSONObject.NULL)
+        .put(FIELD_WHOLE_SECONDARY, content.wholeSecondary ?: JSONObject.NULL)
+        .put(FIELD_WHOLE_DETAIL, detailJson(content.wholeDetail))
         .apply {
             if (significant) put("significant", true)
             if (urgent) put("tone", TONE_URGENT)
@@ -1016,6 +1070,15 @@ object ActivitySurfaceContract {
         return result
     }
 
+    /** [readText] with no control character: a whole secondary is one drawn line too. */
+    private fun readWholeLine(payload: JSONObject): ReadResult<String?> {
+        val result = readText(payload, FIELD_WHOLE_SECONDARY, MAX_WHOLE_CHARS)
+        if (result is ReadResult.Present && result.value?.any(Char::isISOControl) == true) {
+            return ReadResult.Invalid("$FIELD_WHOLE_SECONDARY must be printable")
+        }
+        return result
+    }
+
     private fun readGlyph(
         payload: JSONObject,
         key: String,
@@ -1077,7 +1140,7 @@ object ActivitySurfaceContract {
         }
     }
 
-    private fun readDetail(payload: JSONObject, key: String): ReadResult<List<String>?> {
+    private fun readDetail(payload: JSONObject, key: String, maxChars: Int = MAX_DETAIL_CHARS): ReadResult<List<String>?> {
         if (!payload.has(key)) return ReadResult.Absent
         val raw = payload.opt(key)
         if (raw == JSONObject.NULL) return ReadResult.Present(null)
@@ -1089,8 +1152,8 @@ object ActivitySurfaceContract {
             for (index in 0 until array.length()) {
                 val line = (array.opt(index) as? String)?.trim()
                     ?: return ReadResult.Invalid("$key must contain strings")
-                if (line.length > MAX_DETAIL_CHARS) {
-                    return ReadResult.Invalid("$key entry exceeds $MAX_DETAIL_CHARS characters")
+                if (line.length > maxChars) {
+                    return ReadResult.Invalid("$key entry exceeds $maxChars characters")
                 }
                 add(line)
             }

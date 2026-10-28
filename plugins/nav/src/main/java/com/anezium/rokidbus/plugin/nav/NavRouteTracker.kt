@@ -79,6 +79,7 @@ internal data class NavRouteSnapshot(
         val instruction = if (nextStep.direction == "ARRIVE") "Follow the route to ${route.destination.name}" else nextStep.instruction
         val stepDistance = distanceLabel(stepDistanceMeters)
         val secondary = if (moving) nextStep.street.ifBlank { nextStep.instruction } else route.destination.name.substringBefore(", ")
+        val detail = if (moving) listOf(instruction).filter { it != secondary } else listOf(quality.message)
         return NavGuidance(
             source = NavSource.NEXUS,
             glyph = if (arrived) "arrive" else if (moving && nextStep.direction != "ARRIVE") nextStep.glyph else NavText.ROUTE_GLYPH,
@@ -95,9 +96,11 @@ internal data class NavRouteSnapshot(
                 }
             },
             secondary = NavText.fit(secondary, 28),
+            street = secondary,
             eta = if (moving) "~$remainingMinutes min".take(8) else null,
             // Compare before clipping: the two text slots have different limits.
-            detail = if (moving) listOf(instruction).filter { it != secondary }.map { NavText.fit(it, 32) } else listOf(quality.message),
+            detail = detail.map { NavText.fit(it, 32) },
+            wholeDetail = detail,
             measure = distanceLabel(remainingMeters).takeUnless { moving && it == stepDistance }?.take(8),
             progressPercent = (progressMeters * 100.0 / route.lengthMeters).roundToInt().coerceIn(0, 100),
             stepKey = "nexus|${quality.name}|$stepIndex",

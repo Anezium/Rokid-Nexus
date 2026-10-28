@@ -104,11 +104,11 @@ internal object GuidanceIslands {
                 glyph = RoutePresentation.glyph(content.glyph, degraded),
                 figure = if (statusInFoot) content.measure ?: "Navigation" else content.primary,
                 measure = content.measure.takeUnless { statusInFoot || (foot != null && footMeasure != null) },
-                street = content.secondary,
+                street = content.wholeSecondary ?: content.secondary,
                 // A figure the phone no longer confirms is drawn as approximate, muted.
                 approximate = degraded || item.stale,
                 time = content.eta,
-                then = content.detail.firstOrNull()?.takeUnless {
+                then = content.wholeDetail.ifEmpty { content.detail }.firstOrNull()?.takeUnless {
                     statusInFoot && (it == "GPS signal lost" || it == RoutePresentation.GPS_LOST)
                 },
                 map = map,

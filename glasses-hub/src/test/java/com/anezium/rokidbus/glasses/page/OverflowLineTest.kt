@@ -321,7 +321,9 @@ class OverflowLineTest {
         fun streetLine(): OverflowLineView = (0 until nav.childCount).map(nav::getChildAt)
             .flatMap { child -> if (child is android.view.ViewGroup) (0 until child.childCount).map(child::getChildAt) else listOf(child) }
             .flatMap { child -> if (child is android.view.ViewGroup) (0 until child.childCount).map(child::getChildAt) else listOf(child) }
-            .filterIsInstance<OverflowLineView>().single()
+            .filterIsInstance<OverflowLineView>()
+            // The reflowed compact form waits GONE beside the regular one.
+            .single { line -> generateSequence<View>(line) { it.parent as? View }.takeWhile { it !== nav }.all { it.visibility == View.VISIBLE } }
         val overflow = streetLine().overflowPx()
         assertTrue("the 28-character street is wider than the text island", overflow > 0)
         assertTrue(streetLine().scrolling)
@@ -364,7 +366,9 @@ class OverflowLineTest {
         fun streetLine(): OverflowLineView = (0 until nav.childCount).map(nav::getChildAt)
             .flatMap { child -> if (child is android.view.ViewGroup) (0 until child.childCount).map(child::getChildAt) else listOf(child) }
             .flatMap { child -> if (child is android.view.ViewGroup) (0 until child.childCount).map(child::getChildAt) else listOf(child) }
-            .filterIsInstance<OverflowLineView>().single()
+            .filterIsInstance<OverflowLineView>()
+            // The reflowed compact form waits GONE beside the regular one.
+            .single { line -> generateSequence<View>(line) { it.parent as? View }.takeWhile { it !== nav }.all { it.visibility == View.VISIBLE } }
         idle(OverflowScroll.HOLD_MS + 1_000)
         assertTrue(streetLine().scrollX > 0)
 

@@ -189,6 +189,28 @@ class LauncherRenderingTest {
     }
 
     @Test
+    fun `a panel keeps a long place and its instruction whole on lines that scroll`() {
+        val place = "Gare du Nord, Paris 10e Arrondissement, Quartier Saint-Vincent-de-Paul"
+        val then = "Follow the route to $place"
+        fun lines(form: IslandForm): List<OverflowLineView> {
+            val nav = NavIslandView(context, icons).apply {
+                bind(form, IslandContent.Guidance("straight", "1.3 km", street = place, time = "~18 min", then = then))
+            }
+            fun walk(view: View): List<OverflowLineView> = when (view) {
+                is OverflowLineView -> listOf(view)
+                is android.view.ViewGroup -> (0 until view.childCount).flatMap { walk(view.getChildAt(it)) }
+                else -> emptyList()
+            }
+            return walk(nav)
+        }
+        // The reflowed form a short resident region falls back to keeps the place whole too.
+        val panel = lines(IslandForm.PANEL)
+        assertEquals(listOf(place, then, place), panel.map { it.text.toString() })
+        assertTrue(panel.all { it.active && it.maxLines == 1 })
+        assertEquals(listOf(place, place), lines(IslandForm.MINIMAP).map { it.text.toString() })
+    }
+
+    @Test
     @Config(qualifiers = "w320dp-h640dp-hdpi")
     fun `a bottom resident reflows at 73 and 54 pixels and recovers on ROM measurements in manual mode`() {
         val controller = Robolectric.buildActivity(Activity::class.java).create().start().resume()

@@ -528,10 +528,10 @@ internal object ActivityOverlayRenderer {
                     )
                 }
             } else {
-                update(compact, listOf(content.title, content.secondary, content.glyph, widthBudgetPx)) {
+                update(compact, listOf(content.title, content.scrolledSecondary, content.glyph, widthBudgetPx)) {
                     compact.render(
                         titleText = content.title,
-                        secondaryText = content.secondary,
+                        secondaryText = content.scrolledSecondary,
                         glyph = glyphOf(owner, content.glyph),
                         widthBudgetPx = widthBudgetPx,
                     )
@@ -628,8 +628,8 @@ internal object ActivityOverlayRenderer {
     /**
      * An activity folded without a measure: its glyph beside two lines, the title over the
      * secondary, and nothing under them. The glyph is as tall as the two lines, so a missing
-     * secondary leaves the title centred beside it and the form keeps its height. A title wider
-     * than its line scrolls to its end while the form is shown, inside the width it already has;
+     * secondary leaves the title centred beside it and the form keeps its height. A title or
+     * secondary wider than its line scrolls to its end while the form is shown, inside the width it already has;
      * a [render] width budget narrows the two lines so the whole form stays inside it.
      */
     internal class ActivityCompactView(context: Context) : LinearLayout(context) {
@@ -641,14 +641,12 @@ internal object ActivityOverlayRenderer {
             softEdges()
             active = true
         }
-        val secondary = TextView(context).apply {
+        val secondary = OverflowLineView(context).apply {
             textSize = COMPACT_SECONDARY_SP
             setTextColor(BusTheme.muted)
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
-            includeFontPadding = false
-            maxLines = 1
-            isSingleLine = true
-            ellipsize = TextUtils.TruncateAt.END
+            softEdges()
+            active = true
         }
 
         init {
@@ -907,16 +905,18 @@ internal object ActivityOverlayRenderer {
     }
 
     /**
-     * The islands' copy of [state]. A headline is a launcher-bundle field, read only while the
-     * bundle is negotiated or held through a link loss, as the card reads it: once an older
-     * phone announces, a headline kept from before names nothing and every island shows the
-     * primary that phone updates.
+     * The islands' copy of [state]. A headline and the whole lines are launcher-bundle fields,
+     * read only while the bundle is negotiated or held through a link loss, as the card reads
+     * them: once an older phone announces, the ones kept from before name nothing and every
+     * island shows the primary and secondary that phone updates.
      */
     internal fun islandStateOf(state: ActivityRenderState, bundle: Boolean): ActivityRenderState {
-        if (bundle || state.items.none { it.activity.content.headline != null }) return state
+        fun ActivitySurfaceContent.launcherText() = headline != null || wholeSecondary != null || wholeDetail.isNotEmpty()
+        if (bundle || state.items.none { it.activity.content.launcherText() }) return state
         return state.copy(
             items = state.items.map { item ->
-                item.copy(activity = item.activity.copy(content = item.activity.content.copy(headline = null)))
+                val content = item.activity.content.copy(headline = null, wholeSecondary = null, wholeDetail = emptyList())
+                item.copy(activity = item.activity.copy(content = content))
             },
         )
     }
@@ -924,6 +924,10 @@ internal object ActivityOverlayRenderer {
     /** The headline where the owner sent one, else the primary; an island has room for either. */
     private val ActivitySurfaceContent.title: String
         get() = headline ?: primary
+
+    /** The secondary for a line that scrolls: the whole one where the owner sent it. */
+    private val ActivitySurfaceContent.scrolledSecondary: String?
+        get() = wholeSecondary ?: secondary
 
     /** Expanded, the measure stands beside the title: "3 min - 250 m". */
     private fun ActivitySurfaceContent.primaryWithMeasure(): String =

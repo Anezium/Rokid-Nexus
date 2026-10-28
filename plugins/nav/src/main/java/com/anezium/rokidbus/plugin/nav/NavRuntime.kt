@@ -15,6 +15,7 @@ import com.anezium.rokidbus.client.plugin.NexusPageDestination
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
 import com.anezium.rokidbus.client.plugin.surfaceSession
 import com.anezium.rokidbus.shared.ActivityCloseReason
+import com.anezium.rokidbus.shared.ActivitySurfaceContract
 
 /**
  * Keeps the live route as one activity. Guidance comes from the notification listener, which
@@ -296,6 +297,9 @@ internal fun NavGuidance.toGuidanceStep() = NexusGuidanceStep(
     stepKey = stepKey,
     imminent = imminent,
     arrived = arrived,
+    // Only what the bounded lines lost: an older hub draws those, a newer one scrolls these.
+    wholeSecondary = street?.let { NavText.fit(it, ActivitySurfaceContract.MAX_WHOLE_CHARS) }?.takeIf { it != secondary },
+    wholeDetail = wholeDetail.map { NavText.fit(it, ActivitySurfaceContract.MAX_WHOLE_CHARS) }.takeIf { it != detail }.orEmpty(),
 )
 
 // Guidance is worth lighting a sleeping display for; the platform still caps

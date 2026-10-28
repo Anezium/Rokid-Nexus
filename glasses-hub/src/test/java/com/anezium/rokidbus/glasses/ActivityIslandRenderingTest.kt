@@ -130,7 +130,7 @@ class ActivityIslandRenderingTest {
     }
 
     @Test
-    fun `folded, a byline too long for its line keeps the playback state that opens it, at any font scale`() {
+    fun `folded, a byline too long for its line scrolls from the playback state that opens it, at any font scale`() {
         try {
             for (fontScale in listOf(1f, 1.5f)) {
                 RuntimeEnvironment.setFontScale(fontScale)
@@ -141,9 +141,9 @@ class ActivityIslandRenderingTest {
                     compact.render(headline, byline, GlyphDrawable(DISC))
                     idle()
                     assertEquals(288, compact.secondary.width)
-                    val layout = requireNotNull(compact.secondary.layout)
-                    assertTrue("the byline is cut at font scale $fontScale", layout.getEllipsisCount(0) > 0)
-                    assertTrue("$state is drawn whole at font scale $fontScale", layout.getEllipsisStart(0) >= state.length)
+                    assertEquals(byline, compact.secondary.text.toString())
+                    assertTrue("the byline scrolls at font scale $fontScale", compact.secondary.scrolling)
+                    assertEquals("$state leads the line at font scale $fontScale", 0, compact.secondary.scrollX)
                 }
             }
         } finally {
@@ -297,6 +297,11 @@ class ActivityIslandRenderingTest {
         val bundled = content(headline = headline, measure = "250 m")
         val kept = ActivityOverlayRenderer.islandStateOf(ActivityRenderState(listOf(item(bundled, ActivityPresentation.CHIP))), bundle = true)
         assertEquals(headline, kept.items.single().activity.content.headline)
+        val whole = bundled.copy(wholeSecondary = "A whole secondary", wholeDetail = listOf("A whole detail"))
+        val stripped = ActivityOverlayRenderer.islandStateOf(ActivityRenderState(listOf(item(whole, ActivityPresentation.CHIP))), bundle = false)
+            .items.single().activity.content
+        assertEquals(null, stripped.wholeSecondary)
+        assertTrue(stripped.wholeDetail.isEmpty())
 
         // The old phone's partial update replaces the primary; the headline from before stays stored.
         listOf(bundled, bundled.copy(primary = "Angel")).forEach { stored ->

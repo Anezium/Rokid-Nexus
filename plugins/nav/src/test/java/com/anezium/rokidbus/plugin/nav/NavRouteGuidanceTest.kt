@@ -78,6 +78,30 @@ class NavRouteGuidanceTest {
     }
 
     @Test
+    fun `a long place reaches the activity whole beside its bounded lines`() {
+        val place = "Gare du Nord, Paris 10e Arrondissement, Quartier Saint-Vincent-de-Paul"
+        val route = route(direction = "ARRIVE", street = place, destination = place)
+        val step = NavRouteSnapshot(route, quality = RouteQuality.TRACKING).guidance().toGuidanceStep()
+
+        assertEquals(NavText.fit(place, 28), step.secondary)
+        assertEquals(listOf(NavText.fit("Follow the route to $place", 32)), step.detail)
+        assertEquals(place, step.wholeSecondary)
+        assertEquals(listOf("Follow the route to $place"), step.wholeDetail)
+        val activity = step.toRouteActivity()
+        assertEquals(place, activity.wholeSecondary)
+        assertEquals(listOf("Follow the route to $place"), activity.wholeDetail)
+    }
+
+    @Test
+    fun `lines that already fit send no whole copy`() {
+        val step = NavRouteSnapshot(route(direction = "ARRIVE", street = "Destination"), quality = RouteQuality.TRACKING)
+            .guidance().toGuidanceStep()
+
+        assertNull(step.wholeSecondary)
+        assertTrue(step.wholeDetail.isEmpty())
+    }
+
+    @Test
     fun `route without maneuvers keeps destination guidance without claiming arrival`() {
         val route = route(direction = "ARRIVE", street = "Destination")
         val guidance = NavRouteSnapshot(route, quality = RouteQuality.TRACKING).guidance()

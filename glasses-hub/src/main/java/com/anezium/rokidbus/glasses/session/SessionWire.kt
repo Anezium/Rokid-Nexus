@@ -136,6 +136,7 @@ internal fun activitySourceOf(entry: ActivityEntry, interactive: Boolean, held: 
     return when {
         interactive -> base.copy(
             text = content.headline ?: content.primary,
+            detail = content.wholeSecondary ?: content.secondary,
             userPinned = content.userPinned,
             offline = content.isOffline,
             knownAtWallMs = content.knownAtWallMs ?: base.knownAtWallMs,
@@ -147,6 +148,7 @@ internal fun activitySourceOf(entry: ActivityEntry, interactive: Boolean, held: 
         )
         held -> base.copy(
             text = content.headline ?: content.primary,
+            detail = content.wholeSecondary ?: content.secondary,
             userPinned = content.userPinned,
             offline = content.isOffline,
             knownAtWallMs = content.knownAtWallMs ?: base.knownAtWallMs,

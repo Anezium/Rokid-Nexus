@@ -55,6 +55,20 @@ class GuidanceIslandTest {
     }
 
     @Test
+    fun `a guidance island draws the whole lines where the owner sent them`() {
+        val place = "Gare du Nord, Paris 10e Arrondissement, Quartier Saint-Vincent-de-Paul"
+        val original = item(ActivityPresentation.PANEL, AmbientSize.PANEL)
+        val bounded = original.activity.content.copy(secondary = "Gare du Nord, Paris 10e…", detail = listOf("Follow the route to Gare du…"))
+        fun shown(content: ActivitySurfaceContent) =
+            GuidanceIslands.of(original.copy(activity = original.activity.copy(content = content)), geometry(RoutePositionQuality.LIVE), null)!!.content
+        assertEquals("Gare du Nord, Paris 10e…", shown(bounded).street)
+        assertEquals("Follow the route to Gare du…", shown(bounded).then)
+        val whole = shown(bounded.copy(wholeSecondary = place, wholeDetail = listOf("Follow the route to $place")))
+        assertEquals(place, whole.street)
+        assertEquals("Follow the route to $place", whole.then)
+    }
+
+    @Test
     fun `render authority follows actual ambient form collapse and foreground suppression`() {
         val map = geometry(RoutePositionQuality.LIVE)
         fun rendered(presentation: ActivityPresentation, size: AmbientSize?) =

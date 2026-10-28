@@ -466,6 +466,8 @@ data class NexusActivity(
     val defaultActionId: String? = null,
     val persistence: NexusActivityPersistence = NexusActivityPersistence.SESSION,
     val headline: String? = null,
+    val wholeSecondary: String? = null,
+    val wholeDetail: List<String> = emptyList(),
 )
 
 val supportsActivitySurface: Boolean
@@ -507,7 +509,8 @@ most 12 trimmed characters; `secondary` is optional and at most 28; `eta` is
 optional and at most 8; `detail` has at most two 32-character entries;
 percentage progress is `0..100`; there are at most three actions; and the
 launcher-bundle `headline` is at most 40 trimmed characters with no control
-character.
+character, `wholeSecondary` at most 120, and `wholeDetail` has at most two
+120-character entries.
 `maxDurationMs`, when present on start, is clamped by the hub to one minute
 through 12 hours. Without it the activity lasts until explicitly ended,
 replaced, or its owner disconnects. There is no TTL and no keep-alive loop.
@@ -804,6 +807,13 @@ same code runs against old hubs.
   and scroll it in place when it is still too wide. `primary` stays required,
   keeps its 12 characters, and is what older hubs draw. It is presentation only
   and does not tighten the action-id rule.
+- `wholeSecondary` and `wholeDetail` — `secondary` and `detail` uncut, at most
+  120 printable characters a line: a whole destination, street or instruction.
+  The glasses scroll them on the lines that would otherwise end in an ellipsis
+  (the launcher card, the folded island, the guidance island's street and next
+  instruction); older hubs draw `secondary` and `detail`. Send only what the
+  bounded lines lost. Like `headline`, they are presentation only.
+  `NexusGuidanceStep` carries both into the activity it builds.
 
 The user can also disable your activity on the phone (the hub then ends it and
 refuses your starts with an `ACTIVITY_DISABLED` error on `/error`) or pin it. In focus the wearer steps
