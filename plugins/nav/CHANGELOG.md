@@ -4,6 +4,8 @@
 
 Street maps and render feedback need Nexus hubs 1.9.0; older hubs keep route-only guidance.
 
+- Anchor every map geometry on the route's ground, so Nexus hubs 1.9.0 glide
+  the map between updates instead of jumping every few seconds.
 - Stop reporting "GPS signal lost" while you stand still. A walk asked Android
   for a fix only after two metres of movement, so waiting at a crossing let the
   last fix age past 30 seconds; fixes now keep coming every second.

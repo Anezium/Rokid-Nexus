@@ -39,6 +39,8 @@ internal data class MapPlan(
     val compassY: Float?,
     /** The credit for the map's street data, bottom right, or null when the geometry carries none. */
     val attribution: MapAttribution? = null,
+    /** Where a glide drew the wearer; null when the geometry's own position was drawn. */
+    val pose: MapPose? = null,
 )
 
 /** The street data's credit: right-aligned at [right], on [baseline], keeping labels out of [box]. */
@@ -98,10 +100,12 @@ internal class RouteMapPainter {
     private val pathDash = DashPathEffect(floatArrayOf(6f, 6f), 0f)
     private val ringDash = DashPathEffect(floatArrayOf(4f, 4f), 0f)
 
-    fun plan(input: MapInput, width: Float, height: Float): MapPlan {
+    /** [pose] is where a glide draws the wearer and the heading it has eased to; null draws [input] as it stands. */
+    fun plan(input: MapInput, width: Float, height: Float, pose: MapPose? = null): MapPlan {
         val geometry = input.geometry
-        val style = RouteMapMath.styleOf(geometry, input.view, input.headingDeg, input.degraded)
-        val transform = RouteMapMath.transform(geometry, input.form, input.view, style, input.headingDeg, width, height, input.insets)
+        val heading = if (pose != null) pose.headingDeg else input.headingDeg
+        val style = RouteMapMath.styleOf(geometry, input.view, heading, input.degraded)
+        val transform = RouteMapMath.transform(geometry, input.form, input.view, style, heading, width, height, input.insets, pose)
         val scaleBar = RouteMapMath.scaleBar(geometry.spanMeters, transform.scale, width * RouteMapMath.SCALE_BAR_FRACTION)
         val compassX = if (input.compass) width - COMPASS_INSET_PX else null
         val compassY = if (input.compass) input.insets.top + COMPASS_INSET_PX else null
@@ -118,7 +122,9 @@ internal class RouteMapPainter {
                 val y = transform.y(point.x.toFloat(), point.y.toFloat())
                 add(MapBox(x - radius, y - radius, x + radius, y + radius))
             }
-            geometry.position?.point?.let { mark(it, 26f) }
+            geometry.position?.point?.let { point ->
+                if (pose == null) mark(point, 26f) else mark(RoutePoint(pose.x.toInt(), pose.y.toInt()), 26f)
+            }
             geometry.turn?.let { mark(it, TURN_RADIUS_PX + 4f) }
             geometry.destination?.let { mark(it, DESTINATION_OUTER_PX + 4f) }
             geometry.stops.forEach { mark(RoutePoint(it.x, it.y), 22f) }
@@ -144,7 +150,7 @@ internal class RouteMapPainter {
             candidates, input.form.maxLabels, MapBox(0f, input.insets.top, width, bottom), reserved,
             verticalOffsets = listOf(0f, -40f, 40f),
         )
-        return MapPlan(transform, style, scaleBar, labels, compassX, compassY, attribution)
+        return MapPlan(transform, style, scaleBar, labels, compassX, compassY, attribution, pose)
     }
 
     fun draw(canvas: Canvas, input: MapInput, plan: MapPlan, width: Float, height: Float) {
@@ -208,7 +214,11 @@ internal class RouteMapPainter {
         }
 
         geometry.position?.point?.let { point ->
-            position(canvas, transform.x(point.x.toFloat(), point.y.toFloat()), transform.y(point.x.toFloat(), point.y.toFloat()), plan.style.position, (input.headingDeg ?: 0f) - transform.rotationDeg)
+            val pose = plan.pose
+            val x = pose?.x ?: point.x.toFloat()
+            val y = pose?.y ?: point.y.toFloat()
+            val heading = if (pose != null) pose.headingDeg else input.headingDeg
+            position(canvas, transform.x(x, y), transform.y(x, y), plan.style.position, (heading ?: 0f) - transform.rotationDeg)
         }
 
         if (plan.compassX != null && plan.compassY != null) compass(canvas, plan.compassX, plan.compassY, transform.rotationDeg)
@@ -385,12 +395,28 @@ internal class RouteMapView(context: Context, leaseFactory: (View) -> RenderedMa
     var plan: MapPlan? = null
         private set
 
+    /** The glide this form and view share across rebuilt views. */
+    var motion: MapMotion? = null
+        private set
+
+    /** Whether the pending draw only advances a glide; such frames report nothing new. */
+    private var gliding = false
+    private val glide = Runnable {
+        gliding = true
+        invalidate()
+    }
+
     fun bind(input: MapInput) {
         if (input == this.input) return
         renderedLease.bind(input.renderContext, input.view)
         val resized = input.form != this.input?.form
         this.input = input
+        motion = MapMotion.of(input.form, input.view).also {
+            it.arrive(input.geometry)
+            it.aim(input.headingDeg)
+        }
         plan = null
+        gliding = false
         if (resized) requestLayout()
         invalidate()
     }
@@ -399,7 +425,9 @@ internal class RouteMapView(context: Context, leaseFactory: (View) -> RenderedMa
     fun planNow(): MapPlan? {
         val current = input ?: return null
         if (width <= 0 || height <= 0) return null
-        return plan ?: painter.plan(current, width.toFloat(), height.toFloat()).also { plan = it }
+        val pose = motion?.pose(current.geometry)
+        plan?.takeIf { it.pose == pose }?.let { return it }
+        return painter.plan(current, width.toFloat(), height.toFloat(), pose).also { plan = it }
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -428,12 +456,22 @@ internal class RouteMapView(context: Context, leaseFactory: (View) -> RenderedMa
         }
         painter.draw(canvas, current, plan, width.toFloat(), height.toFloat())
         canvas.restoreToCount(saved)
-        renderedLease.drawn()
+        // A glide frame draws the geometry already reported; only a bind or a reveal reports.
+        if (!gliding) renderedLease.drawn()
+        gliding = false
+        removeCallbacks(glide)
+        if (motion?.moving() == true) postDelayed(glide, GLIDE_FRAME_MS)
     }
 
     override fun onDetachedFromWindow() {
+        removeCallbacks(glide)
         renderedLease.detach()
         super.onDetachedFromWindow()
+    }
+
+    private companion object {
+        /** About 30 frames a second while the map moves, and none once it rests. */
+        const val GLIDE_FRAME_MS = 33L
     }
 
     override fun onVisibilityAggregated(isVisible: Boolean) {

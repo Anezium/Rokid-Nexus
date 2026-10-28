@@ -125,8 +125,12 @@ class NavMapPublisherTest {
             now, quality = RouteQuality.TRACKING, atMs = now)
         val a = snapshot(1_000.0)
         val b = snapshot(10_000.0)
-        // An identical clipped straight route can still describe a different geographic frame.
-        assertEquals(NavMapProjection.geometry(a, NavMapView.FOLLOW), NavMapProjection.geometry(b, NavMapView.FOLLOW))
+        // An identical clipped straight route can still describe a different geographic frame; only
+        // the anchor, there for the hub's glide, tells them apart, and correlation never relies on it.
+        val geometryA = NavMapProjection.geometry(a, NavMapView.FOLLOW)
+        val geometryB = NavMapProjection.geometry(b, NavMapView.FOLLOW)
+        assertEquals(geometryA.copy(anchor = null), geometryB.copy(anchor = null))
+        assertTrue(geometryA.anchor != geometryB.anchor)
         val keysA = NavMapProjection.tiles(a, NavMapView.FOLLOW, OsmShortbreadSource)
         val keysB = NavMapProjection.tiles(b, NavMapView.FOLLOW, OsmShortbreadSource)
         assertTrue(keysA.isNotEmpty() && keysB.isNotEmpty())

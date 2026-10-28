@@ -75,6 +75,26 @@ class RouteGeometryContractTest {
     }
 
     @Test
+    fun `an anchor round trips in decimetres and a bad one is refused`() {
+        val anchored = walk.copy(anchor = RouteAnchor(frame = 7, x = -1_234, y = 56_789))
+        val encoded = JSONObject(RouteGeometryContract.encode(anchored).toString())
+        assertEquals(RouteGeometryResult.Valid(anchored), RouteGeometryContract.validate(encoded))
+        assertTrue(!RouteGeometryContract.encode(walk).has("anchor"))
+        assertNull(RouteGeometryContract.parseOrNull(RouteGeometryContract.encode(walk).put("anchor", JSONObject.NULL))!!.anchor)
+        val edge = RouteGeometryContract.MAX_ANCHOR_DM
+        assertValid(RouteGeometryContract.encode(walk.copy(anchor = RouteAnchor(0, edge, -edge))))
+        listOf(
+            JSONObject().put("frame", 1).put("x", edge + 1).put("y", 0),
+            JSONObject().put("frame", 1).put("x", 1.5).put("y", 0),
+            JSONObject().put("x", 0).put("y", 0),
+            JSONObject().put("frame", 1).put("x", 0),
+        ).forEach { anchor ->
+            assertTrue(anchor.toString(), RouteGeometryContract.validate(RouteGeometryContract.encode(walk).put("anchor", anchor)) is RouteGeometryResult.Invalid)
+        }
+        assertTrue(RouteGeometryContract.validate(RouteGeometryContract.encode(walk).put("anchor", "here")) is RouteGeometryResult.Invalid)
+    }
+
+    @Test
     fun `a basemap attribution round trips and an absent one stays absent`() {
         val credited = walk.copy(attribution = "© OpenStreetMap")
         val encoded = JSONObject(RouteGeometryContract.encode(credited).toString())

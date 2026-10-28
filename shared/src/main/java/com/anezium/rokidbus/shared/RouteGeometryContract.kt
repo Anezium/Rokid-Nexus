@@ -49,6 +49,14 @@ data class RoutePosition(
 data class RouteStopMark(val x: Int, val y: Int, val label: String)
 
 /**
+ * Where a frame's centre lies on the ground: [x] and [y] decimetres along the frame's own axes from
+ * a point that stays put for every frame sharing [frame]. Two frames of one [frame] differ only by
+ * where they are centred, so the hub can glide the map from one to the next instead of jumping.
+ * A new route, or anything that moves that point, takes a new [frame].
+ */
+data class RouteAnchor(val frame: Int, val x: Int, val y: Int)
+
+/**
  * Bounded, hub-rendered route geometry. The frame is north-up in a local metric projection where
  * [RouteGeometryContract.EXTENT] units span [spanMeters]; the hub rotates it for heading-up views.
  * Providers clip with Liang-Barsky to a window covering the rotated viewport, never by clamping
@@ -56,6 +64,7 @@ data class RouteStopMark(val x: Int, val y: Int, val label: String)
  *
  * [attribution] credits the source of the `street` and `major` paths (for OpenStreetMap data,
  * "© OpenStreetMap"); the hub draws it in a corner of the map. Hubs that predate it ignore it.
+ * [anchor] places the frame on the ground for that glide; hubs that predate it ignore it too.
  */
 data class RouteGeometry(
     val spanMeters: Double,
@@ -66,6 +75,7 @@ data class RouteGeometry(
     val destination: RoutePoint? = null,
     val stops: List<RouteStopMark> = emptyList(),
     val attribution: String? = null,
+    val anchor: RouteAnchor? = null,
 )
 
 sealed interface RouteGeometryResult {
@@ -87,6 +97,9 @@ object RouteGeometryContract {
     const val MAX_STOPS = 4
     const val MAX_STOP_LABEL_CHARS = 4
     const val MAX_ATTRIBUTION_CHARS = 40
+
+    /** An anchor's reach, in decimetres either way: a quarter of the way round the Earth. */
+    const val MAX_ANCHOR_DM = 100_000_000
 
     /** Rejects anything outside the schema, including a serialized size above [MAX_BYTES]. */
     fun validate(value: Any?): RouteGeometryResult = try {
@@ -156,6 +169,7 @@ object RouteGeometryContract {
                 )
             }
             geometry.attribution?.let { put("attribution", it) }
+            geometry.anchor?.let { put("anchor", JSONObject().put("frame", it.frame).put("x", it.x).put("y", it.y)) }
         }
 
     private fun read(geometry: JSONObject): RouteGeometry {
@@ -223,6 +237,15 @@ object RouteGeometryContract {
             text
         }
 
+        val anchor = optionalObject(geometry, "anchor")?.let { entry ->
+            fun decimetres(key: String): Int {
+                val value = integer(entry.opt(key)) ?: fail("anchor $key must be an integer")
+                check(value in -MAX_ANCHOR_DM..MAX_ANCHOR_DM, "anchor $key must be within $MAX_ANCHOR_DM decimetres")
+                return value
+            }
+            RouteAnchor(integer(entry.opt("frame")) ?: fail("anchor frame must be an integer"), decimetres("x"), decimetres("y"))
+        }
+
         return RouteGeometry(
             spanMeters = span,
             paths = paths,
@@ -232,6 +255,7 @@ object RouteGeometryContract {
             destination = optionalObject(geometry, "destination")?.let(::point),
             stops = stops,
             attribution = attribution,
+            anchor = anchor,
         )
     }
 

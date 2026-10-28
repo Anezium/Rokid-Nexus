@@ -895,7 +895,10 @@ stops, 16 KiB, coordinates 0..1,000 in a north-up frame spanning `spanMeters`)
 and `publishActivityHeading(deg, accuracyDeg)` the compass heading. If your
 `street` or `major` paths come from a map source that must be credited, set
 `attribution` (1 to 40 printable characters, for OpenStreetMap
-`"© OpenStreetMap"`); the glasses draw it in the corner of every map. Gate
+`"© OpenStreetMap"`); the glasses draw it in the corner of every map. Set
+`anchor` (`RouteAnchor(frame, x, y)`, decimetres from a point fixed for the
+whole route) so successive geometries glide into one another on the glasses
+instead of jumping every publication; give a new route a new `frame`. Gate
 provider streets on `supportsRenderedMaps`, which guarantees both hubs preserve
 and render that credit; unsupported pairs retain route-only geometry. Latest wins;
 neither is ever queued. Geometry needs the SPP data plane and returns

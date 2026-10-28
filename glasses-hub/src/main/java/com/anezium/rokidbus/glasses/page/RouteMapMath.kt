@@ -128,6 +128,7 @@ internal object RouteMapMath {
         width: Float,
         height: Float,
         insets: MapInsets = MapInsets(),
+        pose: MapPose? = null,
     ): MapTransform {
         val areaTop = insets.top.coerceIn(0f, height)
         val areaBottom = (height - insets.bottom).coerceIn(areaTop, height)
@@ -152,8 +153,9 @@ internal object RouteMapMath {
         return MapTransform(
             anchorX = anchorX,
             anchorY = anchorY,
-            centerX = point?.x?.toFloat() ?: HALF_EXTENT,
-            centerY = point?.y?.toFloat() ?: HALF_EXTENT,
+            // A gliding wearer is the centre where the glide has them, not where the frame put them.
+            centerX = pose?.x ?: point?.x?.toFloat() ?: HALF_EXTENT,
+            centerY = pose?.y ?: point?.y?.toFloat() ?: HALF_EXTENT,
             rotationDeg = rotation,
             scale = scale,
         )

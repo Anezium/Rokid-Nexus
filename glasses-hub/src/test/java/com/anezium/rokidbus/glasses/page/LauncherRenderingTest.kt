@@ -795,6 +795,34 @@ class LauncherRenderingTest {
     }
 
     @Test
+    fun `a follow map glides to the next geometry, and a rebuilt map carries on the glide`() {
+        MapMotion.reset()
+        fun walk(eastDm: Int) = RouteGeometry(
+            spanMeters = 200.0,
+            paths = listOf(RoutePath(RoutePathRole.ROUTE, listOf(RoutePoint(500, 1000), RoutePoint(500 + eastDm % 3, 0)))),
+            position = RoutePosition(RoutePositionQuality.LIVE, RoutePoint(500, 500)),
+            anchor = com.anezium.rokidbus.shared.RouteAnchor(1, eastDm, 0),
+        )
+        fun map(geometry: RouteGeometry) = RouteMapView(context).apply {
+            bind(MapInput(geometry, MapForm.PANEL))
+            measure(View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            layout(0, 0, measuredWidth, measuredHeight)
+        }
+        assertEquals(500f, requireNotNull(map(walk(0)).planNow()).transform.centerX, 0.01f)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(5_000))
+        val moving = map(walk(70))
+        // Seven metres behind the new frame's centre at first, then on it five seconds later.
+        assertEquals(465f, requireNotNull(moving.planNow()).transform.centerX, 0.5f)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(2_500))
+        assertEquals(482.5f, requireNotNull(moving.planNow()).transform.centerX, 0.5f)
+        assertEquals(482.5f, requireNotNull(map(walk(70)).planNow()).transform.centerX, 0.5f)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(2_600))
+        assertEquals(500f, requireNotNull(moving.planNow()).transform.centerX, 0.01f)
+        assertFalse(requireNotNull(moving.motion).moving())
+        MapMotion.reset()
+    }
+
+    @Test
     fun `a compact map is a card with its caption and a measured map`() {
         val geometry = RouteGeometry(500.0, listOf(RoutePath(RoutePathRole.ROUTE, listOf(RoutePoint(500, 500), RoutePoint(500, 100)))))
         render(SessionScreen(ScreenHeader("NAVIGATION"), listOf(ScreenBlock.Map("map", geometry, selected = true, label = "MAP · FOLLOW", trail = "1/2")), null, focusKey = "map"))

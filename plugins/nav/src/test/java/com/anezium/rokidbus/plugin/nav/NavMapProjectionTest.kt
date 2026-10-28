@@ -30,6 +30,21 @@ class NavMapProjectionTest {
     }
 
     @Test
+    fun `frames of one route share an anchor frame and differ by the ground walked`() {
+        val route = straight()
+        val here = NavMapProjection.geometry(tracking(route, 250.0), NavMapView.FOLLOW).anchor!!
+        val further = NavMapProjection.geometry(tracking(route, 257.0), NavMapView.FOLLOW).anchor!!
+        assertEquals(here.frame, further.frame)
+        // Seven metres along the route, in decimetres on the frame's own axes.
+        assertEquals(70.0, kotlin.math.hypot((further.x - here.x).toDouble(), (further.y - here.y).toDouble()), 1.5)
+        val overview = NavMapProjection.geometry(tracking(route, 250.0), NavMapView.OVERVIEW).anchor!!
+        assertEquals(here.frame, overview.frame)
+        // A new route is new ground, whatever it shares with the old one.
+        val rerouted = NavMapProjection.geometry(tracking(straight(), 250.0), NavMapView.FOLLOW).anchor!!
+        assertTrue(rerouted.frame != here.frame)
+    }
+
+    @Test
     fun `confirmed progress splits the route into the walked part and the route ahead`() {
         val route = straight()
         val fresh = NavMapProjection.geometry(tracking(route, 0.0), NavMapView.OVERVIEW)

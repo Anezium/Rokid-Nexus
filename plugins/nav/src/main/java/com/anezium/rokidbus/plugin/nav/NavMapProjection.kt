@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.nav
 
+import com.anezium.rokidbus.shared.RouteAnchor
 import com.anezium.rokidbus.shared.RouteGeometry
 import com.anezium.rokidbus.shared.RouteGeometryContract
 import com.anezium.rokidbus.shared.RouteLabel
@@ -150,9 +151,20 @@ internal object NavMapProjection {
             position = routePosition,
             turn = turn,
             destination = destination,
+            anchor = anchor(line, window),
         )
 
         return fit(fragments, budget, ::assemble)
+    }
+
+    /**
+     * The window's centre in decimetres from the line's own origin, so the hub glides from one frame
+     * to the next. The frame names the line object, never a place: a new route is a new frame.
+     */
+    private fun anchor(line: RouteLine, window: NavMapWindow): RouteAnchor {
+        fun decimetres(meters: Double) = (meters * 10.0).roundToInt()
+            .coerceIn(-RouteGeometryContract.MAX_ANCHOR_DM, RouteGeometryContract.MAX_ANCHOR_DM)
+        return RouteAnchor(System.identityHashCode(line), decimetres(window.center.x), decimetres(window.center.y))
     }
 
     /** Street names the planner returned, where they are on the frame: next turn first. */

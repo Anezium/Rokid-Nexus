@@ -2411,7 +2411,8 @@ The `follow` and `overview` of a `route` page and the payload of
   "turn": {"x": 500, "y": 500},
   "destination": {"x": 800, "y": 500},
   "stops": [{"x": 300, "y": 400, "label": "A"}],
-  "attribution": "© OpenStreetMap"
+  "attribution": "© OpenStreetMap",
+  "anchor": {"frame": 41, "x": 12345, "y": -6789}
 }
 ```
 
@@ -2428,6 +2429,15 @@ The `follow` and `overview` of a `route` page and the payload of
   corner of every map size. Providers requiring that credit must gate street
   data on the separately negotiated `RENDERED_MAP` bit below; older hub pairs
   keep route-only guidance because they cannot guarantee preservation and display.
+- `anchor`: optional. `x` and `y` are integer decimetres (at most 100,000,000
+  either way) from a point that stays put for every geometry sharing the
+  integer `frame`, along the frame's own axes, to the frame's centre. Two
+  geometries of one `frame` and one `spanMeters` differ only by where they are
+  centred, so the glasses glide the map and the wearer from one to the next
+  over the time between them instead of jumping, and ease the heading the same
+  way. A new route, or anything that moves that point, takes a new `frame`;
+  without an anchor, a geometry is drawn where it says at once. Older hubs
+  ignore it.
 - `position.quality`: `live`, `stale` (the last fix, with its age in
   `fixAgeS`) or `none` (no position; any coordinates are ignored).
 - The serialized geometry is at most 16 KiB. Anything outside the schema is
