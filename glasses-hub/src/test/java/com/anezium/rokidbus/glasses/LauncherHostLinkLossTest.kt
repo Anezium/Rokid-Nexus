@@ -450,8 +450,9 @@ class LauncherHostLinkLossTest {
         } catch (expected: AssertionError) {
             assertTrue(expected.message.orEmpty(), expected.message.orEmpty().contains("did not finish"))
         }
+        // Closing the first pipe wakes the reader before close() finishes the remaining pipes.
+        assertTrue("watchdog did not finish closing the peer", unanswered.closed.await(2, TimeUnit.SECONDS))
         assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 3_000)
-        assertTrue(unanswered.closed.await(0, TimeUnit.SECONDS))
 
         // A peer the server accepts but that never says hello: the real hello deadline closes it.
         sppClock += 5_000
