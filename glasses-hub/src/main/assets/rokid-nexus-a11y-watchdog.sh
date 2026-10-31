@@ -10,7 +10,7 @@ LOGFILE="$BASE/$NAME.log"
 HEARTBEAT="$BASE/$NAME.heartbeat"
 VERSIONFILE="$BASE/$NAME.version"
 RECOVERYFILE="$BASE/$NAME.recovery"
-VERSION="2026-09-27.1"
+VERSION="2026-10-31.1"
 HEALTHY_INTERVAL="${INTERVAL:-180}"
 RECOVERY_INTERVAL="${RECOVERY_INTERVAL:-30}"
 RECOVERY_CYCLES="${RECOVERY_CYCLES:-3}"
@@ -61,7 +61,8 @@ app_pid() {
 }
 
 pid_cmdline() {
-  tr '\000' ' ' < "/proc/$1/cmdline" 2>/dev/null
+  # Read through cat: toybox tr spins forever on the read error of a process exiting meanwhile.
+  cat "/proc/$1/cmdline" 2>/dev/null | tr '\000' ' '
 }
 
 is_watchdog_pid() {

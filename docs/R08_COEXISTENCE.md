@@ -1,6 +1,6 @@
 # R08 Access Bridge recovery
 
-Watchdog `2026-09-27.1` can maintain the two R08 shell helpers without enabling
+Watchdog `2026-10-31.1` can maintain the two R08 shell helpers without enabling
 legacy TCP ADB. Install the updated Nexus glasses APK and R08 glasses/companion
 APKs, then arm R08 once. Nexus must have completed its own self-arm setup.
 Existing R08 installations with WRITE_SECURE_SETTINGS also register when the app

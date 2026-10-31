@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Glasses hub
+
+- After a reboot, the shell watchdog restarts R08 Access Bridge's two helpers when R08 is armed, without reopening ADB port 5555. Before this, R08's ring actions stayed dead after every reboot on glasses running Nexus.
+- The watchdog and command bridge no longer risk spinning a CPU core forever when a process they inspect exits at that moment (toybox `tr` loops on that read error).
+
 ### Phone hub
 
 - Builds against CXR-L client 1.1.2 through CxrGlobal 0.3.0, and tells Hi Rokid which client version it speaks.
