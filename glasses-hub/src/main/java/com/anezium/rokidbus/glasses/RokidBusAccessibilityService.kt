@@ -2088,7 +2088,7 @@ private class SessionOverlayWindow(
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
-            PixelFormat.OPAQUE,
+            PixelFormat.TRANSLUCENT,
         )
         val added = runCatching { manager.addView(view, params) }
             .onFailure { logError("Session host window could not be added", it) }

@@ -1,6 +1,8 @@
 // Adapted from the Rokid-Nexus fork by alvarosw (https://github.com/alvarosw/Rokid-Nexus), Apache-2.0.
 package com.anezium.rokidbus.glasses.session
 
+import java.util.UUID
+
 /** The single deadline the reducer asks for, on the uptime clock. */
 internal interface SessionTimer {
     /** Replaces any pending task. */
@@ -36,11 +38,12 @@ internal class SessionRunner(
     private val clock: () -> Long,
     private val timer: SessionTimer,
     private val sink: SessionEffectSink,
+    idNamespace: String = UUID.randomUUID().toString(),
     private val onError: (Throwable) -> Unit = { throw it },
 ) {
     /** Written on the main thread only; volatile because other components read it from their own. */
     @Volatile
-    var model: SessionModel = SessionModel()
+    var model: SessionModel = SessionModel(idNamespace = idNamespace)
         private set
 
     val state: SessionState get() = model.state

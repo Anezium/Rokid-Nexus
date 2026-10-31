@@ -35,8 +35,9 @@ class NexusPageTest {
             this.listener = listener
         }
         override fun send(path: String, id: String, payload: JSONObject): Boolean {
+            val gate = release
             entered?.countDown()
-            release?.await(5, TimeUnit.SECONDS)
+            gate?.await(5, TimeUnit.SECONDS)
             sends += path to JSONObject(payload.toString())
             sendIds += id
             return accept

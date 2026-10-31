@@ -468,11 +468,13 @@ data class NexusActivity(
     val headline: String? = null,
     val wholeSecondary: String? = null,
     val wholeDetail: List<String> = emptyList(),
+    val eventKey: String? = null, // Launcher v4: stable identity of the latest real event.
 )
 
 val supportsActivitySurface: Boolean
 val supportsActivityExtras: Boolean
 fun supportsLauncherInteractive(): Boolean
+fun supportsActivityEvents(): Boolean // Both hubs negotiated launcher v4.
 val registrationGeneration: Int
 fun startActivity(activity: NexusActivity): NexusSdkResult
 fun updateActivity(
@@ -815,14 +817,139 @@ same code runs against old hubs.
   bounded lines lost. Like `headline`, they are presentation only.
   `NexusGuidanceStep` carries both into the activity it builds.
 
+#### User choice: Keep in activities
+
+Any plugin can expose the standard opt-in with `NexusActivityPreference` and
+`NexusUi.activitySettingRow`. It defaults off and persists across process restarts.
+Pass an existing `SharedPreferences` and key to preserve an older plugin's choice.
+
+```kotlin
+val keep = NexusActivityPreference(context)
+val toggle = NexusUi.switch(context).apply { isChecked = keep.enabled }
+val row = NexusUi.activitySettingRow(context, toggle)
+toggle.setOnCheckedChangeListener { _, enabled ->
+    keep.enabled = enabled
+    refreshActivity() // Your existing event-driven publisher; off sends endActivity().
+}
+
+// On an approved registration or a real data change:
+val entry = keep.retained(NexusActivity(
+    glyph = "list",
+    primary = "Groceries",
+    destination = NexusPageDestination("myplugin:groceries"),
+))
+if (entry == null) client.endActivity() else client.startActivity(entry)
+```
+
+Use `updateActivity` for later changes in the same registration. `retained` sets
+`persistence = ONGOING` only while opted in; it returns null when off. Publish an
+honest idle destination when there is no current task, so the wearer can open it
+and start one. Disabling ends the entry and preserves the plugin's data. If Nexus
+is disconnected, persist the owed end and deliver it on the next approved
+registration, before publishing again. Hello Nexus's Todo publisher is the full
+example, including this removal path. The helper stores the user's preference;
+it does not bind, start a service, poll, override grants or opt in automatically.
+Nexus's pin ordering and floating visibility remain separate choices.
+
+#### User-controlled floating activities (launcher bundle v4)
+
+Keeping a card in Activities does not require a permanent overlay. Nexus owns
+the user's per-plugin floating display settings: Automatic (the existing app
+rules), Always visible, Home screen only, On changes, or Activities only. On
+changes uses a user-selected 3, 5 or 10 seconds (default 5), then animates the
+band away. The card and its destination stay; expiry never ends the activity.
+The camera, an open Nexus session and an app configured to hide all activities
+still take precedence. Classic retains its existing behavior.
+
+Put the standard settings link beside your ongoing-activity opt-in:
+
+```kotlin
+column.addView(NexusUi.activityDisplaySettingsRow(context, "myplugin"))
+// Or open it from your own settings control:
+val opened = NexusActivityPreference.openDisplaySettings(context, "myplugin")
+// false means Nexus is absent or too old; offer an update, not a custom overlay.
+```
+
+For a real event, publish `NexusActivity.eventKey`: an opaque, stable identity
+of at most 64 printable characters. A different non-null key starts a temporary
+band only when the user chose On changes. A new live start may show once;
+reconnect resends of the same key do not replay it. An unchanged key, explicit
+null, cover completion, playback position and ordinary text updates do not
+renew the timer. Existing `significant = true` events also qualify, but that
+flag still affects priority: do not use it just to show a new song.
+
+```kotlin
+val entry = NexusActivity(
+    glyph = "disc",
+    primary = shortTitle,
+    headline = title.take(40),
+    secondary = shortArtist,
+    wholeSecondary = fullArtist.take(120),
+    eventKey = stableTrackId, // Same across pause, progress, artwork and reconnect.
+    destination = NexusPageDestination("myplugin:player"),
+    persistence = NexusActivityPersistence.ONGOING,
+)
+client.updateActivity(entry, significant = false)
+```
+
+Use a content identifier or digest, never a timestamp or per-send counter.
+For a task list, its persisted data revision is suitable. Do not poll or add
+a service to generate events. Plugins cannot choose display mode, duration,
+foreground policy or a forced animation; the SDK link opens Nexus's user-owned
+settings without changing them. On older peers the SDK strips `eventKey`.
+With older glasses the phone keeps On changes and Home screen only bands
+hidden until both hubs support v4, rather than displaying them permanently.
+These settings concern native activity bands; the legacy short-lived Pin API
+does not become an ongoing activity or gain this event lifecycle.
+
+#### Covers and the integrated player (launcher bundle v2 and v3)
+
+`supportsLauncherArtwork()` is true when both hubs negotiated bundle version 2.
+`NexusActivity.artwork` and `PageBody.Media.artwork` accept a `LauncherArtwork`:
+an inline `mono1` preview, at most 128 by 128 pixels and 2,048 decoded bytes.
+Bits are row-major, most significant bit first; 1 draws phosphor and 0 is
+transparent. `data` is standard Base64. The hub never fetches a URI for a cover;
+no additional permission is requested. Omit artwork for the normal glyph fallback.
+On an activity update, null clears a previous cover.
+
+Prefer JPEG for album covers when `supportsLauncherImageArtwork()` is true
+(bundle v3). Use `LauncherArtwork(width, height, data, encoding = LauncherArtwork.JPEG)`:
+dimensions are at most 256 by 256, data is Base64 for at most 32,768 JPEG bytes,
+and the JPEG header must match the declared dimensions. The hub renders the image
+with its original tones and filtered scaling; it does not threshold or dither it.
+Media Deck uses its existing `ImageArtworkEncoder` with this tighter compressed
+cap, so Base64 and the page's other fields fit the unchanged 64 KiB page budget.
+The same detailed cover works on the activity card and compact floating pin.
+On v2 peers the SDK and phone clear unsupported JPEG artwork explicitly, including
+result replacements, so a previous track's cover cannot remain visible. Mono1 is
+still accepted for deliberately monochrome previews and older peers.
+
+`PageBody.Media` also accepts optional `positionMs`, `durationMs` (0 through
+604,800,000), `playbackSpeed` (finite, -16 through 16; default 1) and `advancing`
+(default follows PLAYING). The position is the anchor at publication. The visible
+player advances its clock locally; send a new revision for a seek or speed change,
+never a stream of progress ticks. Its commands form one horizontal strip on the
+same swipe axis, with tap to run and one Back to leave the player, including
+when its controls have focus. Opening a media page
+uses this integrated player; the separate immersion remains a legacy fallback.
+The SDK and phone remove these v2 fields for older peers, including result
+replacement pages. Text, typed commands and destinations continue to work.
+
 The user can also disable your activity on the phone (the hub then ends it and
 refuses your starts with an `ACTIVITY_DISABLED` error on `/error`) or pin it. In focus the wearer steps
-along your commands and a hub `Open app` slot that opens your full app directly
-on a fresh tap; that slot is the hub's, not one of your three.
+along your commands. A commands-first activity with a destination also gets a
+hub `Open page` slot; for typed media it is labelled `Open player` and replaces
+the redundant full-app slot. Other launchable owners retain `Open app` for the
+full app. These hub slots are not part of your three actions. The selected live
+commands-first card previews its controls; the first tap focuses them without
+executing. Back on the card leaves command focus; Back in the full media player
+returns to the containing Nexus menu directly.
 
 A command arrives on `onNexusActivityCommand(command)` with `actionId`, a fresh
 `invocationId`, the revision `seq` the wearer saw, and the `typed` you declared
-on that action. Return the outcome: `done`, `rejected` or `stale`, with an
+on that action. Treat the invocation id as an opaque deduplication key: its
+format can change, and a restarted launcher must not reuse an earlier id.
+Return the outcome: `done`, `rejected` or `stale`, with an
 optional message of at most 64 characters. Return null when you cannot tell yet;
 the glasses then show the command as unconfirmed, and you may still report
 within eight seconds with `sendActivityCommandResult(command, result)`, once.
@@ -1249,8 +1376,9 @@ bundle:
   the same value as its `threadKey`.
 
 When the event leaves the phone (its notification was removed), call
-`withdrawNotice(eventKey)`: the glasses mark it removed and stop offering a
-reply for that thread. It is not a read or delivery receipt, and it is refused
+`withdrawNotice(eventKey)`: the glasses remove its launcher preview, retain it
+as removed in Notifications history, and stop offering a reply for that thread.
+It is not a read or delivery receipt, and it is refused
 with `CAPABILITY_NOT_AVAILABLE` without the bundle.
 
 When the user tells your plugin to stop keeping what it showed (they turned a

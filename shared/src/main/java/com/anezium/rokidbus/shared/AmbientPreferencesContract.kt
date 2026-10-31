@@ -45,6 +45,7 @@ data class AmbientPolicy(
     val revision: Long,
     val modes: Map<String, ForegroundAmbientMode>,
     val hiddenOwners: Set<String> = emptySet(),
+    val activityDisplays: Map<String, ActivityDisplayPreference> = emptyMap(),
 )
 
 /**
@@ -117,6 +118,7 @@ object AmbientPreferencesContract {
         .put("revision", policy.revision)
         .put("modes", JSONObject().apply { policy.modes.toSortedMap().forEach { (app, mode) -> put(app, mode.wireValue) } })
         .put("hiddenOwners", JSONArray(policy.hiddenOwners.sorted()))
+        .put("activityDisplays", displayPreferencesPayload(policy.activityDisplays))
 
     fun parsePolicy(payload: JSONObject): AmbientPolicy? {
         val revision = nonnegativeLong(payload.opt("revision")) ?: return null
@@ -137,7 +139,32 @@ object AmbientPreferencesContract {
                 hidden += (owners.opt(index) as? String)?.takeIf(PluginDescriptor::isValidId) ?: return null
             }
         }
-        return AmbientPolicy(revision, modes, hidden)
+        val displays = if (payload.has("activityDisplays")) {
+            parseDisplayPreferences(payload.opt("activityDisplays")) ?: return null
+        } else emptyMap()
+        return AmbientPolicy(revision, modes, hidden, displays)
+    }
+
+    fun displayPreferencesPayload(displays: Map<String, ActivityDisplayPreference>): JSONObject = JSONObject().apply {
+        displays.toSortedMap().forEach { (owner, preference) ->
+            put(owner, JSONObject().put("mode", preference.mode.wireValue).put("durationMs", preference.durationMs))
+        }
+    }
+
+    fun parseDisplayPreferences(raw: Any?): Map<String, ActivityDisplayPreference>? {
+        val map = raw as? JSONObject ?: return null
+        if (map.length() > MAX_HIDDEN_OWNERS) return null
+        val result = linkedMapOf<String, ActivityDisplayPreference>()
+        for (owner in map.keys()) {
+            if (!PluginDescriptor.isValidId(owner)) return null
+            val item = map.opt(owner) as? JSONObject ?: return null
+            val modeValue = item.opt("mode") as? String ?: return null
+            val duration = nonnegativeLong(item.opt("durationMs")) ?: return null
+            if (duration !in ActivityDisplayPreference.DURATIONS_MS) return null
+            val mode = ActivityDisplayMode.fromWireValue(modeValue) ?: continue
+            result[owner] = ActivityDisplayPreference(mode, duration)
+        }
+        return result
     }
 
     private fun nonnegativeLong(value: Any?): Long? = when (value) {

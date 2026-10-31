@@ -153,10 +153,10 @@ internal data class NotificationHistory(
     /**
      * The root's notification stop (plan 028a §6.4): an aggregate when the newest live
      * conversation entries span several threads of one owner, else a card for the newest live
-     * conversation entry, else the generic preview of the newest entry; null when nothing shows.
+     * conversation entry, else the generic preview of the newest non-withdrawn entry.
      */
     fun rootPreview(nowWallMs: Long): NoticePreview? {
-        val visible = visible(nowWallMs)
+        val visible = visible(nowWallMs).filter { it.state != HistoryState.WITHDRAWN }
         val newest = visible.firstOrNull() ?: return null
         val conversation = visible.firstOrNull { it.live && it.notice.threadKey != null } ?: return generic(newest)
         val owner = conversation.notice.ownerPluginId
@@ -174,11 +174,11 @@ internal data class NotificationHistory(
 
     /**
      * The aggregate for [ownerPluginId] once none of its threads is live: only the threads still
-     * within the display bound, answered or removed; null when none is.
+     * within the display bound and not withdrawn; null when none is.
      */
     fun resolvedAggregateFor(ownerPluginId: String?, nowWallMs: Long): NoticePreview? {
         val threads = visible(nowWallMs)
-            .filter { it.notice.ownerPluginId == ownerPluginId && it.notice.threadKey != null }
+            .filter { it.state != HistoryState.WITHDRAWN && it.notice.ownerPluginId == ownerPluginId && it.notice.threadKey != null }
             .distinctBy { it.notice.threadKey }
         return if (threads.isEmpty() || ownerPluginId == null) null else aggregate(ownerPluginId, threads)
     }

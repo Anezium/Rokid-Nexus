@@ -1050,14 +1050,14 @@ class ComposerSessionTest {
     }
 
     @Test
-    fun `the root's conversation card says its arrival time in every state`() {
+    fun `a withdrawn preview retains its arrival time only in history`() {
         arrive(conversationNotice("t1", "Ana", "on est devant"))
         openRoot(at = 1_000)
         fun card() = screen().blocks.first() as ScreenBlock.Card
         assertEquals("14:02", card().time)
         send(SessionEvent.NoticeWithdrawn("relay", "t1"))
-        assertEquals("RELAY · ${SessionScreens.NOTIFICATION_REMOVED}", card().label)
-        assertEquals("14:02", card().time)
+        assertTrue(root().stops.none { it.kind == RootStopKind.NOTICE_PREVIEW })
+        assertEquals(wallNow, model.history.entries.single().notice.atWallMs)
     }
 
     @Test
@@ -1107,7 +1107,7 @@ class ComposerSessionTest {
     // ---- notifications ------------------------------------------------------------------------
 
     @Test
-    fun `the root's conversation card keeps its entry and resolves in place`() {
+    fun `the root's conversation card keeps its entry until withdrawn`() {
         arrive(conversationNotice("t1", "Ana", "on est devant"))
         openRoot(at = 1_000)
         val card = root().stops.first()
@@ -1124,16 +1124,35 @@ class ComposerSessionTest {
         assertEquals(2, root().stops.single { it.kind == RootStopKind.NOTIFICATIONS }.count)
 
         send(SessionEvent.NoticeWithdrawn("relay", "t1"))
-        assertEquals(HistoryState.WITHDRAWN, root().stops.first().notice?.state)
-        val drawn = screen().blocks.first() as ScreenBlock.Card
-        assertEquals("RELAY · ${SessionScreens.NOTIFICATION_REMOVED}", drawn.label)
-        assertEquals(SessionScreens.REMOVED_NOTHING_PROVEN, drawn.tertiary)
+        assertTrue(root().stops.none { it.kind == RootStopKind.NOTICE_PREVIEW })
+        assertEquals(HistoryState.WITHDRAWN, model.history.entry(entryId!!)?.state)
+        // A press begun on the vanished card cannot open its replacement.
+        press(3_000, start = 2_000)
+        assertTrue(effects.none { it is RequestPage })
 
-        // It still opens its exact thread, never another one.
-        send(SessionEvent.Enter(3_000))
+        openRoot(at = 4_000)
+        assertEquals("Bo", root().stops.first().text)
+        shown(5_000)
+        press(5_100)
         val request = effects.filterIsInstance<RequestPage>().single().request
         assertEquals("relay:thread", request.correlation.pageId)
-        assertEquals(destination("t1").paramsJson, request.paramsJson)
+        assertEquals(destination("t2").paramsJson, request.paramsJson)
+    }
+
+    @Test
+    fun `removing the selected preview requires a new drawn contact on its replacement`() {
+        arrive(conversationNotice("t1", "Ana", "hello"))
+        openRoot(at = 1_000)
+        shown(2_000)
+        send(SessionEvent.NoticeWithdrawn("relay", "t1"))
+        assertEquals(RootStopKind.NOTIFICATIONS, root().stops[root().selected].kind)
+        press(2_500, start = 2_100)
+        assertTrue(model.state is SessionState.Root)
+        shown(3_000)
+        press(3_100, start = 2_100)
+        assertTrue(model.state is SessionState.Root)
+        press(3_200)
+        assertTrue(model.state is SessionState.InPage)
     }
 
     @Test
@@ -1445,7 +1464,7 @@ class ComposerSessionTest {
         send(SessionEvent.FocusShown(SessionFocus.tokenOf(model) ?: error("nothing on screen"), atMs))
     }
 
-    private fun press(at: Long) = send(SessionEvent.Enter(at + 40, pressStartMs = at))
+    private fun press(at: Long, start: Long = at) = send(SessionEvent.Enter(at + 40, pressStartMs = start))
 
     private fun send(event: SessionEvent) {
         val transition = reducer.reduce(model, event)

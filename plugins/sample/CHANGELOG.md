@@ -4,6 +4,9 @@
 
 The todo activity and its pages need Nexus hubs 1.9.0.
 
+- Add **Remove pin** to phone settings, so the standalone background pin can be
+  dismissed without waiting for its expiry or changing the Todo activity.
+
 - A todo example for the launcher bundle, through the public SDK only: the
   `hello:main` and `hello:todo` pages, a checklist whose rows carry `checked`
   and whose actions are typed `SetChecked` with the explicit desired state,

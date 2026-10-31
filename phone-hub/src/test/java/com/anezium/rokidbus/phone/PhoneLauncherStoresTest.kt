@@ -14,6 +14,27 @@ import org.junit.Test
 
 /** The phone's per-plugin launcher choices: quick approvals, activity preferences, offline snapshots. */
 class PhoneLauncherStoresTest {
+    @Test
+    fun `activity display choices persist under their grant and degrade quietly for old glasses`() {
+        val storage = MemoryStorage()
+        val prefs = PhoneActivityPreferences(storage)
+        val key = principal("media", emptySet()).grantKey()
+        val display = com.anezium.rokidbus.shared.ActivityDisplayPreference(com.anezium.rokidbus.shared.ActivityDisplayMode.EVENTS, 3_000)
+        assertTrue(prefs.setDisplay(key, display))
+        assertEquals(display, PhoneActivityPreferences(storage).preferenceFor(key).display)
+        assertTrue(prefs.preferenceFor(key).enabled)
+        val sent = mutableListOf<JSONObject>()
+        val sync = PhoneAmbientSync(PhoneAmbientPreferencesStore(MemoryStorage()),
+            send = { _, payload -> sent += payload; null }, launcherActive = { true }, log = {},
+            activityDisplays = { mapOf("media" to display) }, supportsActivityEvents = { false })
+        sync.pushPolicy()
+        val policy = AmbientPreferencesContract.parsePolicy(sent.single())!!
+        assertEquals(setOf("media"), policy.hiddenOwners)
+        assertTrue(policy.activityDisplays.isEmpty())
+        assertTrue(prefs.purge(key))
+        assertTrue(prefs.displayPreferences().isEmpty())
+    }
+
     private class MemoryStorage : PluginGrantStorage {
         var value: String? = null
         override fun read(): String? = value

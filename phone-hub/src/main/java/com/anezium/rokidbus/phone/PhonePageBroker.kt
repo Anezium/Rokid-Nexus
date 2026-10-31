@@ -789,6 +789,18 @@ class PhonePageBroker(
      */
     private fun forGlasses(stamped: JSONObject, page: PageSurfaceResponse.Page?, owner: String): JSONObject {
         if (launcherVersion() < 1) return PageSurfaceContract.stripLauncherFields(stamped)
+        for (body in listOfNotNull(stamped.optJSONObject("body"), stamped.optJSONObject("replacement")?.optJSONObject("body"))) {
+            com.anezium.rokidbus.shared.LauncherArtwork.stripUnsupported(body, launcherVersion())
+        }
+        if (launcherVersion() < LauncherInteractiveContract.ARTWORK_VERSION) {
+            for (body in listOfNotNull(stamped.optJSONObject("body"), stamped.optJSONObject("replacement")?.optJSONObject("body"))) {
+                body.remove("artwork")
+                body.remove("positionMs")
+                body.remove("durationMs")
+                body.remove("playbackSpeed")
+                body.remove("advancing")
+            }
+        }
         val approved = host.pageProvider(owner)?.let(host::quickFamilies).orEmpty()
         val quickIds = page?.actions.orEmpty()
             .filter { it.kind == PageSurfaceContract.KIND_PLUGIN && QuickActionPolicyContract.isQuick(it.typed, approved) }

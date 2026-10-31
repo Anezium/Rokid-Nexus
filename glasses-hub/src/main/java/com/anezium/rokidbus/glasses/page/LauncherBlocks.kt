@@ -8,7 +8,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.glasses.session.MapSize
 import com.anezium.rokidbus.glasses.session.ScreenBlock
-import com.anezium.rokidbus.shared.MediaPlaybackState
 
 /** How large a manoeuvre is drawn: on a page, or floating over the full-screen map. */
 internal enum class ManeuverScale(val glyphPx: Int, val distancePx: Float, val streetPx: Float) {
@@ -21,64 +20,8 @@ internal enum class ManeuverScale(val glyphPx: Int, val distancePx: Float, val s
  * transit ribbon. Each is measured at its real height; nothing here caps lines to fit a slot.
  */
 internal object LauncherBlocks {
-    /**
-     * Now playing, as an inert outlined card (its controls are rows or the command strip): the
-     * source in the caption row with the playback state as a glyph, never a word; the title
-     * bright only while it plays; artist, album and the page's own status under it. Nothing to
-     * play, or a player out of reach, is drawn muted throughout.
-     */
-    fun media(context: Context, icons: SessionIconSource, block: ScreenBlock.Media): View = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        background = PageStyle.outlined(selected = false)
-        setPadding(PageStyle.CARD_PADDING_PX, 10, PageStyle.CARD_PADDING_PX, 12)
-        val absent = block.state == MediaPlaybackState.NONE || block.state == MediaPlaybackState.UNAVAILABLE
-        val stateGlyph = when (block.state) {
-            MediaPlaybackState.PLAYING -> "play"
-            MediaPlaybackState.PAUSED -> "pause"
-            MediaPlaybackState.STOPPED -> "stop"
-            MediaPlaybackState.NONE, MediaPlaybackState.UNAVAILABLE -> null
-        }
-        val playing = block.state == MediaPlaybackState.PLAYING
-        if (block.source != null || stateGlyph != null) {
-            addView(
-                LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    addView(
-                        PageStyle.text(context, block.source.orEmpty(), PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, 1, 0.14f),
-                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
-                    )
-                    stateGlyph?.let { name ->
-                        glyphDrawable(context, icons, name, if (playing) PageStyle.phosphor else PageStyle.muted)?.let { drawable ->
-                            addView(
-                                ImageView(context).apply {
-                                    setImageDrawable(drawable)
-                                    tag = MediaStateTag(block.state)
-                                },
-                                LinearLayout.LayoutParams(MEDIA_STATE_PX, MEDIA_STATE_PX).apply { leftMargin = 10 },
-                            )
-                        }
-                    }
-                },
-                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 6 },
-            )
-        }
-        val titleColor = when {
-            absent -> PageStyle.muted
-            playing -> PageStyle.phosphor
-            else -> PageStyle.ink
-        }
-        addView(PageStyle.text(context, block.title, PageStyle.TITLE_PX, titleColor, PageStyle.sans).apply { setLineSpacing(0f, 1.2f) })
-        block.artist?.takeIf(String::isNotBlank)?.let {
-            addView(PageStyle.text(context, it, PageStyle.BODY_PX, if (absent) PageStyle.muted else PageStyle.ink, PageStyle.sans).apply { setPadding(0, 4, 0, 0) })
-        }
-        block.album?.takeIf(String::isNotBlank)?.let {
-            addView(PageStyle.text(context, it, PageStyle.ASIDE_PX, PageStyle.muted, PageStyle.sans).apply { setPadding(0, 3, 0, 0) })
-        }
-        block.status?.takeIf(String::isNotBlank)?.let {
-            addView(PageStyle.text(context, it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono).apply { setPadding(0, 8, 0, 0) })
-        }
-    }
+    fun media(context: Context, icons: SessionIconSource, block: ScreenBlock.Media): View =
+        MediaPlayerBlockView(context, icons, block)
 
     /**
      * The next manoeuvre: its glyph, the distance as the figure, the street and the arrival. A
@@ -156,10 +99,6 @@ internal object LauncherBlocks {
             setPadding(7, 1, 7, 2)
         }
 
-    /** What a media block's state glyph shows, kept on the view for tests. */
-    data class MediaStateTag(val state: MediaPlaybackState)
-
-    const val MEDIA_STATE_PX = 20
     const val MANEUVER_GAP_PX = 12
     const val APPROXIMATE = "~"
 }

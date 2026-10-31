@@ -11,6 +11,11 @@ bundled JPEG image, cards, directional input, tap state, and back-to-close
 behavior. The settings activity uses the shared `NexusUi`/`BusTheme` kit and
 provides the system uninstall action.
 
+The phone settings also demonstrate a standalone background pin. **Pin something
+from the phone** sends it once, then disconnects. **Remove pin** reconnects and
+calls the public SDK's `hidePin()` for this plugin; the Todo activity and list
+remain unchanged.
+
 The manifest requests `ink_surface` and `microphone` separately from `surfaces`.
 After install, approve the grants to exercise Ink and background audio; old
 glasses or a down SPP data link take the fallback path. The implementation is in
@@ -32,6 +37,12 @@ frames arrive, so a crashed plugin or stalled stream cannot leave a stale listen
 indicator. Normal stops hide it immediately.
 
 ## Todo example
+
+The Todo settings pair **Keep in activities** with the SDK's **Floating
+activity** link. Nexus owns that display choice and its duration. The sample
+uses its persisted list revision as `NexusActivity.eventKey`, so a real list
+edit may briefly reveal its band when the user chooses On changes. A resend
+or reconnect keeps the same key; expiry hides the band while retaining the card.
 
 A small checklist shows the launcher bundle through the public SDK only: pages,
 typed `setChecked` actions and an ongoing activity, with no glasses app and

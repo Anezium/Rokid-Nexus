@@ -115,11 +115,25 @@ internal object ActivityOverlayRenderer {
             }
 
         val visible = state.items.filter { it.presentation != ActivityPresentation.HIDDEN }
-        state.items.filter { it.presentation == ActivityPresentation.HIDDEN }.forEach { nodes[it.activity.surfaceId]?.visibility = View.GONE }
         if (visible.isEmpty()) {
-            // The camera needs the glasses clear now, not after a fold.
-            teardown(keepMotionTokens = true)
+            // Leave an in-flight expiry animation to its completion callback. Camera suppression
+            // and other hard hides still remove the window immediately.
+            if (state.items.any { it.animateExit }) {
+                if (nodes.isNotEmpty()) dismissAll(keepMotionTokens = true)
+                else if ((root?.childCount ?: 0) == 0) teardown(keepMotionTokens = true)
+            } else teardown(keepMotionTokens = true)
             return
+        }
+        state.items.filter { it.presentation == ActivityPresentation.HIDDEN }.forEach { item ->
+            nodes[item.activity.surfaceId]?.let { island ->
+                if (item.animateExit) {
+                    if (island.visibility == View.VISIBLE && island.currentForm != null) island.dismiss {
+                        if (latestState.items.none { it.activity.surfaceId == item.activity.surfaceId && it.presentation != ActivityPresentation.HIDDEN }) {
+                            island.visibility = View.GONE
+                        }
+                    }
+                } else island.visibility = View.GONE
+            }
         }
         val activeService = service ?: return
         val container = ensureWindow(activeService) ?: return
@@ -361,11 +375,12 @@ internal object ActivityOverlayRenderer {
     private fun foldToSteady(flare: FlareSession) {
         val island = nodes[flare.surfaceId] ?: return
         val item = latestState.items.firstOrNull { it.activity.surfaceId == flare.surfaceId } ?: return
+        if (item.presentation == ActivityPresentation.HIDDEN) return
         island.showSteady(item.presentation)
     }
 
     /** The last activity ended: every island folds away, then the window goes. */
-    private fun dismissAll() {
+    private fun dismissAll(keepMotionTokens: Boolean = false) {
         flareGeneration++
         flareCollapse?.let(main::removeCallbacks)
         flareCollapse = null
@@ -380,7 +395,7 @@ internal object ActivityOverlayRenderer {
         leaving.forEach { island ->
             island.dismiss {
                 container.removeView(island)
-                if (root === container && nodes.isEmpty() && container.childCount == 0) teardown()
+                if (root === container && nodes.isEmpty() && container.childCount == 0) teardown(keepMotionTokens)
             }
         }
     }
@@ -422,18 +437,17 @@ internal object ActivityOverlayRenderer {
         private val nav: NavIslandView = NavIslandView(context),
         /** An owner's activity glyph by name. */
         private val glyphOf: (String, String) -> Drawable = { owner, glyph -> GlassesHub.activityGlyphDrawable(context, owner, glyph) },
-        /** A command's built-in glyph by name. */
-        actionGlyphOf: (String) -> Drawable = HudActionRowView.builtInGlyphs(context),
     ) : HudIslandView(context) {
         // Every form that names the activity scrolls a title wider than its line rather than cut it.
         private val chip = PinOverlayRenderer.PinPanelView(context, movingTitle = titleLine(context)).apply { dropChrome() }
         private val compact = ActivityCompactView(context)
         private val glyphOnly = ActivityGlyphView(context, compact.title.lineHeight)
-        private val panel = ActivityPanelView(context, actionGlyphOf)
+        private val panel = ActivityPanelView(context)
         private val flareTitle = titleLine(context)
         private val flare = NoticeOverlayRenderer.NoticeBandView(context, chromeless = true, movingTitle = flareTitle)
 
         private var renderedGuidance: GuidanceIsland? = null
+        private var compactArtwork = false
 
         /** Drawn as a guidance island: its steady form is [nav], whatever the presentation. */
         var guided = false
@@ -500,6 +514,9 @@ internal object ActivityOverlayRenderer {
             // While the phone link is down the island says it is last known and offers no action.
             val content = GuidanceIslands.lastKnown(item)
             val owner = item.activity.ownerPluginId
+            compactArtwork = content.artwork != null || item.activity.content.actions.any { it.typed?.isMedia == true }
+            val preview = content.artwork?.drawable(context, BusTheme.phosphor)
+            val budget = if (compactArtwork) minOf(widthBudgetPx ?: Int.MAX_VALUE, resources.displayMetrics.widthPixels / 2) else widthBudgetPx
             val measured = content.measure != null
             // The text form while its title keeps a character's room, then the glyph alone, then nothing.
             val textMinPx = if (measured) chip.minStackedWidthPx(PinSurfaceSize.MEDIUM) else compact.minWidthPx()
@@ -510,7 +527,7 @@ internal object ActivityOverlayRenderer {
                 else -> compact
             }
             if (folded === glyphOnly) {
-                update(glyphOnly, owner to content.glyph) { glyphOnly.setImageDrawable(glyphOf(owner, content.glyph)) }
+                update(glyphOnly, listOf(owner, content.glyph, content.artwork)) { glyphOnly.setImageDrawable(preview ?: glyphOf(owner, content.glyph)) }
             }
             if (measured) {
                 update(chip, listOf(content.title, content.measure, content.secondary, content.glyph, widthBudgetPx)) {
@@ -528,20 +545,20 @@ internal object ActivityOverlayRenderer {
                     )
                 }
             } else {
-                update(compact, listOf(content.title, content.scrolledSecondary, content.glyph, widthBudgetPx)) {
+                update(compact, listOf(content.title, content.scrolledSecondary, content.glyph, content.artwork, compactArtwork, budget)) {
                     compact.render(
                         titleText = content.title,
                         secondaryText = content.scrolledSecondary,
-                        glyph = glyphOf(owner, content.glyph),
-                        widthBudgetPx = widthBudgetPx,
+                        glyph = preview ?: glyphOf(owner, content.glyph),
+                        widthBudgetPx = budget,
+                        small = compactArtwork,
                     )
                 }
             }
-            update(panel, content to item.activity.selectedActionIndex) {
+            update(panel, content) {
                 panel.render(
                     content = content,
                     mainGlyph = glyphOf(owner, content.glyph),
-                    selectedActionIndex = item.activity.selectedActionIndex,
                 )
             }
             update(flare, content) {
@@ -586,7 +603,7 @@ internal object ActivityOverlayRenderer {
             setOutline(BusTheme.hairline, dp(context, 1).toFloat())
             val form = when {
                 guided -> nav
-                presentation == ActivityPresentation.PANEL -> panel
+                presentation == ActivityPresentation.PANEL && !compactArtwork -> panel
                 withheld -> null
                 else -> folded
             }
@@ -677,7 +694,14 @@ internal object ActivityOverlayRenderer {
                 ceil(title.paint.measureText("M")).toInt()
         }
 
-        fun render(titleText: String, secondaryText: String?, glyph: Drawable, widthBudgetPx: Int? = null) {
+        fun render(titleText: String, secondaryText: String?, glyph: Drawable, widthBudgetPx: Int? = null, small: Boolean = false) {
+            title.setTextSize(if (small) android.util.TypedValue.COMPLEX_UNIT_PX else android.util.TypedValue.COMPLEX_UNIT_SP, if (small) 17f else COMPACT_TITLE_SP)
+            secondary.setTextSize(if (small) android.util.TypedValue.COMPLEX_UNIT_PX else android.util.TypedValue.COMPLEX_UNIT_SP, if (small) 13f else COMPACT_SECONDARY_SP)
+            val edge = if (small) 8 else dp(context, 8)
+            val vertical = if (small) 6 else dp(context, COMPACT_VERTICAL_PADDING_DP)
+            setPadding(edge, vertical, edge, vertical)
+            val side = if (small) 36 else title.lineHeight + dp(context, COMPACT_LINE_GAP_DP) + secondary.lineHeight
+            this.glyph.layoutParams = (this.glyph.layoutParams as LayoutParams).apply { width = side; height = side }
             val glyphParams = this.glyph.layoutParams as LayoutParams
             val fractionPx = (resources.displayMetrics.widthPixels * COMPACT_TEXT_WIDTH_FRACTION).toInt()
             val maxWidthPx = widthBudgetPx
@@ -709,7 +733,7 @@ internal object ActivityOverlayRenderer {
     }
 
     /** The platform-owned expanded geometry; no plugin field controls it. */
-    private class ActivityPanelView(context: Context, actionGlyphOf: (String) -> Drawable) : LinearLayout(context) {
+    private class ActivityPanelView(context: Context) : LinearLayout(context) {
         private val glyph = ImageView(context)
         // A headline still too wide at the smallest fitting size scrolls rather than lose its end.
         private val primary = OverflowLineView(context).apply {
@@ -739,7 +763,6 @@ internal object ActivityOverlayRenderer {
         }
         private val track = ActivityTrackView(context)
         private val details = List(2) { text(DETAIL_SP, BusTheme.muted) }
-        private val actions = HudActionRowView(context, wholeLabels = true, glyphOf = actionGlyphOf)
         private val secondaryRow = LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
@@ -806,12 +829,6 @@ internal object ActivityOverlayRenderer {
                             },
                         )
                     }
-                    addView(
-                        actions,
-                        LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                            topMargin = dp(context, 8)
-                        },
-                    )
                 },
                 LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f),
             )
@@ -820,7 +837,6 @@ internal object ActivityOverlayRenderer {
         fun render(
             content: ActivitySurfaceContent,
             mainGlyph: Drawable,
-            selectedActionIndex: Int,
         ) {
             glyph.setImageDrawable(
                 content.badge?.let { ActivityBadgeDrawable(context, it) } ?: mainGlyph,
@@ -856,10 +872,6 @@ internal object ActivityOverlayRenderer {
                 view.text = line.orEmpty()
                 view.visibility = visibleIf(line != null)
             }
-            actions.render(
-                actions = content.actions.map { HudActionChip(it.glyph, it.label) },
-                selectedIndex = selectedActionIndex,
-            )
         }
 
         /**

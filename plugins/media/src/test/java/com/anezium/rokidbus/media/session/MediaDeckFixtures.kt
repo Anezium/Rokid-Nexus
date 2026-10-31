@@ -60,6 +60,13 @@ internal class FakeMonitor(private val listener: MediaDeckMonitorListener) : Med
     var sendResult: MediaDeckSendResult? = null
 
     val sent = mutableListOf<Pair<MediaDeckObservation.Session, MediaDeckCommand>>()
+    var resumeRequests = 0
+
+    override fun resumeIdle(): MediaDeckSendResult {
+        if (!started || live != MediaDeckObservation.NoSession) return MediaDeckSendResult.MOVED
+        resumeRequests++
+        return sendResult ?: MediaDeckSendResult.SENT
+    }
 
     override fun start() {
         started = true

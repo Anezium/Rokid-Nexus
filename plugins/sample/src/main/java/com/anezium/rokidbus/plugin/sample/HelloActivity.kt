@@ -62,6 +62,9 @@ class HelloActivity : Activity() {
             addView(NexusUi.sectionRow(this@HelloActivity, "Background pin"), NexusUi.block())
             addView(BusTheme.gap(this@HelloActivity, 10))
             addView(backgroundPinCard(), NexusUi.block())
+            addView(NexusUi.textButton(this@HelloActivity, "Remove pin").apply {
+                setOnClickListener { updateBackgroundPin(show = false) }
+            }, NexusUi.block())
             addView(BusTheme.gap(this@HelloActivity, 8))
             addView(statusLine(), NexusUi.block())
             addView(BusTheme.gap(this@HelloActivity, 24))
@@ -98,7 +101,7 @@ class HelloActivity : Activity() {
                 "No surface. Works with the glasses off.",
             ),
         )
-        setOnClickListener { pushBackgroundPin() }
+        setOnClickListener { updateBackgroundPin(show = true) }
     }
 
     private fun statusLine(): TextView = NexusUi.statusLine(this).also {
@@ -112,10 +115,11 @@ class HelloActivity : Activity() {
      * A ride-hailing plugin does exactly this from its notification listener — nothing
      * here needs a surface, a launcher entry, or the hub having opened us first.
      */
-    private fun pushBackgroundPin() {
+    private fun updateBackgroundPin(show: Boolean) {
         releaseClient()
         report("Connecting…")
-        val client = NexusPluginClient.create(
+        lateinit var client: NexusPluginClient
+        client = NexusPluginClient.create(
             context = applicationContext,
             pluginId = PLUGIN_ID,
             callbacks = object : NexusPluginCallbacks {
@@ -125,11 +129,14 @@ class HelloActivity : Activity() {
                 override fun onLinkState(state: Int) = Unit
 
                 override fun onRegistrationState(result: Int) {
-                    if (result != PluginRegistrationResult.APPROVED) {
-                        main.post { report("Not approved — grant this plugin in Nexus first.") }
-                        return
+                    main.post {
+                        if (pushClient !== client) return@post
+                        if (result != PluginRegistrationResult.APPROVED) {
+                            report("Not approved — grant this plugin in Nexus first.")
+                            return@post
+                        }
+                        pushAndDisconnect(show)
                     }
-                    main.post { pushAndDisconnect() }
                 }
             },
         )
@@ -137,23 +144,23 @@ class HelloActivity : Activity() {
         client.connect()
     }
 
-    private fun pushAndDisconnect() {
+    private fun pushAndDisconnect(show: Boolean) {
         val client = pushClient ?: return
-        val result = client.showPin(
+        val result = if (show) client.showPin(
             NexusPin(
                 title = "PUSHED FROM PHONE",
                 lines = listOf("no surface involved"),
             ),
-        )
+        ) else client.hidePin()
         report(
             when (result) {
                 NexusSdkResult.SENT ->
-                    "Pinned. Disconnected — it stays without us, for 30 minutes."
+                    if (show) "Pinned. Disconnected — it stays without us, for 30 minutes." else "Pin removed."
                 NexusSdkResult.CAPABILITY_NOT_AVAILABLE ->
                     "These glasses cannot show pins."
                 NexusSdkResult.CAPABILITY_NOT_GRANTED ->
                     "Surfaces not granted to this plugin."
-                else -> "Could not pin: $result"
+                else -> "Could not ${if (show) "pin" else "remove pin"}: $result"
             },
         )
         // Going away immediately is the point, not a shortcut: the pin is the hub's now.

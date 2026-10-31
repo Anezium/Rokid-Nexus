@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import com.anezium.rokidbus.shared.AmbientPolicy
 import com.anezium.rokidbus.shared.AmbientPreferencesContract
+import com.anezium.rokidbus.shared.ActivityDisplayPreference
 import com.anezium.rokidbus.shared.AmbientSize
 import com.anezium.rokidbus.shared.AmbientSizeEdit
 import com.anezium.rokidbus.shared.AmbientSizes
@@ -44,6 +45,7 @@ internal data class AmbientPreferencesSnapshot(
     val modes: Map<String, ForegroundAmbientMode> = emptyMap(),
     val queued: Map<String, AmbientSize?> = emptyMap(),
     val hiddenOwners: Set<String> = emptySet(),
+    val activityDisplays: Map<String, ActivityDisplayPreference> = emptyMap(),
 )
 
 /**
@@ -77,6 +79,8 @@ internal class AmbientPreferencesMirror(
     val hiddenOwners: Set<String> get() = snapshot.hiddenOwners
 
     fun size(owner: String): AmbientSize? = snapshot.sizes[owner]
+
+    fun display(owner: String): ActivityDisplayPreference = snapshot.activityDisplays[owner] ?: ActivityDisplayPreference.DEFAULT
 
     /** The mode over [packageName]; home is always residents, an app nobody configured signals. */
     fun modeFor(packageName: String?, isHome: Boolean): ForegroundAmbientMode =
@@ -120,8 +124,8 @@ internal class AmbientPreferencesMirror(
         if (last != null && incoming.revision <= last) return false
         policyRevision = incoming.revision
         val before = snapshot
-        commit(snapshot.copy(modes = incoming.modes, hiddenOwners = incoming.hiddenOwners))
-        return before.modes != incoming.modes || before.hiddenOwners != incoming.hiddenOwners
+        commit(snapshot.copy(modes = incoming.modes, hiddenOwners = incoming.hiddenOwners, activityDisplays = incoming.activityDisplays))
+        return before.modes != incoming.modes || before.hiddenOwners != incoming.hiddenOwners || before.activityDisplays != incoming.activityDisplays
     }
 
     /** The link went: the next phone snapshots are taken whatever their revision. */
@@ -156,7 +160,9 @@ internal class SharedPreferencesAmbientStorage(context: Context) : AmbientPrefer
         val hidden = prefs.getString(HIDDEN, null)?.let(::JSONArray)?.let { json ->
             (0 until json.length()).mapTo(linkedSetOf()) { json.getString(it) }
         }.orEmpty()
-        AmbientPreferencesSnapshot(sizes, modes, queued, hidden)
+        val displays = prefs.getString(DISPLAYS, null)?.let(::JSONObject)
+            ?.let(AmbientPreferencesContract::parseDisplayPreferences).orEmpty()
+        AmbientPreferencesSnapshot(sizes, modes, queued, hidden, displays)
     }.getOrElse { AmbientPreferencesSnapshot() }
 
     override fun save(snapshot: AmbientPreferencesSnapshot) {
@@ -168,6 +174,7 @@ internal class SharedPreferencesAmbientStorage(context: Context) : AmbientPrefer
                 JSONObject().apply { snapshot.queued.forEach { (owner, size) -> put(owner, size?.wireValue ?: JSONObject.NULL) } }.toString(),
             )
             .putString(HIDDEN, JSONArray(snapshot.hiddenOwners.sorted()).toString())
+            .putString(DISPLAYS, AmbientPreferencesContract.displayPreferencesPayload(snapshot.activityDisplays).toString())
             .apply()
     }
 
@@ -177,6 +184,7 @@ internal class SharedPreferencesAmbientStorage(context: Context) : AmbientPrefer
         const val MODES = "modes"
         const val QUEUED = "queued"
         const val HIDDEN = "hidden_owners"
+        const val DISPLAYS = "activity_displays"
     }
 }
 
@@ -207,6 +215,8 @@ internal object AmbientPreferences {
 
     /** [owner]'s saved size, null while automatic. The display page's preview never shows here. */
     fun size(owner: String): AmbientSize? = mirror.size(owner)
+
+    fun display(owner: String): ActivityDisplayPreference = mirror.display(owner)
 
     /** The size [owner]'s island is drawn at: the display page's preview over the saved size. */
     fun effectiveSize(owner: String): AmbientSize? = preview?.takeIf { it.first == owner }?.second ?: mirror.size(owner)

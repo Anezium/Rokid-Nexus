@@ -731,6 +731,10 @@ internal class PhoneActivityState(
     /** The glasses' copy: the phone's stamps with the bundle, a plain v1 activity without it. */
     private fun wireForm(activity: CanonicalPhoneActivity, payload: JSONObject): JSONObject {
         if (!bundleNegotiated()) return ActivitySurfaceContract.stripLauncherFields(payload)
+        val wirePayload = JSONObject(payload.toString()).apply {
+            com.anezium.rokidbus.shared.LauncherArtwork.stripUnsupported(this, launcherVersion() ?: 0)
+            if ((launcherVersion() ?: 0) < LauncherInteractiveContract.ACTIVITY_EVENTS_VERSION) remove("eventKey")
+        }
         val owner = activity.ownerPluginId
         val stamps = ActivityHubStamps(
             state = if (activity.offline) ActivityState.OFFLINE else ActivityState.LIVE,
@@ -738,7 +742,7 @@ internal class PhoneActivityState(
             knownAtWallMs = activity.knownAtWallMs,
         )
         return ActivitySurfaceContract.withHubStamps(
-            payload,
+            wirePayload,
             stamps,
             ActivitySurfaceContract.quickActionIds(activity.content, policy.quickFamilies(owner)),
         )

@@ -96,8 +96,7 @@ class NoticeExpiryRootTest {
         val firstAt = wallNow
         arrive(conversation("t2", "Alan", "moi aussi"))
         openRoot()
-        send(SessionEvent.NoticeWithdrawn("relay", "t1"))
-        send(SessionEvent.NoticeWithdrawn("relay", "t2"))
+        model = model.copy(history = model.history.markHandedOff("relay", "t1").markHandedOff("relay", "t2"))
         assertTrue(drawn().any { "Mika" in it })
 
         wallNow = firstAt + NoticeSurfaceContract.MAX_HISTORY_AGE_MS
@@ -151,8 +150,7 @@ class NoticeExpiryRootTest {
         wallNow += NoticeSurfaceContract.MAX_HISTORY_AGE_MS / 2
         arrive(conversation("t2", "Alan", "moi aussi"))
         openRoot()
-        send(SessionEvent.NoticeWithdrawn("relay", "t1"))
-        send(SessionEvent.NoticeWithdrawn("relay", "t2"))
+        model = model.copy(history = model.history.markHandedOff("relay", "t1").markHandedOff("relay", "t2"))
         assertTrue(drawn().any { "Mika" in it })
 
         // A deep sleep across Mika's bound: the newest member keeps the stop's own time fresh.

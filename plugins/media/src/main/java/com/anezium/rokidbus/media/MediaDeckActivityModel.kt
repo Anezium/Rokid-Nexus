@@ -91,12 +91,20 @@ internal object MediaDeckActivityModel {
     }
 
     /**
-     * The activity for [state], or null when there is nothing true to show: no session, no access,
-     * or sessions that cannot be read. The card's first tap focuses the play/pause command for the
-     * state shown (never a toggle); its destination, the media page, stays openable offline.
+     * The activity for [state], including an idle destination; null without access or readable
+     * session state. The card opens the integrated media page on its first tap; its destination
+     * stays openable offline. Older command-capable hubs retain the explicit transport actions.
      * The whole title rides as the headline for the surfaces with room for it.
      */
-    fun activity(state: MediaDeckState): NexusActivity? {
+    fun activity(state: MediaDeckState, artwork: com.anezium.rokidbus.shared.LauncherArtwork? = null): NexusActivity? {
+        if (state is MediaDeckState.NoSession) return NexusActivity(
+            glyph = GLYPH,
+            primary = "Media Deck",
+            secondary = "Ready to play",
+            destination = NexusPageDestination(MediaDeckPages.MAIN),
+            activation = NexusActivityActivation.DESTINATION,
+            persistence = NexusActivityPersistence.ONGOING,
+        )
         val active = state as? MediaDeckState.Active ?: return null
         val playPause = MediaDeckCommand.desiredFor(active.phase)
         val actions = listOf(MediaDeckCommand.PREVIOUS, playPause, MediaDeckCommand.NEXT).map { command ->
@@ -108,19 +116,30 @@ internal object MediaDeckActivityModel {
             )
         }
         // A podcast or a video often has no artist; the app it plays in is still true.
-        val byline = active.track.artist.ifBlank { active.track.sourceLabel }
+        val byline = MediaText.oneLine(MediaText.printable(active.track.artist.ifBlank { active.track.sourceLabel }))
         val note = noteOf(active.phase)
         val room = ActivitySurfaceContract.MAX_SECONDARY_CHARS - (note?.let { it.length + NOTE_SEPARATOR.length } ?: 0)
+        val secondary = listOfNotNull(note, MediaText.ellipsize(byline, room).takeIf(String::isNotBlank))
+            .joinToString(NOTE_SEPARATOR).takeIf(String::isNotBlank)
+        val wholeSecondary = MediaText.ellipsize(
+            listOfNotNull(note, byline.takeIf(String::isNotBlank)).joinToString(NOTE_SEPARATOR),
+            ActivitySurfaceContract.MAX_WHOLE_CHARS,
+        ).takeIf { it.isNotBlank() && it != secondary }
         return NexusActivity(
             glyph = GLYPH,
             primary = MediaText.ellipsize(active.track.title, ActivitySurfaceContract.MAX_PRIMARY_CHARS),
-            secondary = listOfNotNull(note, MediaText.ellipsize(byline, room).takeIf(String::isNotBlank))
-                .joinToString(NOTE_SEPARATOR)
-                .takeIf(String::isNotBlank),
+            secondary = secondary,
+            wholeSecondary = wholeSecondary,
+            eventKey = com.anezium.rokidbus.media.session.shortHash(
+                active.track.packageName + "\u0000" + active.track.mediaId.ifBlank {
+                    listOf(active.track.title, active.track.artist, active.track.album).joinToString("\u0000")
+                },
+            ),
             headline = MediaText.ellipsize(MediaText.printable(active.track.title), ActivitySurfaceContract.MAX_HEADLINE_CHARS),
             actions = actions,
             destination = NexusPageDestination(MediaDeckPages.MAIN),
             activation = NexusActivityActivation.COMMANDS,
+            artwork = artwork,
             defaultActionId = MediaDeckActionIds.encode(playPause, active.revision),
             persistence = NexusActivityPersistence.ONGOING,
         )
@@ -158,7 +177,7 @@ internal object MediaDeckActivityModel {
         MediaDeckActivityStatus.DISABLED -> "Off"
         MediaDeckActivityStatus.ACCESS_REQUIRED -> "On · needs media access"
         MediaDeckActivityStatus.REVOKED -> "On · media access was turned off"
-        MediaDeckActivityStatus.NO_SESSION -> "On · nothing playing"
+        MediaDeckActivityStatus.NO_SESSION -> "On · ready to play"
         MediaDeckActivityStatus.PLAYING,
         MediaDeckActivityStatus.PAUSED,
         MediaDeckActivityStatus.SESSION_CHANGED,

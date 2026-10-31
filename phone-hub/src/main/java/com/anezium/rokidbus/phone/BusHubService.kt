@@ -1159,6 +1159,8 @@ class BusHubService : Service() {
             launcherActive = { remoteLauncherInteractiveVersion?.let(LauncherInteractiveContract::isActive) == true },
             log = ::log,
             hiddenOwners = ::ownersKeptOffGlasses,
+            activityDisplays = ::activityDisplayPreferences,
+            supportsActivityEvents = { (remoteLauncherInteractiveVersion ?: 0) >= LauncherInteractiveContract.ACTIVITY_EVENTS_VERSION },
         )
         ComposeKeyboardPrompt.sink = object : ComposeKeyboardSink {
             override fun onText(captureId: String, text: String) =
@@ -5868,6 +5870,13 @@ class BusHubService : Service() {
      * The plugins whose island and pin the user keeps off the glasses: only a choice made under
      * the grant the owner holds now, since a stale key's choice is about to be purged.
      */
+    private fun activityDisplayPreferences(): Map<String, com.anezium.rokidbus.shared.ActivityDisplayPreference> {
+        if (!::activityPreferences.isInitialized) return emptyMap()
+        return activityPreferences.displayPreferences().filterKeys { key ->
+            surfaceOwnerFor(key.pluginId)?.grantKey() == key
+        }.mapKeys { it.key.pluginId }
+    }
+
     private fun ownersKeptOffGlasses(): Set<String> {
         if (!::activityPreferences.isInitialized) return emptySet()
         return activityPreferences.keptOffGlasses()

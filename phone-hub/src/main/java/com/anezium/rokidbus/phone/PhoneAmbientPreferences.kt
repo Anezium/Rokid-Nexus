@@ -132,6 +132,8 @@ internal class PhoneAmbientSync(
     private val log: (String) -> Unit,
     initialRevision: Long = System.currentTimeMillis(),
     private val hiddenOwners: () -> Set<String> = { emptySet() },
+    private val activityDisplays: () -> Map<String, com.anezium.rokidbus.shared.ActivityDisplayPreference> = { emptyMap() },
+    private val supportsActivityEvents: () -> Boolean = { true },
 ) {
     private val revision = AtomicLong(initialRevision)
 
@@ -167,8 +169,15 @@ internal class PhoneAmbientSync(
     fun pushPolicy() {
         if (!launcherActive()) return
         // Within the wire's bound: PhoneActivityPreferences refuses to keep one more plugin off.
-        val hidden = hiddenOwners()
-        val policy = AmbientPolicy(revision.incrementAndGet(), store.modes(), hidden)
+        val displays = activityDisplays()
+        // Old glasses cannot time or scope an island: keep these choices quiet until updated.
+        val unsupported = if (supportsActivityEvents()) emptySet() else displays.filterValues {
+            it.mode == com.anezium.rokidbus.shared.ActivityDisplayMode.EVENTS ||
+                it.mode == com.anezium.rokidbus.shared.ActivityDisplayMode.HOME
+        }.keys
+        val hidden = hiddenOwners() + unsupported
+        val policy = AmbientPolicy(revision.incrementAndGet(), store.modes(), hidden,
+            if (supportsActivityEvents()) displays else emptyMap())
         val error = send(AmbientPreferencesContract.POLICY_PATH, AmbientPreferencesContract.policyPayload(policy))
         log(
             "ambient policy ${if (error == null) "sent" else "not sent code=$error"} revision=${policy.revision} " +

@@ -33,6 +33,7 @@ internal data class MediaDeckTarget(val identity: MediaSessionIdentity, val revi
  */
 internal enum class MediaDeckControlOutcome(val status: Status) {
     DONE(Status.DONE),
+    RESUME_REQUESTED(Status.DONE),
 
     /** Another session took over since the wearer saw this one. */
     STALE_SESSION(Status.STALE),
@@ -56,6 +57,7 @@ internal enum class MediaDeckControlOutcome(val status: Status) {
     val message: String
         get() = when (this) {
             DONE -> "Sent to the player"
+            RESUME_REQUESTED -> "Resume requested on phone"
             STALE_SESSION -> "Another player took over"
             STALE_REVISION -> "Playback changed"
             NO_SESSION -> "Nothing is playing"

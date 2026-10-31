@@ -6,6 +6,8 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import com.anezium.rokidbus.shared.ActivityDisplayMode
+import com.anezium.rokidbus.shared.ActivityDisplayPreference
 import com.anezium.rokidbus.shared.ActivityCloseReason
 import com.anezium.rokidbus.shared.ActivitySurfaceContent
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
@@ -39,6 +41,7 @@ internal data class ActivityRenderItem(
     val activity: NexusActivitySurface,
     val primary: Boolean,
     val presentation: ActivityPresentation,
+    val animateExit: Boolean = false,
     /** True only on the event item whose flare was admitted as urgent. */
     val urgent: Boolean = false,
     /** The owner's explicit ambient size as drawn here (capped over an app); null while automatic. */
@@ -157,9 +160,11 @@ internal class ActivityStateMachine {
         val maxDurationDeadlineMs: Long?,
         val selectedActionIndex: Int,
         val motionToken: Long,
+        val lastEventAtMs: Long?,
     )
 
     private val residents = linkedMapOf<String, Resident>()
+    private val eventKeys = linkedMapOf<String, String>()
     private val latestSeqBySurface = mutableMapOf<String, Long>()
     private var globalClearSeq = Long.MIN_VALUE
     private var order = 0L
@@ -242,6 +247,7 @@ internal class ActivityStateMachine {
             // A new session is the latest thing to happen, so it goes above what was already running.
             // Restarting a resident (a re-registration, a lost send) is not news and keeps its place.
             lastSignificantOrder = if (previous == null) nextOrder else previous.lastSignificantOrder,
+            lastEventAtMs = if (content.isOffline) null else observeEvent(ownerPluginId, content.eventKey, nowMs, previous?.lastEventAtMs),
             lastFlareAtMs = null,
             lastUrgentAtMs = previous?.lastUrgentAtMs,
             collapseAtMs = nowMs + COLLAPSE_AFTER_MS,
@@ -285,6 +291,7 @@ internal class ActivityStateMachine {
             ?.takeIf { it >= 0 }
             ?: 0
         val nextOrder = ++order
+        val observedEventAt = if (content.isOffline) null else observeEvent(current.ownerPluginId, content.eventKey, nowMs, current.lastEventAtMs)
         residents[surfaceId] = current.copy(
             seq = seq,
             content = content,
@@ -294,7 +301,8 @@ internal class ActivityStateMachine {
             } else {
                 current.lastSignificantOrder
             },
-            collapseAtMs = nowMs + COLLAPSE_AFTER_MS,
+            lastEventAtMs = if (content.isOffline) null else if (patch.significant) nowMs else observedEventAt,
+            collapseAtMs = if (patch.significant) nowMs + COLLAPSE_AFTER_MS else current.collapseAtMs,
             selectedActionIndex = selectedIndex,
             motionToken = ++motionToken,
         )
@@ -331,7 +339,12 @@ internal class ActivityStateMachine {
         return ActivityMutation.Cleared(cleared)
     }
 
-    fun expire(nowMs: Long): List<String> {
+    fun expire(nowMs: Long, displayOf: (String) -> ActivityDisplayPreference = { ActivityDisplayPreference.DEFAULT }): List<String> {
+        residents.replaceAll { _, resident ->
+            val display = displayOf(resident.ownerPluginId)
+            if (display.mode == ActivityDisplayMode.EVENTS && resident.lastEventAtMs?.let { nowMs >= it + display.durationMs } == true)
+                resident.copy(lastEventAtMs = null) else resident
+        }
         val expired = residents.values
             .filter { it.maxDurationDeadlineMs?.let { deadline -> nowMs >= deadline } == true }
             .map(Resident::surfaceId)
@@ -340,8 +353,14 @@ internal class ActivityStateMachine {
         return expired
     }
 
-    fun nextDeadlineMs(nowMs: Long, alwaysExpanded: Boolean): Long? = buildList {
+    fun nextDeadlineMs(nowMs: Long, alwaysExpanded: Boolean,
+        displayOf: (String) -> ActivityDisplayPreference = { ActivityDisplayPreference.DEFAULT },
+    ): Long? = buildList {
         residents.values.forEach { resident ->
+            val display = displayOf(resident.ownerPluginId)
+            if (display.mode == ActivityDisplayMode.EVENTS) {
+                resident.lastEventAtMs?.plus(display.durationMs)?.takeIf { it > nowMs }?.let(::add)
+            }
             resident.maxDurationDeadlineMs?.let(::add)
             if (!alwaysExpanded && resident.collapseAtMs > nowMs) add(resident.collapseAtMs)
         }
@@ -372,16 +391,26 @@ internal class ActivityStateMachine {
         sizeOf: (String) -> AmbientSize? = { null },
         mode: ForegroundAmbientMode = ForegroundAmbientMode.RESIDENTS,
         keptOff: (String) -> Boolean = { false },
+        displayOf: (String) -> ActivityDisplayPreference = { ActivityDisplayPreference.DEFAULT },
     ): ActivityEventPresentation {
         val resident = residents[surfaceId]
             ?: return ActivityEventPresentation(ActivityPresentation.HIDDEN)
         if (context == ActivityPresentationContext.CAMERA_OVERLAY || mode == ForegroundAmbientMode.NOTHING ||
             keptOff(resident.ownerPluginId)
         ) {
+            residents[surfaceId] = resident.copy(lastEventAtMs = null)
             return ActivityEventPresentation(ActivityPresentation.HIDDEN)
         }
+        val display = displayOf(resident.ownerPluginId)
+        val ownerMode = if (display.mode == ActivityDisplayMode.PERSISTENT || display.mode == ActivityDisplayMode.HOME)
+            ForegroundAmbientMode.RESIDENTS else mode
+        val special = displayPresentation(resident, display, context, mode, nowMs)
+        if (special != null) return ActivityEventPresentation(
+            if (display.mode == ActivityDisplayMode.EVENTS && special != ActivityPresentation.HIDDEN &&
+                resident.lastEventAtMs == nowMs) ActivityPresentation.PULSE else special,
+        )
         if (surfaceId != islandPrimary(keptOff)) {
-            return ActivityEventPresentation(applyForegroundMode(ActivityPresentation.PULSE, mode))
+            return ActivityEventPresentation(applyForegroundMode(ActivityPresentation.PULSE, ownerMode))
         }
         val flareAvailable = resident.lastFlareAtMs
             ?.let { nowMs - it >= FLARE_INTERVAL_MS }
@@ -395,7 +424,7 @@ internal class ActivityStateMachine {
                 flareBudgetAvailable = flareAvailable || urgentAdmitted,
                 collapseState = collapseState(resident, nowMs, alwaysExpanded || sizeOf(resident.ownerPluginId) != null),
             ),
-            mode,
+            ownerMode,
         )
         val urgentFlare = urgentAdmitted && selected == ActivityPresentation.FLARE
         if (selected == ActivityPresentation.FLARE) {
@@ -418,28 +447,45 @@ internal class ActivityStateMachine {
         sizeOf: (String) -> AmbientSize? = { null },
         mode: ForegroundAmbientMode = ForegroundAmbientMode.RESIDENTS,
         keptOff: (String) -> Boolean = { false },
+        displayOf: (String) -> ActivityDisplayPreference = { ActivityDisplayPreference.DEFAULT },
     ): ActivityRenderState {
         val ordered = residents.values.sortedBy(Resident::startedOrder)
         val primary = primarySurfaceId()
         // An owner kept off the glasses keeps its entry, so its card, but no island nor corner.
-        val islandPrimary = islandPrimary(keptOff)
-        val islands = islandIds(islandPrimary, keptOff)
+        val scopedOff: (String) -> Boolean = { owner ->
+            keptOff(owner) || residents.values.firstOrNull { it.ownerPluginId == owner }?.let {
+                displayPresentation(it, displayOf(owner), context, mode, nowMs) == ActivityPresentation.HIDDEN
+            } == true
+        }
+        val islandPrimary = islandPrimary(scopedOff)
+        val eventCandidate = ordered.filter { !scopedOff(it.ownerPluginId) && displayOf(it.ownerPluginId).mode == ActivityDisplayMode.EVENTS }
+            .maxByOrNull { it.lastEventAtMs ?: Long.MIN_VALUE }?.surfaceId
+        val islands = islandIds(islandPrimary, scopedOff, eventCandidate)
+        val rendered = islands + ordered.filter { displayOf(it.ownerPluginId).mode == ActivityDisplayMode.EVENTS }.map { it.surfaceId }
         corners = allocateActivityCorners(
             activityIdsInOrder = ordered.map(Resident::surfaceId).filter { it in islands },
             existing = corners.filterKeys { it in islands },
             pinCorner = pinCorner,
         )
         return ActivityRenderState(
-            items = ordered.filter { it.surfaceId in islands }.mapNotNull { resident ->
-                val corner = corners[resident.surfaceId] ?: return@mapNotNull null
+            items = ordered.filter { it.surfaceId in rendered }.map { resident ->
+                val corner = corners[resident.surfaceId] ?: PinSurfacePosition.TOP_RIGHT
                 val preferred = sizeOf(resident.ownerPluginId)
+                val display = displayOf(resident.ownerPluginId)
+                val ownerMode = if (display.mode == ActivityDisplayMode.PERSISTENT || display.mode == ActivityDisplayMode.HOME)
+                    ForegroundAmbientMode.RESIDENTS else mode
+                val special = displayPresentation(resident, display, context, mode, nowMs)
                 val presentation = when {
-                    context == ActivityPresentationContext.CAMERA_OVERLAY ->
+                    resident.surfaceId !in islands -> ActivityPresentation.HIDDEN
+                    context == ActivityPresentationContext.CAMERA_OVERLAY || keptOff(resident.ownerPluginId) ->
                         ActivityPresentation.HIDDEN
+                    mode == ForegroundAmbientMode.NOTHING -> ActivityPresentation.HIDDEN
+                    special != null -> if (special != ActivityPresentation.HIDDEN && resident.surfaceId == eventSurfaceId &&
+                        eventPresentation == ActivityPresentation.PULSE) ActivityPresentation.PULSE else special
                     resident.surfaceId == eventSurfaceId && eventPresentation != null ->
                         eventPresentation
                     resident.surfaceId != islandPrimary ->
-                        applyForegroundMode(ActivityPresentation.CHIP, mode)
+                        applyForegroundMode(ActivityPresentation.CHIP, ownerMode)
                     else ->
                         applyForegroundMode(
                             selectActivityPresentation(
@@ -449,7 +495,7 @@ internal class ActivityStateMachine {
                                 // An explicit size replaces the ten-second collapse.
                                 collapseState = collapseState(resident, nowMs, alwaysExpanded || preferred != null),
                             ),
-                            mode,
+                            ownerMode,
                         )
                 }
                 ActivityRenderItem(
@@ -468,6 +514,8 @@ internal class ActivityStateMachine {
                         selectedActionIndex = NO_SELECTED_ACTION,
                         motionToken = resident.motionToken,
                     ),
+                    animateExit = display.mode == ActivityDisplayMode.EVENTS &&
+                        context != ActivityPresentationContext.CAMERA_OVERLAY && !keptOff(resident.ownerPluginId),
                     primary = resident.surfaceId == islandPrimary,
                     presentation = presentation,
                     urgent = eventUrgent &&
@@ -490,22 +538,47 @@ internal class ActivityStateMachine {
         )
     }
 
+    private fun displayPresentation(
+        resident: Resident,
+        display: ActivityDisplayPreference,
+        context: ActivityPresentationContext,
+        mode: ForegroundAmbientMode,
+        nowMs: Long,
+    ): ActivityPresentation? = when {
+        mode == ForegroundAmbientMode.NOTHING -> ActivityPresentation.HIDDEN
+        display.mode == ActivityDisplayMode.HIDDEN -> ActivityPresentation.HIDDEN
+        display.mode == ActivityDisplayMode.HOME && context != ActivityPresentationContext.IDLE_HOME -> ActivityPresentation.HIDDEN
+        display.mode == ActivityDisplayMode.EVENTS ->
+            if (!resident.content.isOffline && resident.lastEventAtMs?.let { nowMs < it + display.durationMs } == true)
+                ActivityPresentation.CHIP else ActivityPresentation.HIDDEN
+        else -> null
+    }
+
     /**
      * The entries that get a corner island: the primary and one other live entry, the wearer's
      * pin first, then the latest significant update, then the earliest start. Never an offline one,
      * nor one whose owner the user keeps off the glasses.
      */
-    private fun islandIds(primary: String?, keptOff: (String) -> Boolean): Set<String> {
+    private fun islandIds(primary: String?, keptOff: (String) -> Boolean, eventCandidate: String? = null): Set<String> {
         val other = residents.values
             .filter { !it.content.isOffline && it.surfaceId != primary && !keptOff(it.ownerPluginId) }
             .sortedWith(
-                compareByDescending<Resident> { it.content.userPinned }
+                compareByDescending<Resident> { it.surfaceId == eventCandidate }
+                    .thenByDescending { it.content.userPinned }
                     .thenByDescending { it.lastSignificantOrder ?: Long.MIN_VALUE }
                     .thenBy { it.startedOrder }
                     .thenBy { it.ownerPluginId },
             )
             .firstOrNull()
         return setOfNotNull(primary, other?.surfaceId)
+    }
+
+    /** Reconnect snapshots with the same event identity are not new events. */
+    private fun observeEvent(owner: String, key: String?, nowMs: Long, previousAtMs: Long?): Long? {
+        if (key == null || eventKeys[owner] == key) return previousAtMs
+        eventKeys[owner] = key
+        while (eventKeys.size > ActivitySurfaceContract.MAX_COLLECTION_ACTIVITIES) eventKeys.remove(eventKeys.keys.first())
+        return nowMs
     }
 
     fun moveSelection(surfaceId: String, delta: Int, nowMs: Long): Boolean {
@@ -838,7 +911,7 @@ internal object ActivityController {
                     DisplayWakeKind.ACTIVITY,
                     // Nothing of an owner kept off the glasses would light up.
                     requested = result.significant && state.wakeDisplayRequested(result.surfaceId) &&
-                        !keptOffGlasses(identity.second),
+                        mayWakeForActivity(identity.second),
                 )
                 publishEvent(result, now)
             }
@@ -879,7 +952,8 @@ internal object ActivityController {
             alwaysExpanded = alwaysExpanded(),
             sizeOf = ambientSizes(ambient),
             mode = ambientMode(ambient),
-            keptOff = keptOff(ambient),
+            keptOff = hiddenIslands(ambient),
+            displayOf = ambientDisplays(ambient),
         )
         if (result.significant && event.presentation == ActivityPresentation.PULSE) {
             log("activity flare throttled id=${result.surfaceId}")
@@ -912,7 +986,8 @@ internal object ActivityController {
             eventUrgent = eventUrgent,
             sizeOf = ambientSizes(ambient),
             mode = ambientMode(ambient),
-            keptOff = keptOff(ambient),
+            keptOff = hiddenIslands(ambient),
+            displayOf = ambientDisplays(ambient),
         ))
         // A route lives as long as its activity: ended or offline, its geometry and heading go.
         RouteLive.retain(
@@ -937,6 +1012,9 @@ internal object ActivityController {
         (GlassesHub.launcherInteractiveActive() || GlassesHub.launcherBundleHeldThroughLoss()) &&
             NexusInput.backend == LauncherBackend.SESSION
 
+    private fun ambientDisplays(ambient: Boolean): (String) -> ActivityDisplayPreference =
+        if (ambient) AmbientPreferences::display else { _ -> ActivityDisplayPreference.DEFAULT }
+
     private fun ambientSizes(ambient: Boolean): (String) -> AmbientSize? =
         if (ambient) { owner ->
             AmbientPreferences.effectiveSize(owner).takeIf {
@@ -953,8 +1031,26 @@ internal object ActivityController {
      */
     internal fun keptOffGlasses(owner: String): Boolean = keptOff(launcherAmbient())(owner)
 
+    private fun mayWakeForActivity(owner: String): Boolean {
+        val ambient = launcherAmbient()
+        if (keptOff(ambient)(owner)) return false
+        if (!ambient) return true
+        if (sessionOpen || cameraOverlayActive || ambientMode(true) == ForegroundAmbientMode.NOTHING) return false
+        return when (AmbientPreferences.display(owner).mode) {
+            ActivityDisplayMode.HIDDEN -> false
+            ActivityDisplayMode.HOME -> presentationContext(true) == ActivityPresentationContext.IDLE_HOME
+            else -> true
+        }
+    }
+
     private fun keptOff(ambient: Boolean): (String) -> Boolean =
         if (ambient) AmbientPreferences::keptOffGlasses else { _ -> false }
+
+    private fun hiddenIslands(ambient: Boolean): (String) -> Boolean {
+        val preference = keptOff(ambient)
+        // The session already renders the collection and its pages; ambient islands cover its chrome.
+        return { owner -> sessionOpen || preference(owner) }
+    }
 
     /**
      * With the bundle's ambient presentation, the open Nexus session counts as the launcher and the
@@ -991,10 +1087,10 @@ internal object ActivityController {
 
     private fun scheduleDeadline(nowMs: Long) {
         cancelDeadline()
-        val deadline = state.nextDeadlineMs(nowMs, alwaysExpanded()) ?: return
+        val deadline = state.nextDeadlineMs(nowMs, alwaysExpanded(), ambientDisplays(launcherAmbient())) ?: return
         val task = Runnable {
             deadlineTask = null
-            val expired = state.expire(SystemClock.elapsedRealtime())
+            val expired = state.expire(SystemClock.elapsedRealtime(), ambientDisplays(launcherAmbient()))
             expired.forEach { reportClosed(it, ActivityCloseReason.MAX_DURATION) }
             publish()
         }

@@ -28,7 +28,7 @@ import org.robolectric.annotation.LooperMode
 /**
  * `/core/notice/purge` (plan 028a §6.2-§6.3): once an owner is purged, nothing it showed stays
  * on a root kept open or beneath a page, as drawn by the session window. A withdrawal is not a
- * purge and keeps its readable card.
+ * purge: it removes the root preview but retains its entry in Notifications.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [32])
@@ -113,12 +113,59 @@ class NoticePurgeRootTest {
     }
 
     @Test
-    fun `a withdrawal keeps the card readable, said as removed`() {
+    fun `a withdrawal removes the root preview but keeps its history entry`() {
         arrive(conversation("t1", "Mika", "le code est 4417"))
         openRoot()
         send(SessionEvent.NoticeWithdrawn("relay", "t1"))
-        assertTrue(drawn().any { "Mika" in it })
-        assertEquals(HistoryState.WITHDRAWN, noticeStop().notice?.state)
+        assertTrue(root().stops.none { it.kind == RootStopKind.NOTICE_PREVIEW })
+        assertFalse(drawn().any { "Mika" in it })
+        assertEquals(HistoryState.WITHDRAWN, model.history.entries.single().state)
+        send(SessionEvent.Back(2_000))
+        openRoot()
+        assertTrue(root().stops.none { it.kind == RootStopKind.NOTICE_PREVIEW })
+    }
+
+    @Test
+    fun `a withdrawn generic notice is not promoted again`() {
+        arrive(NoticeEntry("relay", "Relay", "Alert", null, atWallMs = wallNow, eventKey = "alert"))
+        openRoot()
+        send(SessionEvent.NoticeWithdrawn("relay", "alert"))
+        assertTrue(root().stops.none { it.kind == RootStopKind.NOTICE_PREVIEW })
+        assertNull(model.history.rootPreview(wallNow))
+    }
+
+    @Test
+    fun `an aggregate loses withdrawn names then leaves when its last thread is withdrawn`() {
+        arrive(conversation("t1", "Mika", "hello"))
+        arrive(conversation("t2", "Alan", "hi"))
+        openRoot()
+        send(SessionEvent.NoticeWithdrawn("relay", "t1"))
+        assertEquals(1, noticeStop().notice?.threads)
+        assertFalse(drawn().any { "Mika" in it })
+        send(SessionEvent.NoticeWithdrawn("relay", "t2"))
+        assertTrue(root().stops.none { it.kind == RootStopKind.NOTICE_PREVIEW })
+    }
+
+    @Test
+    fun `withdrawal preserves the selected surviving stop and an open page's Back target`() {
+        arrive(conversation("t1", "Mika", "hello"))
+        openRoot()
+        send(SessionEvent.Step(1, 2_000))
+        assertEquals(RootStopKind.NOTIFICATIONS, root().stops[root().selected].kind)
+        send(SessionEvent.NoticeWithdrawn("relay", "t1"))
+        assertEquals(RootStopKind.NOTIFICATIONS, root().stops[root().selected].kind)
+        assertEquals(0, root().selected)
+
+        send(SessionEvent.Back(3_000))
+        arrive(conversation("t2", "Alan", "hi"))
+        openRoot()
+        repeat(2) { send(SessionEvent.Step(1, 4_000L + it)) }
+        send(SessionEvent.Enter(4_100))
+        assertTrue(model.state is SessionState.InPage)
+        send(SessionEvent.NoticeWithdrawn("relay", "t2"))
+        send(SessionEvent.Back(5_000))
+        assertTrue(root().stops.none { it.kind == RootStopKind.NOTICE_PREVIEW })
+        assertEquals(RootStopKind.APPLICATIONS, root().stops[root().selected].kind)
     }
 
     private fun assertGone(vararg words: String) {

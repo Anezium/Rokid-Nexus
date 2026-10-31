@@ -232,7 +232,7 @@ class ActivityStateMachineTest {
             now,
         )
         assertEquals(
-            ActivityPresentation.PANEL,
+            ActivityPresentation.CHIP,
             snapshotPrimaryPresentation(alwaysExpanded = false),
         )
     }

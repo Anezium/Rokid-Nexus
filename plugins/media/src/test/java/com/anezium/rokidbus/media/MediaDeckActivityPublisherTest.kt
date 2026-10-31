@@ -26,6 +26,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MediaDeckActivityPublisherTest {
+    @Test fun `only a different track changes the activity event identity`() {
+        fun activity(title: String, phase: MediaPlaybackPhase) = MediaDeckActivityModel.activity(
+            MediaDeckState.Active(1, SESSION_B, track(title = title), phase, sessionChanged = false))!!
+        val playing = activity("Teardrop", MediaPlaybackPhase.PLAYING)
+        assertEquals(playing.eventKey, activity("Teardrop", MediaPlaybackPhase.PAUSED).eventKey)
+        assertFalse(playing.eventKey == activity("Angel", MediaPlaybackPhase.PLAYING).eventKey)
+        val refined = MediaDeckActivityModel.activity(MediaDeckState.Active(2, SESSION_B,
+            track().copy(durationMs = 331_000, artist = "Corrected artist"), MediaPlaybackPhase.PLAYING, sessionChanged = false))!!
+        assertEquals("a stable media id survives metadata completion", playing.eventKey, refined.eventKey)
+    }
+
     private class FakePort : MediaDeckActivityPort {
         override var approved = false
         var held = 0
@@ -182,6 +193,28 @@ class MediaDeckActivityPublisherTest {
     }
 
     @Test
+    fun `scrolling activities retain the last artist beyond the legacy secondary limit`() {
+        fun activity(artist: String, phase: MediaPlaybackPhase) = requireNotNull(
+            MediaDeckActivityModel.activity(MediaDeckState.Active(1, SESSION_B, track(artist = artist), phase, sessionChanged = false)),
+        )
+        val artists = "MUNZi, yuri63k, kairo6k"
+        val paused = activity(artists, MediaPlaybackPhase.PAUSED)
+        assertEquals("Paused · MUNZi, yuri63k, ka…", paused.secondary)
+        assertEquals("Paused · $artists", paused.wholeSecondary)
+        assertFalse(paused.wholeSecondary!!.contains('…'))
+        assertTrue(paused.secondary!!.length <= ActivitySurfaceContract.MAX_SECONDARY_CHARS)
+
+        val playing = activity("$artists, Massive Attack", MediaPlaybackPhase.PLAYING)
+        assertEquals("$artists, Massive Attack", playing.wholeSecondary)
+        assertTrue(playing.secondary!!.length <= ActivitySurfaceContract.MAX_SECONDARY_CHARS)
+        assertNull(activity(artists, MediaPlaybackPhase.PLAYING).wholeSecondary)
+        val untrusted = activity("First\u0000artist\n" + "🎵".repeat(100), MediaPlaybackPhase.PAUSED).wholeSecondary!!
+        assertTrue(untrusted.length <= ActivitySurfaceContract.MAX_WHOLE_CHARS)
+        assertFalse(untrusted.any(Char::isISOControl))
+        assertFalse(Character.isHighSurrogate(untrusted[untrusted.lastIndex - 1]))
+    }
+
+    @Test
     fun `a position tick publishes nothing and a burst collapses into one update`() {
         val publisher = live()
         port.calls.clear()
@@ -268,15 +301,79 @@ class MediaDeckActivityPublisherTest {
     }
 
     @Test
-    fun `nothing playing ends the activity and lets the service go`() {
+    fun `nothing playing retains an ongoing destination and lets the service go`() {
         val publisher = live()
 
         fake.monitor.emit(MediaDeckObservation.NoSession)
-        assertEquals(listOf("start", "end"), port.calls)
+        advance(MediaDeckActivityPublisher.MIN_UPDATE_INTERVAL_MS)
+        assertEquals(listOf("start", "update"), port.calls)
+        assertEquals(NexusActivityActivation.DESTINATION, port.activities.last().activation)
+        assertEquals(NexusActivityPersistence.ONGOING, port.activities.last().persistence)
+        assertTrue(port.activities.last().actions.isEmpty())
         assertEquals(MediaDeckActivityStatus.NO_SESSION, publisher.status)
         advance(MediaDeckActivityPublisher.RELEASE_AFTER_END_MS)
         assertFalse(port.holding)
         assertTrue(publisher.isWatching)
+        fake.monitor.emit(observed())
+        assertEquals("update", port.calls.last())
+        assertTrue(port.holding)
+        assertEquals(NexusActivityActivation.COMMANDS, port.activities.last().activation)
+    }
+
+    @Test
+    fun `enabling while idle releases its binding after repeated settings refresh`() {
+        val publisher = publisher()
+        port.approved = true
+        publisher.setEnabled(true)
+        publisher.rearm()
+        assertEquals(listOf("start"), port.calls)
+        advance(MediaDeckActivityPublisher.RELEASE_AFTER_END_MS)
+        assertFalse(port.holding)
+        assertTrue(publisher.mayBeOnHub)
+        publisher.setEnabled(false)
+        assertEquals("end", port.calls.last())
+        assertFalse(publisher.isWatching)
+    }
+
+    @Test
+    fun `refused idle publication releases its binding without retrying`() {
+        val publisher = publisher()
+        port.approved = true
+        port.result = NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        publisher.setEnabled(true)
+        advance(MediaDeckActivityPublisher.RELEASE_AFTER_END_MS)
+        assertFalse(port.holding)
+        assertFalse(publisher.isStarted)
+        val attempts = port.calls.size
+        advance(MediaDeckActivityPublisher.RELEASE_AFTER_END_MS)
+        assertEquals(attempts, port.calls.size)
+    }
+
+    @Test
+    fun `idle startup releases its binding if registration never arrives`() {
+        val publisher = publisher()
+        publisher.setEnabled(true)
+        assertTrue(port.holding)
+        advance(MediaDeckActivityPublisher.RELEASE_AFTER_END_MS)
+        assertFalse(port.holding)
+        assertTrue(port.calls.isEmpty())
+    }
+
+    @Test
+    fun `idle survives service loss and a fresh registration revives live commands`() {
+        val publisher = publisher()
+        port.approved = true
+        publisher.setEnabled(true)
+        advance(MediaDeckActivityPublisher.RELEASE_AFTER_END_MS)
+        publisher.onBusLost()
+        port.approved = false
+        fake.monitor.emit(observed())
+        assertTrue(port.holding)
+        publisher.onBusReady()
+        port.approved = true
+        publisher.onRegistration(true, 2)
+        assertEquals("start", port.calls.last())
+        assertEquals(NexusActivityActivation.COMMANDS, port.activities.last().activation)
     }
 
     @Test

@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadata
+import android.media.AudioManager
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
@@ -11,8 +12,9 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.view.KeyEvent
 
-/** One look at the observed session, with what only the full surface needs: position and artwork. */
+/** One look at the session, including the position and artwork used by the integrated player. */
 internal data class MediaDeckSnapshot(
     val identity: MediaSessionIdentity,
     val track: MediaTrack,
@@ -123,6 +125,28 @@ internal class MediaSessionMonitor(
                 if (failure is SecurityException) MediaDeckSendResult.ACCESS_REQUIRED else MediaDeckSendResult.FAILED
             },
         )
+    }
+
+    override fun resumeIdle(): MediaDeckSendResult {
+        if (!started) return MediaDeckSendResult.MOVED
+        if (!isNotificationAccessEnabled()) return MediaDeckSendResult.ACCESS_REQUIRED
+        return try {
+            val manager = mediaSessionManager ?: return MediaDeckSendResult.FAILED
+            // Never use this fallback for a live session, including one whose metadata is missing.
+            if (manager.getActiveSessions(listenerComponent).isNotEmpty()) {
+                refreshOnMain()
+                return MediaDeckSendResult.MOVED
+            }
+            val audio = appContext.getSystemService(AudioManager::class.java) ?: return MediaDeckSendResult.FAILED
+            audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY))
+            audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY))
+            scheduleRefresh()
+            MediaDeckSendResult.SENT
+        } catch (_: SecurityException) {
+            MediaDeckSendResult.ACCESS_REQUIRED
+        } catch (_: RuntimeException) {
+            MediaDeckSendResult.FAILED
+        }
     }
 
     private fun refreshOnMain() {
@@ -248,9 +272,11 @@ internal class MediaSessionMonitor(
 
     private fun selectController(controllers: List<MediaController>): MediaController? =
         controllers
-            .filter(::hasUsableMetadata)
             .sortedWith(
-                compareByDescending<MediaController> { playbackPriority(it.playbackState?.state) }
+                // Cold-started players publish their session before metadata. Keep one callback
+                // attached while it loads, without displacing an already readable player.
+                compareByDescending<MediaController> { hasUsableMetadata(it) }
+                    .thenByDescending { playbackPriority(it.playbackState?.state) }
                     .thenByDescending { it.playbackState?.lastPositionUpdateTime ?: Long.MIN_VALUE },
             )
             .firstOrNull()

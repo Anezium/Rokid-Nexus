@@ -201,4 +201,56 @@ class NexusPageInteractiveTest {
         assertThrows(IllegalArgumentException::class.java) { NexusPageResult.rejected(code = "has space") }
         assertNull(NexusPageResult.done().code)
     }
+    private fun coverPage() = NexusPage.Content(1, "Music", PageBody.Media(
+        "Track", com.anezium.rokidbus.shared.MediaPlaybackState.PAUSED,
+        artwork = com.anezium.rokidbus.shared.LauncherArtwork(1, 1, "gA=="),
+        positionMs = 1000, durationMs = 90000, playbackSpeed = 2f, advancing = false,
+    ))
+
+    @Test fun `v2 carries covers and anchors`() {
+        register(launcher = 2)
+        provider.page = coverPage()
+        open()
+        assertTrue(client.supportsLauncherArtwork())
+        val body = responses().single().getJSONObject("body")
+        assertEquals("mono1", body.getJSONObject("artwork").getString("encoding"))
+        assertEquals(1000, body.getLong("positionMs"))
+        assertEquals(2.0, body.getDouble("playbackSpeed"), 0.0)
+    }
+
+    @Test fun `v1 keeps the media text and strips v2 fields`() {
+        register(launcher = 1)
+        provider.page = coverPage()
+        open()
+        assertFalse(client.supportsLauncherArtwork())
+        val body = responses().single().getJSONObject("body")
+        assertEquals("Track", body.getString("title"))
+        for (key in listOf("artwork", "positionMs", "durationMs", "playbackSpeed", "advancing")) assertFalse(key, body.has(key))
+    }
+
+    private fun jpegCover(): com.anezium.rokidbus.shared.LauncherArtwork {
+        val bytes = byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte(), 0xc0.toByte(),
+            0, 17, 8, 1, 0, 1, 0, 3, 1, 17, 0, 2, 17, 0, 3, 17, 0, 0xff.toByte(), 0xd9.toByte())
+        return com.anezium.rokidbus.shared.LauncherArtwork(256, 256,
+            java.util.Base64.getEncoder().encodeToString(bytes), "jpeg")
+    }
+
+    @Test fun `v3 preserves detailed JPEG covers`() {
+        register(launcher = 3)
+        provider.page = NexusPage.Content(1, "Music", PageBody.Media("Track",
+            com.anezium.rokidbus.shared.MediaPlaybackState.PAUSED, artwork = jpegCover()))
+        open()
+        assertTrue(client.supportsLauncherImageArtwork())
+        assertEquals("jpeg", responses().single().getJSONObject("body").getJSONObject("artwork").getString("encoding"))
+    }
+
+    @Test fun `v2 gets an explicit cover clear instead of unsupported JPEG`() {
+        register(launcher = 2)
+        provider.page = NexusPage.Content(1, "Music", PageBody.Media("Track",
+            com.anezium.rokidbus.shared.MediaPlaybackState.PAUSED, artwork = jpegCover()))
+        open()
+        assertFalse(client.supportsLauncherImageArtwork())
+        assertTrue(responses().single().getJSONObject("body").isNull("artwork"))
+    }
+
 }

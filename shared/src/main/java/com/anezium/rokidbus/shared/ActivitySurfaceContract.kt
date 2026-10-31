@@ -143,12 +143,15 @@ data class ActivitySurfaceContent(
     val wholeSecondary: String? = null,
     /** Launcher bundle: [detail] uncut, drawn instead of it where a line scrolls. */
     val wholeDetail: List<String> = emptyList(),
+    val artwork: LauncherArtwork? = null,
     /** Hub stamp: null on anything a plugin sent. */
     val state: ActivityState? = null,
     /** Hub stamp: the user pinned this owner's entry on the phone. */
     val userPinned: Boolean = false,
     /** Hub stamp: wall-clock time the content was last confirmed live. */
     val knownAtWallMs: Long? = null,
+    /** Stable opaque event identity; a changed value may briefly reveal a user-enabled island. */
+    val eventKey: String? = null,
 ) {
     /**
      * What the first activation does: the explicit [activation], else the destination when
@@ -203,11 +206,15 @@ data class ActivitySurfacePatch(
     val headline: ActivityField<String?>? = null,
     val wholeSecondary: ActivityField<String?>? = null,
     val wholeDetail: ActivityField<List<String>>? = null,
+    val artwork: ActivityField<LauncherArtwork?>? = null,
     val state: ActivityField<ActivityState?>? = null,
     val userPinned: ActivityField<Boolean>? = null,
     val knownAtWallMs: ActivityField<Long?>? = null,
+    val eventKey: ActivityField<String?>? = null,
 ) {
     fun applyTo(content: ActivitySurfaceContent): ActivitySurfaceContent = content.copy(
+        eventKey = if (eventKey != null) eventKey.value else content.eventKey,
+        artwork = if (artwork != null) artwork.value else content.artwork,
         glyph = if (glyph != null) glyph.value else content.glyph,
         primary = if (primary != null) primary.value else content.primary,
         secondary = if (secondary != null) secondary.value else content.secondary,
@@ -323,6 +330,7 @@ object ActivitySurfaceContract {
 
     const val MAX_PRIMARY_CHARS = 12
     const val MAX_HEADLINE_CHARS = 40
+    const val MAX_EVENT_KEY_CHARS = 64
     const val MAX_SECONDARY_CHARS = 28
     const val MAX_ETA_CHARS = 8
     const val MAX_DETAIL_LINES = 2
@@ -384,7 +392,7 @@ object ActivitySurfaceContract {
 
     /** Plugin-side launcher fields on the activity object. */
     private val launcherFields = listOf(FIELD_DESTINATION, FIELD_ACTIVATION, FIELD_DEFAULT_ACTION_ID, FIELD_PERSISTENCE, FIELD_HEADLINE,
-        FIELD_WHOLE_SECONDARY, FIELD_WHOLE_DETAIL,
+        FIELD_WHOLE_SECONDARY, FIELD_WHOLE_DETAIL, "artwork", "eventKey",
     )
 
     /** Hub stamps on the activity object; per action there is also `hubQuick`. */
@@ -502,6 +510,11 @@ object ActivitySurfaceContract {
             is ReadResult.Invalid -> return invalid(result.reason)
             ReadResult.Absent -> ActivityPersistence.SESSION
         }
+        val eventKey = when (val result = readEventKey(payload)) {
+            is ReadResult.Present -> result.value
+            is ReadResult.Invalid -> return invalid(result.reason)
+            ReadResult.Absent -> null
+        }
         val headline = when (val result = readHeadline(payload)) {
             is ReadResult.Present -> result.value
             is ReadResult.Invalid -> return invalid(result.reason)
@@ -527,7 +540,10 @@ object ActivitySurfaceContract {
             StampRead()
         }
 
+        val artwork = try { LauncherArtwork.parse(payload.opt("artwork")) }
+        catch (_: IllegalArgumentException) { return invalid("Invalid artwork") }
         val content = ActivitySurfaceContent(
+            artwork = artwork,
             glyph = glyph,
             primary = primary,
             secondary = secondary,
@@ -545,6 +561,7 @@ object ActivitySurfaceContract {
             defaultActionId = defaultActionId,
             persistence = persistence,
             headline = headline,
+            eventKey = eventKey,
             wholeSecondary = wholeSecondary,
             wholeDetail = wholeDetail,
             state = stamps.state?.value,
@@ -653,6 +670,11 @@ object ActivitySurfaceContract {
             is ReadResult.Invalid -> return patchInvalid(result.reason)
             ReadResult.Absent -> null
         }
+        val eventKey = when (val result = readEventKey(payload)) {
+            is ReadResult.Present -> ActivityField(result.value)
+            is ReadResult.Invalid -> return patchInvalid(result.reason)
+            ReadResult.Absent -> null
+        }
         val headline = when (val result = readHeadline(payload)) {
             is ReadResult.Present -> ActivityField(result.value)
             is ReadResult.Invalid -> return patchInvalid(result.reason)
@@ -678,7 +700,11 @@ object ActivitySurfaceContract {
             StampRead()
         }
 
+        val artwork = try {
+            if (payload.has("artwork")) ActivityField(LauncherArtwork.parse(payload.opt("artwork"))) else null
+        } catch (_: IllegalArgumentException) { return patchInvalid("Invalid artwork") }
         val patch = ActivitySurfacePatch(
+            artwork = artwork,
             glyph = glyph,
             primary = primary,
             secondary = secondary,
@@ -696,6 +722,7 @@ object ActivitySurfaceContract {
             defaultActionId = defaultActionId,
             persistence = persistence,
             headline = headline,
+            eventKey = eventKey,
             wholeSecondary = wholeSecondary,
             wholeDetail = wholeDetail,
             state = stamps.state,
@@ -799,6 +826,7 @@ object ActivitySurfaceContract {
         .put("detail", detailJson(content.detail))
         .put("actions", actionsJson(content.actions))
         .apply {
+            content.artwork?.let { put("artwork", it.toJson()) }
             content.secondary?.let { put("secondary", it) }
             content.progress?.let { put("progress", progressJson(it)) }
             content.eta?.let { put("eta", it) }
@@ -815,6 +843,7 @@ object ActivitySurfaceContract {
             content.defaultActionId?.let { put(FIELD_DEFAULT_ACTION_ID, it) }
             if (content.persistence != ActivityPersistence.SESSION) put(FIELD_PERSISTENCE, content.persistence.wireValue)
             content.headline?.let { put(FIELD_HEADLINE, it) }
+            content.eventKey?.let { put("eventKey", it) }
             content.wholeSecondary?.let { put(FIELD_WHOLE_SECONDARY, it) }
             if (content.wholeDetail.isNotEmpty()) put(FIELD_WHOLE_DETAIL, detailJson(content.wholeDetail))
             content.state?.let { put(FIELD_STATE, it.wireValue) }
@@ -836,6 +865,7 @@ object ActivitySurfaceContract {
         .put("kind", KIND)
         .put("glyph", content.glyph)
         .put("primary", content.primary)
+        .put("artwork", content.artwork?.toJson() ?: JSONObject.NULL)
         .put("secondary", content.secondary ?: JSONObject.NULL)
         .put("progress", content.progress?.let(::progressJson) ?: JSONObject.NULL)
         .put("eta", content.eta ?: JSONObject.NULL)
@@ -849,6 +879,7 @@ object ActivitySurfaceContract {
         .put(FIELD_DEFAULT_ACTION_ID, content.defaultActionId ?: JSONObject.NULL)
         .put(FIELD_PERSISTENCE, content.persistence.wireValue)
         .put(FIELD_HEADLINE, content.headline ?: JSONObject.NULL)
+        .put("eventKey", content.eventKey ?: JSONObject.NULL)
         .put(FIELD_WHOLE_SECONDARY, content.wholeSecondary ?: JSONObject.NULL)
         .put(FIELD_WHOLE_DETAIL, detailJson(content.wholeDetail))
         .apply {
@@ -1059,6 +1090,15 @@ object ActivitySurfaceContract {
             null
         }
         return ReadResult.Present(StampRead(state, userPinned, knownAt))
+    }
+
+    /** The opaque event identity is bounded and printable like a drawn line. */
+    private fun readEventKey(payload: JSONObject): ReadResult<String?> {
+        val result = readText(payload, "eventKey", MAX_EVENT_KEY_CHARS)
+        if (result is ReadResult.Present && result.value?.any(Char::isISOControl) == true) {
+            return ReadResult.Invalid("eventKey must be printable")
+        }
+        return result
     }
 
     /** [readText] with no control character: a headline is one drawn line. */

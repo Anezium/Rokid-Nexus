@@ -54,7 +54,6 @@ class ActivityIslandRenderingTest {
         island = ActivityOverlayRenderer.ActivityIsland(
             activity,
             glyphOf = { _, _ -> GlyphDrawable(DISC) },
-            actionGlyphOf = { GlyphDrawable(DISC) },
         )
         island.place(PinSurfacePosition.TOP_RIGHT, 0)
         activity.setContentView(island)
@@ -169,7 +168,7 @@ class ActivityIslandRenderingTest {
     }
 
     @Test
-    fun `expanded, the media commands are glyphs alone and labels that fit are drawn whole`() {
+    fun `passive expanded islands show information without command buttons`() {
         val media = listOf(
             ActivityAction("prev@1", "prev", "Previous"),
             ActivityAction("pause@1", "pause", "Pause"),
@@ -177,11 +176,7 @@ class ActivityIslandRenderingTest {
         )
         show(content(headline = headline, secondary = "Massive Attack", actions = media), ActivityPresentation.PANEL)
 
-        // The flare's band has a row of its own, unused by an activity.
-        val row = find<HudActionRowView>(island).single { it.isShown }
-        assertEquals(3, row.childCount)
-        assertFalse(row.labelsShown)
-        assertTrue(find<TextView>(row).none { it.isShown })
+        assertTrue(find<HudActionRowView>(island).none { it.isShown })
         // The panel's title is the headline too, scrolling where it does not fit.
         val title = find<OverflowLineView>(island).single { it.isShown }
         assertEquals(headline, title.text.toString())
@@ -191,10 +186,7 @@ class ActivityIslandRenderingTest {
             content(headline = headline, actions = listOf(ActivityAction("go", "next", "Go"), ActivityAction("end", "stop", "End"))),
             ActivityPresentation.PANEL,
         )
-        assertTrue(row.labelsShown)
-        val labels = find<TextView>(row).filter { it.isShown }
-        assertEquals(listOf("Go", "End"), labels.map { it.text.toString() })
-        labels.forEach { assertEquals(0, requireNotNull(it.layout).getEllipsisCount(0)) }
+        assertTrue(find<HudActionRowView>(island).none { it.isShown })
     }
 
     @Test
@@ -369,6 +361,53 @@ class ActivityIslandRenderingTest {
         assertEquals(0, requireNotNull(line.layout).getEllipsisCount(0))
         assertEquals(width, form.width)
         assertEquals(height, form.height)
+    }
+
+    @Test
+    fun `a compact cover island scrolls the full paused artist list through its last name`() {
+        val whole = "Paused · MUNZi, yuri63k, kairo6k"
+        show(content(headline = "Final life", secondary = "Paused · MUNZi, yuri63k, ka…").copy(
+            wholeSecondary = whole,
+            artwork = com.anezium.rokidbus.shared.LauncherArtwork(1, 1, "gA=="),
+        ), ActivityPresentation.PANEL)
+        val compact = island.folded as ActivityOverlayRenderer.ActivityCompactView
+        assertSame(compact, island.currentForm)
+        assertTrue(compact.width <= 240)
+        assertTrue(compact.height <= 60)
+        assertDrawnWhole(compact.secondary, whole, compact)
+    }
+
+    @Test
+    fun `a retained cover stays compact offline within half the HUD`() {
+        val artwork = com.anezium.rokidbus.shared.LauncherArtwork(1, 1, "gA==")
+        show(content(headline = headline, secondary = "Massive Attack").copy(artwork = artwork), ActivityPresentation.PANEL)
+        val compact = island.folded as ActivityOverlayRenderer.ActivityCompactView
+        assertSame(compact, island.currentForm)
+        assertTrue(compact.width <= 240)
+        assertTrue(compact.height <= 60)
+        assertEquals(36, compact.glyph.width)
+        assertFalse(shownTexts(island).any { it == "Playing" })
+        // Last-known entries have no executable actions; their cover still chooses this form.
+        show(content(headline = headline, secondary = "Last known").copy(artwork = artwork), ActivityPresentation.PANEL)
+        assertSame(compact, island.currentForm)
+        assertTrue(compact.width <= 240)
+    }
+
+    @Test
+    fun `coverless media keeps compact geometry after link loss hides commands`() {
+        val source = content(headline = headline, secondary = "Artist", actions = listOf(
+            ActivityAction("play", "play", "Play", com.anezium.rokidbus.shared.PageActionType.MediaPlay),
+        ))
+        val stale = item(source, ActivityPresentation.PANEL).copy(stale = true, knownAtWallMs = 1_000)
+        island.render(stale, guidance = null)
+        island.showSteady(ActivityPresentation.PANEL)
+        idle()
+        val compact = island.folded as ActivityOverlayRenderer.ActivityCompactView
+        assertSame(compact, island.currentForm)
+        assertTrue(compact.width <= 240)
+        assertTrue(compact.height <= 60)
+        assertEquals(17f, compact.title.textSize)
+        assertTrue(GuidanceIslands.lastKnown(stale).actions.isEmpty())
     }
 
     private fun show(content: ActivitySurfaceContent, presentation: ActivityPresentation) {

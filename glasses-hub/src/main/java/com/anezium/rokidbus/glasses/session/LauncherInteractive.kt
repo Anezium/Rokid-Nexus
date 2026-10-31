@@ -4,6 +4,7 @@ import com.anezium.rokidbus.shared.ActivityAction
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.PageActionType
+import com.anezium.rokidbus.shared.PageDestination
 import com.anezium.rokidbus.shared.QuickActionPolicy
 
 /**
@@ -73,6 +74,7 @@ internal data class CommandSlotModel(
     val action: ActivityAction?,
     /** False for an offline entry's commands: they are drawn, never run. */
     val enabled: Boolean,
+    val destination: PageDestination? = null,
 ) {
     val hub: Boolean get() = action == null
 }
@@ -83,6 +85,8 @@ internal object ActivityCommands {
     const val OPEN_APP_KEY = "hub open-app"
     const val OPEN_APP = "Open app"
     const val OPEN_APP_GLYPH = "grid"
+    const val OPEN_PAGE_KEY = "hub open-page"
+    const val OPEN_PAGE_GLYPH = "open-app"
 
     /**
      * How long the glasses wait for a result: the phone's own deadline plus a margin for the hop
@@ -97,7 +101,12 @@ internal object ActivityCommands {
      */
     fun slots(stop: ActivityStop): List<CommandSlotModel> = buildList {
         stop.commands.forEach { add(CommandSlotModel(it.id, it.label, it.glyph, it, enabled = !stop.lastKnown)) }
-        if (stop.launchable && stop.ownerPluginId != null) {
+        val media = stop.commands.any { it.typed?.isMedia == true }
+        stop.destination?.let { destination ->
+            add(CommandSlotModel(OPEN_PAGE_KEY, if (media) "Open player" else "Open page", OPEN_PAGE_GLYPH,
+                null, enabled = true, destination = destination))
+        }
+        if (stop.launchable && stop.ownerPluginId != null && !(media && stop.destination != null)) {
             add(CommandSlotModel(OPEN_APP_KEY, OPEN_APP, OPEN_APP_GLYPH, null, enabled = true))
         }
     }

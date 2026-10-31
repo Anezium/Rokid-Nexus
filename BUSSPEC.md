@@ -1769,7 +1769,11 @@ resends the affected entry.
 ```
 
 `invocationId` is fresh and a page-style id; `seq` is the revision the wearer
-saw; `mode` is `confirmed` or `quick`. The phone requires all three and checks:
+saw; `mode` is `confirmed` or `quick`. Invocation and request ids are opaque and
+must remain fresh across glasses process or runner restarts: the phone and
+providers can still remember earlier ids. A runtime namespace preserves replay
+protection without reusing a restarted session counter.
+The phone requires all three and checks:
 owner live with a single registration, entry live (not offline), `seq` equal to
 its canonical `seq`, action still declared, `quick` only for a quick-eligible
 type whose family the owner's policy approves now, at most one pending command
@@ -1848,8 +1852,10 @@ activity, the current notification preview, `Activities · n` when more than two
 activities are live, `Notifications · n`, Applications. Optional stops are
 omitted when absent. The head activity is the shipped primary activity at the
 moment the session opens. Root order, stop membership and card sizes are frozen
-from the accepted triple tap until the session closes; values inside a card may
-update in place. Newly started activities wait for the next session. An activity
+from the accepted triple tap until the session closes, except that a withdrawn
+notification preview is removed; surviving selection follows its identity and a
+replacement target requires a fresh contact. Values inside a card may update
+in place. Newly started activities wait for the next session. An activity
 that ends stays in place as Ended and inert until the session closes; STEP moves
 past it normally and SELECT on it does nothing. Arriving notices update the
 existing preview and counter without moving selection or inserting a stop. The
@@ -1864,12 +1870,20 @@ With the launcher bundle a destination-first card opens its destination page
 directly, with its params: no detail page, no `onNexusOpen`/`onNexusClose`, no
 change underneath. A commands-first card's first tap enters command focus on
 `defaultActionId` and never executes. In focus, STEP moves along the plugin
-commands and then a hub-owned `Open app` slot (shown when the owner is
-launchable in Applications); a fresh SELECT runs the focused one immediately,
+commands and then hub-owned navigation slots. A card with a destination has
+`Open page`; typed media labels it `Open player` and omits the redundant full-app
+slot. Other launchable owners retain `Open app` when available in Applications.
+The selected live commands-first card previews the strip without a selected
+control. A fresh SELECT in command focus runs the focused one immediately,
 in quick or confirmed mode; BACK leaves focus first. An offline entry still opens its
 destination, its commands are inert, and Open app stays available. `Open app`
 launches directly on a fresh tap, and a destination page opened
 from an activity ends with a hub row `Open app` for a launchable owner.
+
+Media page controls are part of the player, not a separate Back destination:
+one BACK pops that media frame even with a transport button focused. It returns
+to its containing Nexus menu. Card command focus, confirmation panels, composer
+capture and full-map commands retain their existing Back behavior.
 
 `Notifications · n` counts the readable notices the hub retains in memory, which
 is at most one: the current notice, or the last one after it was dismissed or
@@ -1887,7 +1901,10 @@ age (a display bound, not a reply lease). An entry holds its owner, its
 flag, its label, the text as shown on the band (the owner's redaction and the
 wearer's hide choices preserved), its arrival time, and a local state `new`,
 `seen`, `handed_off` or `withdrawn`. A withdraw marks matching entries
-withdrawn; a purge removes the owner's entries, then refreshes every root
+withdrawn and removes their promoted launcher preview, including beneath an open
+page. History entries remain consultable in Notifications. A surviving root
+selection keeps its identity; replacing a withdrawn selected preview requires a
+fresh contact after the new target is drawn. A purge removes the owner's entries, then refreshes every root
 already open or beneath a page from the remaining history: a stop that still
 references the purged owner after that refresh becomes an inert `Notification
 removed` placeholder in the same slot, while a generic preview may instead
@@ -1897,8 +1914,9 @@ an aggregate card (`<n> conversations`, opening the owner's main page) when the
 newest live conversation entries come from more than one thread of one owner;
 else a conversation card for the newest conversation entry, which opens its
 exact `destination` directly and keeps its identity under focus while resolving
-in place to handed off or removed; else the generic preview of the newest
-entry. The armed band is unchanged.
+in place to handed off until withdrawn; else the generic preview of the newest
+non-withdrawn entry. A root with only withdrawn entries has no notification
+preview. The armed band is unchanged.
 
 Applications lists Nexus plugins and native apps as the shipped launcher catalog
 merges them. A plugin that provides pages and is reachable over a negotiated
@@ -2337,6 +2355,49 @@ version is raised. HUD copy is English, like the rest of the session chrome.
   phone. Glasses never act on a bundle field
   unless the phone negotiated the bundle. Old plugins keep working unchanged.
 
+### Cover and player anchors (bundle v2)
+
+Current hubs announce `launcherInteractiveVersion: 4`; v1 above remains the
+baseline. Version 2 adds optional `artwork` on an activity and a `media` page body:
+`{"encoding":"mono1","width":96,"height":96,"data":"..."}`. Dimensions are
+integers from 1 through 128. Standard Base64 `data` is at most 2,732 characters
+and decodes to exactly ceil(width * height / 8) bytes, never more than 2,048.
+Pixels are row-major, most significant bit first; 1 is phosphor, 0 transparent.
+No URI, network request or new capability is involved. Missing activity patch
+artwork preserves the old value; explicit null clears it. Malformed previews
+invalidate the containing start, update or typed media body.
+
+A `media` body may also carry `positionMs` and `durationMs` (integer milliseconds,
+0 through 604800000), `playbackSpeed` (finite number, -16 through 16, default 1)
+and `advancing` (boolean; absent follows PLAYING). Position is an anchor at
+publication; local drawing advances it while visible. Providers publish real
+seek/speed/state changes, not periodic progress ticks. Bundle v1 peers get these
+fields stripped from activities, page bodies and result replacement bodies;
+their existing typed controls and text remain usable. No exact-match tier
+version changes.
+
+### Detailed covers (bundle v3)
+
+Version 3 also accepts `artwork.encoding: "jpeg"` with integer `width` and
+`height` from 1 through 256. `data` is standard Base64, at most 43,692 characters
+decoding to at most 32,768 bytes. The JPEG header's dimensions must match; the
+renderer also checks decoded bounds before allocating its bitmap. The compressed
+cap leaves room for Base64 and Media Deck's metadata inside the 65,536-byte page
+limit; the full envelope remains subject to that limit. JPEG preserves continuous
+tones and uses filtered scaling in the player, card and compact pin. This reuses
+the media image encoder, with a tighter compressed cap for inline page transport.
+If an activity image cannot fit the available CXR-only transport, the phone clears
+only the outgoing artwork and delivers the text and controls with the same stamped
+identity and sequence. Canonical state retains the JPEG for an SPP reconnect resend.
+No URI, network fetch, binary asset reference or additional grant is introduced.
+
+Mono1 remains valid unchanged. With bundle v2, JPEG becomes explicit artwork null
+in SDK and phone output, including page-result replacement bodies: older peers
+show their glyph fallback and never retain a previous track's cover. Bundle v1
+still strips the artwork key completely. `supportsLauncherImageArtwork()` reports
+whether the pair negotiated v3; `supportsLauncherArtwork()` still reports v2 or
+later.
+
 ### Typed actions
 
 `typed` is an optional object on a page action (`kind: plugin`) or an activity
@@ -2562,6 +2623,35 @@ the text and focuses Type next. Nothing is retried or resent on reconnect, and
 the draft never goes to another recipient.
 
 ### Ambient preferences (`/core/ambient/*`)
+
+Launcher bundle v4 adds optional activity `eventKey` on start and update, at
+most 64 printable characters. Omission in a patch retains the key; explicit
+null clears it without announcing an event. A changed non-null key identifies
+a real event independently of `significant`, priority, wake-display and
+command identity. The SDK and phone strip it for peers below v4. A live initial
+start may present once; canonical reconnect resends with an already-seen key
+do not restart it. Never use a changing clock or transport revision as a key.
+
+The trusted policy additionally carries `activityDisplays: {pluginId:
+{mode, durationMs}}`, at most 64 entries, with modes `automatic`, `persistent`,
+`home`, `events`, `hidden` and duration 3000, 5000 or 10000 ms (default 5000).
+Unknown mode values drop that entry; invalid ids, shapes, durations or bounds
+reject the snapshot. Omitted maps retain the legacy automatic behavior.
+Choices are phone-owned and scoped to the currently approved signed plugin.
+They are purged with its grant and sent on changes and link-up. No plugin can
+write this policy or choose a duration through activity content.
+
+`events` shows a compact native band for a changed event key or a significant
+update, then animates it away. Ordinary updates do not extend that deadline.
+`persistent` keeps the existing form over home and apps; `home` shows it only
+on home; `hidden` leaves the activity in the collection without a band.
+`automatic` preserves foreground app rules. Camera, Nexus session visibility
+and per-app `nothing` override all modes. Offline snapshots start no event.
+Temporary entries consume no resident corner after expiry, do not change
+collection priority, and retain their card and destination. Presentation
+expiry is not activity end and does not use `maxDurationMs`. Classic keeps
+its prior display behavior. For older glasses, event/home choices downgrade
+to hidden owners; the SDK settings link does not silently change a choice.
 
 - Per-owner island size `text`, `minimap` or `panel` (absent: the hub's
   automatic choice). The phone stores it and is authoritative. A glasses edit

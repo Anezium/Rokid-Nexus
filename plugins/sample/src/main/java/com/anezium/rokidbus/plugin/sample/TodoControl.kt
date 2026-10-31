@@ -16,9 +16,10 @@ import com.anezium.rokidbus.shared.plugin.PluginCapability
 /** "Show in activities", in the plugin's own preferences; the hub never sees them. */
 internal class TodoSettings(context: Context) : TodoActivityPrefs {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val activityPreference = com.anezium.rokidbus.client.plugin.NexusActivityPreference(prefs, KEY_SHOW)
 
     override val showInActivities: Boolean
-        get() = prefs.getBoolean(KEY_SHOW, false)
+        get() = activityPreference.enabled
 
     override var endPending: Boolean
         get() = prefs.getBoolean(KEY_END_PENDING, false)

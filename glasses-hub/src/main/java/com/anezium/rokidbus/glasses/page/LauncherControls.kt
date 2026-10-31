@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.ImageView
 import android.widget.LinearLayout
+import com.anezium.rokidbus.glasses.session.ActivityCommands
 import com.anezium.rokidbus.glasses.session.CommandSlot
 import com.anezium.rokidbus.glasses.session.CommandStrip
 import com.anezium.rokidbus.glasses.session.FooterButton
@@ -26,7 +27,9 @@ import com.anezium.rokidbus.glasses.session.StatusLineStyle
  * command. The focused slot is the only bright one, glyph and label together. Up to three slots
  * always keep their labels (shortened if they must be); from four, when every label cannot fit,
  * the slots at rest keep only their glyph and the focused one its whole label: what tap would
- * run is always read.
+ * run is always read. With no focused slot (the preview a selected card shows before a tap
+ * takes its controls) every slot is at rest and the label, if one must go, stays on the hub's
+ * slot: the way into the full player is the one thing the preview has to name.
  */
 internal class CommandStripView(context: Context, private val icons: SessionIconSource) : View(context) {
     private var items: List<CommandSlot> = emptyList()
@@ -57,9 +60,9 @@ internal class CommandStripView(context: Context, private val icons: SessionIcon
 
     fun bind(strip: CommandStrip) {
         items = strip.items
-        focused = strip.focusedIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0))
+        focused = if (strip.focusedIndex < 0) -1 else strip.focusedIndex.coerceAtMost((items.size - 1).coerceAtLeast(0))
         glyphs = items.mapIndexed { index, slot ->
-            glyphDrawable(context, icons, if (slot.hub) HudGlyphs.OPEN_APP else slot.glyph, colorOf(slot, index == focused))
+            glyphDrawable(context, icons, glyphOf(slot), colorOf(slot, index == focused))
         }
         contentDescription = items.getOrNull(focused)?.label
         arrange()
@@ -89,14 +92,16 @@ internal class CommandStripView(context: Context, private val icons: SessionIcon
         val share = available / items.size
         val natural = items.map { naturalWidth(it, withLabel = true) }
         val labelled = natural.all { it <= share } || items.size < GLYPH_ONLY_FROM
+        // The one slot that keeps its label when the others cannot: the focused one, else the hub's.
+        val wide = if (focused >= 0) focused else items.indexOfFirst { it.hub }
         val widths = if (labelled) {
             List(items.size) { share }
         } else {
             val bare = GLYPH_PX + 2f * PADDING_PX
             val rest = (items.size - 1) * bare
-            items.indices.map { if (it == focused) (available - rest).coerceAtLeast(bare) else bare }
+            items.indices.map { if (it == wide) (available - rest).coerceAtLeast(bare) else bare }
         }
-        labelsShown = items.indices.map { labelled || it == focused }
+        labelsShown = items.indices.map { labelled || it == wide }
         var x = 0f
         val rects = mutableListOf<RectF>()
         separatorX = null
@@ -151,6 +156,10 @@ internal class CommandStripView(context: Context, private val icons: SessionIcon
             }
         }
     }
+
+    /** The hub's generic Open app keeps its box-and-arrow; a hub slot naming its own glyph draws it. */
+    private fun glyphOf(slot: CommandSlot): String =
+        if (slot.hub && slot.glyph == ActivityCommands.OPEN_APP_GLYPH) HudGlyphs.OPEN_APP else slot.glyph
 
     private fun outlineOf(slot: CommandSlot, isFocused: Boolean): Int = when {
         isFocused -> PageStyle.phosphor

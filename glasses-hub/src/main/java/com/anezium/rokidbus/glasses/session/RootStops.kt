@@ -50,6 +50,7 @@ internal data class ActivityStop(
      * phone nothing until the bundle is negotiated again.
      */
     val held: Boolean = false,
+    val artwork: com.anezium.rokidbus.shared.LauncherArtwork? = null,
 ) {
     /**
      * Drawn as last known, its commands inert: offline on the phone, or [stale] while the link is
@@ -162,15 +163,23 @@ internal object RootStops {
     fun retainedNotices(preview: NoticePreview?): Int = if (preview == null) 0 else 1
 
     /**
-     * Notification changes inside a session change text, states and counters only, never order or
-     * membership (plan 028a §6.4). A conversation card keeps its entry and only resolves in place
-     * (handed off, removed); an aggregate keeps its owner; a generic preview follows the newest entry.
+     * Notification updates retain their anchored identity. A withdrawn preview leaves the root;
+     * its entry remains available in Notifications. An aggregate keeps its surviving threads.
      */
     fun withHistory(stops: List<RootStop>, history: NotificationHistory, nowWallMs: Long): List<RootStop> {
         val count = history.visible(nowWallMs).size
-        return stops.map {
+        return stops.mapNotNull {
             when (it.kind) {
-                RootStopKind.NOTICE_PREVIEW -> refreshNotice(it, history, nowWallMs)
+                RootStopKind.NOTICE_PREVIEW -> {
+                    val card = it.notice
+                    val withdrawn = card?.entryId?.let(history::entry)?.state == HistoryState.WITHDRAWN
+                    val ownerEntries = history.visible(nowWallMs).filter { entry ->
+                        entry.notice.ownerPluginId == card?.ownerPluginId && entry.notice.threadKey != null
+                    }
+                    val withdrawnAggregate = card?.kind == NoticeCardKind.AGGREGATE && ownerEntries.isNotEmpty() &&
+                        ownerEntries.all { entry -> entry.state == HistoryState.WITHDRAWN }
+                    if (withdrawn || withdrawnAggregate) null else refreshNotice(it, history, nowWallMs)
+                }
                 RootStopKind.NOTIFICATIONS -> it.copy(count = count)
                 else -> it
             }
@@ -182,7 +191,7 @@ internal object RootStops {
      * refresh, a notification stop still showing anything of it keeps its place as an inert,
      * content-free placeholder, so nothing of the owner survives on a root kept open or beneath a
      * page. A stop whose owner is not known is treated as the purged owner's. A withdrawal is
-     * not a purge: it keeps its readable card through [withHistory].
+     * not a purge: its history entry remains even though [withHistory] removes its root preview.
      */
     fun withPurged(stops: List<RootStop>, ownerPluginId: String, history: NotificationHistory, nowWallMs: Long): List<RootStop> =
         withHistory(stops, history, nowWallMs).map {

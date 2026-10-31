@@ -1126,8 +1126,14 @@ data class NexusActivity(
     val headline: String? = null,
     val wholeSecondary: String? = null,
     val wholeDetail: List<String> = emptyList(),
+    val artwork: com.anezium.rokidbus.shared.LauncherArtwork? = null,
+    /** Launcher v4: opaque identity of the latest real event, at most 64 printable characters. */
+    val eventKey: String? = null,
 ) {
     init {
+        require(eventKey == null || (eventKey.length <= ActivitySurfaceContract.MAX_EVENT_KEY_CHARS && eventKey.none(Char::isISOControl))) {
+            "eventKey must be at most 64 printable characters"
+        }
         require(activation != NexusActivityActivation.DESTINATION || destination != null) {
             "Destination activation needs a destination"
         }
@@ -1206,6 +1212,8 @@ data class NexusActivity(
         persistence = persistence.contract,
         headline = headline?.trim()?.takeIf { it.isNotEmpty() },
         wholeSecondary = wholeSecondary?.trim()?.takeIf { it.isNotEmpty() },
+        eventKey = eventKey?.trim()?.takeIf { it.isNotEmpty() },
         wholeDetail = wholeDetail.map(String::trim),
+        artwork = artwork,
     )
 }

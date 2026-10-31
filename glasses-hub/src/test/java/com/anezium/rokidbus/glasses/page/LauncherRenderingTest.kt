@@ -394,6 +394,33 @@ class LauncherRenderingTest {
 
     private fun draw(target: View): Bitmap = Bitmap.createBitmap(target.width, target.height, Bitmap.Config.ARGB_8888).also { target.draw(Canvas(it)) }
 
+    @Test
+    fun `updated retained media paints the same complete frame as a fresh screen`() {
+        val media = ScreenBlock.Media("media", "First track", "Original artist", "Album", "Media Deck", MediaPlaybackState.PAUSED, null)
+        val first = SessionScreen(ScreenHeader("MEDIA DECK", "1/3"), listOf(media), ScreenHint("tap controls", "back root"))
+        render(first)
+        draw(view)
+        val retained = view.blockViews.getValue("media")
+        val updated = first.copy(
+            header = ScreenHeader("MEDIA DECK", "2/3"),
+            blocks = listOf(media.copy(title = "Second", artist = "New artist", state = MediaPlaybackState.PLAYING)),
+        )
+        render(updated)
+        assertSame(retained, view.blockViews.getValue("media"))
+        val afterUpdate = draw(view)
+
+        val fresh = SessionScreenView(context, icons).apply {
+            show(updated)
+            measure(
+                View.MeasureSpec.makeMeasureSpec(PageStyle.WIDTH_PX, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(PageStyle.HEIGHT_PX, View.MeasureSpec.EXACTLY),
+            )
+            layout(0, 0, PageStyle.WIDTH_PX, PageStyle.HEIGHT_PX)
+        }
+        assertTrue(afterUpdate.sameAs(draw(fresh)))
+        assertTrue(afterUpdate.sameAs(draw(view)))
+    }
+
     private fun visibleInViewport(key: String): Boolean {
         val block = view.blockViews.getValue(key)
         return block.top >= 0 && block.bottom <= view.viewport.height
@@ -690,8 +717,8 @@ class LauncherRenderingTest {
         val maneuver = ScreenBlock.Maneuver("maneuver", "turn-left", "120 m", "Rue de Rivoli", "arrival 12:24", approximate = true)
         render(SessionScreen(ScreenHeader("MEDIA DECK"), listOf(media, maneuver), null, focusKey = "media"))
         val mediaView = view.blockViews.getValue("media")
-        assertEquals(listOf("Media Deck", "Reptilia", "The Strokes", "Room on Fire", "Controls on the phone"), texts(mediaView))
-        assertEquals(MediaPlaybackState.PLAYING, find<ImageView>(mediaView).mapNotNull { it.tag as? LauncherBlocks.MediaStateTag }.single().state)
+        assertEquals(listOf("Reptilia", "The Strokes", "Room on Fire", "Controls on the phone"), texts(mediaView).filter(String::isNotBlank))
+        assertEquals(176, find<ImageView>(mediaView).single().layoutParams.width)
         assertEquals(PageStyle.phosphor, find<TextView>(mediaView).first { it.text.toString() == "Reptilia" }.currentTextColor)
         val distance = find<TextView>(view.blockViews.getValue("maneuver")).first()
         assertEquals("~120 m", distance.text.toString())
@@ -699,7 +726,7 @@ class LauncherRenderingTest {
 
         render(SessionScreen(ScreenHeader("MEDIA DECK"), listOf(media.copy(state = MediaPlaybackState.UNAVAILABLE)), null))
         val unavailable = view.blockViews.getValue("media")
-        assertTrue(find<ImageView>(unavailable).none { it.tag is LauncherBlocks.MediaStateTag })
+        assertTrue(find<ImageView>(unavailable).all { it.visibility == View.GONE })
         assertEquals(PageStyle.muted, find<TextView>(unavailable).first { it.text.toString() == "Reptilia" }.currentTextColor)
     }
 
@@ -944,4 +971,108 @@ class LauncherRenderingTest {
         assertNull(wait.mapView)
         assertTrue(wait.texts().containsAll(listOf("RER B", "→ Robinson", "3 min")))
     }
+    @Test
+    @Config(qualifiers = "w320dp-h640dp-hdpi")
+    fun `a selected cover card scrolls its full artist line and stops when deselected`() {
+        val artists = "Paused · MUNZi, yuri63k, kairo6k, Massive Attack, Portishead, Gorillaz"
+        val card = ScreenBlock.Card("media:activity", "MEDIA DECK", null, "Final life", artists, null,
+            figure = false, ended = false, selected = true,
+            artwork = com.anezium.rokidbus.shared.LauncherArtwork(1, 1, "gA=="))
+        val controller = Robolectric.buildActivity(Activity::class.java).create().start().resume()
+        try {
+            controller.get().setContentView(view)
+            controller.visible()
+            view.show(SessionScreen(ScreenHeader("ACTIVITIES"), listOf(card), null, focusKey = card.key))
+            shadowOf(Looper.getMainLooper()).idle()
+            val line = find<OverflowLineView>(view.blockViews.getValue(card.key)).single { it.text.toString() == artists }
+            assertTrue(line.overflowPx() > 0)
+            assertTrue(line.scrolling)
+            assertEquals(0, requireNotNull(line.layout).getEllipsisCount(0))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(
+                OverflowScroll.HOLD_MS + OverflowScroll.travelMs(line.overflowPx()) + OverflowScroll.FRAME_MS))
+            assertEquals(line.overflowPx(), line.scrollX)
+
+            view.show(SessionScreen(ScreenHeader("ACTIVITIES"), listOf(card.copy(selected = false)), null))
+            shadowOf(Looper.getMainLooper()).idle()
+            val inactive = find<OverflowLineView>(view.blockViews.getValue(card.key)).single { it.text.toString() == artists }
+            assertFalse(inactive.scrolling)
+            assertEquals(0, inactive.scrollX)
+        } finally {
+            controller.pause().stop().destroy()
+        }
+    }
+
+    @Test fun `a cover card keeps its executable command strip visible`() {
+        val strip = com.anezium.rokidbus.glasses.session.CommandStrip(listOf(
+            com.anezium.rokidbus.glasses.session.CommandSlot("play", "Play", "play"),
+        ), 0)
+        val card = ScreenBlock.Card("cover-card", "MEDIA", null, "Track", "Artist", null,
+            figure = false, ended = false, selected = true,
+            artwork = com.anezium.rokidbus.shared.LauncherArtwork(1, 1, "gA=="), commands = strip)
+        render(SessionScreen(ScreenHeader("ACTIVITIES"), listOf(card), null, focusKey = card.key))
+        val content = view.blockViews.getValue(card.key)
+        assertEquals(1, find<CommandStripView>(content).size)
+        assertEquals(48, find<ImageView>(content).single().width)
+        assertEquals(View.VISIBLE, find<CommandStripView>(content).single().visibility)
+        assertTrue(find<CommandStripView>(content).single().height > 0)
+    }
+
+    @Test fun `ended and dashed cover cards keep muted text and a broken outline`() {
+        for (ended in listOf(true, false)) {
+            val card = ScreenBlock.Card("ended-cover", "MEDIA", null, "Track", "Artist", null,
+                figure = false, ended = ended, dashed = !ended, selected = true,
+                artwork = com.anezium.rokidbus.shared.LauncherArtwork(1, 1, "gA=="))
+            render(SessionScreen(ScreenHeader("NEXUS"), listOf(card), null, focusKey = card.key))
+            val content = view.blockViews.getValue(card.key)
+            assertEquals(PageStyle.muted, find<TextView>(content).single { it.text.toString() == "Track" }.currentTextColor)
+            assertEquals(PageStyle.muted, find<TextView>(content).single { it.text.toString() == "Artist" }.currentTextColor)
+            assertTrue(find<ImageView>(content).single().imageAlpha < 255)
+            val bitmap = draw(content)
+            val edge = (20 until bitmap.width - 20).map { Color.green(bitmap.getPixel(it, 1)) > 20 }
+            assertTrue("outline has repeated dashes and gaps", edge.zipWithNext().count { it.first != it.second } >= 6)
+        }
+    }
+
+    @Test fun `JPEG covers retain tones and filtered scaling in the integrated player`() {
+        val source = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        for (y in 0 until 64) for (x in 0 until 64) source.setPixel(x, y, android.graphics.Color.rgb(x * 4, y * 4, 80))
+        val bytes = java.io.ByteArrayOutputStream().use { output ->
+            source.compress(Bitmap.CompressFormat.JPEG, 88, output)
+            output.toByteArray()
+        }
+        source.recycle()
+        val cover = com.anezium.rokidbus.shared.LauncherArtwork(64, 64,
+            java.util.Base64.getEncoder().encodeToString(bytes), "jpeg")
+        val block = ScreenBlock.Media("jpeg-player", "Track", state = MediaPlaybackState.PAUSED, artwork = cover)
+        render(SessionScreen(ScreenHeader("MEDIA DECK"), listOf(block), null))
+        val drawable = find<ImageView>(view.blockViews.getValue(block.key)).single().drawable as android.graphics.drawable.BitmapDrawable
+        assertTrue(drawable.paint.isFilterBitmap)
+        val pixels = IntArray(64 * 64)
+        drawable.bitmap.getPixels(pixels, 0, 64, 0, 0, 64, 64)
+        assertTrue(pixels.toSet().size > 256)
+    }
+
+    @Test fun `media metadata stays attached across control focus and playback changes`() {
+        val media = ScreenBlock.Media("media", "Track", "Artist", state = MediaPlaybackState.PLAYING,
+            positionMs = 1000, durationMs = 90000)
+        val controls = ScreenBlock.Controls("media-controls", com.anezium.rokidbus.glasses.session.CommandStrip(listOf(
+            com.anezium.rokidbus.glasses.session.CommandSlot("pause", "Pause", "pause")), -1))
+        render(SessionScreen(ScreenHeader("MEDIA"), listOf(media, controls), null, focusKey = "media"))
+        val player = view.blockViews.getValue("media")
+        val image = find<ImageView>(player).single()
+        render(SessionScreen(ScreenHeader("MEDIA"), listOf(media, controls.copy(strip = controls.strip.copy(focusedIndex = 0))), null, focusKey = controls.key))
+        assertTrue(player === view.blockViews.getValue("media"))
+        assertTrue(image === find<ImageView>(player).single())
+        render(SessionScreen(ScreenHeader("MEDIA"), listOf(media.copy(state = MediaPlaybackState.PAUSED, positionMs = 2000), controls), null, focusKey = controls.key))
+        assertTrue(player === view.blockViews.getValue("media"))
+        assertTrue(texts(player).containsAll(listOf("Track", "Artist")))
+        assertTrue(texts(player).any { it.startsWith("0:02") })
+        val replacement = media.copy(title = "Next track", artist = "New artist",
+            artwork = com.anezium.rokidbus.shared.LauncherArtwork(1, 1, "gA=="))
+        render(SessionScreen(ScreenHeader("MEDIA"), listOf(replacement, controls), null, focusKey = controls.key))
+        assertTrue(player === view.blockViews.getValue("media"))
+        assertTrue(image === find<ImageView>(player).single())
+        assertTrue(texts(player).containsAll(listOf("Next track", "New artist")))
+    }
+
 }

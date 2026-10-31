@@ -228,4 +228,42 @@ class PhoneActivityRouterTest {
         .put("surfaceId", "$pluginId:${ActivitySurfaceContract.LOCAL_SURFACE_ID}")
         .put("localSurfaceId", ActivitySurfaceContract.LOCAL_SURFACE_ID)
         .put("ownerPluginId", pluginId)
+    @Test fun `CXR only keeps activity state and controls while SPP restores its detailed cover`() {
+        var spp = false
+        val routeSink = object : PhoneHudRouteSink by sink {
+            override fun sendRemote(envelope: BusEnvelope): String? {
+                sink.sendRemote(envelope)
+                return if (!spp && envelope.payload.optJSONObject("artwork") != null) "NO_DATA_PLANE" else null
+            }
+        }
+        val state = PhoneActivityState(nowMs = { now }, launcherVersion = { 3 })
+        val jpegRouter = PhoneActivityRouter(state, routeSink, { now }, {}, {})
+        val bytes = ByteArray(8192)
+        byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte(), 0xc0.toByte(),
+            0, 17, 8, 1, 0, 1, 0, 3, 1, 17, 0, 2, 17, 0, 3, 17, 0, 0xff.toByte(), 0xd9.toByte()).copyInto(bytes)
+        val artwork = com.anezium.rokidbus.shared.LauncherArtwork(256, 256,
+            java.util.Base64.getEncoder().encodeToString(bytes), "jpeg").toJson()
+        val start = startEnvelope("maps").copy(payload = startEnvelope("maps").payload.put("artwork", artwork))
+        jpegRouter.handleLocal(start, hudSender("maps"))
+        assertTrue(sink.errors.isEmpty())
+        assertEquals(2, sink.remote.size)
+        assertTrue(sink.remote.last().payload.isNull("artwork"))
+        assertEquals(1, sink.remote.last().payload.getJSONArray("actions").length())
+        now += 1_000
+        jpegRouter.handleLocal(updateEnvelope("maps").copy(payload = identity("maps").put("primary", "Paused").put("artwork", artwork)), hudSender("maps"))
+        assertTrue(sink.errors.isEmpty())
+        assertEquals("Paused", sink.remote.last().payload.getString("primary"))
+        assertTrue(sink.remote.last().payload.isNull("artwork"))
+        sink.remote.clear()
+        jpegRouter.resendIfAvailable()
+        assertEquals(BusPaths.ACTIVITY_END, sink.remote.first().path)
+        assertTrue(sink.remote.last().payload.isNull("artwork"))
+        spp = true
+        sink.remote.clear()
+        jpegRouter.resendIfAvailable()
+        assertEquals(2, sink.remote.size)
+        assertEquals(artwork.getString("data"), sink.remote.last().payload.getJSONObject("artwork").getString("data"))
+        assertEquals("Paused", sink.remote.last().payload.getString("primary"))
+    }
+
 }

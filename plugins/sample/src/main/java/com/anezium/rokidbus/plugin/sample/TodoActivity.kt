@@ -40,6 +40,7 @@ internal object TodoActivitySummary {
         destination = NexusPageDestination(TodoPages.TODO),
         activation = NexusActivityActivation.DESTINATION,
         persistence = NexusActivityPersistence.ONGOING,
+        eventKey = "list-${list.revision}",
     )
 
     private fun clip(value: String, limit: Int): String =

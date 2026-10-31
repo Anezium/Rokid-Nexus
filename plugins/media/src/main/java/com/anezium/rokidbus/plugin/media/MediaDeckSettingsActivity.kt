@@ -58,13 +58,14 @@ class MediaDeckSettingsActivity : Activity() {
             )
             addView(
                 settingRow(
-                    title = "Show in activities",
+                    title = com.anezium.rokidbus.client.plugin.NexusActivityPreference.TITLE,
                     subtitle = activitySub,
                     value = activityValue,
                     danger = false,
                 ) { toggleActivity() },
                 NexusUi.block(),
             )
+            addView(NexusUi.activityDisplaySettingsRow(this@MediaDeckSettingsActivity, "media"), NexusUi.block())
             addView(BusTheme.gap(this@MediaDeckSettingsActivity, 22))
             addView(NexusUi.sectionRow(this@MediaDeckSettingsActivity, "Plugin"), NexusUi.block())
             addView(BusTheme.gap(this@MediaDeckSettingsActivity, 12))
@@ -197,11 +198,11 @@ class MediaDeckSettingsActivity : Activity() {
         accessValue.setTextColor(if (access) NexusUi.GREEN else NexusUi.INK2)
 
         val shown = MediaDeckPreferences(this).showInActivities
-        activityValue.text = if (shown) "ON ›" else "OFF ›"
+        activityValue.text = if (shown) "REMOVE ›" else "ADD ›"
         activityValue.setTextColor(if (shown) NexusUi.GREEN else NexusUi.INK2)
         activitySub.text = when {
-            shown -> MediaDeckActivityModel.summaryOf(MediaDeckActivityControl.status(this))
-            access -> "Keep what plays among your glasses' activities"
+            shown -> MediaDeckActivityModel.summaryOf(MediaDeckActivityControl.status(this)) + ". Tap to remove."
+            access -> "Keep the player in Nexus, even when nothing plays"
             else -> "Needs media access first"
         }
     }

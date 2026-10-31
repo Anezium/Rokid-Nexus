@@ -511,7 +511,16 @@ internal class NexusPageChannel(
                 .put("revision", content.revision)
                 .put("template", content.body.template)
                 .put("title", content.title)
-                .put("body", PageTemplateContract.encode(content.body))
+                .put("body", PageTemplateContract.encode(content.body).apply {
+                    com.anezium.rokidbus.shared.LauncherArtwork.stripUnsupported(this, launcherInteractiveVersion)
+                    if (launcherInteractiveVersion < LauncherInteractiveContract.ARTWORK_VERSION) {
+                        remove("artwork")
+                        remove("positionMs")
+                        remove("durationMs")
+                        remove("playbackSpeed")
+                        remove("advancing")
+                    }
+                })
                 .put(
                     "actions",
                     JSONArray().apply {

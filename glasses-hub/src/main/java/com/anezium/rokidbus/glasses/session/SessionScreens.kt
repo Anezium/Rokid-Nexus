@@ -84,6 +84,7 @@ internal sealed interface ScreenBlock {
         val offline: Boolean = false,
         val dashed: Boolean = false,
         val commands: CommandStrip? = null,
+        val artwork: com.anezium.rokidbus.shared.LauncherArtwork? = null,
     ) : ScreenBlock
 
     /**
@@ -151,6 +152,8 @@ internal sealed interface ScreenBlock {
         val anchor: DocumentAnchor? = null,
     ) : ScreenBlock
 
+    data class Controls(override val key: String, val strip: CommandStrip) : ScreenBlock
+
     /** Now playing: what the media page says, with no controls (they are the command strip). */
     data class Media(
         override val key: String,
@@ -160,6 +163,12 @@ internal sealed interface ScreenBlock {
         val source: String? = null,
         val state: MediaPlaybackState,
         val status: String? = null,
+        val artwork: com.anezium.rokidbus.shared.LauncherArtwork? = null,
+        val positionMs: Long? = null,
+        val durationMs: Long? = null,
+        val receivedAtMs: Long = 0,
+        val playbackSpeed: Float = 1f,
+        val advancing: Boolean? = null,
     ) : ScreenBlock
 
     /** The next manoeuvre; [approximate] prefixes the distance with "~" for a degraded position. */
@@ -361,8 +370,11 @@ internal class SessionScreens(
                     icon = stop.icon,
                     tertiary = stop.activity?.takeUnless { stop.ended }?.let { commandLine(it, facts) },
                     offline = stop.activity?.lastKnown == true,
+                    artwork = stop.activity?.artwork,
                     commands = stop.activity?.takeUnless { stop.ended }
-                        ?.let { activity -> state.focus?.takeIf { it.stopId == stop.id }?.let { strip(activity, it) } },
+                        ?.let { activity ->
+                            cardStrip(activity, state.focus?.takeIf { it.stopId == stop.id }, selected)
+                        },
                 )
                 RootStopKind.NOTICE_PREVIEW -> noticeCard(stop, selected, facts)
                 RootStopKind.ACTIVITIES, RootStopKind.NOTIFICATIONS ->
@@ -375,6 +387,8 @@ internal class SessionScreens(
             state.focus != null -> ScreenHint(FOCUS_HINT, FOCUS_BACK)
             selectedStop?.ended == true -> ScreenHint("swipe next card", "back close")
             selectedStop?.kind == RootStopKind.NOTIFICATIONS -> ScreenHint(NOTIFICATIONS_HINT, "back close")
+            selectedStop?.activity?.let { it.activation == com.anezium.rokidbus.shared.ActivityActivation.COMMANDS && !it.lastKnown } == true ->
+                ScreenHint("swipe next · tap controls", "back close")
             else -> ScreenHint("swipe next · tap open", "back close")
         }
         return SessionScreen(ScreenHeader(NEXUS, "back: close"), blocks, hint, statusText, focusKey = selectedStop?.id)
@@ -459,10 +473,16 @@ internal class SessionScreens(
     }
 
     /** An activity's commands as its card draws them in command focus. */
-    private fun strip(activity: ActivityStop, focus: CommandFocus): CommandStrip = CommandStrip(
+    private fun strip(activity: ActivityStop, focus: CommandFocus?): CommandStrip = CommandStrip(
         ActivityCommands.slots(activity).map { CommandSlot(it.key, it.label, it.glyph, enabled = it.enabled, hub = it.hub) },
-        focus.index,
+        focus?.index ?: -1,
     )
+
+    private fun cardStrip(activity: ActivityStop, focus: CommandFocus?, selected: Boolean): CommandStrip? = when {
+        focus != null -> strip(activity, focus)
+        selected && !activity.lastKnown && activity.activation == com.anezium.rokidbus.shared.ActivityActivation.COMMANDS -> strip(activity, null)
+        else -> null
+    }
 
     /**
      * A card's third line: an offline entry's last-known time first, else its owner's command
@@ -681,13 +701,14 @@ internal class SessionScreens(
             }
             body is PageBody.Commands -> body.text?.let { blocks += ScreenBlock.Text("text", it, TextRole.BODY) }
             body is PageBody.Media ->
-                blocks += ScreenBlock.Media("media", body.title, body.artist, body.album, body.source, body.state, body.status)
+                blocks += ScreenBlock.Media("media", body.title, body.artist, body.album, body.source, body.state, body.status,
+                    body.artwork, body.positionMs, body.durationMs, status.snapshot.receivedAtMs, body.playbackSpeed, body.advancing)
         }
-        val rows = ActivityCommands.withOpenAppRows(items.rows(page), frame.openApp)
+        val rows = ActivityCommands.withOpenAppRows(items.rows(page), frame.openApp.takeUnless { body is PageBody.Media })
         val controls = items.controls(page)
         val commandFocus = frame.commandFocus
         // A control strip shows a selection only while it holds the focus.
-        val showsSelection = controls == null || commandFocus != null
+        val showsSelection = frame.tombstone == null && (controls == null || commandFocus != null)
         val pendingAction = frame.invocation?.actionId
         val rowBlocks: MutableList<ScreenBlock> = rows.mapIndexed { index, row ->
             val selected = showsSelection && frame.tombstone == null && index == frame.selected
@@ -727,13 +748,27 @@ internal class SessionScreens(
         frame.tombstone?.let { label ->
             rowBlocks.add(frame.selected.coerceIn(0, rowBlocks.size), ScreenBlock.Row("tombstone", label, "removed", enabled = false, selected = true, tombstone = true))
         }
-        blocks += rowBlocks
+        val mediaStrip = if (body is PageBody.Media && rows.isNotEmpty()) {
+            ScreenBlock.Controls("media-controls", CommandStrip(rows.map { row ->
+                val typed = page.actions.firstOrNull { it.id == row.actionId }?.typed
+                val glyph = when (typed) {
+                    com.anezium.rokidbus.shared.PageActionType.MediaPlay -> "play"
+                    com.anezium.rokidbus.shared.PageActionType.MediaPause -> "pause"
+                    com.anezium.rokidbus.shared.PageActionType.MediaPrevious -> "prev"
+                    com.anezium.rokidbus.shared.PageActionType.MediaNext -> "next"
+                    else -> "play"
+                }
+                CommandSlot(row.key, row.label, glyph, row.enabled, row.key == ActivityCommands.OPEN_APP_KEY)
+            }, if (showsSelection) frame.selected else -1))
+        } else null
+        if (mediaStrip != null) blocks += mediaStrip else if (body !is PageBody.Media) blocks += rowBlocks
         if (rows.isEmpty() && body is PageBody.SelectableList) {
             blocks += ScreenBlock.Text("empty", body.emptyText ?: "Nothing here", TextRole.CAPTION, centered = true)
         }
         // The collection says what its tags and bounds mean (r17 4.14).
         if (frame.pageId == RootStops.NOTIFICATIONS_PAGE_ID) blocks += ScreenBlock.Text("footnote", NOTIFICATIONS_FOOTNOTE, TextRole.CAPTION)
-        val focus = rowBlocks.firstOrNull { it.isSelected() }?.key ?: blocks.firstOrNull()?.key
+        val focus = if (body is PageBody.Media) mediaStrip?.takeIf { showsSelection }?.key ?: "media"
+            else rowBlocks.firstOrNull { it.isSelected() }?.key ?: blocks.firstOrNull()?.key
         val selectedRow = if (frame.tombstone == null && showsSelection) rows.getOrNull(frame.selected) else null
         val action = when {
             commandFocus != null -> FOCUS_HINT
@@ -747,7 +782,7 @@ internal class SessionScreens(
             }
         }
         val backHint = when {
-            commandFocus?.stopId == CommandFocus.MEDIA -> BACK_PAGE
+            commandFocus?.stopId == CommandFocus.MEDIA -> back
             commandFocus != null -> FOCUS_BACK
             readsFirst -> BACK_TO_TEXT
             else -> back
@@ -917,7 +952,8 @@ internal class SessionScreens(
         icon = activity.icon,
         tertiary = commandLine(activity, facts),
         offline = activity.lastKnown,
-        commands = focus?.let { strip(activity, it) },
+        artwork = activity.artwork,
+        commands = cardStrip(activity, focus, selected),
     )
 
     /**
@@ -1183,7 +1219,7 @@ internal class SessionScreens(
         const val OFFLINE = "offline"
         const val OFFLINE_HINT = "offline · last known"
         const val PENDING = "waiting for the app"
-        const val TAP_CONTROLS = "tap controls"
+        const val TAP_CONTROLS = "swipe or tap controls"
         const val BACK_PAGE = "back page"
 
         /** BACK from the full map's commands returns to the map. */

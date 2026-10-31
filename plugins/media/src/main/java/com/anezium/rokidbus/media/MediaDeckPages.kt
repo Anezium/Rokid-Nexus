@@ -24,7 +24,7 @@ import com.anezium.rokidbus.shared.PageTemplateContract
 /**
  * Media Deck's page, `media:main`: what plays now and its three transport controls, each the
  * explicit command for the state shown. With the launcher bundle it is a `media` body whose
- * controls the hub draws as one strip, and the hub adds its own Open app; without it, the base
+ * controls the hub draws as one strip in its integrated player; without it, the base
  * summary template with the controls as rows and a labelled row to the full app, which otherwise
  * could not be reached from a page-capable launcher.
  */
@@ -32,6 +32,11 @@ internal object MediaDeckPages {
     const val MAIN = "media:main"
     const val TITLE = "Media Deck"
     const val OPEN_APP = "open-app"
+    const val RESUME = "resume-last-player"
+
+    private fun resumeAction() = NexusPageActionSpec(
+        RESUME, "Resume last player", NexusPageActionKind.PLUGIN, typed = NexusActionType.MediaPlay,
+    )
 
     /**
      * The media body's middle control. One id for Play and Pause keeps the hub's selection on the
@@ -55,9 +60,11 @@ internal object MediaDeckPages {
         else -> actionIdOf(command)
     }
 
-    fun page(pageId: String, revision: Long, state: MediaDeckState, extended: Boolean): NexusPage = when {
+    fun page(pageId: String, revision: Long, state: MediaDeckState, extended: Boolean,
+        artwork: com.anezium.rokidbus.shared.LauncherArtwork? = null, positionMs: Long? = null,
+        playbackSpeed: Float = 1f, advancing: Boolean? = null): NexusPage = when {
         pageId != MAIN -> NexusPage.Unavailable
-        extended -> mediaPage(revision, state)
+        extended -> mediaPage(revision, state, artwork, positionMs, playbackSpeed, advancing)
         else -> basePage(revision, state)
     }
 
@@ -75,14 +82,19 @@ internal object MediaDeckPages {
         is MediaDeckState.NoSession, is MediaDeckState.Unknown -> "none"
     }
 
-    private fun mediaPage(revision: Long, state: MediaDeckState): NexusPage.Content {
+    private fun mediaPage(revision: Long, state: MediaDeckState, artwork: com.anezium.rokidbus.shared.LauncherArtwork?, positionMs: Long?, playbackSpeed: Float, advancing: Boolean?): NexusPage.Content {
         val active = state as? MediaDeckState.Active
         if (active == null) {
             val idle = idleCopy(state)
             return NexusPage.Content(
                 revision,
                 TITLE,
-                PageBody.Media(title = idle.title, state = idle.playback, status = idle.status),
+                PageBody.Media(
+                    title = idle.title, state = idle.playback, status = idle.status,
+                    controls = if (state is MediaDeckState.NoSession) listOf(RESUME) else emptyList(),
+                    defaultControl = RESUME.takeIf { state is MediaDeckState.NoSession },
+                ),
+                actions = if (state is MediaDeckState.NoSession) listOf(resumeAction()) else emptyList(),
                 live = true,
             )
         }
@@ -99,6 +111,11 @@ internal object MediaDeckPages {
                 source = optional(track.sourceLabel, PageTemplateContract.MAX_SOURCE_CHARS),
                 controls = commands.map(::controlIdOf),
                 defaultControl = PLAY_PAUSE,
+                artwork = artwork,
+                positionMs = positionMs?.coerceIn(0, 604800000L),
+                durationMs = track.durationMs?.coerceIn(0, 604800000L),
+                playbackSpeed = playbackSpeed.takeIf { it.isFinite() }?.coerceIn(-16f, 16f) ?: 0f,
+                advancing = advancing,
             ),
             actions = commands.map { actionSpec(it, controlIdOf(it)) },
             live = true,
@@ -114,8 +131,11 @@ internal object MediaDeckPages {
             return NexusPage.Content(
                 revision,
                 TITLE,
-                PageBody.Summary(primary = idle.title, text = idle.status, items = listOf(openApp)),
-                actions = listOf(openAppAction),
+                PageBody.Summary(primary = idle.title, text = idle.status, items = listOfNotNull(
+                    PageRow(RESUME, "Resume last player", target = PageTarget.Action(RESUME)).takeIf { state is MediaDeckState.NoSession },
+                    openApp,
+                )),
+                actions = listOfNotNull(resumeAction().takeIf { state is MediaDeckState.NoSession }, openAppAction),
                 live = true,
             )
         }
@@ -160,7 +180,9 @@ internal object MediaDeckPages {
         }
         is MediaDeckState.Unavailable ->
             IdleCopy("Media control unavailable", MediaPlaybackState.UNAVAILABLE, "Check Media Deck on the phone")
-        is MediaDeckState.NoSession, is MediaDeckState.Unknown, is MediaDeckState.Active ->
+        is MediaDeckState.NoSession ->
+            IdleCopy("Ready to play", MediaPlaybackState.NONE, "If silent, open a player on phone")
+        is MediaDeckState.Unknown, is MediaDeckState.Active ->
             IdleCopy("Nothing playing", MediaPlaybackState.NONE, "Start playback on the phone")
     }
 
@@ -209,12 +231,19 @@ internal class MediaDeckPageProvider<R : Any>(
     private var answering = false
     private var dirty = false
     private var shownKey: String? = null
+    private var shownArtwork: com.anezium.rokidbus.shared.LauncherArtwork? = null
+    private val progress = MediaDeckPageProgress()
+    private var shownProgressRevision = -1L
     private var shownRevision: Long? = null
     private var lastPublishAt: Long? = null
     private var cancelPublish: (() -> Unit)? = null
     private var cancelLease: (() -> Unit)? = null
     private val shownTargets = LinkedHashMap<Long, MediaDeckTarget?>()
-    private val listener = MediaDeckStateListener { _, _, changed -> if (changed) stateChanged() }
+    private val idleRevisions = LinkedHashMap<Long, Long>()
+    private val listener = MediaDeckStateListener { _, snapshot, changed ->
+        val moved = progress.observe(snapshot, now())
+        if (changed || moved) stateChanged()
+    }
 
     val isWatching: Boolean get() = watching
 
@@ -243,6 +272,11 @@ internal class MediaDeckPageProvider<R : Any>(
 
     fun onAction(pageId: String, revision: Long, actionId: String, typed: NexusActionType?): NexusPageResult {
         if (pageId != MediaDeckPages.MAIN) return MediaDeckControlOutcome.NOT_OFFERED.toPageResult()
+        if (actionId == MediaDeckPages.RESUME) {
+            if (typed != null && typed != NexusActionType.MediaPlay) return MediaDeckControlOutcome.NOT_OFFERED.toPageResult()
+            val idle = idleRevisions[revision] ?: return MediaDeckControlOutcome.STALE_REVISION.toPageResult()
+            return hub.resumeIdle(idle).toPageResult()
+        }
         val command = if (actionId == MediaDeckPages.PLAY_PAUSE) {
             // Only the typed value says which of the two the wearer saw; without it nothing runs.
             typed?.let(MediaDeckCommand::of)?.takeIf { it == MediaDeckCommand.PLAY || it == MediaDeckCommand.PAUSE }
@@ -297,10 +331,14 @@ internal class MediaDeckPageProvider<R : Any>(
     private fun stateChanged() {
         if (answering) return
         val request = current ?: return
-        if (MediaDeckPages.contentKey(hub.state) == shownKey) {
+        if (MediaDeckPages.contentKey(hub.state) == shownKey && hub.artwork == shownArtwork && progress.revision == shownProgressRevision) {
             // The same session, item and phase under a new state revision (the monitor restarted):
             // what the wearer sees is still true, so its actions now bind to the new revision.
-            shownRevision?.let { shown -> shownTargets[shown] = MediaDeckTarget.of(hub.state) }
+            shownRevision?.let { shown ->
+                shownTargets[shown] = MediaDeckTarget.of(hub.state)
+                val idle = hub.state as? MediaDeckState.NoSession
+                if (idle != null && idleRevisions.containsKey(shown)) idleRevisions[shown] = idle.revision
+            }
             return
         }
         dirty = true
@@ -318,7 +356,7 @@ internal class MediaDeckPageProvider<R : Any>(
         }
         val nextRevision = nextRevision(null)
         val state = hub.state
-        val page = MediaDeckPages.page(MediaDeckPages.MAIN, nextRevision, state, extended())
+        val page = MediaDeckPages.page(MediaDeckPages.MAIN, nextRevision, state, extended(), hub.artwork, progress.position(now()), progress.snapshot?.playbackSpeed ?: 1f, progress.snapshot?.advancing)
         if (publish(request, page) == NexusSdkResult.SENT) {
             remember(nextRevision, state)
             dirty = false
@@ -330,14 +368,21 @@ internal class MediaDeckPageProvider<R : Any>(
     private fun show(pageRevision: Long): NexusPage {
         val state = hub.state
         remember(pageRevision, state)
-        return MediaDeckPages.page(MediaDeckPages.MAIN, pageRevision, state, extended())
+        return MediaDeckPages.page(MediaDeckPages.MAIN, pageRevision, state, extended(), hub.artwork, progress.position(now()), progress.snapshot?.playbackSpeed ?: 1f, progress.snapshot?.advancing)
     }
 
     private fun remember(pageRevision: Long, state: MediaDeckState) {
         shownKey = MediaDeckPages.contentKey(state)
+        shownArtwork = hub.artwork
+        shownProgressRevision = progress.revision
         shownRevision = pageRevision
         shownTargets[pageRevision] = MediaDeckTarget.of(state)
-        while (shownTargets.size > MAX_SHOWN_REVISIONS) shownTargets.remove(shownTargets.keys.first())
+        if (state is MediaDeckState.NoSession) idleRevisions[pageRevision] = state.revision
+        while (shownTargets.size > MAX_SHOWN_REVISIONS) {
+            val removed = shownTargets.keys.first()
+            shownTargets.remove(removed)
+            idleRevisions.remove(removed)
+        }
     }
 
     private fun watch() {

@@ -22,6 +22,23 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NexusLauncherInteractiveTest {
+    @Test
+    fun `event hints require v4 without changing ordinary update priority`() {
+        val (client, wire) = client(LegacyCallbacks())
+        val activity = NexusActivity(glyph = "disc", primary = "Track", eventKey = "track-1")
+        wire.deliver(BusPaths.HUB_CAPABILITIES, JSONObject().put("pageSessionVersion", 1).put("launcherInteractiveVersion", 3))
+        assertFalse(client.supportsActivityEvents())
+        assertEquals(NexusSdkResult.SENT, client.startActivity(activity))
+        assertFalse(wire.sends.last().second.has("eventKey"))
+        wire.deliver(BusPaths.HUB_CAPABILITIES, JSONObject().put("pageSessionVersion", 1).put("launcherInteractiveVersion", 4))
+        assertTrue(client.supportsActivityEvents())
+        assertEquals(NexusSdkResult.SENT, client.updateActivity(activity.copy(eventKey = "track-2")))
+        assertEquals("track-2", wire.sends.last().second.getString("eventKey"))
+        assertFalse(wire.sends.last().second.optBoolean("significant"))
+        assertThrows(IllegalArgumentException::class.java) { activity.copy(eventKey = "x".repeat(65)) }
+        assertThrows(IllegalArgumentException::class.java) { activity.copy(eventKey = "bad\nkey") }
+    }
+
     private class FakeTransport : NexusPluginTransport {
         lateinit var listener: NexusPluginTransport.Listener
         var featureBits = 0

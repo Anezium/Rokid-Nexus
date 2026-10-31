@@ -110,6 +110,7 @@ internal data class ActivitySource(
     val stale: Boolean = false,
     /** Its launcher fields were validated before a link loss and nothing was announced since; see [ActivityStop.held]. */
     val held: Boolean = false,
+    val artwork: com.anezium.rokidbus.shared.LauncherArtwork? = null,
 )
 
 /**
@@ -144,6 +145,7 @@ internal fun activitySourceOf(entry: ActivityEntry, interactive: Boolean, held: 
             destination = content.destination,
             activation = content.effectiveActivation,
             commands = if (content.isOffline) emptyList() else content.actions,
+            artwork = content.artwork,
             defaultActionId = content.effectiveDefaultActionId,
         )
         held -> base.copy(
@@ -155,6 +157,7 @@ internal fun activitySourceOf(entry: ActivityEntry, interactive: Boolean, held: 
             destination = content.destination,
             activation = content.effectiveActivation,
             held = true,
+            artwork = content.artwork,
         )
         else -> base
     }
@@ -207,6 +210,7 @@ internal class ActivityFeed(
                 startedOrder = source.startedOrder,
                 significantOrder = source.significantOrder,
                 held = source.held,
+                artwork = source.artwork,
             )
             if (stop == previous) return@forEach
             known[source.surfaceId] = stop

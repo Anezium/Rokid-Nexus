@@ -345,6 +345,7 @@ internal class SessionReducer(
                 }
             }
             is SessionEvent.Enter -> when {
+                state.requireFreshSelection && !fresh(model, event) -> keep(model)
                 state.focus != null -> focusEnter(model, rootSite(state), rootActivity(state, state.focus.stopId), event)
                 // An ended activity keeps its place but opens nothing.
                 else -> state.stops.getOrNull(state.selected)?.takeUnless { it.ended }?.let { stop ->
@@ -563,8 +564,9 @@ internal class SessionReducer(
             val frame = top.copy(selected = target, selectedKey = key, commandFocus = focus.copy(key = key, index = target))
             return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
         }
-        // Outside focus a control strip is not a list to walk: a tap focuses it first.
-        if (controlsOf(top) != null) return keep(model)
+        // Outside focus a swipe reaches the controls at once, on the one a first tap would focus;
+        // the next swipes walk them and the rows under them. It never plays anything.
+        if (controlsOf(top) != null) return focusControls(model, state, top) ?: keep(model)
         val status = top.status
         if (top.reading()) {
             // Read text pages through its own measured layout; bounded at both ends.
@@ -630,20 +632,11 @@ internal class SessionReducer(
                         listOf(ShowFrame),
                     )
                 }
-                if (top.tombstone != null) return keep(model)
-                if (top.commandFocus == null) {
-                    controlsOf(top)?.let { controls ->
-                        // The first tap on a media page focuses its default control; it never plays.
-                        val index = entriesOf(top).indexOfFirst { it.key == controls.defaultKey }
-                        if (index < 0) return keep(model)
-                        val frame = top.copy(
-                            selected = index,
-                            selectedKey = controls.defaultKey,
-                            commandFocus = CommandFocus(CommandFocus.MEDIA, controls.defaultKey, index),
-                        )
-                        return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
-                    }
+                if (top.commandFocus == null && controlsOf(top) != null) {
+                    // The first tap on a media page focuses its default control; it never plays.
+                    return focusControls(model, state, top) ?: keep(model)
                 }
+                if (top.tombstone != null) return keep(model)
                 when (val item = entriesOf(top).getOrNull(top.selected)?.item) {
                     is PageItem.OpenPage ->
                         openFrame(model, state.root, state.frames, item.pageId, item.paramsJson, nowMs, applicationOpenApp(top, item.pageId))
@@ -670,7 +663,21 @@ internal class SessionReducer(
         }
     }
 
-    /** BACK closes a panel, then leaves command focus, then the rows of read text for the text, then pops the frame. */
+    /** A media page's controls focused on their default control, or null when it is not among the rows. */
+    private fun focusControls(model: SessionModel, state: SessionState.InPage, top: Frame): SessionTransition? {
+        val controls = controlsOf(top) ?: return null
+        val index = entriesOf(top).indexOfFirst { it.key == controls.defaultKey }
+        if (index < 0) return null
+        val frame = top.copy(
+            selected = index,
+            selectedKey = controls.defaultKey,
+            tombstone = null,
+            commandFocus = CommandFocus(CommandFocus.MEDIA, controls.defaultKey, index),
+        )
+        return SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
+    }
+
+    /** BACK cancels overlays, pops a media player directly, otherwise leaves focus before the frame. */
     private fun back(model: SessionModel, state: SessionState.InPage, nowMs: Long): SessionTransition {
         val top = state.frames.last()
         // BACK cancels a capture (the earlier draft stays), then leaves the composer's focus.
@@ -687,6 +694,7 @@ internal class SessionReducer(
             return SessionTransition(model.copy(state = state.withTop(top.copy(panel = null))), listOf(ShowFrame))
         }
         if (top.commandFocus != null) {
+            if (top.commandFocus.stopId == CommandFocus.MEDIA) return pop(model, state, nowMs)
             return SessionTransition(model.copy(state = state.withTop(top.copy(commandFocus = null))), listOf(ShowFrame))
         }
         // The command list goes back where it was opened: the full map, or the page with Commands
@@ -1055,7 +1063,7 @@ internal class SessionReducer(
         if (floor != null && page.revision < floor) return keep(model)
         // The same revision keeps its laid-out snapshot, unless the templates it was read with changed.
         val kept = status.previous?.takeIf { page.revision == floor && it.extended == itemResolver.acceptsExtended() }
-        val snapshot = kept ?: Snapshot(page, extended = itemResolver.acceptsExtended())
+        val snapshot = kept ?: Snapshot(page, extended = itemResolver.acceptsExtended(), receivedAtMs = nowMs)
         // The first display of a frame starts its lease; an uncovered frame already holds one.
         val lease = status.leaseUntilMs ?: (nowMs + PageSurfaceContract.LEASE_MS)
         val granted = listOfNotNull(
@@ -1190,7 +1198,7 @@ internal class SessionReducer(
         nowMs: Long,
     ): SessionTransition {
         val replaced = top.copy(
-            status = status.copy(snapshot = Snapshot(page, extended = itemResolver.acceptsExtended()), revision = page.revision),
+            status = status.copy(snapshot = Snapshot(page, extended = itemResolver.acceptsExtended(), receivedAtMs = nowMs), revision = page.revision),
             revisionFloor = page.revision,
             shownAtMs = nowMs,
             // The display page is a hub preference, bound to no revision: guidance updates keep it.
@@ -1325,7 +1333,7 @@ internal class SessionReducer(
 
     /** The page's own rows, then the hub's Open app row of a page opened for a launchable owner. */
     private fun entriesFor(page: PageSurfaceResponse.Page, openApp: OpenApp?): List<PageEntry> =
-        ActivityCommands.withOpenApp(itemResolver.entries(page), openApp)
+        ActivityCommands.withOpenApp(itemResolver.entries(page), openApp.takeUnless { page.template == PageSurfaceContract.TEMPLATE_MEDIA })
 
     /**
      * A provider page entered from Applications, over the launcher bundle, ends with the hub's
@@ -1861,7 +1869,7 @@ internal class SessionReducer(
         val destination = activity.destination
         return when {
             // A held card goes where the bundle validated, a transport back or not: inert, asking nothing.
-            activity.activation == ActivityActivation.DESTINATION && destination != null ->
+            (activity.activation == ActivityActivation.DESTINATION || activity.lastKnown) && destination != null ->
                 openFrame(model, root, below, destination.pageId, destination.paramsJson, nowMs, openAppOf(activity), inert = activity.held)
             activity.activation == ActivityActivation.COMMANDS && !activity.lastKnown && activity.commands.isNotEmpty() -> {
                 val slots = ActivityCommands.slots(activity)
@@ -1898,7 +1906,19 @@ internal class SessionReducer(
         activity ?: return keep(model)
         val owner = activity.ownerPluginId ?: return keep(model)
         val slot = ActivityCommands.slots(activity).getOrNull(focus.index)?.takeIf { it.key == focus.key } ?: return keep(model)
-        val action = slot.action ?: return if (fresh(model, event)) launch(model, model.state, owner, event.nowMs) else keep(model)
+        val action = slot.action ?: run {
+            if (!fresh(model, event)) return keep(model)
+            val destination = slot.destination ?: return launch(model, model.state, owner, event.nowMs)
+            val state = model.state
+            val root = when (state) {
+                is SessionState.Root -> state.copy(focus = null)
+                is SessionState.InPage -> state.root.copy(focus = null)
+                else -> return keep(model)
+            }
+            val below = (state as? SessionState.InPage)?.frames.orEmpty()
+            return openFrame(model, root, below, destination.pageId, destination.paramsJson, event.nowMs,
+                openAppOf(activity), inert = activity.held)
+        }
         if (!slot.enabled || activity.lastKnown || owner in model.pendingCommands) return keep(model)
         if (!fresh(model, event)) return keep(model)
         if (model.linkLost) return SessionTransition(model, listOf(SessionEffect.ShowStatus(SessionStatus.NotAvailable)))
@@ -2032,8 +2052,10 @@ internal class SessionReducer(
     }
 }
 
-private fun SessionModel.nextId(kind: String): Pair<String, SessionModel> =
-    "s$generation-$kind$nextId" to copy(nextId = nextId + 1)
+private fun SessionModel.nextId(kind: String): Pair<String, SessionModel> {
+    val local = "s$generation-$kind$nextId"
+    return (if (idNamespace.isEmpty()) local else "$idNamespace-$local") to copy(nextId = nextId + 1)
+}
 
 private fun Frame.retained(): Snapshot? = when (val status = status) {
     is FrameStatus.Loading -> status.previous
@@ -2094,10 +2116,23 @@ private fun SessionState.rootStops(): List<RootStop> = when (this) {
 
 private fun SessionState.mapRootStops(transform: (List<RootStop>) -> List<RootStop>): SessionState = when (this) {
     SessionState.Closed -> this
-    is SessionState.Opening -> copy(root = root.copy(stops = transform(root.stops)))
-    is SessionState.Root -> copy(stops = transform(stops))
-    is SessionState.InPage -> copy(root = root.copy(stops = transform(root.stops)))
+    is SessionState.Opening -> copy(root = root.mapStops(transform))
+    is SessionState.Root -> mapStops(transform)
+    is SessionState.InPage -> copy(root = root.mapStops(transform))
     is SessionState.Launching -> copy(previous = previous.mapRootStops(transform))
+}
+
+private fun SessionState.Root.mapStops(transform: (List<RootStop>) -> List<RootStop>): SessionState.Root {
+    val next = transform(stops)
+    val selectedId = stops.getOrNull(selected)?.id
+    val retained = next.indexOfFirst { it.id == selectedId }
+    val index = if (retained >= 0) retained else selected.coerceIn(0, next.lastIndex.coerceAtLeast(0))
+    return copy(
+        stops = next,
+        selected = index,
+        focus = focus?.takeIf { it.stopId == next.getOrNull(index)?.id },
+        requireFreshSelection = requireFreshSelection || (selectedId != null && retained < 0),
+    )
 }
 
 private fun List<ActivityStop>.upsert(stop: ActivityStop): List<ActivityStop> {

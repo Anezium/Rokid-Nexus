@@ -196,9 +196,9 @@ class PhonePageBrokerLauncherTest {
     @Test
     fun `providers hear the launcher bundle version beside the page version`() {
         open()
-        assertEquals(1, capabilities().last().getInt(LauncherInteractiveContract.CAPABILITY_FIELD_VERSION))
+        assertEquals(LauncherInteractiveContract.VERSION, capabilities().last().getInt(LauncherInteractiveContract.CAPABILITY_FIELD_VERSION))
         assertEquals(1, capabilities().last().getInt(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION))
-        assertEquals(1, broker.negotiatedLauncherVersion)
+        assertEquals(LauncherInteractiveContract.VERSION, broker.negotiatedLauncherVersion)
         broker.onGlassesCapabilities(PageSurfaceContract.VERSION, 0)
         assertEquals(0, capabilities().last().getInt(LauncherInteractiveContract.CAPABILITY_FIELD_VERSION))
         assertEquals(0, broker.negotiatedLauncherVersion)
@@ -395,4 +395,42 @@ class PhonePageBrokerLauncherTest {
             assertEquals(launcher == 1, forwarded.has("code"))
         }
     }
+    @Test fun `v1 strips covers from pages and result replacements`() {
+        val registration = open(launcher = 1)
+        val body = JSONObject().put("title", "Track").put("state", "paused")
+            .put("artwork", com.anezium.rokidbus.shared.LauncherArtwork(1, 1, "gA==").toJson())
+            .put("positionMs", 1000).put("durationMs", 90000).put("playbackSpeed", 2.0).put("advancing", false)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(template = "media", body = body), registration))
+        val forwarded = responses().single().getJSONObject("body")
+        assertFalse(forwarded.has("artwork"))
+        visible()
+        invoke("art-result", "play")
+        val replacement = page(2, template = "media", body = body)
+        val result = JSONObject().put("invocationId", "art-result").put("status", "done").put("replacement", replacement)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, result, registration))
+        val replaced = host.glasses.last { it.first == BusPaths.PAGE_RESULT }.second.getJSONObject("replacement").getJSONObject("body")
+        for (key in listOf("artwork", "positionMs", "durationMs", "playbackSpeed", "advancing")) assertFalse(key, replaced.has(key))
+    }
+
+    private fun jpegCover(): com.anezium.rokidbus.shared.LauncherArtwork {
+        val bytes = byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte(), 0xc0.toByte(),
+            0, 17, 8, 1, 0, 1, 0, 3, 1, 17, 0, 2, 17, 0, 3, 17, 0, 0xff.toByte(), 0xd9.toByte())
+        return com.anezium.rokidbus.shared.LauncherArtwork(256, 256,
+            java.util.Base64.getEncoder().encodeToString(bytes), "jpeg")
+    }
+
+    @Test fun `v2 clears JPEG in both pages and replacement pages`() {
+        val registration = open(launcher = 2)
+        val body = JSONObject().put("title", "Track").put("state", "paused").put("artwork", jpegCover().toJson())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(template = "media", body = body), registration))
+        assertTrue(responses().single().getJSONObject("body").isNull("artwork"))
+        visible()
+        invoke("jpeg-result", "play")
+        val result = JSONObject().put("invocationId", "jpeg-result").put("status", "done")
+            .put("replacement", page(2, template = "media", body = body))
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, result, registration))
+        assertTrue(host.glasses.last { it.first == BusPaths.PAGE_RESULT }.second
+            .getJSONObject("replacement").getJSONObject("body").isNull("artwork"))
+    }
+
 }

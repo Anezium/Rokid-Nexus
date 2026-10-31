@@ -63,11 +63,11 @@ class MediaDeckPagesTest {
     }
 
     @Test
-    fun `without a session the page says why and offers no control`() {
+    fun `an idle page offers explicit resume but access loss offers no control`() {
         val none = content(stateOf(MediaDeckObservation.NoSession), extended = true)
         assertEquals(MediaPlaybackState.NONE, (none.body as PageBody.Media).state)
-        assertTrue((none.body as PageBody.Media).controls.isEmpty())
-        assertTrue(none.actions.isEmpty())
+        assertEquals(listOf(MediaDeckPages.RESUME), (none.body as PageBody.Media).controls)
+        assertEquals(NexusActionType.MediaPlay, none.actions.single().typed)
 
         val revoked = content(stateOf(observed(), MediaDeckObservation.AccessRequired), extended = true)
         val body = revoked.body as PageBody.Media
@@ -100,7 +100,7 @@ class MediaDeckPagesTest {
     private val published = mutableListOf<NexusPage>()
     private val tasks = mutableListOf<() -> Unit>()
 
-    private fun provider() = MediaDeckPageProvider<Request>(
+    private fun provider(extended: Boolean = true) = MediaDeckPageProvider<Request>(
         hub = fake.hub,
         pageIdOf = Request::pageId,
         floorOf = Request::floor,
@@ -108,13 +108,40 @@ class MediaDeckPagesTest {
             published += page
             NexusSdkResult.SENT
         },
-        extended = { true },
+        extended = { extended },
         now = { 0L },
         schedule = { _, task ->
             tasks += task
             ({ tasks.remove(task); Unit })
         },
     )
+
+    @Test
+    fun `idle resume allows deliberate attempts and cannot control a replacement session`() {
+        val provider = provider()
+        val page = provider.onRequest(Request(MediaDeckPages.MAIN, null)) as NexusPage.Content
+        fun resume(revision: Long) = provider.onAction(MediaDeckPages.MAIN, revision, MediaDeckPages.RESUME, NexusActionType.MediaPlay)
+        assertEquals(0, fake.monitor.resumeRequests)
+        assertEquals(NexusPageResultStatus.DONE, resume(page.revision).status)
+        assertEquals(1, fake.monitor.resumeRequests)
+        assertEquals(NexusPageResultStatus.DONE, resume(page.revision).status)
+        assertEquals(2, fake.monitor.resumeRequests)
+        val next = provider.onRequest(Request(MediaDeckPages.MAIN, null)) as NexusPage.Content
+        fake.monitor.emit(observed())
+        assertEquals(NexusPageResultStatus.STALE, resume(next.revision).status)
+        assertEquals(2, fake.monitor.resumeRequests)
+        assertTrue(fake.monitor.sent.isEmpty())
+    }
+
+    @Test
+    fun `a confirmed base page can resume without a typed field`() {
+        val provider = provider(extended = false)
+        val page = provider.onRequest(Request(MediaDeckPages.MAIN, null)) as NexusPage.Content
+        assertTrue(page.body is PageBody.Summary)
+        assertEquals(NexusPageResultStatus.DONE,
+            provider.onAction(MediaDeckPages.MAIN, page.revision, MediaDeckPages.RESUME, null).status)
+        assertEquals(1, fake.monitor.resumeRequests)
+    }
 
     @Test
     fun `a page action runs on the session the page showed, at that revision`() {

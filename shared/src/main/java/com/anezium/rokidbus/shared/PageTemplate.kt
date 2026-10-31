@@ -172,6 +172,11 @@ sealed interface PageBody {
         val status: String? = null,
         val controls: List<String> = emptyList(),
         val defaultControl: String? = null,
+        val artwork: LauncherArtwork? = null,
+        val positionMs: Long? = null,
+        val durationMs: Long? = null,
+        val playbackSpeed: Float = 1f,
+        val advancing: Boolean? = null,
     ) : PageBody {
         override val template: String get() = PageSurfaceContract.TEMPLATE_MEDIA
         override val items: List<PageRow> get() = emptyList()
@@ -462,6 +467,11 @@ object PageTemplateContract {
                 body.status?.let { put("status", it) }
                 put("controls", JSONArray().apply { body.controls.forEach(::put) })
                 body.defaultControl?.let { put("defaultControl", it) }
+                body.artwork?.let { put("artwork", it.toJson()) }
+                body.positionMs?.let { put("positionMs", it) }
+                body.durationMs?.let { put("durationMs", it) }
+                if (body.playbackSpeed != 1f) put("playbackSpeed", body.playbackSpeed.toDouble())
+                body.advancing?.let { put("advancing", it) }
             }
             is PageBody.Route -> {
                 body.maneuver?.let { maneuver ->
@@ -617,7 +627,20 @@ object PageTemplateContract {
             )
         }
 
+        private fun mediaTime(body: JSONObject, key: String): Long? {
+            if (!body.has(key) || body.isNull(key)) return null
+            val value = body.opt(key) as? Number ?: fail("$key must be an integer")
+            val millis = value.toLong()
+            check(value.toDouble() == millis.toDouble() && millis in 0..604_800_000L, "$key is out of bounds")
+            return millis
+        }
+
         fun media(body: JSONObject): PageBody.Media {
+            val speed = if (body.has("playbackSpeed")) {
+                val value = body.opt("playbackSpeed") as? Number ?: fail("playbackSpeed must be a number")
+                value.toDouble().also { check(it.isFinite() && it in -16.0..16.0, "playbackSpeed is out of bounds") }.toFloat()
+            } else 1f
+            val advancing = if (body.has("advancing")) body.opt("advancing") as? Boolean ?: fail("advancing must be boolean") else null
             val state = body.opt("state") as? String ?: fail("state must be a string")
             val array = array(body, "controls", required = false)
             val controls = if (array == null) {
@@ -644,6 +667,11 @@ object PageTemplateContract {
                 status = optionalText(body, "status", MAX_MEDIA_TEXT_CHARS),
                 controls = controls,
                 defaultControl = defaultControl,
+                artwork = LauncherArtwork.parse(body.opt("artwork")),
+                positionMs = mediaTime(body, "positionMs"),
+                durationMs = mediaTime(body, "durationMs"),
+                playbackSpeed = speed,
+                advancing = advancing,
             )
         }
 

@@ -1,5 +1,10 @@
 # Launcher completion (plan 028) — implementation report
 
+The [2026-10-31 validation pass](reviews/launcher-release-validation-20261031.md)
+records the latest main integration, all-module tests, signed installs and focused
+Media Deck/Activities device checks. Its remaining boundaries are explicit; it
+does not mark the historical hardware matrix below as fully accepted.
+
 Date: 2026-10-12, amended 2026-10-17 after GPT-6 Astra's independent review (section 2). Branch `dev/launcher-complete` (local; integration checkout `dev/launcher-rework`
 fast-forwarded to the same commit). Base `2d08f0a3` (approved plan 028, r17 mockup). Not pushed,
 released or tagged. The later [2026-10-18 device smoke](LAUNCHER_DEVICE_SMOKE_20261018.md)

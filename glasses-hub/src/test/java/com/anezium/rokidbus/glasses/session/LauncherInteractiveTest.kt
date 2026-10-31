@@ -493,8 +493,6 @@ class LauncherInteractiveTest {
             .put(typedAction("next", PageActionType.MediaNext))
         respond(effects.filterIsInstance<RequestPage>().single().request, body, actions, now = 2_100)
 
-        send(SessionEvent.Step(1, 2_150))
-        assertEquals(listOf(SessionEffect.None), effects)
         shown(2_200)
         press(2_300)
         assertEquals(CommandFocus(CommandFocus.MEDIA, "action play", 1), top().commandFocus)
@@ -508,9 +506,81 @@ class LauncherInteractiveTest {
         assertEquals("next", invocation.actionId)
         assertEquals(PageSurfaceContract.MODE_QUICK, invocation.mode)
 
-        send(SessionEvent.Back(2_700))
-        assertNull(top().commandFocus)
-        assertTrue(model.state is SessionState.InPage)
+        send(SessionEvent.Step(-1, 2_800))
+        assertEquals(CommandFocus(CommandFocus.MEDIA, "action play", 1), top().commandFocus)
+        assertTrue(effects.none { it is SendAction })
+        send(SessionEvent.Step(-1, 2_900))
+        assertEquals("action previous", top().commandFocus?.key)
+        repeat(3) { send(SessionEvent.Step(1, 3_000L + it)) }
+        assertEquals("action next", top().commandFocus?.key)
+        send(SessionEvent.Back(3_100))
+        assertTrue(model.state is SessionState.Root)
+        assertTrue(effects.any { it is SessionEffect.SendClosed })
+    }
+
+    @Test
+    fun `selected activity previews quick commands and opens its integrated player without launching the app`() {
+        openRoot(stop(destination = PageDestination("media:now")))
+        val screens = SessionScreens(items, pluginLabel = { null }, formatTime = { "12:00" }, wallTimeOf = { it })
+        val screen = screens.screen(model.state, null, model.generation, CommandFacts.of(model))
+        val card = screen.blocks.filterIsInstance<ScreenBlock.Card>().single { it.key == "media:activity" }
+        assertEquals(-1, card.commands!!.focusedIndex)
+        assertEquals(listOf("previous", "play", "next", ActivityCommands.OPEN_PAGE_KEY), card.commands.items.map { it.key })
+        assertEquals("Open player", card.commands.items.last().label)
+        assertEquals("swipe next · tap controls", screen.hint?.action)
+        shown(1_900)
+        press(2_000)
+        assertEquals("play", root().focus?.key)
+        assertTrue(effects.none { it is SendActivityCommand || it is RequestPage })
+        send(SessionEvent.Step(1, 2_100))
+        send(SessionEvent.Step(1, 2_200))
+        assertEquals(ActivityCommands.OPEN_PAGE_KEY, root().focus?.key)
+        shown(2_300)
+        press(2_250)
+        assertTrue(effects.none { it is RequestPage })
+        press(2_400)
+        assertEquals("media:now", effects.filterIsInstance<RequestPage>().single().request.correlation.pageId)
+        assertTrue(effects.none { it is SessionEffect.SendLauncherOpen })
+        val request = effects.filterIsInstance<RequestPage>().single().request
+        respond(request, PageBody.Media("Song", MediaPlaybackState.PAUSED,
+            controls = listOf("play"), defaultControl = "play"), JSONArray().put(typedAction("play", PageActionType.MediaPlay)), 2_500)
+        shown(2_600)
+        press(2_700)
+        assertEquals(CommandFocus.MEDIA, top().commandFocus?.stopId)
+        send(SessionEvent.Back(2_800))
+        assertTrue(model.state is SessionState.Root)
+        assertNull(root().focus)
+    }
+
+    @Test
+    fun `one Back leaves the player from every focused transport button`() {
+        for (direction in listOf(-1, 0, 1)) {
+            model = SessionModel()
+            openRoot(stop(activation = ActivityActivation.DESTINATION, destination = PageDestination("media:now")))
+            press(2_000)
+            val request = effects.filterIsInstance<RequestPage>().single().request
+            val body = PageBody.Media("Song", MediaPlaybackState.PAUSED,
+                controls = listOf("previous", "play", "next"), defaultControl = "play")
+            val actions = JSONArray().put(typedAction("previous", PageActionType.MediaPrevious))
+                .put(typedAction("play", PageActionType.MediaPlay)).put(typedAction("next", PageActionType.MediaNext))
+            respond(request, body, actions, 2_100)
+            send(SessionEvent.Step(1, 2_200))
+            if (direction != 0) send(SessionEvent.Step(direction, 2_300))
+            assertEquals(CommandFocus.MEDIA, top().commandFocus?.stopId)
+            send(SessionEvent.Back(2_400))
+            assertTrue(model.state is SessionState.Root)
+            assertEquals(1, effects.filterIsInstance<SessionEffect.SendClosed>().size)
+            assertTrue(effects.none { it is SendAction })
+        }
+    }
+
+    @Test
+    fun `an offline commands-first card still opens its retained destination without a command`() {
+        openRoot(stop(destination = PageDestination("media:now"), offline = true))
+        shown(1_900)
+        press(2_000)
+        assertEquals("media:now", effects.filterIsInstance<RequestPage>().single().request.correlation.pageId)
+        assertTrue(effects.none { it is SendActivityCommand || it is SessionEffect.SendLauncherOpen })
     }
 
     @Test
@@ -643,9 +713,40 @@ class LauncherInteractiveTest {
     /** A touchpad tap whose contact began at [at]; the firmware classifies it 40 ms later. */
     private fun press(at: Long) = send(SessionEvent.Enter(at + 40, pressStartMs = at))
 
-    private fun respond(request: PageSurfaceRequest, body: PageBody, actions: JSONArray, now: Long) {
+    @Test
+    fun `media controls returning after idle do not trap the removed selection`() {
+        for (control in 0..2) {
+            model = SessionModel()
+            openRoot(stop(activation = ActivityActivation.DESTINATION, destination = PageDestination("media:now")))
+            press(2_000)
+            val request = effects.filterIsInstance<RequestPage>().single().request
+            val body = PageBody.Media("Song", MediaPlaybackState.PAUSED,
+                controls = listOf("previous", "play", "next"), defaultControl = "play")
+            val actions = JSONArray().put(typedAction("previous", PageActionType.MediaPrevious))
+                .put(typedAction("play", PageActionType.MediaPlay)).put(typedAction("next", PageActionType.MediaNext))
+            respond(request, body, actions, 2_100)
+            send(SessionEvent.Step(1, 2_200))
+            if (control != 1) send(SessionEvent.Step(control - 1, 2_300))
+            respond(request, PageBody.Media("Idle", MediaPlaybackState.NONE), JSONArray(), 2_400, revision = 2)
+            respond(request, body, actions, 2_500, revision = 3)
+            assertTrue(top().tombstone != null)
+            val screen = SessionScreens(items, pluginLabel = { null }, formatTime = { "12:00" }, wallTimeOf = { it })
+                .screen(model.state, null, model.generation, CommandFacts.of(model))
+            assertTrue(screen.blocks.any { it is ScreenBlock.Controls })
+            assertTrue(screen.blocks.none { it is ScreenBlock.Row })
+            if (control == 0) press(2_600) else send(SessionEvent.Step(1, 2_600))
+            assertNull(top().tombstone)
+            assertEquals("action play", top().commandFocus?.key)
+            assertTrue(effects.none { it is SendAction })
+            send(SessionEvent.Step(1, 2_700))
+            assertTrue(top().commandFocus != null)
+            assertTrue(effects.none { it is SendAction })
+        }
+    }
+
+    private fun respond(request: PageSurfaceRequest, body: PageBody, actions: JSONArray, now: Long, revision: Long = 1) {
         val payload = PageSurfaceContract.correlationPayload(request.correlation)
-            .put("revision", 1).put("template", body.template).put("title", "Page")
+            .put("revision", revision).put("template", body.template).put("title", "Page")
             .put("body", PageTemplateContract.encode(body)).put("actions", actions).put("live", true)
         send(SessionEvent.PageResponse(payload, now))
         assertTrue(top().status is FrameStatus.Shown)

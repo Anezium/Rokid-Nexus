@@ -257,7 +257,7 @@ class ActivityIslandRowTest {
     @Test
     fun `an island with no room for its glyph is not drawn, and comes back by itself`() {
         val media = item("media", PinSurfacePosition.TOP_LEFT, content(headline = headline, secondary = "Kid Loco"))
-        val island = ActivityOverlayRenderer.ActivityIsland(activity, glyphOf = { _, _ -> GlyphDrawable(DISC) }, actionGlyphOf = { GlyphDrawable(DISC) })
+        val island = ActivityOverlayRenderer.ActivityIsland(activity, glyphOf = { _, _ -> GlyphDrawable(DISC) })
         container.addView(island, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         island.place(media.activity.corner, 0)
         val drawWithin = { budgetPx: Int? ->
@@ -321,7 +321,6 @@ class ActivityIslandRowTest {
                 ActivityOverlayRenderer.ActivityIsland(
                     activity,
                     glyphOf = { _, _ -> GlyphDrawable(DISC) },
-                    actionGlyphOf = { GlyphDrawable(DISC) },
                 ).also { container.addView(it, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)) }
             }.also { island ->
                 island.place(item.activity.corner, 0)

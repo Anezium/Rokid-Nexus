@@ -134,6 +134,11 @@
             android:parentActivityName=".SettingsActivity" />
 
         <activity
+            android:name=".ActivityDisplaySettingsActivity"
+            android:exported="true"
+            android:parentActivityName=".GlassesDisplaySettingsActivity" />
+
+        <activity
             android:name=".SpeechSettingsActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize"

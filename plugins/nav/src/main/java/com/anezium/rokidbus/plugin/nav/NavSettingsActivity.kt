@@ -10,6 +10,8 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.Switch
@@ -24,7 +26,12 @@ import com.anezium.rokidbus.client.ui.NexusUi
  * Each asks for its Android permission only at the moment it is used.
  */
 class NavSettingsActivity : Activity() {
-    private lateinit var accessStatus: TextView
+    private lateinit var accessValue: TextView
+    private lateinit var accessSub: TextView
+    private lateinit var accessAction: TextView
+    private lateinit var accessChevron: TextView
+    private lateinit var routeRow: View
+    private lateinit var routeDot: View
     private lateinit var routeStatus: TextView
     private val sourceSwitches = mutableMapOf<NavSource, Switch>()
     private lateinit var journeyPanel: NavJourneyPanel
@@ -53,21 +60,8 @@ class NavSettingsActivity : Activity() {
             addView(NexusUi.sectionRow(this@NavSettingsActivity, getString(R.string.nav_settings_glasses)), NexusUi.block())
             addView(BusTheme.gap(this@NavSettingsActivity, 10))
             addView(switchesCard(), NexusUi.block())
-            addView(BusTheme.gap(this@NavSettingsActivity, 24))
-            addView(NexusUi.sectionRow(this@NavSettingsActivity, getString(R.string.nav_settings_access)), NexusUi.block())
-            addView(BusTheme.gap(this@NavSettingsActivity, 10))
+            addView(BusTheme.gap(this@NavSettingsActivity, 8))
             addView(accessCard(), NexusUi.block())
-            addView(BusTheme.gap(this@NavSettingsActivity, 8))
-            addView(NexusUi.statusLine(this@NavSettingsActivity).also { accessStatus = it }, NexusUi.block())
-            addView(BusTheme.gap(this@NavSettingsActivity, 24))
-            addView(NexusUi.sectionRow(this@NavSettingsActivity, getString(R.string.nav_settings_route)), NexusUi.block())
-            addView(BusTheme.gap(this@NavSettingsActivity, 10))
-            addView(
-                NexusUi.cardBody(this@NavSettingsActivity, getString(R.string.nav_settings_how)),
-                NexusUi.block(),
-            )
-            addView(BusTheme.gap(this@NavSettingsActivity, 8))
-            addView(NexusUi.statusLine(this@NavSettingsActivity).also { routeStatus = it }, NexusUi.block())
             addView(BusTheme.gap(this@NavSettingsActivity, 24))
             addView(NexusUi.sectionRow(this@NavSettingsActivity, getString(R.string.nav_settings_plugin)), NexusUi.block())
             addView(BusTheme.gap(this@NavSettingsActivity, 10))
@@ -115,13 +109,24 @@ class NavSettingsActivity : Activity() {
 
     /** What the listener really is: allowed and connected, allowed but not connected yet, or not allowed. */
     private fun refreshAccess() {
-        accessStatus.text = getString(
+        val granted = accessGranted()
+        val connected = granted && NavState.listenerConnected
+        accessValue.text = getString(
             when {
-                !accessGranted() -> R.string.nav_settings_access_off
-                NavState.listenerConnected -> R.string.nav_settings_access_on
+                !granted -> R.string.nav_settings_access_off
+                connected -> R.string.nav_settings_access_on
                 else -> R.string.nav_settings_access_connecting
             },
         )
+        accessValue.setTextColor(if (connected) NexusUi.GREEN_DIM else NexusUi.AMBER)
+        accessSub.text = getString(R.string.nav_settings_access_sub) +
+            if (granted && !connected) "\n\n" + getString(R.string.nav_settings_access_connecting_sub) else ""
+        accessAction.text = getString(
+            if (granted) R.string.nav_settings_access_action_manage else R.string.nav_settings_access_action_allow,
+        ).uppercase()
+        val actionColor = if (granted) NexusUi.INK3 else NexusUi.GREEN
+        accessAction.setTextColor(actionColor)
+        accessChevron.setTextColor(if (granted) NexusUi.INK4 else NexusUi.GREEN)
     }
 
     override fun onPause() {
@@ -140,18 +145,35 @@ class NavSettingsActivity : Activity() {
         if (requestCode == NavJourneyPanel.LOCATION_REQUEST) journeyPanel.permissionResult()
     }
 
+    /**
+     * The route line lives inside the access card and only appears when there is something to
+     * say: a live route from another app, or the plugin still waiting for approval in the hub.
+     * Switched off, or simply idle, it stays out of the way.
+     */
     private fun refreshRoute() {
-        val guidance = NavState.guidance
-        routeStatus.text = when {
-            !NavControl.journeyActive && !NavSettings(this).switches().enabled -> getString(R.string.nav_settings_route_off)
-            guidance != null -> getString(
-                R.string.nav_settings_route_live,
-                guidance.source.label,
-                listOfNotNull(guidance.primary, guidance.secondary).joinToString(" · "),
-            )
-            NavState.registration != null && NavState.registration != PluginRegistrationResult.APPROVED ->
-                getString(R.string.nav_settings_not_approved)
-            else -> getString(R.string.nav_settings_route_idle)
+        val guidance = NavState.guidance?.takeUnless { it.source == NavSource.NEXUS }
+        val registration = NavState.registration
+        val wanted = NavControl.journeyActive || NavSettings(this).switches().enabled
+        val live = wanted && guidance != null
+        val notApproved = wanted && registration != null && registration != PluginRegistrationResult.APPROVED
+        when {
+            live -> {
+                routeStatus.text = getString(
+                    R.string.nav_settings_route_live,
+                    guidance!!.source.label,
+                    listOfNotNull(guidance.primary, guidance.secondary).joinToString(" · "),
+                )
+                routeStatus.setTextColor(NexusUi.INK2)
+                NexusUi.setDotColor(routeDot, NexusUi.GREEN)
+                routeRow.visibility = View.VISIBLE
+            }
+            notApproved -> {
+                routeStatus.text = getString(R.string.nav_settings_not_approved)
+                routeStatus.setTextColor(NexusUi.AMBER)
+                NexusUi.setDotColor(routeDot, NexusUi.AMBER)
+                routeRow.visibility = View.VISIBLE
+            }
+            else -> routeRow.visibility = View.GONE
         }
     }
 
@@ -203,11 +225,75 @@ class NavSettingsActivity : Activity() {
         }
     }
 
+    /**
+     * One pressable card for Notification Access: title, the listener's real state, the full
+     * privacy explanation (never clipped), the live route or approval line when there is one,
+     * and an ALLOW / MANAGE action with a chevron so the tap is obviously a permission step.
+     */
     private fun accessCard(): LinearLayout = NexusUi.pressableCard(this).apply {
-        orientation = LinearLayout.VERTICAL
-        addView(NexusUi.rowTitle(this@NavSettingsActivity, getString(R.string.nav_settings_access_title)))
-        addView(NexusUi.rowSub(this@NavSettingsActivity, getString(R.string.nav_settings_access_sub)))
+        val ctx = this@NavSettingsActivity
+        contentDescription = getString(R.string.nav_settings_access_title)
         setOnClickListener { openAccessSettings() }
+        addView(
+            LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(NexusUi.rowTitle(ctx, getString(R.string.nav_settings_access_title)))
+                addView(BusTheme.gap(ctx, 4))
+                addView(
+                    NexusUi.rowSub(ctx, "").apply {
+                        maxLines = 2
+                        ellipsize = null
+                    }.also { accessValue = it },
+                    NexusUi.block(),
+                )
+                addView(BusTheme.gap(ctx, 8))
+                // Body copy, not a one-line sub: the privacy explanation has to wrap in full.
+                addView(NexusUi.cardBody(ctx, "").also { accessSub = it }, NexusUi.block())
+                addView(routeLine(), NexusUi.block())
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        addView(
+            LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(NexusUi.rowSub(ctx, "").also { accessAction = it })
+                addView(
+                    NexusUi.chevron(ctx).also { accessChevron = it },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { marginStart = NexusUi.dp(ctx, 4) },
+                )
+            },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { marginStart = NexusUi.dp(ctx, 12) },
+        )
+    }
+
+    /** Dot plus status text; hidden until [refreshRoute] has a live route or an approval error to show. */
+    private fun routeLine(): LinearLayout = LinearLayout(this).apply {
+        val ctx = this@NavSettingsActivity
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(0, NexusUi.dp(ctx, 10), 0, 0)
+        visibility = View.GONE
+        addView(
+            NexusUi.dot(ctx).also { routeDot = it },
+            LinearLayout.LayoutParams(NexusUi.dp(ctx, 7), NexusUi.dp(ctx, 7)).apply {
+                marginEnd = NexusUi.dp(ctx, 8)
+            },
+        )
+        addView(
+            NexusUi.rowSub(ctx, "").apply {
+                maxLines = 3
+                ellipsize = null
+            }.also { routeStatus = it },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        routeRow = this
     }
 
     private fun accessGranted(): Boolean = runCatching {

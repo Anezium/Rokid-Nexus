@@ -1,6 +1,15 @@
 package com.anezium.rokidbus.media.session
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import com.anezium.rokidbus.media.MonoArtworkEncoder
+import com.anezium.rokidbus.media.ImageArtworkEncoder
+import com.anezium.rokidbus.shared.LauncherArtwork
+import java.util.Base64
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /** The active-session watcher, behind a seam so the hub and its subscribers run without Android. */
 internal interface MediaDeckMonitor {
@@ -17,6 +26,9 @@ internal interface MediaDeckMonitor {
      * session's live state: a change whose callback has not arrived yet answers [MediaDeckSendResult.MOVED].
      */
     fun send(expected: MediaDeckObservation.Session, command: MediaDeckCommand): MediaDeckSendResult
+
+    /** Explicit user request for Android's last media receiver, only while no session exists. */
+    fun resumeIdle(): MediaDeckSendResult
 }
 
 internal enum class MediaDeckSendResult {
@@ -47,7 +59,7 @@ internal enum class MediaDeckSubscriber {
 }
 
 internal fun interface MediaDeckStateListener {
-    /** [changed] when [state] carries a new revision; otherwise only the snapshot's position moved. */
+    /** [changed] when the state or cover changes; position callbacks may also carry a seek. */
     fun onState(state: MediaDeckState, snapshot: MediaDeckSnapshot?, changed: Boolean)
 }
 
@@ -65,6 +77,12 @@ internal class MediaDeckMonitorHub(monitorFactory: (MediaDeckMonitorListener) ->
 
     var snapshot: MediaDeckSnapshot? = null
         private set
+
+    var artwork: LauncherArtwork? = null
+        private set
+    private var artworkKey: List<Any?>? = null
+    private var artworkGeneration = 0L
+    internal var loadArtwork: ((MediaDeckSnapshot, (LauncherArtwork?) -> Unit) -> Unit)? = null
 
     val state: MediaDeckState get() = machine.state
 
@@ -89,6 +107,9 @@ internal class MediaDeckMonitorHub(monitorFactory: (MediaDeckMonitorListener) ->
         monitor.stop()
         machine.forget()
         snapshot = null
+        artwork = null
+        artworkKey = null
+        artworkGeneration++
     }
 
     /**
@@ -109,6 +130,18 @@ internal class MediaDeckMonitorHub(monitorFactory: (MediaDeckMonitorListener) ->
         }
     }
 
+    fun resumeIdle(revision: Long): MediaDeckControlOutcome {
+        val current = machine.state
+        if (current is MediaDeckState.AccessRequired) return MediaDeckControlOutcome.ACCESS_REQUIRED
+        if (current !is MediaDeckState.NoSession || current.revision != revision) return MediaDeckControlOutcome.STALE_REVISION
+        return when (monitor.resumeIdle()) {
+            MediaDeckSendResult.SENT -> MediaDeckControlOutcome.RESUME_REQUESTED
+            MediaDeckSendResult.MOVED -> MediaDeckControlOutcome.STALE_REVISION
+            MediaDeckSendResult.ACCESS_REQUIRED -> MediaDeckControlOutcome.ACCESS_REQUIRED
+            MediaDeckSendResult.FAILED -> MediaDeckControlOutcome.FAILED
+        }
+    }
+
     /** Looks again, for a subscriber that has a reason to doubt what it holds. */
     fun refresh() {
         if (listeners.isNotEmpty()) monitor.refresh()
@@ -119,7 +152,20 @@ internal class MediaDeckMonitorHub(monitorFactory: (MediaDeckMonitorListener) ->
         if (listeners.isEmpty()) return
         val changed = machine.observe(observation)
         snapshot = observed
-        listeners.values.toList().forEach { it.onState(machine.state, observed, changed) }
+        val previousArtwork = artwork
+        val key = observed?.let { listOf(it.identity, it.track.key, it.artwork, it.artwork?.generationId, it.artworkUri) }
+        if (key != artworkKey) {
+            artworkKey = key
+            artwork = null
+            val generation = ++artworkGeneration
+            if (observed != null) loadArtwork?.invoke(observed) { loaded ->
+                if (generation == artworkGeneration && listeners.isNotEmpty() && artwork != loaded) {
+                    artwork = loaded
+                    listeners.values.toList().forEach { it.onState(machine.state, snapshot, changed = true) }
+                }
+            }
+        }
+        listeners.values.toList().forEach { it.onState(machine.state, observed, changed || previousArtwork != artwork) }
     }
 
     companion object {
@@ -129,7 +175,23 @@ internal class MediaDeckMonitorHub(monitorFactory: (MediaDeckMonitorListener) ->
         fun get(context: Context): MediaDeckMonitorHub = instance ?: synchronized(this) {
             instance ?: run {
                 val appContext = context.applicationContext
-                MediaDeckMonitorHub { listener -> MediaSessionMonitor(appContext, listener) }.also { instance = it }
+                val main = Handler(Looper.getMainLooper())
+                val worker = ThreadPoolExecutor(1, 1, 30L, TimeUnit.SECONDS,
+                    ArrayBlockingQueue(1), ThreadPoolExecutor.DiscardOldestPolicy()).apply { allowCoreThreadTimeOut(true) }
+                MediaDeckMonitorHub { listener -> MediaSessionMonitor(appContext, listener) }.also { hub ->
+                    hub.loadArtwork = { snapshot, done ->
+                        worker.execute {
+                            val image = ImageArtworkEncoder.encode(appContext, snapshot.artwork, snapshot.artworkUri, LauncherArtwork.MAX_IMAGE_BYTES)
+                            val art = image?.let {
+                                LauncherArtwork(it.width, it.height, Base64.getEncoder().encodeToString(it.bytes), LauncherArtwork.JPEG)
+                            } ?: MonoArtworkEncoder.encode(appContext, snapshot.artwork, snapshot.artworkUri)?.let {
+                                LauncherArtwork(it.width, it.height, Base64.getEncoder().encodeToString(it.bytes))
+                            }
+                            main.post { done(art) }
+                        }
+                    }
+                    instance = hub
+                }
             }
         }
     }

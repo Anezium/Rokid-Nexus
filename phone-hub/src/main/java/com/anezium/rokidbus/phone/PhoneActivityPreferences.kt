@@ -3,6 +3,8 @@ package com.anezium.rokidbus.phone
 import android.content.Context
 import android.content.SharedPreferences
 import com.anezium.rokidbus.shared.AmbientPreferencesContract
+import com.anezium.rokidbus.shared.ActivityDisplayMode
+import com.anezium.rokidbus.shared.ActivityDisplayPreference
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -15,6 +17,7 @@ data class PhoneActivityPreference(
     val enabled: Boolean = true,
     val pinned: Boolean = false,
     val floating: Boolean = true,
+    val display: ActivityDisplayPreference = ActivityDisplayPreference.DEFAULT,
 ) {
     companion object {
         val DEFAULT = PhoneActivityPreference()
@@ -63,6 +66,19 @@ class PhoneActivityPreferences(private val storage: PluginGrantStorage) {
         return true
     }
 
+    @Synchronized
+    fun setDisplay(key: PluginGrantKey, display: ActivityDisplayPreference): Boolean {
+        if (display != ActivityDisplayPreference.DEFAULT && !canKeepOffGlasses(key)) return false
+        edit(key) { it.copy(floating = display.mode != ActivityDisplayMode.HIDDEN,
+            display = if (display.mode == ActivityDisplayMode.HIDDEN) it.display else display) }
+        return true
+    }
+
+    @Synchronized
+    fun displayPreferences(): Map<PluginGrantKey, ActivityDisplayPreference> = entries().mapValues { (_, preference) ->
+        if (preference.floating) preference.display else ActivityDisplayPreference(ActivityDisplayMode.HIDDEN)
+    }.filterValues { it != ActivityDisplayPreference.DEFAULT }
+
     /** The plugins whose island and pin the user keeps off the glasses. */
     @Synchronized
     fun keptOffGlasses(): Set<PluginGrantKey> = entries().filterValues { !it.floating }.keys
@@ -70,7 +86,7 @@ class PhoneActivityPreferences(private val storage: PluginGrantStorage) {
     /** True when [key] is already kept off, or the other plugins kept off leave room for it. */
     @Synchronized
     fun canKeepOffGlasses(key: PluginGrantKey): Boolean =
-        (keptOffGlasses() - key).size < AmbientPreferencesContract.MAX_HIDDEN_OWNERS
+        (displayPreferences().keys - key).size < AmbientPreferencesContract.MAX_HIDDEN_OWNERS
 
     /** True when [key] had choices to drop. */
     @Synchronized
@@ -124,7 +140,9 @@ class PhoneActivityPreferences(private val storage: PluginGrantStorage) {
                         GrantKeyJson.encode(key)
                             .put("enabled", preference.enabled)
                             .put("pinned", preference.pinned)
-                            .put("floating", preference.floating),
+                            .put("floating", preference.floating)
+                            .put("displayMode", preference.display.mode.wireValue)
+                            .put("durationMs", preference.display.durationMs),
                     )
                 }
             return JSONObject().put("version", VERSION).put("entries", items).toString()
@@ -144,7 +162,11 @@ class PhoneActivityPreferences(private val storage: PluginGrantStorage) {
                         val pinned = item.opt("pinned") as? Boolean ?: continue
                         // Stored before the choice existed: floating, as it was then.
                         val floating = item.opt("floating") as? Boolean ?: true
-                        put(key, PhoneActivityPreference(enabled = enabled, pinned = pinned, floating = floating))
+                        val mode = ActivityDisplayMode.fromWireValue(item.optString("displayMode")) ?: ActivityDisplayMode.AUTOMATIC
+                        val duration = item.optLong("durationMs").takeIf { it in ActivityDisplayPreference.DURATIONS_MS }
+                            ?: ActivityDisplayPreference.DEFAULT_DURATION_MS
+                        put(key, PhoneActivityPreference(enabled = enabled, pinned = pinned, floating = floating,
+                            display = ActivityDisplayPreference(mode, duration)))
                     }
                 }
             }.getOrDefault(emptyMap())

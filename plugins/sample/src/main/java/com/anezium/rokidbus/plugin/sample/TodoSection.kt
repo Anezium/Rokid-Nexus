@@ -45,15 +45,15 @@ internal class TodoSection(private val activity: Activity) {
         column.addView(addRow(), NexusUi.block())
         column.addView(BusTheme.gap(activity, 16))
         column.addView(
-            NexusUi.switchRow(
+            NexusUi.activitySettingRow(
                 activity,
-                "Show in activities",
-                "Keeps the list among the glasses' activities, even while this plugin sleeps.",
                 toggle,
+                "Open this list from Nexus anytime. Turn off to remove it; your items stay saved.",
             ),
             NexusUi.block(),
         )
         column.addView(BusTheme.gap(activity, 8))
+        column.addView(NexusUi.activityDisplaySettingsRow(activity, "hello"), NexusUi.block())
         column.addView(status, NexusUi.block())
         // Drawing the saved state back into the switch is not a change of it.
         toggle.setOnCheckedChangeListener { _, on ->

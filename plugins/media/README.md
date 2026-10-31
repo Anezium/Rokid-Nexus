@@ -27,7 +27,20 @@ HUD surface, and forwards only play/pause/previous/next transport commands.
 - Without that capability, artwork keeps the original center-cropped,
   contrast-normalized, Floyd-Steinberg-dithered 96 x 96 `mono1` payload.
 
-## Show in activities (launcher bundle)
+## Keep in activities (launcher bundle)
+
+The **Floating activity** settings link opens Nexus's separate display choices:
+automatic, always visible, home only, briefly on track changes, or Activities
+only. Temporary bands use the user's 3/5/10-second duration and retain the
+player's card after disappearing. Media Deck publishes a stable opaque track
+event key; pause, position, artwork and metadata refinement do not renew it.
+This uses the public launcher v4 SDK, without media-specific policy in Nexus.
+
+An active activity previews Previous, Play/Pause and Next directly on its
+selected Nexus card. Tap to focus its controls; the final **Open player** slot
+opens the integrated cover player. One Back from that player returns to the
+containing Nexus menu, even while a transport button is focused. The passive
+floating band has no playback buttons.
 
 - An explicit setting in Media Deck's phone screen, off by default and available only once
   notification access is on. It is kept through a revoke, a reboot or a process death, and can
@@ -36,12 +49,13 @@ HUD surface, and forwards only play/pause/previous/next transport commands.
   listener, even with the full surface closed, and publishes a now-playing activity: the title
   (12 characters, ellipsized, and whole up to 40 as the launcher headline) and the artist (or
   the app's name, followed by "Paused" or "Stopped" when nothing plays), marked with Media
-  Deck's own `disc` glyph rather than a play or pause mark, Previous, Play or Pause, and
-  Next as typed `media.*` commands, Play/Pause focused first, `ONGOING` persistence and the
-  `media:main` page as its destination. It is updated only when the session, the item or
+  Deck's JPEG cover on bundle v3 (its `disc` glyph as fallback), Previous, Play or Pause, and
+  Next as typed `media.*` commands, `ONGOING` persistence and the
+  `media:main` page as its destination, opened directly on tap. It is updated only when the session, the item or
   playing/paused changes, never for the position, and nothing polls.
-- The plugin service is held bound only while there is something to publish. Nothing playing,
-  no notification access or unreadable sessions end the activity and let the service go.
+- With nothing playing, the ongoing entry stays as a destination to the player page; its
+  service binding is released after publication. No notification access or unreadable sessions
+  end the activity and let the service go.
   Turning the setting off ends the activity and stops watching. A registration that is not
   approved, the activity turned off in Nexus, or the hub replacing it stop it too while the
   setting stays on; the next registration (opening Media Deck) tries once more.
@@ -56,13 +70,26 @@ HUD surface, and forwards only play/pause/previous/next transport commands.
   hub keeps the focus on the same slot when an id changes. The page's middle control instead
   keeps one id, `playpause`, whose typed value is the explicit Play or Pause at the shown
   revision.
+- The idle page offers **Resume last player**. This separate explicit action asks Android's
+  last media receiver to play, only if no active session exists when pressed. It never redirects
+  a command that was shown for a particular session. Android may have no resumable receiver;
+  the result reports a request, and the page explains to open a player on the phone if silent.
+- **Keep in activities → Remove** removes the entry and stops monitoring. Hello Nexus uses the
+  same SDK `NexusActivityPreference` for its checklist; turning it off preserves the list's items.
+  Any plugin can use this default-off preference and `NexusUi.activitySettingRow`; Nexus keeps
+  the offline entry without holding its service. See the public SDK guide for the lifecycle.
 
 ## Pages
 
 `media:main` (`rokidbus.plugin.pages = 1`) shows what plays with its three controls. With the
 launcher bundle it is a `media` body whose controls are the typed actions, so a user who
 approved the `media` quick-action family (`rokidbus.plugin.quickActions = media`, descriptor
-metadata, not a capability) runs them on one tap; the hub adds its own Open app. Older
+metadata, not a capability) runs them on one tap. Bundle v2 adds locally advancing progress and a horizontal transport strip.
+Bundle v3 uses the same detailed JPEG encoder as the original media surface, up to
+256 pixels per edge and 32 KiB compressed for inline page transport; no dithering.
+The card and compact pin use that same cover. Phone seeks and speed changes
+refresh the anchor without periodic traffic. The floating pin stays compact, including while
+retaining a cover offline, and track changes do not expand it. Older
 launchers get the base summary template with the controls and Open the full app as rows.
 The page watches the sessions only while it is shown.
 

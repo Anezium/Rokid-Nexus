@@ -61,7 +61,9 @@ sanctioned exceptions:
    polling or background refresh is permitted for pages, and live revisions are
    sent only on real changes while the page is visible.
 
-6. **User-enabled ongoing activities** (launcher bundle): a plugin may publish an
+6. **User-enabled ongoing activities** (launcher bundle; SDK
+   `NexusActivityPreference` and `NexusUi.activitySettingRow` provide the standard
+   default-off user choice, see docs/PLUGIN_SDK.md): a plugin may publish an
    activity with `persistence = ONGOING` only while the user has turned on its own
    "Show in activities" setting, and only from events it already receives (its
    own data changing, an alarm the user set) — never by polling. Turning the
@@ -70,6 +72,19 @@ sanctioned exceptions:
    no service, foreground service or wake lock may be held to keep the entry
    alive, and the entry revives only through a fresh start from a new
    registration.
+
+   Floating presentation is a separate, user-owned Nexus choice. Offer
+   `NexusUi.activityDisplaySettingsRow(context, pluginId)` beside the opt-in
+   (or call `NexusActivityPreference.openDisplaySettings`). With launcher v4,
+   set `NexusActivity.eventKey` to a stable opaque id (at most 64 printable
+   characters) for each real event: a track id/digest or persisted task-list
+   revision. Keep it unchanged for pause, progress, covers and reconnect.
+   Nexus decides whether to keep a band, show it only at home, briefly reveal
+   it for 3/5/10 seconds, or show only its Activities card. Never simulate this
+   with repeated start/end, `maxDurationMs`, significant updates just to raise
+   media priority, polling, your own overlay or a service. The native timer
+   ending removes only the floating band, not the ongoing card. `eventKey`
+   never authorizes wake, priority, input, a new capability or `/core/ambient/*`.
 
 7. **Media Deck activity monitoring**: while the user has enabled Media Deck's
    activity and granted it notification access, Media Deck may keep observing the

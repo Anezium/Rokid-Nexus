@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import android.app.Activity
+import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Bundle
@@ -75,6 +76,17 @@ class GlassesDisplaySettingsActivity : Activity() {
             addView(launcherCard(), NexusUi.block())
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
             addView(islandSizeCard(), NexusUi.block())
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
+            addView(
+                NexusUi.navCard(
+                    this@GlassesDisplaySettingsActivity,
+                    "Floating activities",
+                    "Per plugin: always visible, home only, briefly on changes, or kept in Activities.",
+                ) {
+                    startActivity(Intent(this@GlassesDisplaySettingsActivity, ActivityDisplaySettingsActivity::class.java))
+                },
+                NexusUi.block(),
+            )
         }
 
         val scroll = ScrollView(this).apply {

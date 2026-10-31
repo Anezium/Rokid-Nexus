@@ -6,6 +6,7 @@ import com.anezium.rokidbus.client.ui.PluginCustomIcon
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.os.Bundle
@@ -16,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.shared.ActivityDisplayMode
 import com.anezium.rokidbus.shared.AmbientPreferencesContract
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.skills.SkillEffect
@@ -288,7 +290,61 @@ class PluginPermissionsActivity : Activity() {
                 BusHubService.onActivityPreferencesChanged(key)
             },
             floatingRow(key, preferences, preference),
+            displayRow(key, preference),
         )
+    }
+
+    /**
+     * Opens the user-owned floating choices for this plugin, with the current one as its value.
+     * A plugin kept off the glasses reads as Activities only, which is what that switch means.
+     */
+    private fun displayRow(key: PluginGrantKey, preference: PhoneActivityPreference): LinearLayout {
+        val mode = if (preference.floating) preference.display.mode else ActivityDisplayMode.HIDDEN
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = NexusUi.pressed(context, Color.TRANSPARENT, 8)
+            setPadding(0, NexusUi.dp(context, 4), 0, NexusUi.dp(context, 4))
+            isClickable = true
+            isFocusable = true
+            contentDescription = "Floating band: ${ActivityDisplaySettingsActivity.label(mode)}. Change"
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(
+                        TextView(context).apply {
+                            text = "Floating band"
+                            textSize = 13f
+                            setTextColor(NexusUi.INK)
+                        },
+                    )
+                    addView(
+                        TextView(context).apply {
+                            text = "When it floats over the glasses, and for how long on changes"
+                            textSize = 10f
+                            setTextColor(NexusUi.INK3)
+                        },
+                    )
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(
+                NexusUi.metaLabel(context, ActivityDisplaySettingsActivity.label(mode).uppercase(), NexusUi.GREEN).apply {
+                    textSize = 11f
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginEnd = NexusUi.dp(context, 6)
+                },
+            )
+            addView(NexusUi.chevron(context))
+            setOnClickListener {
+                startActivity(
+                    Intent(this@PluginPermissionsActivity, ActivityDisplaySettingsActivity::class.java)
+                        .putExtra(ActivityDisplaySettingsActivity.EXTRA_PLUGIN_ID, key.pluginId)
+                        .putExtra(ActivityDisplaySettingsActivity.EXTRA_PLUGIN_PACKAGE, key.packageName),
+                )
+            }
+        }
     }
 
     /**

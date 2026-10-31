@@ -21,12 +21,13 @@ import com.anezium.rokidbus.shared.LinkStateBits
 /** Media Deck's own settings: the user's switch, and what the last process left on the hub. */
 internal class MediaDeckPreferences(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+    private val activityPreference = com.anezium.rokidbus.client.plugin.NexusActivityPreference(prefs, KEY_SHOW_IN_ACTIVITIES)
 
     /** "Show in activities"; off by default, and kept through revocation and process death. */
     var showInActivities: Boolean
-        get() = prefs.getBoolean(KEY_SHOW_IN_ACTIVITIES, false)
+        get() = activityPreference.enabled
         set(value) {
-            prefs.edit().putBoolean(KEY_SHOW_IN_ACTIVITIES, value).apply()
+            activityPreference.enabled = value
         }
 
     var activityOnHub: Boolean

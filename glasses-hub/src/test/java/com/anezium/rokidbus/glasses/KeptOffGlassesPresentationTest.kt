@@ -95,6 +95,26 @@ class KeptOffGlassesPresentationTest {
     }
 
     @Test
+    fun `the Nexus session hides islands while keeping the activity collection live`() {
+        startActivity(OWNER)
+        startActivity(OTHER)
+        assertTrue(render.items.isNotEmpty())
+        try {
+            ActivityController.setSessionOpen(true)
+            idle()
+            assertTrue(render.items.isEmpty())
+            assertEquals(2, render.collection.size)
+            startActivity(OWNER)
+            assertTrue(render.items.isEmpty())
+            assertEquals(2, render.collection.size)
+        } finally {
+            ActivityController.setSessionOpen(false)
+            idle()
+        }
+        assertTrue(render.items.isNotEmpty())
+    }
+
+    @Test
     fun `its island leaves the home and every app while its card stays, and comes back unasked`() {
         startActivity(OWNER)
         startActivity(OTHER)
@@ -200,6 +220,23 @@ class KeptOffGlassesPresentationTest {
 
     private fun island(owner: String): ActivityRenderItem? = render.items.singleOrNull { it.activity.ownerPluginId == owner }
 
+    @Test
+    fun `home-only and muted apps cannot wake for an invisible activity`() {
+        startActivity(OWNER, wakeDisplay = true)
+        AmbientForeground.onWindowsChanged(listOf(ForegroundWindow(APP, isApplication = true)))
+        policy(emptySet(), displays = mapOf(OWNER to com.anezium.rokidbus.shared.ActivityDisplayPreference(
+            com.anezium.rokidbus.shared.ActivityDisplayMode.HOME)))
+        ShadowPowerManager.reset()
+        shadowOf(app.getSystemService(Context.POWER_SERVICE) as PowerManager).setIsInteractive(false)
+        advance(DisplayWakePolicy.BUDGET_WINDOW_MS + 100)
+        update(OWNER, significant = true)
+        assertNull(ShadowPowerManager.getLatestWakeLock())
+        policy(emptySet(), modes = mapOf(APP to ForegroundAmbientMode.NOTHING), displays = mapOf(OWNER to
+            com.anezium.rokidbus.shared.ActivityDisplayPreference(com.anezium.rokidbus.shared.ActivityDisplayMode.PERSISTENT)))
+        update(OWNER, significant = true)
+        assertNull(ShadowPowerManager.getLatestWakeLock())
+    }
+
     private fun content(primary: String, wakeDisplay: Boolean = false) = ActivitySurfaceContent(
         glyph = "music", primary = primary, secondary = null, progress = null, eta = null,
         detail = emptyList(), actions = emptyList(), maxDurationMs = null, wakeDisplay = wakeDisplay,
@@ -243,11 +280,12 @@ class KeptOffGlassesPresentationTest {
         hidden: Set<String>,
         modes: Map<String, ForegroundAmbientMode> = emptyMap(),
         revision: Long = SEQ.incrementAndGet(),
+        displays: Map<String, com.anezium.rokidbus.shared.ActivityDisplayPreference> = emptyMap(),
     ) {
         GlassesHub.onRemoteEnvelope(
             BusEnvelope(
                 path = AmbientPreferencesContract.POLICY_PATH,
-                payload = AmbientPreferencesContract.policyPayload(AmbientPolicy(revision, modes, hidden)),
+                payload = AmbientPreferencesContract.policyPayload(AmbientPolicy(revision, modes, hidden, displays)),
             ),
         )
         idle()

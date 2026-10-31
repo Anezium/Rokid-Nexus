@@ -98,7 +98,14 @@ internal class MediaDeckRuntime(
             KeyEvent.KEYCODE_SPACE,
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
             KeyEvent.KEYCODE_HEADSETHOOK,
-            -> (shownState as? MediaDeckState.Active)?.let { MediaDeckCommand.desiredFor(it.phase) } ?: return
+            -> {
+                val state = shownState
+                if (state is MediaDeckState.NoSession) {
+                    hub.resumeIdle(state.revision)
+                    return
+                }
+                (state as? MediaDeckState.Active)?.let { MediaDeckCommand.desiredFor(it.phase) } ?: return
+            }
             KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_DPAD_DOWN,
             KeyEvent.KEYCODE_MEDIA_NEXT,
@@ -150,9 +157,9 @@ internal class MediaDeckRuntime(
                 "and enable notification access.",
             )
             is MediaDeckState.NoSession, is MediaDeckState.Active -> "idle" to listOf(
-                "Nothing is playing.",
-                "Start Spotify, VLC, a podcast,",
-                "or another media app on the phone.",
+                "Ready to play.",
+                "Tap to resume your last player.",
+                "If silent, open a player on the phone.",
             )
             is MediaDeckState.Unavailable -> "unavailable" to listOf(
                 "Media control is unavailable.",

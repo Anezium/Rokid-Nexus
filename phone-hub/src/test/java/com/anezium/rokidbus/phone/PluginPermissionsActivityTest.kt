@@ -38,7 +38,7 @@ class PluginPermissionsActivityTest {
             .apply { isAccessible = true }.invoke(activity, principal) as List<*>
         val text = rows.flatMap { labels(it as View) }
 
-        assertEquals(3, rows.size)
+        assertEquals(4, rows.size)
         assertEquals(
             listOf("Show its activity on the glasses", "Pin its activity", "Float over the glasses"),
             text.filter { it == "Show its activity on the glasses" || it == "Pin its activity" || it == "Float over the glasses" },

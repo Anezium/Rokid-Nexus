@@ -13,6 +13,7 @@ internal data class Snapshot(
     val page: PageSurfaceResponse.Page,
     val byteSize: Int = page.byteSize,
     val extended: Boolean = false,
+    val receivedAtMs: Long = 0,
 )
 
 internal data class PendingInvocation(val invocationId: String, val actionId: String, val sinceMs: Long)
@@ -175,6 +176,8 @@ internal sealed interface SessionState {
         val stops: List<RootStop>,
         val selected: Int = 0,
         val focus: CommandFocus? = null,
+        /** A withdrawn selected preview exposed a different target under the same contact. */
+        val requireFreshSelection: Boolean = false,
     ) : SessionState
 
     /** [frames] excludes the root; `frames[i]` is wire frame index `i + 1`. */
@@ -277,6 +280,8 @@ internal data class SessionModel(
     val mapViews: Map<String, MapView> = emptyMap(),
     /** When the next notification shown leaves the 24-hour display bound, on the session clock. */
     val historyExpiryAtMs: Long? = null,
+    /** The phone and plugins remember wire ids across runner/process restarts. */
+    val idNamespace: String = "",
 ) {
     /**
      * The one time the runner's timer is set for: the state's own deadline and, while a session

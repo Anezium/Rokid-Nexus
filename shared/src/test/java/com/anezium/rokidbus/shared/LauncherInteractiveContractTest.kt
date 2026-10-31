@@ -63,8 +63,8 @@ class LauncherInteractiveContractTest {
         assertTrue(GlassesHubCapabilitiesContract.supportsLauncherInteractive(capable))
 
         // A newer glasses build runs this phone's version, never more.
-        val newer = glasses(BusCapabilityBits.LAUNCHER_INTERACTIVE, 3)
-        assertEquals(1, GlassesHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(newer))
+        val newer = glasses(BusCapabilityBits.LAUNCHER_INTERACTIVE, LauncherInteractiveContract.VERSION + 1)
+        assertEquals(LauncherInteractiveContract.VERSION, GlassesHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(newer))
 
         assertFalse(GlassesHubCapabilitiesContract.supportsLauncherInteractive(glasses(0, 1)))
         assertFalse(GlassesHubCapabilitiesContract.supportsLauncherInteractive(glasses(BusCapabilityBits.LAUNCHER_INTERACTIVE, 0)))

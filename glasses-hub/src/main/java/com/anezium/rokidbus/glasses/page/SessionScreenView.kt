@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses.page
 
 import android.content.Context
+import com.anezium.rokidbus.glasses.drawable
 import android.graphics.Canvas
 import android.view.Gravity
 import android.view.View
@@ -165,6 +166,8 @@ internal class SessionScreenView(
             val view = when {
                 block === full -> View(context)
                 block is ScreenBlock.Map -> LauncherBlocks.map(context, block, blockViews[block.key], leaseFactory)
+                block is ScreenBlock.Media -> (blockViews[block.key] as? MediaPlayerBlockView)
+                    ?.apply { bind(block) } ?: LauncherBlocks.media(context, icons, block)
                 else -> viewFor(block, chromeless)
             }
             block.key to view
@@ -191,6 +194,7 @@ internal class SessionScreenView(
         }
         viewport.whole = screen.blocks.filterIsInstance<ScreenBlock.Fact>().mapNotNull { blockViews[it.key] }
         viewport.fit = fit?.untilKey?.let(blockViews::get)
+        viewport.invalidate()
         invalidate()
     }
 
@@ -271,6 +275,8 @@ internal class SessionScreenView(
     }
 
     private companion object {
+        /** The cover on a media card: a mark, not a poster; the title stays the card's figure. */
+        const val ARTWORK_PX = 48
         /** About 30 frames a second while the full map moves, and none once it rests. */
         const val FULL_GLIDE_FRAME_MS = 33L
         /** The roles of a card's moving lines, in their memory keys. */
@@ -295,6 +301,7 @@ internal class SessionScreenView(
         is ScreenBlock.Document -> documentView(block)
         is ScreenBlock.Conversation -> conversationView(block)
         is ScreenBlock.Media -> LauncherBlocks.media(context, icons, block)
+        is ScreenBlock.Controls -> CommandStripView(context, icons).apply { bind(block.strip) }
         is ScreenBlock.Maneuver -> LauncherBlocks.maneuver(context, icons, block, if (chromeless) ManeuverScale.FULL else ManeuverScale.PAGE)
         is ScreenBlock.Map -> LauncherBlocks.map(context, block)
         is ScreenBlock.Ribbon -> LauncherBlocks.ribbon(context, block)
@@ -308,7 +315,9 @@ internal class SessionScreenView(
      * resolved one is dashed, bright only while it holds the selection; in command focus its
      * commands follow, the focused one outlined.
      */
-    private fun card(block: ScreenBlock.Card): View = LinearLayout(context).apply {
+    private fun card(block: ScreenBlock.Card): View {
+        if (block.artwork != null) return artworkCard(block)
+        return LinearLayout(context).apply {
         orientation = VERTICAL
         val dashed = block.ended || block.dashed
         background = if (dashed) PageStyle.dashedPhosphor(block.selected) else PageStyle.outlined(block.selected)
@@ -367,6 +376,70 @@ internal class SessionScreenView(
                 CommandStripView(context, icons).apply { bind(strip) },
                 LayoutParams(LayoutParams.MATCH_PARENT, CommandStripView.HEIGHT_PX).apply { topMargin = 8 },
             )
+        }
+    }
+
+    }
+
+    /**
+     * A media card: its cover beside the label, title and artist, the command strip under them
+     * when the card carries one. The cover is the mark; the title is bright only while the card
+     * holds the selection, like every other card; an offline entry is drawn muted. The strip's
+     * height is reserved whenever it is bound, so taking the controls never moves the card.
+     */
+    private fun artworkCard(block: ScreenBlock.Card): View = LinearLayout(context).apply {
+        orientation = VERTICAL
+        val dashed = block.ended || block.dashed
+        val quiet = dashed || block.offline
+        background = if (dashed) PageStyle.dashedPhosphor(block.selected) else PageStyle.outlined(block.selected)
+        setPadding(PageStyle.CARD_PADDING_PX, 10, PageStyle.CARD_PADDING_PX, 10)
+        val bright = if (quiet) PageStyle.muted else if (block.selected) PageStyle.phosphor else PageStyle.ink
+        val body = if (quiet) PageStyle.muted else PageStyle.ink
+        addView(LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(ImageView(context).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setImageDrawable(block.artwork!!.drawable(context, if (quiet) PageStyle.muted else PageStyle.phosphor))
+                imageAlpha = if (quiet) 130 else 255
+                contentDescription = null
+            }, LayoutParams(ARTWORK_PX, ARTWORK_PX).apply { rightMargin = PageStyle.CARD_ICON_GAP_PX + 4 })
+            addView(LinearLayout(context).apply {
+                orientation = VERTICAL
+                addView(LinearLayout(context).apply {
+                    orientation = HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(PageStyle.text(context, block.label, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, 1, 0.14f), LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+                    block.time?.let { addView(PageStyle.text(context, it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, 1).apply { setPadding(10, 0, 0, 0) }) }
+                })
+                addView(OverflowLineView(context).apply {
+                    text = block.primary
+                    style(PageStyle.TITLE_PX, bright, PageStyle.sans)
+                    active = block.selected
+                    memory = overflowMemory
+                    memoryKey = "${block.key}:primary"
+                    setPadding(0, 2, 0, 0)
+                })
+                block.secondary?.takeIf(String::isNotBlank)?.let { value ->
+                    addView(OverflowLineView(context).apply {
+                        text = value
+                        style(PageStyle.CARD_BODY_PX, body, PageStyle.sans)
+                        active = block.selected
+                        memory = overflowMemory
+                        memoryKey = "${block.key}:secondary"
+                        setPadding(0, 1, 0, 0)
+                    })
+                }
+                block.tertiary?.takeIf(String::isNotBlank)?.let {
+                    addView(PageStyle.text(context, it, PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.sans, 1).apply { setPadding(0, 2, 0, 0) })
+                }
+            }, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+        }, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        block.commands?.takeIf { it.items.isNotEmpty() }?.let { strip ->
+            addView(View(context).apply { setBackgroundColor(PageStyle.outline) },
+                LayoutParams(LayoutParams.MATCH_PARENT, 1).apply { topMargin = 10 })
+            addView(CommandStripView(context, icons).apply { bind(strip) },
+                LayoutParams(LayoutParams.MATCH_PARENT, CommandStripView.HEIGHT_PX).apply { topMargin = 10 })
         }
     }
 

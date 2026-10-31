@@ -164,7 +164,7 @@ internal class PhoneActivityRouter(
                             PluginBusJournal.Verdict.OK,
                         )
                         if (sink.pinLinkUp()) {
-                            sink.sendRemote(forwarded)?.let {
+                            sendRemote(forwarded)?.let {
                                 sink.deliverError(sender.replyBinder, envelope.id, it)
                             }
                         } else {
@@ -331,7 +331,7 @@ internal class PhoneActivityRouter(
         persistIfChanged()
         if (sink.pinLinkUp()) {
             val sentinel = state.emptySlotAssertPayload()
-            sink.sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_END, payload = sentinel))
+            sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_END, payload = sentinel))
         }
         sink.log("activity tier cleared reason=hub_stopped count=${cleared.size} offline=${offline.size}")
     }
@@ -356,7 +356,7 @@ internal class PhoneActivityRouter(
         // A phone-hub restart may leave several owner IDs rendered on the glasses.
         // Clear the whole tier first, then mint newer sequences for every canonical resend.
         val emptyAssert = state.emptySlotAssertPayload()
-        val clearError = sink.sendRemote(
+        val clearError = sendRemote(
             BusEnvelope(path = BusPaths.ACTIVITY_END, payload = emptyAssert),
         )
         if (clearError != null) {
@@ -365,7 +365,7 @@ internal class PhoneActivityRouter(
         }
 
         state.payloadsForResend().forEach { payload ->
-            val error = sink.sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_START, payload = payload))
+            val error = sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_START, payload = payload))
             if (error == null) {
                 sink.log(
                     "activity resent owner=${payload.optString("ownerPluginId")} " +
@@ -456,7 +456,7 @@ internal class PhoneActivityRouter(
             sink.log("activity result dropped owner=$pluginId reason=link_down")
             return
         }
-        sink.sendRemote(outgoing)?.let { sink.log("activity result failed owner=$pluginId code=$it") }
+        sendRemote(outgoing)?.let { sink.log("activity result failed owner=$pluginId code=$it") }
     }
 
     private fun handleGeometry(envelope: BusEnvelope, sender: PhoneHudRouteSender, pluginId: String) {
@@ -559,7 +559,7 @@ internal class PhoneActivityRouter(
             sink.log("activity offline held owner=${result.ownerPluginId} reason=link_or_bundle")
             return
         }
-        sink.sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_START, payload = result.payload))?.let {
+        sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_START, payload = result.payload))?.let {
             sink.log("activity offline failed owner=${result.ownerPluginId} code=$it")
         }
     }
@@ -568,7 +568,7 @@ internal class PhoneActivityRouter(
     private fun sendRestamp(outcome: PhoneActivityPreferenceOutcome.Restamped) {
         if (!state.bundleNegotiated() || !sink.pinLinkUp()) return
         val path = if (outcome.asStart) BusPaths.ACTIVITY_START else BusPaths.ACTIVITY_UPDATE
-        sink.sendRemote(BusEnvelope(path = path, payload = outcome.payload))?.let {
+        sendRemote(BusEnvelope(path = path, payload = outcome.payload))?.let {
             sink.log("activity restamp failed owner=${outcome.ownerPluginId} code=$it")
         }
     }
@@ -580,6 +580,18 @@ internal class PhoneActivityRouter(
         launcher.persistOffline(snapshots)
     }
 
+    private fun sendRemote(envelope: BusEnvelope): String? {
+        val error = sink.sendRemote(envelope)
+        if (error != "NO_DATA_PLANE" || envelope.binary != null ||
+            envelope.path !in setOf(BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_UPDATE) ||
+            envelope.payload.optJSONObject("artwork") == null) return error
+        // Optional artwork must not prevent text and controls from reaching a CXR-only link.
+        val withoutArtwork = envelope.copy(payload = JSONObject(envelope.payload.toString()).put("artwork", JSONObject.NULL))
+        if (com.anezium.rokidbus.shared.FrameProtocol.toJsonBytes(withoutArtwork).size >
+            com.anezium.rokidbus.shared.BusConstants.CXR_CONTROL_MAX_BYTES) return error
+        return sink.sendRemote(withoutArtwork)
+    }
+
     private fun forward(
         envelope: BusEnvelope,
         payload: JSONObject,
@@ -588,7 +600,7 @@ internal class PhoneActivityRouter(
         val forwarded = envelope.copy(payload = payload)
         sink.recordLocalRoute(forwarded, sender.uid, sender.pluginId, PluginBusJournal.Verdict.OK)
         if (sink.pinLinkUp()) {
-            sink.sendRemote(forwarded)?.let { sink.deliverError(sender.replyBinder, envelope.id, it) }
+            sendRemote(forwarded)?.let { sink.deliverError(sender.replyBinder, envelope.id, it) }
         } else {
             sink.log(
                 "activity held owner=${payload.optString("ownerPluginId")} " +
@@ -629,7 +641,7 @@ internal class PhoneActivityRouter(
             sink.log("activity end held owner=${result.ownerPluginId} cause=$cause reason=link_down")
             return
         }
-        val error = sink.sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_END, payload = result.payload))
+        val error = sendRemote(BusEnvelope(path = BusPaths.ACTIVITY_END, payload = result.payload))
         if (error != null) {
             sink.log("activity end failed owner=${result.ownerPluginId} cause=$cause code=$error")
         }

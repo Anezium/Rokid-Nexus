@@ -29,8 +29,8 @@ internal interface MediaDeckActivityPort {
  * The "Show in activities" subscriber. While the user enables it, it watches the media sessions
  * through the shared monitor and publishes the now-playing activity, even with the full surface
  * closed. It keeps the plugin service bound only while there is something to publish, ends the
- * activity and lets the service go when there is not (no session, no access, sessions that cannot
- * be read), and never polls: it publishes on a new revision only, which position never makes.
+ * activity on access loss or unreadable state. With no session it publishes an ongoing idle
+ * destination and releases its service binding. It never polls: position makes no revision.
  *
  * Nexus can stop it too: a registration that is not approved (pending, revoked, plugin disabled),
  * the user turning the activity off in Nexus, or the hub replacing it. It then ends what it
@@ -49,7 +49,7 @@ internal class MediaDeckActivityPublisher(
     onHubAtStart: Boolean = false,
     private val rememberOnHub: (Boolean) -> Unit = {},
 ) {
-    private data class Published(val revision: Long)
+    private data class Published(val revision: Long, val artwork: com.anezium.rokidbus.shared.LauncherArtwork?)
 
     var enabled = false
         private set
@@ -87,8 +87,8 @@ internal class MediaDeckActivityPublisher(
 
     /**
      * Whether an entry of this plugin may still be on the hub, live or as the offline snapshot an
-     * earlier process left. Remembered across processes, so turning the activity off, or finding
-     * nothing playing, ends that snapshot too instead of leaving it there for good.
+     * earlier process left. Remembered across processes, so turning the activity off ends that
+     * snapshot too instead of leaving it there for good.
      */
     var mayBeOnHub: Boolean = onHubAtStart
         private set
@@ -250,7 +250,7 @@ internal class MediaDeckActivityPublisher(
     }
 
     private fun plan() {
-        val activity = if (enabled && suspendedBy == null) MediaDeckActivityModel.activity(hub.state) else null
+        val activity = if (enabled && suspendedBy == null) MediaDeckActivityModel.activity(hub.state, hub.artwork) else null
         if (activity == null) {
             stopPublishing(releaseNow = false)
             return
@@ -266,11 +266,18 @@ internal class MediaDeckActivityPublisher(
     }
 
     private fun flush() {
-        if (!enabled || suspendedBy != null || !port.approved) return
-        val state = hub.state as? MediaDeckState.Active ?: return
-        val activity = MediaDeckActivityModel.activity(state) ?: return
+        if (!enabled || suspendedBy != null) return
+        if (!port.approved) {
+            releaseIfIdle(hub.state)
+            return
+        }
+        val state = hub.state
+        val activity = MediaDeckActivityModel.activity(state, hub.artwork) ?: return
         val previous = published
-        if (started && previous?.revision == state.revision) return
+        if (started && previous?.revision == state.revision && previous.artwork == hub.artwork) {
+            releaseIfIdle(state)
+            return
+        }
         if (started) {
             val wait = lastSentAt?.let { it + MIN_UPDATE_INTERVAL_MS - now() } ?: 0L
             if (wait > 0L) {
@@ -293,13 +300,25 @@ internal class MediaDeckActivityPublisher(
             // capabilities, a link coming back, or the next change.
             started = false
             published = null
+            releaseIfIdle(state)
             return
         }
         started = true
         markOnHub(true)
-        published = Published(state.revision)
-        shownTargets[state.revision] = MediaDeckTarget(state.identity, state.revision)
+        published = Published(state.revision, hub.artwork)
+        MediaDeckTarget.of(state)?.let { shownTargets[state.revision] = it }
         while (shownTargets.size > MAX_SHOWN_REVISIONS) shownTargets.remove(shownTargets.keys.first())
+        releaseIfIdle(state)
+    }
+
+    private fun releaseIfIdle(state: MediaDeckState) {
+        if (state is MediaDeckState.NoSession && holding && cancelRelease == null) {
+            // The hub retains the ongoing destination; an idle shortcut needs no service binding.
+            cancelRelease = schedule(RELEASE_AFTER_END_MS) {
+                cancelRelease = null
+                release()
+            }
+        }
     }
 
     private fun stopPublishing(releaseNow: Boolean) {

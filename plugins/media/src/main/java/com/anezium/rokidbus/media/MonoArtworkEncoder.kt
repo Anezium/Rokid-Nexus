@@ -190,23 +190,24 @@ internal object MonoArtworkEncoder {
 internal object ImageArtworkEncoder {
     private val JPEG_QUALITIES = listOf(88, 80, 72, 60, 48, 36)
 
-    fun encode(context: Context, source: Bitmap?, sourceUri: String): EncodedImageArtwork? {
-        encode(source)?.let { return it }
+    fun encode(context: Context, source: Bitmap?, sourceUri: String, maxBytes: Int = ImageSurfaceContract.MAX_IMAGE_BYTES): EncodedImageArtwork? {
+        encode(source, maxBytes)?.let { return it }
         if (sourceUri.isBlank()) return null
         val decoded = runCatching { decodeLocalArtwork(context, sourceUri) }.getOrNull() ?: return null
         return try {
-            encode(decoded)
+            encode(decoded, maxBytes)
         } finally {
             if (!decoded.isRecycled) decoded.recycle()
         }
     }
 
-    fun encode(source: Bitmap?): EncodedImageArtwork? {
+    fun encode(source: Bitmap?, maxBytes: Int = ImageSurfaceContract.MAX_IMAGE_BYTES): EncodedImageArtwork? {
         if (source == null || source.isRecycled || source.width <= 0 || source.height <= 0) return null
-        return runCatching { encodeChecked(source) }.getOrNull()
+        return runCatching { encodeChecked(source, maxBytes) }.getOrNull()
     }
 
-    private fun encodeChecked(source: Bitmap): EncodedImageArtwork? {
+    private fun encodeChecked(source: Bitmap, maxBytes: Int): EncodedImageArtwork? {
+        require(maxBytes in 1..ImageSurfaceContract.MAX_IMAGE_BYTES)
         val owned = mutableListOf<Bitmap>()
         fun own(bitmap: Bitmap): Bitmap {
             if (bitmap !== source && owned.none { it === bitmap }) owned += bitmap
@@ -234,7 +235,7 @@ internal object ImageArtworkEncoder {
                     if (!scaled.compress(Bitmap.CompressFormat.JPEG, quality, output)) return@forEach
                     output.toByteArray()
                 }
-                if (bytes.isEmpty() || bytes.size > ImageSurfaceContract.MAX_IMAGE_BYTES) return@forEach
+                if (bytes.isEmpty() || bytes.size > maxBytes) return@forEach
                 val dimensions = ImageSurfaceContract.dimensions(ImageSurfaceContract.MIME_JPEG, bytes)
                     ?: return@forEach
                 if (dimensions.width != targetWidth || dimensions.height != targetHeight) return@forEach

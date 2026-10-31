@@ -312,6 +312,14 @@ class NexusPluginClient internal constructor(
         }
     }
 
+    /** Both hubs negotiated bounded previews and the integrated media page (launcher v2). */
+    fun supportsLauncherArtwork(): Boolean = supportsLauncherInteractive() &&
+        pages.launcherInteractiveVersion >= LauncherInteractiveContract.ARTWORK_VERSION
+
+    /** Both hubs accept full-tone JPEG covers in launcher pages and activities (bundle v3). */
+    fun supportsLauncherImageArtwork(): Boolean = supportsLauncherInteractive() &&
+        pages.launcherInteractiveVersion >= LauncherInteractiveContract.IMAGE_ARTWORK_VERSION
+
     /**
      * Whether these glasses support the platform-owned activity tier.
      *
@@ -675,12 +683,19 @@ class NexusPluginClient internal constructor(
         }
     }
 
+    /** Whether both hubs support event-triggered activity presentation. */
+    fun supportsActivityEvents(): Boolean = supportsLauncherInteractive() &&
+        pages.launcherInteractiveVersion >= com.anezium.rokidbus.shared.LauncherInteractiveContract.ACTIVITY_EVENTS_VERSION
+
     private val ownActivityId: String
         get() = "$pluginId:${ActivitySurfaceContract.LOCAL_SURFACE_ID}"
 
     /** Peers without the launcher bundle get a plain activity, whatever this plugin set. */
     private fun forActivityPeers(payload: JSONObject): JSONObject =
-        if (supportsLauncherInteractive()) payload else ActivitySurfaceContract.stripLauncherFields(payload)
+        if (supportsLauncherInteractive()) payload.apply {
+            com.anezium.rokidbus.shared.LauncherArtwork.stripUnsupported(this, pages.launcherInteractiveVersion)
+            if (!supportsActivityEvents()) remove("eventKey")
+        } else ActivitySurfaceContract.stripLauncherFields(payload)
 
     private fun forNoticePeers(payload: JSONObject): JSONObject =
         if (supportsLauncherInteractive()) payload else NoticeSurfaceContract.stripLauncherFields(payload)
