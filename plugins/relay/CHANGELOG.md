@@ -2,7 +2,7 @@
 
 ## 1.4.0
 
-Needs Nexus hubs 1.9.0 for the launcher pages; with older hubs Relay 1.4.0
+Needs Nexus hubs 2.0.0 for the launcher pages; with older hubs Relay 1.4.0
 behaves like 1.3.0.
 
 - Read-only alerts from apps set to All open as a conversation page without

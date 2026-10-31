@@ -2,7 +2,7 @@
 
 ## 1.0.6
 
-The todo activity and its pages need Nexus hubs 1.9.0.
+The todo activity and its pages need Nexus hubs 2.0.0.
 
 - Add **Remove pin** to phone settings, so the standalone background pin can be
   dismissed without waiting for its expiry or changing the Todo activity.

@@ -2,7 +2,12 @@
 
 ## 1.0.4
 
-The activity and its page need Nexus hubs 1.9.0; with older hubs Media Deck behaves like 1.0.3.
+- Integrated Nexus player with cover artwork, progress, full-text scrolling and
+  quick activity-card controls. One Back leaves its focused controls.
+- Keep in activities retains an idle Resume music entry. Nexus owns when its
+  floating band appears; the settings link opens the shared display chooser.
+
+The activity and its page need Nexus hubs 2.0.0; with older hubs Media Deck behaves like 1.0.3.
 
 - A "Which player?" choice made through Assistant reaches only that player for that call
   and leaves the surface, the activity and the page as they were.
@@ -10,7 +15,7 @@ The activity and its page need Nexus hubs 1.9.0; with older hubs Media Deck beha
   what plays among the glasses' activities even with Media Deck closed: title, artist,
   Previous, Play or Pause, and Next. A tap on the card focuses Play/Pause; nothing plays on
   that first tap. The activity follows only real changes (the player, the track, playing or
-  paused), never the position, and nothing polls. Turning the setting off, nothing playing or
+  paused), never the position, and nothing polls. While idle it keeps a Resume music entry. Turning the setting off or
   revoking notification access ends it; the setting itself is kept.
 - A new track or another player updates the activity quietly: it no longer lifts what plays
   above a running route or another activity in the glasses' stack.

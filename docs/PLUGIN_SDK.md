@@ -19,7 +19,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.23.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.24.0")
 }
 ```
 
@@ -27,10 +27,11 @@ For local development against a checkout, publish a snapshot instead:
 `.\gradlew.bat :shared:publishToMavenLocal :bus-client:publishToMavenLocal
 '-PversionName=0.1.0-SNAPSHOT'` and consume it from `mavenLocal()`.
 
-The launcher-bundle APIs documented below are available in this source checkout;
-`sdk-v0.23.0` does not include them. External plugins using interactive activity
-destinations, typed quick actions, or the conversation/media/route templates must
-consume a snapshot until an SDK release includes those APIs.
+SDK `sdk-v0.24.0` includes the launcher-bundle APIs documented below: interactive
+activity destinations, typed actions, conversation/media/route templates, artwork
+and user-owned floating activity settings. Update both hubs to Nexus 2.0.0 for
+the complete launcher experience; continue negotiating individual capabilities
+for older peers. Plugins built against 0.23.0 must be rebuilt against 0.24.0.
 
 Use `compileSdk = 36`. The bus-client AAR supports `minSdk >= 26`; the
 repository's canonical Sample and Transit plugin templates use `minSdk = 30`
@@ -1391,7 +1392,7 @@ queue, which dies with the client. `onAccepted` runs once the phone hub holds th
 request on disk; from there it reaches the glasses across a link loss or a
 restart of either hub. Keep the request owed on your side until then and send it
 again on your next registration; repeating it is harmless. Hubs before Nexus
-1.9.0 keep no notification history, refuse the path and never accept it.
+2.0.0 keep no notification history, refuse the path and never accept it.
 
 ```kotlin
 nexusClient?.showNotice(
