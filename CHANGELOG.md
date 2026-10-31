@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 1.8.3
+
+Update both Nexus hubs together. The 1.8.2 release published the glasses APK only; this release also ships the phone changes described below under 1.8.2.
+
+### Phone hub
+
+- Recognizes Global Hi Rokid's native scene reports, which contain active names separated by commas rather than JSON. A native prompter was previously read as no scene running, bypassing the assist takeover guard. Scene names are matched exactly; JSON reports remain supported.
+- Tapping the "Hi Rokid ended the glasses session" notification reconnects even when the Nexus home screen already exists in the background. Merely returning to Nexus does not automatically reclaim the session, and a stopped hub stays stopped.
+
+### Glasses hub
+
+- Includes the R08 helper restart and shell CPU fixes from 1.8.2, with a matching app version.
+
 ## 1.8.2
 
 Update both Nexus hubs together.
