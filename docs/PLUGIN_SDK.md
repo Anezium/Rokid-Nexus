@@ -925,6 +925,13 @@ On v2 peers the SDK and phone clear unsupported JPEG artwork explicitly, includi
 result replacements, so a previous track's cover cannot remain visible. Mono1 is
 still accepted for deliberately monochrome previews and older peers.
 
+If only CXR is available and optional artwork makes an activity or media page
+too large, the phone can clear its outgoing artwork and deliver the text and
+controls instead. This also covers live media page updates and action-result
+replacement pages. The remaining complete envelope must fit CXR; mandatory
+content that still needs SPP fails closed. Page revisions and action identities
+are preserved. See [BUSSPEC.md, Detailed covers](../BUSSPEC.md#detailed-covers-bundle-v3).
+
 `PageBody.Media` also accepts optional `positionMs`, `durationMs` (0 through
 604,800,000), `playbackSpeed` (finite, -16 through 16; default 1) and `advancing`
 (default follows PLAYING). The position is the anchor at publication. The visible

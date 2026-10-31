@@ -27,6 +27,26 @@ Rokid Nexus is a plugin platform for Rokid AR glasses: one permanent hub lives
 on the glasses and renders everything; all features ship as ordinary Android
 APKs on the phone. Plugins need no separate APK on the glasses.
 
+## Nexus 2.0
+
+Triple tap opens the native Nexus launcher: live Activities cards, Notifications
+history and Applications. A card opens its conversation, player, route or
+checklist inside Nexus. Media Deck adds cover art and quick playback commands
+directly on its card; opening the player adds progress, and one Back returns
+to the launcher.
+
+A Navigation card shows route guidance; opening it shows the embedded map.
+Nexus-planned walks also support floating minimap/panel and full-screen maps.
+Guidance relayed from other navigation apps remains text-only. For each plugin,
+choose Automatic, Always visible, Home screen only, On changes or Activities
+only. On changes uses a 3, 5 or 10 second event window; its expiry leaves the
+retained Activities card available.
+
+Update **both hubs to 2.0.0**, plus Relay 1.4.0, Navigation 0.3.0, Media Deck
+1.0.4 and Sample 1.0.6. Plugin developers use SDK 0.24.0. See the
+[2.0.0 release](https://github.com/Anezium/Rokid-Nexus/releases/tag/v2.0.0)
+and [changelog](CHANGELOG.md) for downloads and compatibility details.
+
 Plugins stay isolated in their own processes, appear only after explicit user
 approval, and draw on the HUD through declarative surfaces — cards, synced
 timed lines, media decks, real images, and compiled interactive Ink pages. They

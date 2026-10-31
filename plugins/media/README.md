@@ -13,7 +13,7 @@ HUD surface, and forwards only play/pause/previous/next transport commands.
 - `MediaDeckPluginService` registers the headless APK through the external Nexus plugin
   SDK and adapts the isolated `MediaDeckRuntime` onto typed surface sessions.
 - The glasses hub owns rendering through the versioned `media` surface documented in
-  `../BUSSPEC.md`; the plugin never installs or launches glasses-side code.
+  `../../BUSSPEC.md`; the plugin never installs or launches glasses-side code.
 
 ## HUD contract
 

@@ -18,17 +18,17 @@ releases. The Gradle project names keep the historical `:plugin-<id>` form
 |---|---|---|
 | [Assistant](assistant/) | `assistant` | Voice questions answered on the band, aloud, or as generated native Ink pages, with camera vision, reminders, notes, and phone-calendar create/list/delete tools |
 | [Relay](relay/) | `relay` | Phone notifications on the HUD, answered by voice, with an inbox for the rest |
-| [Navigation](nav/) | `nav` | Google Maps and Citymapper guidance kept on the glasses as one live activity |
+| [Navigation](nav/) | `nav` | Notification guidance from navigation apps, plus Nexus-planned walking routes with native maps |
 | [Feeds](../plugin-feeds/) | `feeds` | Bluesky and X timelines on the HUD |
 | [Lens](lens/) | `lens` | Live and frozen camera OCR with phone-side translation |
 | [Transit](transit/) | `transit` | Nearby stops, departures, and favourites |
 | [Lyrics](lyrics/) | `lyrics` | Live synced lyrics for whatever is playing |
-| [Media Deck](media/) | `media` | Universal now-playing surface with transport controls |
+| [Media Deck](media/) | `media` | Universal now-playing activity with cover art, launcher quick controls and an integrated player |
 | [Photos Sync](photosync/) | `photosync` | Copies glasses captures into the phone gallery on their own |
 | [Wireless ADB](wireless-adb/) | `wirelessadb` | Enables and pairs the glasses' real ADB-over-Wi-Fi transport under an explicit high-risk grant |
 | [Patcher](patcher/) | `patcher` | Patches stock YouTube on the phone for the hub's YouTube setup; phone-only, not shown in the glasses launcher |
 | [Tasker](tasker/) | `tasker` | Lists named Tasker tasks on the HUD and runs the selected automation on the phone |
-| [Sample](sample/) | `hello` | Minimal copyable reference plugin |
+| [Sample](sample/) | `hello` | Copyable SDK reference, Todo/Groceries pages, persistent activity opt-in and pin removal |
 
 Feeds lives at the repository root as `plugin-feeds/`; everything else about
 it follows the same layout and rules.

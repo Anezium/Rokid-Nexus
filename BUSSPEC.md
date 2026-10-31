@@ -2389,6 +2389,13 @@ the media image encoder, with a tighter compressed cap for inline page transport
 If an activity image cannot fit the available CXR-only transport, the phone clears
 only the outgoing artwork and delivers the text and controls with the same stamped
 identity and sequence. Canonical state retains the JPEG for an SPP reconnect resend.
+For a media `/page/response` (initial or live revision) or `/page/result` replacement,
+`NO_DATA_PLANE` likewise permits one retry with explicit artwork null, but only
+when the complete resulting envelope fits CXR. The phone preserves the page,
+revision, action identities and correlation fields and determines transport
+requirements from the payload actually sent. If mandatory content still needs
+SPP, the page fails closed as before; clearing optional artwork never loosens
+an action guard or the page limits.
 No URI, network fetch, binary asset reference or additional grant is introduced.
 
 Mono1 remains valid unchanged. With bundle v2, JPEG becomes explicit artwork null
