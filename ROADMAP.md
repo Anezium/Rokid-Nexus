@@ -1,6 +1,6 @@
 # Rokid Nexus — Roadmap
 
-Status: 2026-10-10. This file is the public roadmap and the source the
+Status: 2026-10-31, Nexus 2.0.0. This file is the public roadmap and the source the
 [project site](https://rokid-nexus.anezium.me) renders. The founding product
 argument lives in [VISION.md](VISION.md); what actually shipped in each release
 lives in [CHANGELOG.md](CHANGELOG.md).
@@ -243,8 +243,8 @@ split preserves behavior; it adds no display policy.
 Navigation 0.2.0 reads Google Maps, Citymapper, OsmAnd, Organic Maps and
 Yandex Maps while they guide you and
 keeps the route as one activity on the glasses: the next turn and its
-distance, or the walk to the stop, the line to board, the stops left. Nothing
-is routed by Nexus and no map is drawn; the plugin reads the guidance those
+distance, or the walk to the stop, the line to board, the stops left. For
+those apps nothing is routed by Nexus and no map is drawn; the plugin reads the guidance those
 apps already post as notifications, so it follows whatever route you chose in
 them. Each app has its own switch, so any of them can be kept off the glasses
 without uninstalling anything. It reads them in English, French and, since
@@ -256,6 +256,19 @@ distance and street, and Yandex Maps driving distance, street and ETA, each
 checked on a phone and glasses. Bitmap-only maneuvers keep a neutral glyph.
 maps.me is read as well, but maps.me stops updating its own notification in
 the background on Android 11 and later, so Organic Maps is the one to use.
+
+Navigation 0.3.0, with both hubs on 2.0.0, can also plan a route itself, and
+only a walking one: search a place on the phone, tap Start, and Transitous (an
+OpenStreetMap-based planner) is asked once for the walk. That walk is the only
+route Nexus draws a map for. Its launcher card is text — distance, destination,
+time left — with no map on it; tapping the card opens the route page inside
+Nexus, with the guidance, an embedded map of the real streets and its commands,
+and from there a full-screen map. Away from the launcher, the route can float
+over the glasses' home screen as a minimap or a panel. Between updates the map
+and position glide instead of jumping. Guidance read from Google Maps or
+Citymapper stays text only, their transit instructions included: no position
+and no street is drawn for it. Planning a public-transport journey in Nexus is
+not shipped; it is under Exploring below.
 
 ### Skills: plugins that work for each other
 
@@ -280,6 +293,41 @@ Google accounts. Reddit followed in 1.7.0 as a Preview: it runs on the glasses,
 but the R08 ring and real posting have not been checked. Both setups live in
 Patcher's settings.
 
+### A launcher, with pages inside it
+
+A triple tap opens Nexus's own launcher on the glasses (2.0.0): live
+activities first — a route, what plays, a to-do list — then the latest
+notification, **Notifications** and **Applications**. Swipe moves, tap opens,
+double tap goes back, and the stack keeps its order while it is open. An
+activity or a notification opens its page inside Nexus instead of the plugin's
+whole surface: a conversation, a player, a route with its map, a checklist.
+**Open app** is still there when the full surface is wanted.
+
+Media Deck 1.0.4 puts the cover and Previous, Play/Pause and Next on its
+card, and its player shows the progress; one Back leaves it. Relay 1.4.0 opens
+a message as a conversation: dictate on the glasses or type on the phone, read
+the draft, then tap Send, a separate action that says the reply was handed to
+the app, never that it was delivered. A notification removed from the phone
+leaves the launcher's cards and stays in Notifications history marked removed,
+which keeps the last 30 notifications of the past 24 hours, in memory only.
+Sample 1.0.6 shows the same pages from the public SDK with a to-do checklist.
+
+With an older phone hub, or the Classic launcher chosen, the glasses keep the
+1.8 launcher. Plugins built on SDK 0.24.0 negotiate the launcher bundle and
+keep a fallback for hubs without it.
+
+### Floating activities, on the wearer's terms
+
+Whether an activity floats over the glasses is the wearer's choice, per
+plugin, on the phone (2.0.0): Automatic, Always visible, Home screen only,
+On changes, or Activities only. On changes shows the band for a real event
+for 3, 5 or 10 seconds, then lets it go. A band expiring never ends the
+activity: its card in Activities has its own lifetime, and a plugin that
+supports it can keep that card after it disconnects, once the wearer turned
+on its *Show in activities* setting. The camera, an open Nexus session and
+an app set to hide all activities still take precedence. Plugins link to
+these settings through the SDK; they never choose visibility or duration.
+
 ### Thirteen plugins, none of them built in
 
 Relay · Assistant · Navigation · Lens · Feeds · Transit · Lyrics · Media Deck
@@ -291,15 +339,16 @@ Relay · Assistant · Navigation · Lens · Feeds · Transit · Lyrics · Media 
 
 Designed, and parked on purpose until a concrete case asks for them.
 
-### Display policies and ownership epochs
+### Ownership epochs beyond the shipped display settings
 
 Foreground ownership, per-surface ordering, sequenced hides, and image-decode
 invalidation already protect the normal handoff. Newest accepted notice
 replacement is an intentional single-slot policy, not a missing queue.
 
-Per-plugin display policies — mute, demote, notices-only — and hub-stamped
-ownership epochs have implementations on development branches, but are not the
-current integration priority. A narrow phone-side check/stamp race remains a
+Nexus 2.0's per-plugin floating modes and foreground-app preferences are shipped.
+Further experiments in ownership epochs and priority arbitration remain on
+development branches rather than the current integration path. A narrow
+phone-side check/stamp race remains a
 hypothesis to reproduce; it is not evidence that an ordinary late image can
 repaint a new owner, or a reason to require a global display rework. This work
 comes back against a concrete scenario.
@@ -335,6 +384,22 @@ Committed, not started, in this order.
 
 ---
 
+## Exploring
+
+Directions for future updates, not commitments. Scope and timing are still
+open, and nothing here is shipped.
+
+- **Favourites under the activities.** Shortcuts to the plugins and apps used
+  most, pinned directly below the activity cards in the launcher, so they are
+  reached without going through Applications every time.
+- **Public-transport journeys in Navigation.** Which bus, metro or train to
+  take, departure times, transfers and stops, planned by Navigation itself and
+  shown through the same native route pages, maps and floating guidance as a
+  walk, so the whole journey reads from the glasses. Today Navigation plans
+  walks only, and transit guidance read from other apps is text.
+
+---
+
 ## Plugins
 
 Everything above is the platform's roadmap; this is the ecosystem's. The rule
@@ -348,18 +413,19 @@ Next below, shipped in 0.1.0.
 
 | Plugin | Still owed |
 |---|---|
-| Relay | Notifications from ordinary apps, not just messengers · an app picker, so the wearer chooses which apps may reach the eye. Typed replies shipped in 1.2.2, typed inside the notice in 1.2.4 |
+| Relay | Nothing named. Typed replies shipped in 1.2.2, typed inside the notice in 1.2.4; notifications from ordinary apps and a per-app Off / Messages only / All choice in 1.3.0; launcher conversations with a dictated or typed draft and a separate Send in 1.4.0 |
 | Assistant | Plugin operations asked by voice and on a real moving journey · Workspace on large folders, and found by meaning rather than by the words in the files. Providers beyond ChatGPT shipped in 1.1.0 — MiniMax, DeepSeek, GLM, OpenRouter, or any OpenAI-compatible server; reminders, timers and notes shipped in 1.3.0, on every provider; phone-calendar creation, listing, and safe deletion in 1.4.0; Hermes, which runs its agent on its own side, in 1.4.1, with the phone tools bridged to it in plain text in 1.4.2; typed notes in 1.4.4; the question itself typed instead of spoken in 1.4.7; assist-button questions kept to the band, and a choice of how answers are drawn, in 1.4.8; plugin operations through Skills, and a Workspace of the phone's own documents, PDFs and images included, in 1.5.0 |
-| Navigation | Bus, tram and RER rides checked on real trips, beyond the walks and boardings already seen · Google Maps and Citymapper set to a language other than English, French or Korean, whose wording it does not read yet · Korean checked on a real trip in Korea · OsmAnd walking and cycling checked on real trips · Yandex Maps walking, cycling and transit once usable notifications have been captured |
+| Navigation | Public-transport journeys planned by Navigation itself (Exploring, above) · bus, tram and RER rides checked on real trips, beyond the walks and boardings already seen · Google Maps and Citymapper set to a language other than English, French or Korean, whose wording it does not read yet · Korean checked on a real trip in Korea · OsmAnd walking and cycling checked on real trips · Yandex Maps walking, cycling and transit once usable notifications have been captured |
 | Feeds | Posting and replying by voice · sources beyond Bluesky and X · video in the timeline |
-| Media Deck | "Next" asked of Assistant, which no operation offers yet · pause asked by voice, with real music players. Now playing and pause for Assistant shipped in 1.0.3 and have run with a test player, from typed questions |
+| Media Deck | "Next" asked of Assistant, which no operation offers yet · pause asked by voice, with real music players. Now playing and pause for Assistant shipped in 1.0.3 and have run with a test player, from typed questions; the launcher player and card controls in 1.0.4 |
 | Photos Sync | A Wi-Fi-only rule · a video's location tag, which Android strips on the way out. Capture-type filters shipped in 1.1.0; optional deletion after sync already shipped in 1.0.0 |
 | Transit | "Take me home" guidance checked on a real trip. Skills and journey guidance shipped in 1.0.5; departures have run on hardware, the guidance not yet on a moving trip |
 | Patcher | Reddit out of Preview: the R08 ring and real posting checked on hardware |
 | Lens · Lyrics | Complete as they stand |
 
-Navigation is deliberately not a Transit feature: it reads other apps' live
-guidance rather than timetables, so it got a plugin of its own.
+Navigation is deliberately not a Transit feature: it follows a route — other
+apps' live guidance, or a walk it planned — rather than listing timetables, so
+it got a plugin of its own.
 
 Ten plugins in the Store were written by someone else, by four different
 authors: [Lume](https://github.com/beyondlevi/lume-nexus), a wearable RSVP speed

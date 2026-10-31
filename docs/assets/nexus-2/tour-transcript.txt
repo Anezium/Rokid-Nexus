@@ -1,0 +1,45 @@
+Nexus 2.0 demo
+
+Glasses-display captures and phone recordings. Demo conversation and simulated navigation position.
+
+00:00:00.000 – 00:00:06.600: Nexus 2.0 · triple-tap launcher
+Native root on the glasses: Activities cards, Notifications and Applications
+
+00:00:06.600 – 00:00:15.600: Quick card commands
+Media Deck right on its card: Previous · Play/Pause · Next
+
+00:00:15.600 – 00:00:20.900: Integrated Media Deck player
+Cover, title, progress and transport controls
+
+00:00:20.900 – 00:00:25.900: Todo / Groceries page
+A checklist page inside Nexus
+
+00:00:25.900 – 00:00:32.500: Relay · Type on the phone
+The draft appears live in the glasses thread and stays unsent
+
+00:00:32.500 – 00:00:39.100: Relay · Send is its own step
+Exact chat bubbles, Dictate on the glasses, Type on the phone
+
+00:00:39.100 – 00:00:49.400: You choose when activities float
+Automatic · Always visible · Home only · On changes · Activities only. On changes: 3 / 5 / 10 s windows
+
+00:00:49.400 – 00:00:55.200: Floating band on the glasses home
+Floats for the event window, then steps aside; the Activities card stays
+
+00:00:55.200 – 00:01:02.200: Withdrawn notifications
+Gone from the root, still in the bounded Notifications history
+
+00:01:02.200 – 00:01:11.400: Open Navigation from the launcher
+The Navigation activity card opens route guidance, map and commands
+
+00:01:11.400 – 00:01:21.000: Walking navigation
+Follow, whole route or full screen — and Text, Minimap or Panel while you walk
+
+00:01:21.000 – 00:01:27.000: Navigation floating on home
+Live minimap and route guidance over the glasses home screen
+
+00:01:27.000 – 00:01:33.300: Smooth full-screen map
+Full-screen walking route · simulated position
+
+00:01:33.300 – 00:01:36.500: Rokid Nexus 2.0
+Update both hubs (phone and glasses) and your plugins
