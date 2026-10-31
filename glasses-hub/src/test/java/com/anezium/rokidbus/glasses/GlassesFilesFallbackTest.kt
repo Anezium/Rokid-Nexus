@@ -660,6 +660,31 @@ class GlassesFilesFallbackTest {
         }
     }
 
+    @Test
+    fun `the source deadline starts before dispatch returns`() {
+        val held = HeldReads(1)
+        val clock = AtomicLong(1_000)
+        val results = LinkedBlockingQueue<GlassesFilesResult>()
+        val file = temp.newFile().apply { writeBytes(byteArrayOf(1)) }
+        val dispatch = java.util.concurrent.Executor { task ->
+            io.execute(task)
+            check(held.entered(1).await(5, TimeUnit.SECONDS))
+            clock.addAndGet(GlassesFilesContract.SOURCE_STALL_MS)
+        }
+        val transfer = GlassesFilesDownload(id, file, null, dispatch,
+            { results.add(it); true }, { _, _, _ -> true }, {}, clock::get,
+            openSource = { held.wrap(it.inputStream()) })
+        val worker = io.submit { transfer.stream() }
+        try {
+            assertTrue(results.poll(5, TimeUnit.SECONDS) is GlassesFilesResult.DownloadReady)
+            assertEquals(GlassesFilesResult.TransferFailed(id, GlassesFilesError.IO_ERROR), results.poll(5, TimeUnit.SECONDS))
+            worker.get(5, TimeUnit.SECONDS)
+        } finally {
+            held.releaseAll()
+            transfer.cancelAll()
+        }
+    }
+
     private data class Resumed(
         val transfer: GlassesFilesDownload,
         val results: LinkedBlockingQueue<GlassesFilesResult>,
