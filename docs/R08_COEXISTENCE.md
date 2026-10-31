@@ -1,6 +1,6 @@
 # R08 Access Bridge recovery
 
-Watchdog `2026-10-31.1` can maintain the two R08 shell helpers without enabling
+Watchdog `2026-10-31.2` can maintain the two R08 shell helpers without enabling
 legacy TCP ADB. Install the updated Nexus glasses APK and R08 glasses/companion
 APKs, then arm R08 once. Nexus must have completed its own self-arm setup.
 Existing R08 installations with WRITE_SECURE_SETTINGS also register when the app
@@ -24,7 +24,10 @@ The contract is deliberately limited:
   Nexus watchdog is installed and its package is enabled. Without Nexus, R08
   retains its standalone loopback setup.
 
-Both updated apps are required; an older Nexus watchdog cannot restore R08.
+Both updated apps are required; an older Nexus watchdog cannot restore R08. From R08
+2.0.6 on, R08 also restarts or replaces its helpers itself over Wireless Debugging, with
+the key the phone companion paired, once the glasses are on Wi-Fi. Each reason Nexus
+declines to restart them is logged once in the watchdog log.
 No cable is needed for this cooperation once both apps have been set up. Recovery
 depends on Nexus successfully restoring its own shell watchdog after reboot.
 

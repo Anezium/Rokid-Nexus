@@ -10,7 +10,7 @@ LOGFILE="$BASE/$NAME.log"
 HEARTBEAT="$BASE/$NAME.heartbeat"
 VERSIONFILE="$BASE/$NAME.version"
 RECOVERYFILE="$BASE/$NAME.recovery"
-VERSION="2026-10-31.1"
+VERSION="2026-10-31.2"
 HEALTHY_INTERVAL="${INTERVAL:-180}"
 RECOVERY_INTERVAL="${RECOVERY_INTERVAL:-30}"
 RECOVERY_CYCLES="${RECOVERY_CYCLES:-3}"
@@ -193,21 +193,34 @@ cleanup_loop() {
 # R08 opts in only after setup. Use the existing shell-owned installers, never code
 # from shared storage or a caller-supplied path, and leave ADB/Wi-Fi policy to Nexus.
 recover_r08() (
+  # Logs each refusal reason once, so a recovery that never happens can still be diagnosed.
+  skip_r08() {
+    [ "$(cat /data/local/tmp/rokid-nexus-r08-recovery.skip 2>/dev/null)" = "$1" ] && return 0
+    echo "$1" > /data/local/tmp/rokid-nexus-r08-recovery.skip
+    log_line "R08 recovery skipped: $1"
+  }
   boot_count="$(settings get global boot_count 2>/dev/null)"
   read uptime_seconds ignored < /proc/uptime
   settings put global rokid_nexus_r08_watchdog "1:$boot_count:${uptime_seconds%%.*}" >/dev/null 2>&1
   [ "$(settings get global r08_access_bridge_armed 2>/dev/null)" = "1" ] || return 0
-  pm list packages -e com.anezium.r08accessbridge 2>/dev/null |
-    grep -qx 'package:com.anezium.r08accessbridge' || return 0
+  if ! pm list packages -e com.anezium.r08accessbridge 2>/dev/null |
+    grep -qx 'package:com.anezium.r08accessbridge'; then
+    skip_r08 "package missing or disabled"
+    return 0
+  fi
   # Both scripts must be provisioned by R08's initial setup before either runs.
   for helper in /data/local/tmp/r08-shortcut-bridge.sh /data/local/tmp/r08-a11y-watchdog.sh; do
-    [ -f "$helper" ] && [ ! -L "$helper" ] || return 0
+    if [ ! -f "$helper" ] || [ -L "$helper" ]; then
+      skip_r08 "${helper##*/} missing or a symlink"
+      return 0
+    fi
     metadata="$(stat -c '%u:%a' "$helper" 2>/dev/null)"
     case "$metadata" in
       2000:700|2000:744|2000:750|2000:755) ;;
-      *) return 0 ;;
+      *) skip_r08 "${helper##*/} owner/mode $metadata not allowed"; return 0 ;;
     esac
   done
+  rm -f /data/local/tmp/rokid-nexus-r08-recovery.skip
   for helper in /data/local/tmp/r08-shortcut-bridge.sh /data/local/tmp/r08-a11y-watchdog.sh; do
     [ "$(settings get global r08_access_bridge_armed 2>/dev/null)" = "1" ] || return 0
     result="$(sh "$helper" start 2>&1)"

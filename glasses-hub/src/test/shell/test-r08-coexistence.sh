@@ -73,5 +73,11 @@ recover_r08
 [ ! -f "$TEST_DIR/starts" ]
 echo 'PASS: foreign-owned, writable and symlink scripts rejected'
 
+grep -q 'R08 recovery skipped: r08-shortcut-bridge.sh owner/mode 2000:777 not allowed' "$TEST_DIR/log"
+logged="$(wc -l < "$TEST_DIR/log")"
+recover_r08
+[ "$(wc -l < "$TEST_DIR/log")" = "$logged" ]
+echo 'PASS: each refusal reason is logged once'
+
 # Any additional settings mutation fails above. The function never invokes ADB or Wi-Fi.
 echo 'PASS: only the capability heartbeat is published'
