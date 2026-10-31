@@ -28,6 +28,9 @@ class PhonePageBrokerLauncherTest {
         val glasses = mutableListOf<Pair<String, JSONObject>>()
         val quick = mutableMapOf<String, Set<QuickActionFamily>>()
         val logs = mutableListOf<String>()
+        var controlOnly = false
+        var artworkRejections = 0
+        var onArtworkRejected: (() -> Unit)? = null
 
         override fun nowMs(): Long = now
         override fun pageProvider(pluginId: String): PhonePluginPrincipal? = providers[pluginId]
@@ -39,6 +42,11 @@ class PhonePageBrokerLauncherTest {
             return live[registration.pluginId]?.any { it.epoch == registration.epoch } == true
         }
         override fun sendToGlasses(path: String, payload: JSONObject): String? {
+            if (controlOnly && PageSurfaceContract.needsDataPlane(path, payload)) {
+                artworkRejections++
+                onArtworkRejected?.invoke()
+                return "NO_DATA_PLANE"
+            }
             glasses += path to JSONObject(payload.toString())
             return null
         }
@@ -412,11 +420,11 @@ class PhonePageBrokerLauncherTest {
         for (key in listOf("artwork", "positionMs", "durationMs", "playbackSpeed", "advancing")) assertFalse(key, replaced.has(key))
     }
 
-    private fun jpegCover(): com.anezium.rokidbus.shared.LauncherArtwork {
+    private fun jpegCover(padding: Int = 0): com.anezium.rokidbus.shared.LauncherArtwork {
         val bytes = byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte(), 0xc0.toByte(),
             0, 17, 8, 1, 0, 1, 0, 3, 1, 17, 0, 2, 17, 0, 3, 17, 0, 0xff.toByte(), 0xd9.toByte())
         return com.anezium.rokidbus.shared.LauncherArtwork(256, 256,
-            java.util.Base64.getEncoder().encodeToString(bytes), "jpeg")
+            java.util.Base64.getEncoder().encodeToString(bytes + ByteArray(padding)), "jpeg")
     }
 
     @Test fun `v2 clears JPEG in both pages and replacement pages`() {
@@ -431,6 +439,60 @@ class PhonePageBrokerLauncherTest {
         assertNull(broker.onProvider(BusPaths.PAGE_RESULT, result, registration))
         assertTrue(host.glasses.last { it.first == BusPaths.PAGE_RESULT }.second
             .getJSONObject("replacement").getJSONObject("body").isNull("artwork"))
+    }
+
+    @Test fun `CXR-only initial media drops optional JPEG and retains exact controls across SPP loss`() {
+        val registration = open()
+        host.controlOnly = true
+        host.onArtworkRejected = {
+            val cxr = com.anezium.rokidbus.shared.LinkStateBits.CXR_CONTROL_UP
+            broker.onLinkState(cxr or com.anezium.rokidbus.shared.LinkStateBits.SPP_DATA_UP, cxr)
+        }
+        val body = JSONObject().put("title", "Track").put("state", "paused").put("artwork", jpegCover(4096).toJson())
+        val original = page(template = "media", body = body)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, original, registration))
+        assertTrue(responses().single().getJSONObject("body").isNull("artwork"))
+        assertTrue(original.getJSONObject("body").optJSONObject("artwork") != null)
+        assertEquals(1, host.artworkRejections)
+        visible()
+        invoke("cxr-play", "play")
+        assertEquals("play", invocations().single().getString("actionId"))
+        assertEquals(registration.epoch, host.delivered.single { it.second == BusPaths.PAGE_ACTION }.first)
+        assertTrue(host.delivered.none { it.second == BusPaths.PAGE_CLOSED })
+    }
+
+    @Test fun `asynchronous media cover on CXR preserves the text page and newer revision actions`() {
+        val registration = open()
+        host.controlOnly = true
+        val body = JSONObject().put("title", "Track").put("state", "paused")
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(template = "media", body = body), registration))
+        visible()
+        val updated = JSONObject(body.toString()).put("artwork", jpegCover(4096).toJson())
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(2, "media", updated), registration))
+        assertEquals(2L, responses().last().getLong("revision"))
+        assertTrue(responses().last().getJSONObject("body").isNull("artwork"))
+        invoke("cxr-new", "play", revision = 2)
+        assertEquals("play", invocations().single().getString("actionId"))
+        assertTrue(host.delivered.none { it.second == BusPaths.PAGE_CLOSED })
+    }
+
+    @Test fun `CXR media result replacements clear the cover without losing result correlation`() {
+        val registration = open()
+        host.controlOnly = true
+        val body = JSONObject().put("title", "Track").put("state", "paused")
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(template = "media", body = body), registration))
+        visible()
+        invoke("cxr-result", "play")
+        val updated = JSONObject(body.toString()).put("artwork", jpegCover(4096).toJson())
+        val result = JSONObject().put("invocationId", "cxr-result").put("status", "done")
+            .put("replacement", page(2, "media", updated))
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, result, registration))
+        val forwarded = host.glasses.last { it.first == BusPaths.PAGE_RESULT }.second
+        assertEquals("cxr-result", forwarded.getString("invocationId"))
+        assertTrue(forwarded.getJSONObject("replacement").getJSONObject("body").isNull("artwork"))
+        invoke("cxr-after-result", "play", revision = 2)
+        assertEquals(2, invocations().size)
+        assertTrue(host.delivered.none { it.second == BusPaths.PAGE_CLOSED })
     }
 
 }

@@ -118,7 +118,6 @@ class PhonePageBroker(
         val live: Boolean,
         val actions: Map<String, PageSurfaceAction>,
         val composer: ConversationComposer?,
-        val dataPlane: Boolean,
         /** An answer to the current request, which makes its actions available. */
         val answersRequest: Boolean,
         val routeMap: Boolean = false,
@@ -466,7 +465,7 @@ class PhonePageBroker(
                         val outgoing = forGlasses(stamped, value, frame.owner)
                         val candidate = Candidate(
                             value.revision, value.live, value.actions.associateBy { it.id }, body.composer,
-                            PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, outgoing), answersRequest = true,
+                            answersRequest = true,
                             routeMap = body.routeMap,
                         )
                         forwardPage(BusPaths.PAGE_RESPONSE, outgoing, frame, candidate)
@@ -491,7 +490,7 @@ class PhonePageBroker(
         val outgoing = forGlasses(stamped, page, frame.owner)
         val candidate = Candidate(
             page.revision, page.live, page.actions.associateBy { it.id }, body.composer,
-            PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, outgoing), answersRequest = false,
+            answersRequest = false,
             routeMap = body.routeMap,
         )
         forwardPage(BusPaths.PAGE_RESPONSE, outgoing, frame, candidate)
@@ -529,7 +528,7 @@ class PhonePageBroker(
             frame.reservedRevision = it.revision
             Candidate(
                 it.revision, it.live, it.actions.associateBy { action -> action.id }, body.composer,
-                PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESULT, outgoing), answersRequest = false,
+                answersRequest = false,
                 routeMap = body.routeMap,
             )
         }
@@ -725,7 +724,15 @@ class PhonePageBroker(
             // Counted when the send starts, not when it was queued: a loss and a reconnect while
             // it waited leave a send over the new session that crosses nothing.
             val losses = synchronized(lock) { dataPlaneLosses }
-            val error = host.sendToGlasses(path, payload)
+            var outgoing = payload
+            var error = host.sendToGlasses(path, outgoing)
+            if (error == "NO_DATA_PLANE") {
+                withoutMediaArtwork(path, payload)?.let {
+                    outgoing = it
+                    error = host.sendToGlasses(path, outgoing)
+                }
+            }
+            val dataPlane = PageSurfaceContract.needsDataPlane(path, outgoing)
             if (error != null) {
                 host.log("page send failed path=$path code=$error bytes=${PageSurfaceContract.serializedBytes(payload)}")
             }
@@ -733,21 +740,31 @@ class PhonePageBroker(
                 if (frames[frame.key] === frame && frame.requestId == requestId && frame.epoch == epoch) {
                     // A page that needed SPP and crossed its loss was judged by the old one: the
                     // glasses may hold it, inert or not, so it counts as lost, never as shown.
-                    val crossedLoss = candidate.dataPlane && dataPlaneLosses != losses
-                    if (error == null && !crossedLoss) commit(frame, candidate) else failClosed(frame)
+                    val crossedLoss = dataPlane && dataPlaneLosses != losses
+                    if (error == null && !crossedLoss) commit(frame, candidate, dataPlane) else failClosed(frame)
                 }
             }
         }
     }
 
-    private fun commit(frame: Frame, candidate: Candidate) {
+    private fun withoutMediaArtwork(path: String, payload: JSONObject): JSONObject? {
+        val outgoing = JSONObject(payload.toString())
+        val page = if (path == BusPaths.PAGE_RESULT) outgoing.optJSONObject("replacement") else outgoing
+        if (page?.optString("template") != PageSurfaceContract.TEMPLATE_MEDIA) return null
+        val body = page.optJSONObject("body") ?: return null
+        if (body.optJSONObject("artwork") == null) return null
+        body.put("artwork", JSONObject.NULL)
+        return outgoing.takeUnless { PageSurfaceContract.needsDataPlane(path, it) }
+    }
+
+    private fun commit(frame: Frame, candidate: Candidate, dataPlane: Boolean) {
         frame.shownRevision = maxOf(frame.shownRevision ?: candidate.revision, candidate.revision)
         frame.shownAtMs = host.nowMs()
         frame.live = candidate.live
         frame.actions = candidate.actions
         frame.composer = candidate.composer
         frame.routeMap = candidate.routeMap
-        frame.dataPlane = candidate.dataPlane
+        frame.dataPlane = dataPlane
         if (candidate.answersRequest) frame.actionable = true
     }
 
