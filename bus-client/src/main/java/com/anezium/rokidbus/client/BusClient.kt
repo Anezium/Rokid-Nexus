@@ -202,6 +202,27 @@ class BusClient(
         }
     }
 
+    /**
+     * Sends over the live, approved Binder only: true when Binder accepted the one-way
+     * transaction. Nothing is queued for a reconnect, so nothing is ever replayed; without a
+     * Binder, or when it throws, the message is dropped and the result is false.
+     */
+    fun trySendImmediate(path: String, id: String, payload: JSONObject): Boolean {
+        if (closed) return false
+        if (pluginId != null && pluginRegistrationState != PluginRegistrationResult.APPROVED) return false
+        val hub = service ?: return false
+        val bytes = payload.toString().toByteArray(Charsets.UTF_8)
+        return runCatching {
+            hub.send(path, id, bytes)
+            true
+        }.getOrElse {
+            service = null
+            listener(BusEvent.Error("json send failed; dropped, not queued"))
+            scheduleReconnect()
+            false
+        }
+    }
+
     fun sendBinary(path: String, meta: JSONObject, data: ByteArray): String =
         sendBinary(path, UUID.randomUUID().toString(), meta, data)
 

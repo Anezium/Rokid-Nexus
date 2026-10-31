@@ -29,6 +29,15 @@ internal object HudTopInset {
         state.effectiveDp
     }
 
+    /** The ROM draws its home status row above accessibility windows; keep ambient maps clear. */
+    fun ambientHeightPx(context: Context, top: Boolean, edgePx: Int): Int = synchronized(lock) {
+        ensureLoaded(context.applicationContext)
+        val metrics = context.resources.displayMetrics
+        val row = TOP_MODE_ROW_CENTER_PX + state.autoDp * metrics.density
+        val available = if (top) row - 24f - edgePx else metrics.heightPixels - edgePx - row - 24f
+        available.toInt().coerceAtLeast(0)
+    }
+
     fun set(context: Context, manualDp: Int, auto: Boolean) {
         val appContext = context.applicationContext
         val cleanManualDp = sanitize(manualDp)
@@ -57,13 +66,13 @@ internal object HudTopInset {
             if (abs(measuredDp - state.autoDp) < AUTO_HYSTERESIS_DP) {
                 return@synchronized null
             }
-            val previousEffectiveDp = state.effectiveDp
             state = state.copy(autoDp = measuredDp)
             appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putInt(KEY_AUTO_INSET_DP, measuredDp)
                 .apply()
-            state.effectiveDp.takeIf { it != previousEffectiveDp }
+            // Ambient height follows the ROM row even when the wearer keeps a manual inset.
+            state.effectiveDp
         }
         nextEffectiveDp?.let(::notifyListeners)
     }
@@ -73,9 +82,10 @@ internal object HudTopInset {
         val nextEffectiveDp = synchronized(lock) {
             val wasInitialized = initialized
             val previousEffectiveDp = state.effectiveDp
+            val previousAutoDp = state.autoDp
             state = next
             initialized = true
-            next.effectiveDp.takeIf { wasInitialized && it != previousEffectiveDp }
+            next.effectiveDp.takeIf { wasInitialized && (it != previousEffectiveDp || next.autoDp != previousAutoDp) }
         }
         nextEffectiveDp?.let(::notifyListeners)
         return next.effectiveDp

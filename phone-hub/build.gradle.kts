@@ -19,8 +19,8 @@ android {
         applicationId = "com.anezium.rokidbus.phone"
         minSdk = 30
         targetSdk = 36
-        versionCode = 10803
-        versionName = "1.8.3"
+        versionCode = 20000
+        versionName = "2.0.0"
         buildConfigField("String", "GLASSES_APK_SIGNER_SHA256", "\"${glassesApkSignerSha256.lowercase()}\"")
     }
 
@@ -64,4 +64,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation(files(rootProject.project(":plugin-nav").layout.buildDirectory.file(
+        "intermediates/runtime_app_classes_jar/debug/bundleDebugClassesToRuntimeJar/classes.jar",
+    )).builtBy(":plugin-nav:bundleDebugClassesToRuntimeJar"))
 }

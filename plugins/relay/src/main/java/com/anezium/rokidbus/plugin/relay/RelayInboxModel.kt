@@ -5,7 +5,11 @@ internal enum class RelayReplyAvailability {
     READ_ONLY,
 }
 
-/** Text-only notification state. Live Android reply objects deliberately stay in ReplyRepository. */
+/**
+ * Text-only notification state. Live Android reply objects deliberately stay in ReplyRepository.
+ * [messages] is [renderedText] with who wrote each message, and [handoffs] the replies Relay handed
+ * to the app for this thread. [capturedAtMs] is the one time known: when the thread was captured.
+ */
 internal data class RelayInboxSnapshot(
     val id: String,
     val sender: String,
@@ -13,6 +17,8 @@ internal data class RelayInboxSnapshot(
     val renderedText: String,
     val capturedAtMs: Long,
     val sourcePackage: String = "",
+    val messages: List<RelayMessage> = emptyList(),
+    val handoffs: List<RelayHandoff> = emptyList(),
 )
 
 internal data class RelayInboxEntry(

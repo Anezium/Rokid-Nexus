@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.4.0
+
+Needs Nexus hubs 2.0.0 for the launcher pages; with older hubs Relay 1.4.0
+behaves like 1.3.0.
+
+- Read-only alerts from apps set to All open as a conversation page without
+  Send, never as a message awaiting your reply.
+- Turning an app Off, switching Relay off or revoking its notification access
+  also clears Relay's notifications from the glasses' history. All of them go:
+  the glasses do not know which app each one came from. Relay's own pages keep
+  showing what is still allowed. It holds even when Android had briefly
+  disconnected Relay, and Relay asks again until the phone confirms it has the
+  request.
+
+- Pages for the glasses' Nexus session, on hubs that support them: the inbox's
+  conversations as a list, and each conversation as a document with who said
+  what and when it was captured. No read-aloud or mark as read from a page.
+  The inbox's hidden-preview and redaction settings apply.
+- **Conversations on the launcher.** With the launcher bundle on both hubs, a
+  conversation page shows who said what on their own sides and lets you reply
+  from the hub's composer; Relay checks the reply action is still there just
+  before sending, and says so when it is not. Notices open their own
+  conversation from the glasses history.
+- **A reply no longer removes its conversation.** What you sent stays in the
+  thread, marked as handed to the app, until the app shows its own copy.
+- **Gone means gone.** When a notification leaves the phone, the glasses are
+  told, its page keeps the text but offers no Send, and a reply still waiting
+  on the band stays there unsent instead of going out.
+- **The send countdown only runs on what you see.** A band update that fails,
+  or a lost link, stops it; Send then waits for a tap.
+- One connection to the hub instead of two: the notification band now sends
+  through the plugin's own service, so a band, the inbox and a page share it,
+  and ending a band no longer drops a page that is open.
+
 ## 1.3.0
 
 - Choose Off, Messages only, or All notifications per source application from a

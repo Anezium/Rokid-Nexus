@@ -38,6 +38,7 @@ class RelayAppsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        RelayHistoryForget.baseline(this)
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
         query = savedInstanceState?.getString("query").orEmpty()

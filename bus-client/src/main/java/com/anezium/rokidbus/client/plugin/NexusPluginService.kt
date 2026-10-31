@@ -10,12 +10,16 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.R
 import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.shared.PageSurfaceContract
+import com.anezium.rokidbus.shared.QuickActionPolicyContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParseResult
@@ -37,6 +41,24 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     private var sessionOpen = false
     private var audioSessionActive = false
     private var ongoingWorkHeld = false
+    private var sessionForegroundActive = false
+    private var sessionForegroundStopRequested = false
+    private val foregroundHandler = Handler(Looper.getMainLooper())
+    private val foregroundExpiry = Runnable { refreshSessionForeground() }
+
+    private fun refreshSessionForeground() {
+        if (Looper.myLooper() != foregroundHandler.looper) {
+            foregroundHandler.post(foregroundExpiry)
+            return
+        }
+        foregroundHandler.removeCallbacks(foregroundExpiry)
+        if (client?.hasForegroundDemand == true) {
+            if (!sessionForegroundActive) startSessionForeground()
+            client?.foregroundLeaseRemainingMs?.let { foregroundHandler.postDelayed(foregroundExpiry, it) }
+        } else if (sessionForegroundStopRequested || (!sessionOpen && !audioSessionActive && !ongoingWorkHeld)) {
+            stopNexusSessionForeground()
+        }
+    }
 
     protected val nexusClient: NexusPluginClient?
         get() = client
@@ -70,7 +92,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
                     try {
                         callbacks.onAudioStopped(reason)
                     } finally {
-                        if (!sessionOpen) stopNexusSessionForeground()
+                        refreshSessionForeground()
                     }
                 }
             },
@@ -107,6 +129,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             callbacks = this,
             hubTarget = hubTarget,
         ).also { created ->
+            created.foregroundDemandChanged = ::refreshSessionForeground
             created.ownSkillCatalog = loadOwnSkillCatalog(descriptor)
             created.connect()
         }
@@ -115,6 +138,8 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     override fun onBind(intent: Intent?): IBinder = localBinder
 
     override fun onDestroy() {
+        client?.foregroundDemandChanged = null
+        foregroundHandler.removeCallbacks(foregroundExpiry)
         client?.releaseAudioSession()
         client?.releaseSpeechSession()
         client?.releaseTtsSession()
@@ -145,7 +170,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             onNexusClose()
         } finally {
             sessionOpen = false
-            if (!ongoingWorkHeld) stopNexusSessionForeground()
+            refreshSessionForeground()
         }
     }
 
@@ -157,7 +182,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         try {
             onNexusBackground()
         } finally {
-            if (!audioSessionActive && !ongoingWorkHeld) stopNexusSessionForeground()
+            refreshSessionForeground()
         }
     }
 
@@ -167,9 +192,11 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     final override fun onNoticeInput(event: NexusInputEvent) = onNexusNoticeInput(event)
     final override fun onNoticeAction(id: String) = onNexusNoticeAction(id)
     final override fun onNoticeClosed(reason: NexusNoticeCloseReason) = onNexusNoticeClosed(reason)
-    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     final override fun onActivityAction(id: String) = onNexusActivityAction(id)
+    final override fun onActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult? =
+        onNexusActivityCommand(command)
     final override fun onActivityClosed(reason: String) = onNexusActivityClosed(reason)
+    final override fun onRenderedMapsChanged() = onNexusRenderedMapsChanged()
     final override fun onSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) =
         onNexusSurfaceTextCommitted(surfaceId, text, cancelled)
     final override fun onInkReady(surfaceId: String) = onNexusInkReady(surfaceId)
@@ -192,7 +219,7 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         try {
             onNexusRegistrationState(result)
         } finally {
-            if (!ongoingWorkHeld) stopNexusSessionForeground()
+            refreshSessionForeground()
         }
     }
     final override fun onAssistantTakeover(enabled: Boolean) = onNexusAssistantTakeover(enabled)
@@ -204,6 +231,12 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     final override fun onSkillResult(result: SkillResultEnvelope) = onNexusSkillResult(result)
     final override fun onMessage(path: String, id: String, payload: JSONObject) =
         onNexusMessage(path, id, payload)
+
+    // Page demand shares the session notification without opening or closing an immersion.
+    final override fun onPageRequest(request: NexusPageRequest): NexusPage = onNexusPageRequest(request)
+    final override fun onPageAction(action: NexusPageAction): NexusPageResult = onNexusPageAction(action)
+    final override fun onPageVisibility(visibility: NexusPageVisibility) = onNexusPageVisibility(visibility)
+    final override fun onPageClosed(closed: NexusPageClosed) = onNexusPageClosed(closed)
     final override fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) =
         onNexusBinaryMessage(path, id, payload, data)
 
@@ -241,11 +274,20 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected open fun onNexusNoticeClosed(reason: NexusNoticeCloseReason) = Unit
 
     /** The wearer fired one of this plugin's current activity actions. */
-    @Deprecated("Glasses hubs 1.7.0 and later draw activity actions but never let the wearer select them. Put a command in a notice or a surface.")
     protected open fun onNexusActivityAction(id: String) = Unit
+
+    /**
+     * A launcher-bundle activity command; see [NexusPluginCallbacks.onActivityCommand]. The default
+     * forwards to [onNexusActivityAction] and returns null, which the glasses show as unconfirmed.
+     */
+    protected open fun onNexusActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult? {
+        onNexusActivityAction(command.actionId)
+        return null
+    }
 
     /** This plugin's activity ended, once, whatever ended it. */
     protected open fun onNexusActivityClosed(reason: String) = Unit
+    protected open fun onNexusRenderedMapsChanged() = Unit
 
     /** The wearer submitted or cancelled a card's [NexusCard.editable] field. */
     protected open fun onNexusSurfaceTextCommitted(
@@ -285,6 +327,19 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     /** See [NexusPluginClient.invokeSkill]; `skills_client` grant only. */
     protected open fun onNexusSkillResult(result: SkillResultEnvelope) = Unit
     protected open fun onNexusMessage(path: String, id: String, payload: JSONObject) = Unit
+
+    /**
+     * One of this plugin's pages, for the glasses' Nexus session. Needs the
+     * `rokidbus.plugin.pages` metadata; the default answers that the page is unavailable.
+     * Return quickly from the main thread: the whole answer, cold start included, must reach
+     * the glasses within eight seconds of the wearer's selection.
+     */
+    protected open fun onNexusPageRequest(request: NexusPageRequest): NexusPage = NexusPage.Unavailable
+
+    /** A confirmed action on one of this plugin's pages; the default rejects it. */
+    protected open fun onNexusPageAction(action: NexusPageAction): NexusPageResult = NexusPageResult.rejected()
+    protected open fun onNexusPageVisibility(visibility: NexusPageVisibility) = Unit
+    protected open fun onNexusPageClosed(closed: NexusPageClosed) = Unit
     protected open fun onNexusBinaryMessage(
         path: String,
         id: String,
@@ -301,10 +356,17 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected fun promoteNexusSessionForeground(
         additionalTypes: Int = 0,
         onFailure: ((Throwable) -> Unit)? = null,
+    ): Boolean = startSessionForeground(additionalTypes, onFailure).also { started ->
+        if (started) sessionForegroundStopRequested = false
+    }
+
+    private fun startSessionForeground(
+        additionalTypes: Int = 0,
+        onFailure: ((Throwable) -> Unit)? = null,
     ): Boolean {
-        if (!sessionOpen && !audioSessionActive && !ongoingWorkHeld) return false
-        createSessionNotificationChannel()
+        if (!sessionOpen && !audioSessionActive && !ongoingWorkHeld && client?.hasForegroundDemand != true) return false
         return runCatching {
+            createSessionNotificationChannel()
             val notification = buildSessionNotification()
             when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
@@ -320,7 +382,10 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
                 else -> startForeground(SESSION_NOTIFICATION_ID, notification)
             }
         }.fold(
-            onSuccess = { true },
+            onSuccess = {
+                sessionForegroundActive = true
+                true
+            },
             onFailure = { failure ->
                 if (onFailure != null) {
                     onFailure(failure)
@@ -354,7 +419,11 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
     protected fun releaseNexusOngoingWork() {
         if (!ongoingWorkHeld) return
         ongoingWorkHeld = false
-        if (sessionOpen || audioSessionActive) promoteNexusSessionForeground() else stopNexusSessionForeground()
+        if ((sessionOpen && !sessionForegroundStopRequested) || audioSessionActive || client?.hasForegroundDemand == true) {
+            startSessionForeground()
+        } else {
+            stopNexusSessionForeground()
+        }
         stopSelf()
     }
 
@@ -362,6 +431,12 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
         get() = ongoingWorkHeld
 
     protected fun stopNexusSessionForeground() {
+        sessionForegroundStopRequested = true
+        if (client?.hasForegroundDemand == true) {
+            startSessionForeground()
+            return
+        }
+        sessionForegroundActive = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -452,6 +527,8 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
             BusConstants.META_PLUGIN_RECEIVE_PREFIXES,
             BusConstants.META_PLUGIN_SETTINGS_ACTIVITY,
             BusConstants.META_PLUGIN_LAUNCHABLE,
+            PageSurfaceContract.META_PLUGIN_PAGES,
+            QuickActionPolicyContract.META_PLUGIN_QUICK_ACTIONS,
             BusConstants.META_PLUGIN_SKILLS,
             BusConstants.META_PLUGIN_SKILLS_CLIENT,
         )

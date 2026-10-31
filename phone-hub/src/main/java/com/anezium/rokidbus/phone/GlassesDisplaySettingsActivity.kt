@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import android.app.Activity
+import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Bundle
@@ -8,11 +9,16 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
+import com.anezium.rokidbus.shared.AmbientSize
+import com.anezium.rokidbus.shared.AmbientPreferencesContract
+import com.anezium.rokidbus.shared.plugin.PluginCapability
 
 /**
  * Everything about what the glasses screen shows and where: the Nexus surface position, the
@@ -55,13 +61,29 @@ class GlassesDisplaySettingsActivity : Activity() {
             addView(
                 switchRow(
                     title = "Keep activities expanded",
-                    subtitle = "Keep the primary activity panel open on glasses",
+                    subtitle = "Off, the first activity folds to a one-line chip 10 seconds after its last " +
+                        "update; a Navigation size chosen below keeps it as is. The others are chips anyway.",
                     checked = PhoneActivityPresentationSettings(this@GlassesDisplaySettingsActivity)
                         .isAlwaysExpanded(),
                 ) { enabled ->
                     PhoneActivityPresentationSettings(this@GlassesDisplaySettingsActivity)
                         .setAlwaysExpanded(enabled)
                     BusHubService.onActivityPresentationPreferenceChanged()
+                },
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
+            addView(launcherCard(), NexusUi.block())
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
+            addView(islandSizeCard(), NexusUi.block())
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
+            addView(
+                NexusUi.navCard(
+                    this@GlassesDisplaySettingsActivity,
+                    "Floating activities",
+                    "Per plugin: always visible, home only, briefly on changes, or kept in Activities.",
+                ) {
+                    startActivity(Intent(this@GlassesDisplaySettingsActivity, ActivityDisplaySettingsActivity::class.java))
                 },
                 NexusUi.block(),
             )
@@ -155,6 +177,130 @@ class GlassesDisplaySettingsActivity : Activity() {
             )
         }
 
+    /**
+     * Which launcher the glasses run. Default leaves it to the glasses' own setting, so nobody's
+     * existing choice is reset; Classic stays the rollback when the new launcher misbehaves.
+     */
+    private fun launcherCard(): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = NexusUi.bordered(this@GlassesDisplaySettingsActivity, NexusUi.PANEL, NexusUi.LINE, 15)
+            setPadding(
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 15),
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 10),
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 15),
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 10),
+            )
+            addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, "Glasses launcher"))
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
+            addView(
+                note("Default follows the glasses' own setting. Classic is the previous launcher, there to go back to."),
+            )
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 6))
+            val store = PhoneLauncherBackendStore(this@GlassesDisplaySettingsActivity)
+            val current = store.choice()
+            val options = listOf(
+                PhoneLauncherBackendChoice.DEFAULT to "Default",
+                PhoneLauncherBackendChoice.SESSION to "New launcher",
+                PhoneLauncherBackendChoice.LEGACY to "Classic launcher",
+            )
+            addView(
+                RadioGroup(this@GlassesDisplaySettingsActivity).apply {
+                    orientation = RadioGroup.VERTICAL
+                    options.forEach { (choice, label) ->
+                        addView(
+                            RadioButton(this@GlassesDisplaySettingsActivity).apply {
+                                id = View.generateViewId()
+                                text = label
+                                textSize = 13f
+                                setTextColor(NexusUi.INK)
+                                buttonTintList = ColorStateList(
+                                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                                    intArrayOf(NexusUi.GREEN, NexusUi.INK3),
+                                )
+                                isChecked = choice == current
+                                setOnCheckedChangeListener { _, checked ->
+                                    if (checked && store.choice() != choice) {
+                                        store.setChoice(choice)
+                                        BusHubService.onLauncherBackendChanged()
+                                    }
+                                }
+                            },
+                        )
+                    }
+                },
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+
+    /**
+     * How large Navigation is drawn on the glasses. Automatic leaves it to the glasses;
+     * the same choice can be made on the glasses, and the phone keeps the last one either way.
+     */
+    private fun islandSizeCard(): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = NexusUi.bordered(this@GlassesDisplaySettingsActivity, NexusUi.PANEL, NexusUi.LINE, 15)
+            setPadding(
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 15),
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 10),
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 15),
+                NexusUi.dp(this@GlassesDisplaySettingsActivity, 10),
+            )
+            addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, "Navigation display"))
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
+            addView(
+                note(
+                    "Text shows arrow, distance and street. Minimap adds a heading-up map. Panel is a " +
+                        "wide map with street names. Maps need a route Nexus plans (a walk started from " +
+                        "Navigation); sources like Google Maps or Citymapper show text. Automatic lets the " +
+                        "glasses decide. Also on the glasses' route page. Other plugins keep their " +
+                        "developer's presentation.",
+                ),
+            )
+            val owners = islandOwners()
+            if (owners.isEmpty()) {
+                addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 8))
+                addView(note("Allow Navigation to show on your glasses (Settings › Plugin access) to choose its size."))
+                return@apply
+            }
+            val store = PhoneAmbientPreferencesStore.shared(this@GlassesDisplaySettingsActivity)
+            val options = listOf(
+                null to "Automatic",
+                AmbientSize.TEXT to "Text",
+                AmbientSize.MINIMAP to "Minimap",
+                AmbientSize.PANEL to "Panel",
+            )
+            owners.forEach { (pluginId, name) ->
+                addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
+                // The card is named after its one owner today; the name only matters with several.
+                if (owners.size > 1) addView(NexusUi.rowLabel(this@GlassesDisplaySettingsActivity, name))
+                addView(
+                    ambientChoiceRow(this@GlassesDisplaySettingsActivity, options, store.sizeFor(pluginId)) { size ->
+                        if (store.setSize(pluginId, size)) BusHubService.onAmbientSizesChanged()
+                    },
+                )
+            }
+        }
+
+    /** Navigation's size control is available only while its surfaces grant is approved. */
+    private fun islandOwners(): List<Pair<String, String>> {
+        val grants = PluginGrantStore(applicationContext)
+        return PhonePluginDiscovery(packageManager).discover()
+            .mapNotNull { (it as? PhonePluginCandidate.Valid)?.principal }
+            .filter { AmbientPreferencesContract.hasSizeChoice(it.descriptor.id) }
+            .filter { principal ->
+                (grants.stateFor(principal) as? PluginGrantState.Approved)
+                    ?.capabilities?.contains(PluginCapability.SURFACES) == true
+            }
+            .map { it.descriptor.id to it.descriptor.displayName }
+            .distinctBy { it.first }
+            .sortedBy { it.second.lowercase() }
+    }
+
     private fun switchRow(
         title: String,
         subtitle: String,
@@ -176,11 +322,22 @@ class GlassesDisplaySettingsActivity : Activity() {
                     orientation = LinearLayout.VERTICAL
                     addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, title))
                     addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
-                    addView(NexusUi.rowSub(this@GlassesDisplaySettingsActivity, subtitle))
+                    addView(note(subtitle))
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
             )
             addView(styledSwitch(checked, onChange))
+        }
+
+    /**
+     * An explanation under a title. The page scrolls, but scrolling cannot reveal what a capped
+     * TextView dropped behind its ellipsis, so these never cap: at a large font size the text
+     * takes the lines it needs.
+     */
+    private fun note(text: String): TextView =
+        NexusUi.rowSub(this, text).apply {
+            maxLines = Int.MAX_VALUE
+            ellipsize = null
         }
 
     private fun styledSwitch(checked: Boolean, onChange: (Boolean) -> Unit): Switch =

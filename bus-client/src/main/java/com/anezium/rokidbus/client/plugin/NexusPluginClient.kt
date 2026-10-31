@@ -3,6 +3,9 @@ package com.anezium.rokidbus.client.plugin
 import android.content.Context
 import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.client.PluginRegistrationResult
+import com.anezium.rokidbus.shared.ActivityCommandResult
+import com.anezium.rokidbus.shared.ActivityGeometryUpdate
+import com.anezium.rokidbus.shared.ActivityHeading
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.ActivitySurfacePatchResult
 import com.anezium.rokidbus.shared.ActivitySurfaceValidationResult
@@ -10,12 +13,17 @@ import com.anezium.rokidbus.shared.AssistantTakeoverContract
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.EditableSurfaceContract
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.InkSurfaceContract
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.NoticeSurfaceValidationResult
+import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceValidationResult
+import com.anezium.rokidbus.shared.RouteGeometry
+import com.anezium.rokidbus.shared.RenderedMapContract
+import com.anezium.rokidbus.shared.MapFeedbackDiagnostics
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PathRules
 import com.anezium.rokidbus.shared.plugin.CapabilityParseResult
@@ -42,22 +50,72 @@ class NexusPluginClient internal constructor(
     private val pluginId: String,
     private val callbacks: NexusPluginCallbacks,
     private val transport: NexusPluginTransport,
-    private val monotonicClockMs: () -> Long = { System.nanoTime() / 1_000_000L },
+    private val monotonicClockMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ) : NexusPluginTransport.Listener, AutoCloseable {
+    internal var mapDiagnosticLog: (String) -> Unit = {}
+    private val mapDiagnostics = MapFeedbackDiagnostics(monotonicClockMs) { mapDiagnosticLog(it) }
+    private val renderedMaps = NexusRenderedMaps(monotonicClockMs, mapDiagnostics)
+
+    /** Both hubs preserve map credit and support authenticated rendered-view feedback over SPP. */
+    val supportsRenderedMaps: Boolean
+        get() = supportsLauncherInteractive() && RenderedMapContract.supported(hubCapabilities) &&
+            currentLinkState and LinkStateBits.SPP_DATA_UP != 0
+
+    /** Empty for unknown, hidden, unsupported or expired views. Read again before requesting data. */
+    val renderedMapViews: Set<NexusRenderedMapView>
+        get() = if (supportsRenderedMaps) renderedMaps.views() else emptySet()
+
+    /** The actually drawn owner publications. Correlate these before requesting a map footprint. */
+    val renderedMapFrames: Set<NexusRenderedMap>
+        get() = if (supportsRenderedMaps) renderedMaps.frames() else emptySet()
+
+    /** Next active slot's expiry, for one lifecycle cancellation timer; null without demand. */
+    val renderedMapLeaseRemainingMs: Long?
+        get() = if (supportsRenderedMaps) renderedMaps.nextExpiryDelayMs() else null
+
+    /** Discard this plugin's feedback, for example when its journey is replaced. */
+    fun clearRenderedMapDemand() = renderedMaps.clear()
+    // A page answer is current or it is nothing: it never waits in the reconnect queue.
+    internal var foregroundDemandChanged: (() -> Unit)? = null
+    internal val hasForegroundDemand: Boolean
+        get() = !closed && isApproved && (
+            synchronized(activityCommandLock) { activeActivityCommands > 0 } ||
+                pages.hasForegroundDemand || foregroundLeaseRemainingMs != null
+            )
+    internal val foregroundLeaseRemainingMs: Long?
+        get() {
+            val commandLease = synchronized(activityCommandLock) {
+                foregroundCommands.entries.removeAll { it.value <= monotonicClockMs() }
+                foregroundCommands.values.minOrNull()?.minus(monotonicClockMs())?.coerceAtLeast(1L)
+            }
+            return listOfNotNull(commandLease, pages.foregroundLeaseRemainingMs).minOrNull()
+        }
+
+    private val pages = NexusPageChannel(pluginId, monotonicClockMs, { foregroundDemandChanged?.invoke() }) { path, id, payload ->
+        !closed && isApproved && transport.sendImmediate(path, id, payload)
+    }
     private val seenEventIds = ArrayDeque<String>()
     private val seenEventIdSet = linkedSetOf<String>()
+    // Activity command invocations already delivered, and those already answered: each runs once
+    // and is answered at most once, whatever the transport repeats.
+    private val activityCommandLock = Any()
+    private val seenActivityInvocations = linkedSetOf<String>()
+    private val answeredActivityCommands = linkedSetOf<String>()
+    private val foregroundCommands = mutableMapOf<String, Long>()
+    private var activeActivityCommands = 0
     // Correlates a surface request's id to the callback that wants to know if
     // the hub rejects it after accepting the Binder call — see watchForSurfaceError.
     private val pendingSurfaceErrors = mutableMapOf<String, (String) -> Unit>()
+    private val pendingForgets = mutableMapOf<String, () -> Unit>()
     private val audioSessionLock = Any()
     private val speechSessionLock = Any()
     private val ttsSessionLock = Any()
     private val snapshotSessionLock = Any()
-    private var registrationState = PluginRegistrationResult.REGISTRATION_FAILED
+    @Volatile private var registrationState = PluginRegistrationResult.REGISTRATION_FAILED
     private var opened = false
     private var backgrounded = false
-    private var closed = false
-    private var approvedCapabilities: Set<PluginCapability> = emptySet()
+    @Volatile private var closed = false
+    @Volatile private var approvedCapabilities: Set<PluginCapability> = emptySet()
     private var noticeInteractionVersion = 0
     private var noticeApprovalAwaitingMetadata = false
     private var currentNoticeToken: String? = null
@@ -128,6 +186,27 @@ class NexusPluginClient internal constructor(
     val supportsPinSurface: Boolean
         get() = hubCapabilities and BusCapabilityBits.PIN_SURFACE != 0
 
+    /**
+     * Whether pages can be served right now: approved with the `surfaces` grant, both hubs on
+     * session/page v1 for this plugin, and a live glasses link. A hub too old to say so reads
+     * as unsupported.
+     */
+    val supportsPageSession: Boolean
+        get() = !closed && hasCapability(PluginCapability.SURFACES) &&
+            pages.sessionVersion == PageSurfaceContract.VERSION && hasUsableLink(currentLinkState)
+
+    /**
+     * Sends a live revision of the page [request] asked for. Only for the frame's current request,
+     * after a `live` answer, while the page is visible under an unexpired lease, and at a revision
+     * above every one already sent for it. The first answer is the callback's return value.
+     */
+    fun publishPage(request: NexusPageRequest, page: NexusPage): NexusSdkResult = when {
+        !isApproved -> NexusSdkResult.NOT_REGISTERED
+        !hasCapability(PluginCapability.SURFACES) -> NexusSdkResult.CAPABILITY_NOT_GRANTED
+        !supportsPageSession -> NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        else -> pages.publish(request, page)
+    }
+
     fun showPin(pin: NexusPin): NexusSdkResult {
         pinPreflight()?.let { return it }
         val payload = pin.toPayload()
@@ -169,10 +248,14 @@ class NexusPluginClient internal constructor(
         noticePreflight()?.let { return it }
         if (notice.image != null) return NexusSdkResult.INVALID_PAYLOAD
         val payload = notice.toPayload()
-        if (NoticeSurfaceContract.validateShow(payload) !is NoticeSurfaceValidationResult.Valid) {
+        val validation = NoticeSurfaceContract.validateShow(payload)
+        if (
+            validation !is NoticeSurfaceValidationResult.Valid ||
+            !NoticeSurfaceContract.destinationAllowed(validation.content, pluginId)
+        ) {
             return NexusSdkResult.INVALID_PAYLOAD
         }
-        return if (send(BusPaths.NOTICE_SHOW, UUID.randomUUID().toString(), payload)) {
+        return if (send(BusPaths.NOTICE_SHOW, UUID.randomUUID().toString(), forNoticePeers(payload))) {
             NexusSdkResult.SENT
         } else {
             NexusSdkResult.NOT_REGISTERED
@@ -184,14 +267,15 @@ class NexusPluginClient internal constructor(
         if (!supportsImageSurface) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
         if (notice.image == null) return NexusSdkResult.INVALID_PAYLOAD
         val payload = notice.toPayload(imageBytes)
+        val validation = NoticeSurfaceContract.validateShow(payload, imageBytes)
         if (
-            NoticeSurfaceContract.validateShow(payload, imageBytes) !is
-            NoticeSurfaceValidationResult.Valid
+            validation !is NoticeSurfaceValidationResult.Valid ||
+            !NoticeSurfaceContract.destinationAllowed(validation.content, pluginId)
         ) {
             return NexusSdkResult.INVALID_PAYLOAD
         }
         return if (
-            sendBinary(BusPaths.NOTICE_SHOW, UUID.randomUUID().toString(), payload, imageBytes)
+            sendBinary(BusPaths.NOTICE_SHOW, UUID.randomUUID().toString(), forNoticePeers(payload), imageBytes)
         ) {
             NexusSdkResult.SENT
         } else {
@@ -228,6 +312,14 @@ class NexusPluginClient internal constructor(
         }
     }
 
+    /** Both hubs negotiated bounded previews and the integrated media page (launcher v2). */
+    fun supportsLauncherArtwork(): Boolean = supportsLauncherInteractive() &&
+        pages.launcherInteractiveVersion >= LauncherInteractiveContract.ARTWORK_VERSION
+
+    /** Both hubs accept full-tone JPEG covers in launcher pages and activities (bundle v3). */
+    fun supportsLauncherImageArtwork(): Boolean = supportsLauncherInteractive() &&
+        pages.launcherInteractiveVersion >= LauncherInteractiveContract.IMAGE_ARTWORK_VERSION
+
     /**
      * Whether these glasses support the platform-owned activity tier.
      *
@@ -245,6 +337,20 @@ class NexusPluginClient internal constructor(
     val supportsActivityExtras: Boolean
         get() = supportsActivitySurface &&
             hubCapabilities and BusCapabilityBits.ACTIVITY_EXTRAS != 0
+
+    /**
+     * Whether both hubs negotiated the launcher bundle for this approved plugin: activity
+     * destinations, commands and offline persistence, typed and quick actions, the conversation,
+     * media and route page bodies, notice destinations and [withdrawNotice], and activity route
+     * geometry. Read from the hub's feature bit, or from the page capabilities it sends a page
+     * provider. When false, the SDK drops every launcher field before sending, and a page must
+     * use the four base templates.
+     */
+    fun supportsLauncherInteractive(): Boolean =
+        !closed && hasCapability(PluginCapability.SURFACES) && (
+            hubCapabilities and BusCapabilityBits.LAUNCHER_INTERACTIVE != 0 ||
+                LauncherInteractiveContract.isActive(pages.launcherInteractiveVersion)
+            )
 
     /** Whether the current glasses/link announced TTS protocol v1. */
     val supportsTts: Boolean
@@ -422,13 +528,14 @@ class NexusPluginClient internal constructor(
     fun startActivity(activity: NexusActivity): NexusSdkResult {
         activityPreflight()?.let { return it }
         val payload = activity.toStartPayload()
+        val validation = ActivitySurfaceContract.validateStart(payload)
         if (
-            ActivitySurfaceContract.validateStart(payload) !is
-            ActivitySurfaceValidationResult.Valid
+            validation !is ActivitySurfaceValidationResult.Valid ||
+            !ActivitySurfaceContract.destinationAllowed(validation.content, pluginId)
         ) {
             return NexusSdkResult.INVALID_PAYLOAD
         }
-        return if (send(BusPaths.ACTIVITY_START, UUID.randomUUID().toString(), payload)) {
+        return if (send(BusPaths.ACTIVITY_START, UUID.randomUUID().toString(), forActivityPeers(payload))) {
             NexusSdkResult.SENT
         } else {
             NexusSdkResult.NOT_REGISTERED
@@ -447,20 +554,167 @@ class NexusPluginClient internal constructor(
     ): NexusSdkResult {
         activityPreflight()?.let { return it }
         val payload = activity.toUpdatePayload(significant, urgent)
+        val validation = ActivitySurfaceContract.validateUpdate(payload)
         if (
-            ActivitySurfaceContract.validateUpdate(payload) !is
-            ActivitySurfacePatchResult.Valid
+            validation !is ActivitySurfacePatchResult.Valid ||
+            !ActivitySurfaceContract.destinationAllowed(validation.patch, pluginId)
         ) {
             return NexusSdkResult.INVALID_PAYLOAD
         }
-        return if (send(BusPaths.ACTIVITY_UPDATE, UUID.randomUUID().toString(), payload)) {
+        return if (send(BusPaths.ACTIVITY_UPDATE, UUID.randomUUID().toString(), forActivityPeers(payload))) {
             NexusSdkResult.SENT
         } else {
             NexusSdkResult.NOT_REGISTERED
         }
     }
 
+    /**
+     * Sends the result of a [NexusActivityCommand] outside the callback, for a plugin that
+     * answered null and finished the work later. Same rules: once per invocation, never retried,
+     * and dropped by the hub after its deadline, when the glasses already show it unconfirmed.
+     */
+    fun sendActivityCommandResult(command: NexusActivityCommand, result: NexusActivityCommandResult): NexusSdkResult {
+        if (!isApproved) return NexusSdkResult.NOT_REGISTERED
+        if (!hasCapability(PluginCapability.SURFACES)) return NexusSdkResult.CAPABILITY_NOT_GRANTED
+        if (!supportsLauncherInteractive()) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        if (command.activityId != ownActivityId) return NexusSdkResult.INVALID_PAYLOAD
+        if (!rememberOnce(answeredActivityCommands, command.invocationId)) return NexusSdkResult.INVALID_PAYLOAD
+        return try {
+            if (transport.sendImmediate(BusPaths.ACTIVITY_RESULT, UUID.randomUUID().toString(), activityResultPayload(command, result))) {
+                NexusSdkResult.SENT
+            } else {
+                NexusSdkResult.NOT_REGISTERED
+            }
+        } finally {
+            synchronized(activityCommandLock) { foregroundCommands.remove(command.invocationId) }
+            foregroundDemandChanged?.invoke()
+        }
+    }
+
+    /**
+     * Replaces the route geometry drawn with this plugin's activity (navigation). Latest wins:
+     * the hub keeps the highest [revision] and drops older ones. Geometry rides only the SPP data
+     * plane: with only the narrow control link up this returns
+     * [NexusSdkResult.CAPABILITY_NOT_AVAILABLE] and nothing is queued, so text guidance must never
+     * depend on it. It is cleared when the activity ends or goes offline.
+     */
+    fun publishActivityGeometry(revision: Long, geometry: RouteGeometry): NexusSdkResult {
+        activityPreflight()?.let { return it }
+        if (geometry.attribution != null && !supportsRenderedMaps) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        if (!supportsLauncherInteractive()) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        if (currentLinkState and LinkStateBits.SPP_DATA_UP == 0) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        if (revision < 0) return NexusSdkResult.INVALID_PAYLOAD
+        val payload = runCatching {
+            ActivitySurfaceContract.geometryPayload(ActivityGeometryUpdate(revision, geometry))
+        }.getOrNull() ?: return NexusSdkResult.INVALID_PAYLOAD
+        if (ActivitySurfaceContract.parseGeometry(payload) == null) return NexusSdkResult.INVALID_PAYLOAD
+        payload.put("surfaceId", ActivitySurfaceContract.LOCAL_SURFACE_ID)
+        return if (transport.sendImmediate(BusPaths.ACTIVITY_GEOMETRY, UUID.randomUUID().toString(), payload)) {
+            NexusSdkResult.SENT
+        } else {
+            NexusSdkResult.NOT_REGISTERED
+        }
+    }
+
+    /**
+     * The wearer's compass heading for this plugin's activity map, [deg] in `0 until 360`, with
+     * an optional accuracy. The hub keeps at most five a second and treats one older than three
+     * seconds as absent; nothing is queued.
+     */
+    fun publishActivityHeading(deg: Double, accuracyDeg: Double? = null): NexusSdkResult {
+        activityPreflight()?.let { return it }
+        if (!supportsLauncherInteractive()) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        // Like geometry, a heading travels over the data plane only; the phone drops it otherwise.
+        if (currentLinkState and LinkStateBits.SPP_DATA_UP == 0) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        val payload = runCatching {
+            ActivitySurfaceContract.headingPayload(ActivityHeading(deg, System.currentTimeMillis(), accuracyDeg))
+        }.getOrNull() ?: return NexusSdkResult.INVALID_PAYLOAD
+        if (ActivitySurfaceContract.parseHeading(payload) == null) return NexusSdkResult.INVALID_PAYLOAD
+        payload.put("surfaceId", ActivitySurfaceContract.LOCAL_SURFACE_ID)
+        return if (transport.sendImmediate(BusPaths.ACTIVITY_HEADING, UUID.randomUUID().toString(), payload)) {
+            NexusSdkResult.SENT
+        } else {
+            NexusSdkResult.NOT_REGISTERED
+        }
+    }
+
+    /**
+     * Says that the event this plugin announced with [eventKey] is no longer on the phone (its
+     * notification was removed). The glasses mark the matching history entries removed and stop
+     * offering a reply for them. It is not a read or delivery receipt.
+     */
+    fun withdrawNotice(eventKey: String): NexusSdkResult {
+        if (!isApproved) return NexusSdkResult.NOT_REGISTERED
+        if (!hasCapability(PluginCapability.SURFACES)) return NexusSdkResult.CAPABILITY_NOT_GRANTED
+        if (!supportsLauncherInteractive()) return NexusSdkResult.CAPABILITY_NOT_AVAILABLE
+        if (!NoticeSurfaceContract.isValidEventKey(eventKey)) return NexusSdkResult.INVALID_PAYLOAD
+        return if (send(BusPaths.NOTICE_WITHDRAW, UUID.randomUUID().toString(), NoticeSurfaceContract.withdrawPayload(eventKey))) {
+            NexusSdkResult.SENT
+        } else {
+            NexusSdkResult.NOT_REGISTERED
+        }
+    }
+
+    /**
+     * Asks the glasses to forget every notification this plugin showed: the history entries and
+     * every copy of their text, as when the user told the plugin to stop keeping that content.
+     * A plugin cannot name anyone else's notifications.
+     *
+     * [SENT][NexusSdkResult.SENT] only means the request left this process; it may still sit in
+     * the client's reconnect queue, which dies with the client. [onAccepted] runs once the phone
+     * hub holds the request on disk, from where it reaches the glasses across a link loss or a
+     * restart of either hub. Keep the request until then and send it again on the next
+     * registration; repeating it is harmless. Hubs before Nexus 1.9.0 keep no notification
+     * history, refuse the path and never accept it.
+     */
+    fun forgetNotices(onAccepted: (() -> Unit)? = null): NexusSdkResult {
+        if (!isApproved) return NexusSdkResult.NOT_REGISTERED
+        if (!hasCapability(PluginCapability.SURFACES)) return NexusSdkResult.CAPABILITY_NOT_GRANTED
+        val id = UUID.randomUUID().toString()
+        if (onAccepted != null) {
+            if (pendingForgets.size > 8) pendingForgets.clear()
+            pendingForgets[id] = onAccepted
+        }
+        return if (send(BusPaths.NOTICE_FORGET, id, NoticeSurfaceContract.forgetPayload())) {
+            NexusSdkResult.SENT
+        } else {
+            pendingForgets.remove(id)
+            NexusSdkResult.NOT_REGISTERED
+        }
+    }
+
+    /** Whether both hubs support event-triggered activity presentation. */
+    fun supportsActivityEvents(): Boolean = supportsLauncherInteractive() &&
+        pages.launcherInteractiveVersion >= com.anezium.rokidbus.shared.LauncherInteractiveContract.ACTIVITY_EVENTS_VERSION
+
+    private val ownActivityId: String
+        get() = "$pluginId:${ActivitySurfaceContract.LOCAL_SURFACE_ID}"
+
+    /** Peers without the launcher bundle get a plain activity, whatever this plugin set. */
+    private fun forActivityPeers(payload: JSONObject): JSONObject =
+        if (supportsLauncherInteractive()) payload.apply {
+            com.anezium.rokidbus.shared.LauncherArtwork.stripUnsupported(this, pages.launcherInteractiveVersion)
+            if (!supportsActivityEvents()) remove("eventKey")
+        } else ActivitySurfaceContract.stripLauncherFields(payload)
+
+    private fun forNoticePeers(payload: JSONObject): JSONObject =
+        if (supportsLauncherInteractive()) payload else NoticeSurfaceContract.stripLauncherFields(payload)
+
+    private fun activityResultPayload(command: NexusActivityCommand, result: NexusActivityCommandResult): JSONObject =
+        ActivitySurfaceContract.resultPayload(
+            ActivityCommandResult(command.activityId, command.invocationId, result.status.contract, result.message),
+        ).put("surfaceId", ActivitySurfaceContract.LOCAL_SURFACE_ID)
+
+    /** Adds [id] to a bounded record, true only the first time; callers on any thread. */
+    private fun rememberOnce(ids: LinkedHashSet<String>, id: String): Boolean = synchronized(activityCommandLock) {
+        if (!ids.add(id)) return@synchronized false
+        while (ids.size > MAX_SEEN_EVENTS) ids.remove(ids.first())
+        true
+    }
+
     fun endActivity(): NexusSdkResult {
+        renderedMaps.clear(RenderedMapContract.AMBIENT)
+        callbacks.onRenderedMapsChanged()
         activityPreflight()?.let { return it }
         return if (
             send(
@@ -485,6 +739,7 @@ class NexusPluginClient internal constructor(
 
     fun send(path: String, id: String, payload: JSONObject): Boolean {
         if (closed || !isApproved) return false
+        if (PathRules.normalizeAbsolute(path) == RenderedMapContract.PATH) return false
         val outgoingPath = canonicalNoticePath(path)
         if (!supportsNoticePatch(outgoingPath, payload)) return false
         val sent = transport.send(outgoingPath, id, prepareNoticePayload(outgoingPath, payload))
@@ -682,6 +937,10 @@ class NexusPluginClient internal constructor(
 
     override fun onRegistrationState(result: Int) {
         if (closed) return
+        renderedMaps.clear()
+        // A new registration holds no page work; the hub announces its page support afresh.
+        synchronized(activityCommandLock) { foregroundCommands.clear() }
+        pages.onRegistrationReset()
         registrationGeneration++
         clearNoticeContext()
         noticeApprovalAwaitingMetadata = result == PluginRegistrationResult.APPROVED
@@ -711,9 +970,12 @@ class NexusPluginClient internal constructor(
             }
         }
         if (result != PluginRegistrationResult.APPROVED) {
+            synchronized(activityCommandLock) { foregroundCommands.clear() }
+            renderedMaps.clear()
             approvedCapabilities = emptySet()
             skillsVersion = 0
             cancelLiveInvocations()
+            pages.onRegistrationReset()
             clearNoticeContext()
             terminateAudioSession(
                 reason = NexusAudioStopReason.ERROR,
@@ -739,8 +1001,15 @@ class NexusPluginClient internal constructor(
 
     override fun onLinkState(state: Int) {
         if (closed) return
+        // Without a usable transport every page lease is void, and support waits for the hub's
+        // next owner-scoped capability update; worn or bonded alone carries no page.
+        if (!hasUsableLink(state)) pages.onLinkUnusable()
         currentLinkState = state
         hubCapabilities = transport.capabilities()
+        if (!supportsRenderedMaps) {
+            renderedMaps.clear()
+            callbacks.onRenderedMapsChanged()
+        }
         callbacks.onLinkState(state)
     }
 
@@ -761,8 +1030,17 @@ class NexusPluginClient internal constructor(
         pendingSurfaceErrors[requestId] = onError
     }
 
+    private fun mapDeliveryDiagnostic(payload: JSONObject, reason: MapFeedbackDiagnostics.Reason?) {
+        mapDiagnostics.record(MapFeedbackDiagnostics.Gate.SDK_DELIVERY,
+            if (reason == null) MapFeedbackDiagnostics.Verdict.PASS else MapFeedbackDiagnostics.Verdict.DROP,
+            reason ?: MapFeedbackDiagnostics.Reason.CURRENT, MapFeedbackDiagnostics.Sample.from(payload))
+    }
+
     override fun onMessage(path: String, id: String, payload: JSONObject) {
-        if (closed) return
+        if (closed) {
+            if (path == RenderedMapContract.PATH) mapDeliveryDiagnostic(payload, MapFeedbackDiagnostics.Reason.CLOSED)
+            return
+        }
         if (path == BusPaths.ERROR) {
             if (!rememberEvent(id)) return
             val handler = pendingSurfaceErrors.remove(payload.optString("forId"))
@@ -780,7 +1058,26 @@ class NexusPluginClient internal constructor(
             }
             return
         }
-        if (payload.optString("pluginId") != pluginId || !rememberEvent(id)) return
+        if (payload.optString("pluginId") != pluginId) {
+            if (path == RenderedMapContract.PATH) mapDeliveryDiagnostic(payload, MapFeedbackDiagnostics.Reason.IDENTITY)
+            return
+        }
+        if (!rememberEvent(id)) {
+            if (path == RenderedMapContract.PATH) mapDeliveryDiagnostic(payload, MapFeedbackDiagnostics.Reason.DUPLICATE)
+            return
+        }
+        if (path == RenderedMapContract.PATH) {
+            mapDeliveryDiagnostic(payload, if (supportsRenderedMaps) null else MapFeedbackDiagnostics.Reason.CAPABILITY)
+            if (supportsRenderedMaps) {
+                if (!renderedMaps.receive(payload)) renderedMaps.clear()
+                callbacks.onRenderedMapsChanged()
+            }
+            return
+        }
+        if (path == BusPaths.PAGE_CLOSED || (path == BusPaths.PAGE_VISIBILITY && !payload.optBoolean("visible"))) {
+            renderedMaps.clear(RenderedMapContract.PAGE)
+            callbacks.onRenderedMapsChanged()
+        }
         if (routeSkillMessage(path, payload)) return
         if (routeSnapshotMessage(path, id, payload)) return
         if (routeSpeechMessage(path, payload)) return
@@ -789,6 +1086,11 @@ class NexusPluginClient internal constructor(
             routeInkMessage(payload)
             return
         }
+        if (path == BusPaths.HUB_CAPABILITIES) {
+            if (isApproved) pages.onCapabilities(payload)
+            return
+        }
+        if (routePageMessage(path, payload)) return
         if (path == BusPaths.NOTICE_INPUT) {
             if (isApproved && !noticeHidePending && acceptsNoticeCallback(payload)) {
                 callbacks.onNoticeInput(
@@ -827,6 +1129,10 @@ class NexusPluginClient internal constructor(
             }
             return
         }
+        if (path == BusPaths.NOTICE_FORGET_ACCEPTED) {
+            pendingForgets.remove(payload.optString("forId"))?.invoke()
+            return
+        }
         if (path == BusPaths.NOTICE_CLOSED) {
             if (isApproved && acceptsNoticeCallback(payload)) {
                 NexusNoticeCloseReason.fromWire(payload.optString("reason"))?.let { reason ->
@@ -837,6 +1143,10 @@ class NexusPluginClient internal constructor(
             return
         }
         if (path == BusPaths.ACTIVITY_ACTION) {
+            if (ActivitySurfaceContract.isCommandPayload(payload)) {
+                routeActivityCommand(payload)
+                return
+            }
             val activityId = payload.optString("activityId")
             val actionId = payload.optString("id")
             if (
@@ -844,12 +1154,13 @@ class NexusPluginClient internal constructor(
                 activityId == "$pluginId:${ActivitySurfaceContract.LOCAL_SURFACE_ID}" &&
                 actionId.isNotBlank()
             ) {
-                @Suppress("DEPRECATION")
                 callbacks.onActivityAction(actionId)
             }
             return
         }
         if (path == BusPaths.ACTIVITY_CLOSED) {
+            renderedMaps.clear(RenderedMapContract.AMBIENT)
+            callbacks.onRenderedMapsChanged()
             val activityId = payload.optString("activityId")
             val reason = payload.optString("reason")
             if (
@@ -904,6 +1215,8 @@ class NexusPluginClient internal constructor(
                 )
             }
             BusPaths.PLUGIN_REGISTRATION -> {
+                renderedMaps.clear()
+                callbacks.onRenderedMapsChanged()
                 // Metadata follows synchronous approval, whose callback may already
                 // have shown a notice, including after a reconnect.
                 if (!noticeApprovalAwaitingMetadata) clearNoticeContext()
@@ -980,6 +1293,7 @@ class NexusPluginClient internal constructor(
 
     override fun close() {
         if (closed) return
+        renderedMaps.clear()
         closed = true
         clearNoticeContext()
         terminateAudioSession(
@@ -996,6 +1310,7 @@ class NexusPluginClient internal constructor(
         )
         terminateSnapshotSession(NexusSnapshotError.ERROR)
         cancelLiveInvocations()
+        pages.onRegistrationReset()
         if (opened || backgrounded) {
             opened = false
             backgrounded = false
@@ -1006,6 +1321,57 @@ class NexusPluginClient internal constructor(
         hubCapabilities = 0
         seenEventIds.clear()
         seenEventIdSet.clear()
+    }
+
+    /**
+     * A launcher-bundle command: delivered once per invocation to this plugin's own current
+     * activity, and answered with what the callback returns. Null sends nothing, so the glasses
+     * show the command unconfirmed; a callback that throws is answered as rejected.
+     */
+    private fun routeActivityCommand(payload: JSONObject) {
+        if (!isApproved || !hasCapability(PluginCapability.SURFACES)) return
+        val parsed = ActivitySurfaceContract.parseCommand(payload) ?: return
+        if (parsed.activityId != ownActivityId) return
+        if (!rememberOnce(seenActivityInvocations, parsed.invocationId)) return
+        val command = NexusActivityCommand(
+            activityId = parsed.activityId,
+            actionId = parsed.actionId,
+            invocationId = parsed.invocationId,
+            seq = parsed.seq,
+            typed = parsed.typed?.toNexus(),
+        )
+        synchronized(activityCommandLock) {
+            foregroundCommands[command.invocationId] = monotonicClockMs() + ActivitySurfaceContract.COMMAND_DEADLINE_MS
+            activeActivityCommands++
+        }
+        foregroundDemandChanged?.invoke()
+        try {
+            val result = runCatching { callbacks.onActivityCommand(command) }
+                .getOrElse { NexusActivityCommandResult.rejected() } ?: return
+            if (!rememberOnce(answeredActivityCommands, command.invocationId)) return
+            try {
+                transport.sendImmediate(BusPaths.ACTIVITY_RESULT, UUID.randomUUID().toString(), activityResultPayload(command, result))
+            } finally {
+                synchronized(activityCommandLock) { foregroundCommands.remove(command.invocationId) }
+            }
+        } finally {
+            synchronized(activityCommandLock) { activeActivityCommands-- }
+            foregroundDemandChanged?.invoke()
+        }
+    }
+
+    /** Page callbacks need no open: approval, the `surfaces` grant, announced support and a usable link do. */
+    private fun routePageMessage(path: String, payload: JSONObject): Boolean {
+        val handler: (JSONObject, NexusPluginCallbacks) -> Unit = when (path) {
+            BusPaths.PAGE_REQUEST -> pages::onRequest
+            BusPaths.PAGE_ACTION -> pages::onAction
+            BusPaths.PAGE_VISIBILITY -> pages::onVisibility
+            BusPaths.PAGE_CLOSED -> pages::onClosed
+            BusPaths.PAGE_RESPONSE, BusPaths.PAGE_RESULT -> return true
+            else -> return false
+        }
+        if (supportsPageSession) handler(payload, callbacks)
+        return true
     }
 
     private fun routeAudioMessage(path: String, payload: JSONObject): Boolean {
@@ -1240,6 +1606,10 @@ class NexusPluginClient internal constructor(
         /** Stands in for the hub's invocation id on a result the SDK builds from a route rejection. */
         const val LOCAL_INVOCATION_ID = "local-rejected"
 
+        /** A transport that can carry a page: CXR control or the SPP data plane, not merely a bond. */
+        private fun hasUsableLink(state: Int): Boolean =
+            state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) != 0
+
         fun create(
             context: Context,
             pluginId: String,
@@ -1249,6 +1619,6 @@ class NexusPluginClient internal constructor(
             pluginId = pluginId,
             callbacks = callbacks,
             transport = AndroidNexusPluginTransport(context, pluginId, hubTarget),
-        )
+        ).also { client -> client.mapDiagnosticLog = { android.util.Log.i("RokidBusClient", it); Unit } }
     }
 }

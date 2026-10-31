@@ -1,23 +1,44 @@
 package com.anezium.rokidbus.plugin.media
 
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import com.anezium.rokidbus.client.PluginRegistrationResult
+import com.anezium.rokidbus.client.plugin.NexusActivityCommand
+import com.anezium.rokidbus.client.plugin.NexusActivityCommandResult
 import com.anezium.rokidbus.client.plugin.NexusCard
 import com.anezium.rokidbus.client.plugin.NexusMedia
 import com.anezium.rokidbus.client.plugin.NexusMediaAnchor
+import com.anezium.rokidbus.client.plugin.NexusPage
+import com.anezium.rokidbus.client.plugin.NexusPageAction
+import com.anezium.rokidbus.client.plugin.NexusPageClosed
+import com.anezium.rokidbus.client.plugin.NexusPageRequest
+import com.anezium.rokidbus.client.plugin.NexusPageResult
+import com.anezium.rokidbus.client.plugin.NexusPageVisibility
 import com.anezium.rokidbus.client.plugin.NexusPluginService
-import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
-import com.anezium.rokidbus.client.plugin.NexusSkillInvocation
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
+import com.anezium.rokidbus.client.plugin.NexusSkillInvocation
+import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
+import com.anezium.rokidbus.media.MediaDeckActivityControl
+import com.anezium.rokidbus.media.MediaDeckPageProvider
 import com.anezium.rokidbus.media.MediaDeckRuntime
 import com.anezium.rokidbus.media.MediaDeckRuntimeHost
 import com.anezium.rokidbus.media.session.AndroidMediaSkillAccess
+import com.anezium.rokidbus.media.session.MediaDeckMonitorHub
+import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.skills.SkillErrorCodes
 import java.util.concurrent.Executors
+import org.json.JSONObject
 
 class MediaDeckPluginService : NexusPluginService() {
+    private val main = Handler(Looper.getMainLooper())
     private var surface: NexusSurfaceSession? = null
     private var runtime: MediaDeckRuntime? = null
+
+    // Skill calls read and pause through their own access, never through the HUD's monitor hub,
+    // its activity publisher or its preferences.
     private val skillWork = Executors.newSingleThreadExecutor()
     private val skills by lazy { MediaSkills(AndroidMediaSkillAccess(applicationContext)) }
 
@@ -45,10 +66,28 @@ class MediaDeckPluginService : NexusPluginService() {
         override fun hideSurface() {
             surface?.hide()
         }
+    }
 
-        override fun post(action: () -> Unit) {
-            mainExecutor.execute(action)
-        }
+    // Pages read the shared monitor; they never open, close or touch the immersion.
+    private val pages by lazy {
+        MediaDeckPageProvider<NexusPageRequest>(
+            hub = MediaDeckMonitorHub.get(applicationContext),
+            pageIdOf = NexusPageRequest::pageId,
+            floorOf = NexusPageRequest::minimumRevision,
+            publish = { request, page -> nexusClient?.publishPage(request, page) ?: NexusSdkResult.NOT_REGISTERED },
+            extended = { nexusClient?.supportsLauncherInteractive() == true },
+            now = SystemClock::elapsedRealtime,
+            schedule = { delayMs, task ->
+                val runnable = Runnable { task() }
+                main.postDelayed(runnable, delayMs)
+                ({ main.removeCallbacks(runnable) })
+            },
+        )
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        nexusClient?.let { MediaDeckActivityControl.serviceCreated(this, it) }
     }
 
     override fun onNexusOpen() {
@@ -66,11 +105,39 @@ class MediaDeckPluginService : NexusPluginService() {
     }
 
     override fun onNexusRegistrationState(result: Int) {
-        if (result != PluginRegistrationResult.APPROVED) runtime?.close()
+        if (result != PluginRegistrationResult.APPROVED) {
+            runtime?.close()
+            pages.forget()
+        }
+        MediaDeckActivityControl.registrationState(result)
     }
 
     override fun onNexusLinkState(state: Int) {
         runtime?.imageCapabilityChanged()
+        if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) pages.forget()
+        MediaDeckActivityControl.linkState(state)
+    }
+
+    override fun onNexusPageRequest(request: NexusPageRequest): NexusPage = pages.onRequest(request)
+
+    override fun onNexusPageAction(action: NexusPageAction): NexusPageResult =
+        pages.onAction(action.pageId, action.revision, action.actionId, action.typed)
+
+    override fun onNexusPageVisibility(visibility: NexusPageVisibility) =
+        pages.onVisibility(visibility.pageId, visibility.visible, visibility.leaseDurationMs)
+
+    override fun onNexusPageClosed(closed: NexusPageClosed) = pages.onClosed(closed.pageId)
+
+    override fun onNexusActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult? =
+        MediaDeckActivityControl.command(command)
+
+    // Only glasses without the launcher bundle deliver this; the same session check applies.
+    override fun onNexusActivityAction(id: String) = MediaDeckActivityControl.legacyAction(id)
+
+    override fun onNexusActivityClosed(reason: String) = MediaDeckActivityControl.activityClosed(reason)
+
+    override fun onNexusMessage(path: String, id: String, payload: JSONObject) {
+        if (path == BusPaths.ERROR) MediaDeckActivityControl.error(payload.optString("code"))
     }
 
     override fun onNexusSkillInvoked(invocation: NexusSkillInvocation) {
@@ -110,6 +177,8 @@ class MediaDeckPluginService : NexusPluginService() {
         runtime?.close()
         runtime = null
         surface = null
+        pages.forget()
+        nexusClient?.let(MediaDeckActivityControl::serviceDestroyed)
         super.onDestroy()
     }
 
@@ -119,6 +188,7 @@ class MediaDeckPluginService : NexusPluginService() {
     private fun ensureRuntime(): MediaDeckRuntime = runtime ?: MediaDeckRuntime(
         context = applicationContext,
         host = runtimeHost,
+        hub = MediaDeckMonitorHub.get(applicationContext),
     ).also { runtime = it }
 
     private companion object {

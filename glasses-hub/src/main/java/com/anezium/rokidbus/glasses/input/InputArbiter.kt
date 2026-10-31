@@ -53,6 +53,12 @@ internal interface InputContext {
      */
     val noticeArmed: Boolean
 
+    /**
+     * A composer capture (dictation or typing) runs in the session: a new triple tap is not
+     * recognised until it is finished or cancelled (plan 028a §5.4).
+     */
+    val captureActive: Boolean get() = false
+
     val legacyShown: Boolean
     val surfaceOwnsKeys: Boolean
     val activeSurfaceId: String?
@@ -113,6 +119,15 @@ internal class InputArbiter(private val context: InputContext) {
     private var contactAt: Long? = null
 
     /**
+     * The latest session contact no classification has settled yet: where the press it becomes
+     * began (plan 028a §5.3). An ENTER takes it; BACK and a swipe settle it.
+     */
+    private var unclassifiedContactAt: Long? = null
+
+    /** When each ENTER press of the session physically began, from its DOWN until its UP reads it. */
+    private val enterStarts = HashMap<Press, Long>()
+
+    /**
      * Whether the detector's post-trigger suppression is in force for the session backend. A
      * trigger that opens the session is followed by the reducer's gate instead; a trigger inside
      * an open session opens no gate, so its own ENTER/BACK classifications must be swallowed.
@@ -168,6 +183,8 @@ internal class InputArbiter(private val context: InputContext) {
         ringTaps.reset()
         ringTapPending = false
         contactAt = null
+        unclassifiedContactAt = null
+        enterStarts.clear()
         tripleTap = TripleTapDetector()
         swipes = DpadPairDedupe()
         suppressionHonoured = false
@@ -306,9 +323,12 @@ internal class InputArbiter(private val context: InputContext) {
         return own(event, Owner.PASSED, consumed = false, out, viaWindow)
     }
 
-    /** A4's guard on new recognition: none from the ring, in a focused field, or under an armed notice. */
+    /**
+     * A4's guard on new recognition: none from the ring, in a focused field, under an armed notice,
+     * or over a composer capture.
+     */
     private fun recognises(event: RawKeyEvent): Boolean =
-        event.deviceClass == DeviceClass.TOUCHPAD && !context.editableFocused && !context.noticeArmed
+        event.deviceClass == DeviceClass.TOUCHPAD && !context.editableFocused && !context.noticeArmed && !context.captureActive
 
     private fun trigger(event: RawKeyEvent, session: Boolean, out: MutableList<RoutedIntent>): InputDecision {
         contactAt = null
@@ -340,15 +360,33 @@ internal class InputArbiter(private val context: InputContext) {
      * A contact DOWN is a `Contact`; ENTER and BACK count on their UP, as the firmware's
      * classification completes; a swipe counts once per duplicated pair. Everything else an
      * open session receives is consumed without meaning.
+     *
+     * An ENTER carries when its press began: the touchpad contact the firmware classified as
+     * this tap, paired at the ENTER's DOWN, or the key's own DOWN when no contact preceded it.
+     * The earlier of the two always wins, so a pairing can only make a press look older.
      */
     private fun sessionEvent(event: RawKeyEvent): SessionEvent? {
         val key = event.keyCode
         return when {
-            key == InputKeys.NOTIFICATION && event.startsPress -> SessionEvent.Contact(event.eventTime)
-            key in InputKeys.CONFIRMS && event.isUp -> SessionEvent.Enter(event.eventTime)
+            key == InputKeys.NOTIFICATION && event.startsPress -> {
+                if (event.deviceClass == DeviceClass.TOUCHPAD) unclassifiedContactAt = event.eventTime
+                SessionEvent.Contact(event.eventTime)
+            }
+            key in InputKeys.CONFIRMS && event.startsPress -> {
+                if (enterStarts.size >= MAX_OPEN_ENTERS) enterStarts.clear()
+                enterStarts[pressOf(event)] = minOf(unclassifiedContactAt ?: event.downTime, event.downTime)
+                unclassifiedContactAt = null
+                null
+            }
+            key in InputKeys.CONFIRMS && event.isUp ->
+                SessionEvent.Enter(event.eventTime, pressStartMs = enterStarts.remove(pressOf(event)) ?: event.downTime)
+            key == InputKeys.BACK && event.startsPress -> {
+                unclassifiedContactAt = null
+                null
+            }
             key == InputKeys.BACK && event.isUp -> SessionEvent.Back(event.eventTime)
             key in InputKeys.DIRECTIONS && event.startsPress ->
-                when (swipes.onKey(key, event.action, event.repeatCount, event.eventTime)) {
+                when (swipes.onKey(key, event.action, event.repeatCount, event.eventTime).also { unclassifiedContactAt = null }) {
                     DpadPairDedupe.Direction.FORWARD -> SessionEvent.Step(1, event.eventTime)
                     DpadPairDedupe.Direction.BACKWARD -> SessionEvent.Step(-1, event.eventTime)
                     null -> null
@@ -393,7 +431,9 @@ internal class InputArbiter(private val context: InputContext) {
         ringTapPending = false
         if (!sessionStillUp(ringTapGeneration)) return
         when (resolution) {
-            RingTapPolicy.Resolution.SINGLE -> deliver(RoutedIntent.ToSession(SessionEvent.Enter(nowMs)), out)
+            // The ring's press began at its tap's DOWN, not when the double-tap window closed.
+            RingTapPolicy.Resolution.SINGLE ->
+                deliver(RoutedIntent.ToSession(SessionEvent.Enter(nowMs, pressStartMs = ringTapAt)), out)
             RingTapPolicy.Resolution.DOUBLE -> deliver(RoutedIntent.ToSession(SessionEvent.Back(nowMs)), out)
             RingTapPolicy.Resolution.IGNORE -> Unit
         }
@@ -440,6 +480,9 @@ internal class InputArbiter(private val context: InputContext) {
 
         /** How long a completed press is remembered, for its window echo and a duplicate UP. */
         private const val PRESS_TTL_MS = 5_000L
+
+        /** ENTER presses awaiting their UP; more than this means UPs were lost, and they are forgotten. */
+        private const val MAX_OPEN_ENTERS = 8
         private val PASS = InputDecision(consumed = false, listOf(RoutedIntent.PassThrough))
     }
 }

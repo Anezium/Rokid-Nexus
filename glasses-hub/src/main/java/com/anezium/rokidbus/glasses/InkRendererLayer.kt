@@ -34,9 +34,17 @@ internal class InkRendererLayer(
     private var store: InkNodeStore? = null
     private var attachedView: InkHudView? = null
 
+    /** Hears every store handed to an attached view, at the moment it is handed over. */
+    internal var projectionObserver: ((InkHudView, InkNodeStore) -> Unit)? = null
+
+    /**
+     * Decodes [surface]'s document or patch off the main thread. A valid result is only staged:
+     * [onStaged] receives it, and nothing becomes this layer's state or reaches a view until the
+     * caller commits it, after deciding the surface may still be presented.
+     */
     fun submit(
         surface: NexusSurface,
-        onCommitted: () -> Unit,
+        onStaged: (StagedInk) -> Unit,
     ) {
         val payload = surface.ink ?: return
         val documentJson = payload.documentJson
@@ -81,9 +89,11 @@ internal class InkRendererLayer(
                             return@post
                         }
                         val next = InkNodeStore.from(decoded.value)
-                        store = next
-                        attachedView?.show(next, payload.debugActions)
-                        onCommitted()
+                        onStaged(
+                            StagedInk(requestGeneration, current, next) { view ->
+                                view.show(next, payload.debugActions)
+                            },
+                        )
                     }
                     is Decoded.Patch -> {
                         val current = store
@@ -94,11 +104,11 @@ internal class InkRendererLayer(
                             return@post
                         }
                         when (val result = InkNodeStore.Executor.apply(current, decoded.value)) {
-                            is InkPatchApplyResult.Applied -> {
-                                store = result.store
-                                attachedView?.applyPatch(result.store, decoded.value.changes, payload.debugActions)
-                                onCommitted()
-                            }
+                            is InkPatchApplyResult.Applied -> onStaged(
+                                StagedInk(requestGeneration, current, result.store) { view ->
+                                    view.applyPatch(result.store, decoded.value.changes, payload.debugActions)
+                                },
+                            )
                             is InkPatchApplyResult.Invalid -> {
                                 logProblem("Ink patch rejected", result.problem)
                                 onRendererError(surface, listOf(result.problem))
@@ -129,7 +139,10 @@ internal class InkRendererLayer(
             attachedView = view
         }
         view.onAction = onAction
-        store?.let { view.show(it, debugActions) }
+        store?.let { accepted ->
+            projectionObserver?.invoke(view, accepted)
+            view.show(accepted, debugActions)
+        }
     }
 
     fun detach(view: InkHudView) {
@@ -202,6 +215,33 @@ internal class InkRendererLayer(
 
     private fun logProblem(prefix: String, problem: InkProblem) {
         log("$prefix code=${problem.code} feature=${problem.feature.orEmpty()} message=${problem.message}")
+    }
+
+    /**
+     * A validated document, or a patch applied to [base], that is not this layer's state yet.
+     * [commit] makes it the state and projects it into the attached view, once, and only while
+     * the layer is still where the candidate was built: no clear, detach or newer document since,
+     * and [base] still the accepted store. Until then a reentrant [attach] sees [base].
+     */
+    internal inner class StagedInk(
+        private val stagedGeneration: Long,
+        private val base: InkNodeStore?,
+        private val next: InkNodeStore,
+        private val project: (InkHudView) -> Unit,
+    ) {
+        private var settled = false
+
+        fun commit(): Boolean {
+            if (settled) return false
+            settled = true
+            if (stagedGeneration != generation || store !== base) return false
+            store = next
+            attachedView?.let { view ->
+                projectionObserver?.invoke(view, next)
+                project(view)
+            }
+            return true
+        }
     }
 
     private sealed interface Decoded {

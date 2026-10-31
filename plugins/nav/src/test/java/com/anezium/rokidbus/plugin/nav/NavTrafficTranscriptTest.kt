@@ -98,7 +98,7 @@ class NavTrafficTranscriptTest {
     private fun traffic(transcript: List<NavGuidance?>): List<String> {
         val planner = NexusGuidancePlanner()
         return transcript.map { guidance ->
-            // An unreadable notification ends the route in NavRuntime; it never reaches the planner.
+            // Unreadable notifications never reach the planner, even during the listener's grace.
             if (guidance == null) return@map "UNREADABLE"
             when (val plan = planner.plan(guidance.toGuidanceStep())) {
                 is NexusGuidancePlan.Start -> "START ${plan.step.toRouteActivity()}"

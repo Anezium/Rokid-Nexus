@@ -3,20 +3,74 @@ package com.anezium.rokidbus.phone
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.NoticeCloseReason
 import com.anezium.rokidbus.shared.NoticeInteractionIdentity
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
+import com.anezium.rokidbus.shared.NoticeWithdrawal
 import org.json.JSONObject
 
-/** Canonical notice routing; Android delivery and transport stay in the hub. */
+/**
+ * Canonical notice routing; Android delivery and transport stay in the hub.
+ *
+ * [launcherVersion] is the launcher bundle version negotiated with the glasses, or null before
+ * they announce. With the bundle the glasses keep a notification history: the router forwards
+ * an owner's withdrawals to it and tells it to forget an owner that lost its grant. Both outlive
+ * a link loss, because the glasses keep their history across one; a withdrawal or purge that
+ * cannot be sent now waits for the next announce.
+ */
 internal class PhoneNoticeRouter(
     private val state: PhoneNoticeState,
     private val sink: PhoneHudRouteSink,
+    private val launcherVersion: () -> Int? = { 0 },
+    private val schedule: (delayMs: Long, block: () -> Unit) -> Unit = { _, _ -> },
 ) {
+    private val historyLock = Any()
+
+    /** Owners whose notices reached glasses that keep a history, so a purge knows whom to name. */
+    private val historyOwners = linkedSetOf<String>()
+    private val pendingPurges = linkedSetOf<String>()
+    private val pendingWithdrawals = linkedSetOf<NoticeWithdrawal>()
+
+    /** Owners whose budget-deferred forget already has a drain scheduled. */
+    private val scheduledDrains = mutableSetOf<String>()
+
+    /**
+     * Where [historyOwners] and [pendingPurges] outlive this process: the glasses keep their
+     * history across a phone hub restart, so a purge owed must survive it too. Owner ids only.
+     */
+    private var ledger: PhoneNoticeOwnerLedger? = null
+
+    /**
+     * Takes back what a previous process of the hub knew it owed the glasses. The caller then
+     * reconciles every restored owner against the current grants, as after a package change.
+     */
+    fun restore(ledger: PhoneNoticeOwnerLedger) {
+        synchronized(historyLock) {
+            val saved = ledger.load()
+            historyOwners += saved.historyOwners
+            pendingPurges += saved.pendingPurges
+            this.ledger = ledger
+            persist()
+        }
+    }
+
+    /** Called with [historyLock] held after either set changed. */
+    private fun persist() {
+        ledger?.save(PhoneNoticeOwners(historyOwners.toSet(), pendingPurges.toSet()))
+    }
+
     fun matches(path: String): Boolean =
         path == BusPaths.NOTICE_SHOW ||
             path == BusPaths.NOTICE_UPDATE ||
-            path == BusPaths.NOTICE_HIDE
+            path == BusPaths.NOTICE_HIDE ||
+            path == BusPaths.NOTICE_WITHDRAW ||
+            path == BusPaths.NOTICE_FORGET
+
+    private fun bundleNegotiated(): Boolean = LauncherInteractiveContract.isActive(launcherVersion() ?: 0)
+
+    /** Owners the glasses may still hold history entries for. */
+    fun historyOwnerIds(): Set<String> = synchronized(historyLock) { historyOwners.toSet() }
 
     fun invalidLocalReason(envelope: BusEnvelope): String? {
         if (isValidLocalNoticeEnvelope(envelope)) return null
@@ -38,6 +92,28 @@ internal class PhoneNoticeRouter(
             reject(envelope, sender, NoticeSurfaceContract.ERROR_INVALID_NOTICE)
             return
         }
+        // Not gated on the link like a show: the history it corrects outlives a link loss.
+        if (envelope.path == BusPaths.NOTICE_WITHDRAW) {
+            handleWithdraw(envelope, sender, pluginId)
+            return
+        }
+        if (envelope.path == BusPaths.NOTICE_FORGET) {
+            sink.recordLocalRoute(envelope, sender.uid, pluginId, PluginBusJournal.Verdict.OK)
+            // The same durable, coalesced obligation as a revoked owner's: one per owner, kept
+            // across a link loss and a restart of this hub. Past the notice budget it is still
+            // kept, and goes once the budget's window has passed, so nothing floods the link and
+            // nothing waits for a reconnection.
+            if (state.admitWithdraw(pluginId)) purgeOwner(pluginId, "owner_forget") else queuePurge(pluginId)
+            // Only now may the plugin stop keeping the request: this hub owns it on disk.
+            sink.deliverLocal(
+                BusEnvelope(
+                    path = BusPaths.NOTICE_FORGET_ACCEPTED,
+                    payload = JSONObject().put("pluginId", pluginId).put("forId", envelope.id),
+                ),
+                sender.replyBinder,
+            )
+            return
+        }
         if (sink.capabilities() and BusCapabilityBits.NOTICE_SURFACE == 0) {
             reject(envelope, sender, NoticeSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE)
             return
@@ -51,17 +127,43 @@ internal class PhoneNoticeRouter(
         }
 
         when (envelope.path) {
-            BusPaths.NOTICE_SHOW ->
+            BusPaths.NOTICE_SHOW -> {
+                val launcherBundle = bundleNegotiated()
+                // A forget the owner asked for earlier goes first, or it would land after this
+                // newer event and erase it. One that cannot go now holds the show back: the
+                // plugin hears so, as for a link that is down.
+                // A show the budget refuses anyway leaves a deferred forget to its drain, so a
+                // stream of refused shows cannot send purges faster than the budget allows.
+                if (launcherBundle && synchronized(historyLock) { pluginId in pendingPurges } && !state.hasBudget(pluginId)) {
+                    reject(envelope, sender, NoticeSurfaceContract.ERROR_NOTICE_RATE_LIMITED)
+                    return
+                }
+                if (launcherBundle && !purgeIfPending(pluginId, "owner_forget_before_show")) {
+                    reject(envelope, sender, NoticeSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE)
+                    return
+                }
                 when (
                     val result = state.show(
                         pluginId,
                         envelope.payload,
                         envelope.binary,
+                        launcherBundle,
                     )
                 ) {
                     is PhoneNoticeShowResult.Rejected ->
                         reject(envelope, sender, result.code)
                     is PhoneNoticeShowResult.Accepted -> {
+                        if (launcherBundle) {
+                            val eventKey = result.notice.payload.optString(NoticeSurfaceContract.FIELD_EVENT_KEY)
+                            synchronized(historyLock) {
+                                if (historyOwners.add(pluginId)) persist()
+                                // A withdrawal queued while the link was down is older than this
+                                // event; flushed after it, it would mark the new notice removed.
+                                if (eventKey.isNotEmpty()) {
+                                    pendingWithdrawals.removeAll { it.ownerPluginId == pluginId && it.eventKey == eventKey }
+                                }
+                            }
+                        }
                         result.replacedOwnerPluginId?.let { previous ->
                             sink.log("notice replaced owner=$previous by=$pluginId")
                             result.replacedNotice?.let { replaced ->
@@ -74,6 +176,7 @@ internal class PhoneNoticeRouter(
                         forward(envelope, result.notice.payload, sender)
                     }
                 }
+            }
             BusPaths.NOTICE_UPDATE ->
                 when (val result = state.update(pluginId, envelope.payload)) {
                     PhoneNoticeUpdateResult.Ignored -> sink.recordLocalRoute(
@@ -104,6 +207,149 @@ internal class PhoneNoticeRouter(
                         deliverClosed(result.ownerPluginId, result.reason, result.identity, result.clientToken)
                     }
                 }
+        }
+    }
+
+    /**
+     * `/notice/withdraw`: the event is no longer on the phone. The owner is the authenticated
+     * sender, never a field of the payload, and the glasses get only that owner and the key.
+     * It is not proof of read or delivery; the plugin hears it was accepted, not delivered.
+     */
+    private fun handleWithdraw(
+        envelope: BusEnvelope,
+        sender: PhoneHudRouteSender,
+        pluginId: String,
+    ) {
+        if (!bundleNegotiated()) {
+            reject(envelope, sender, NoticeSurfaceContract.ERROR_CAPABILITY_NOT_AVAILABLE)
+            return
+        }
+        val eventKey = NoticeSurfaceContract.parseWithdraw(envelope.payload)
+        if (eventKey == null) {
+            reject(envelope, sender, NoticeSurfaceContract.ERROR_INVALID_NOTICE)
+            return
+        }
+        if (!state.admitWithdraw(pluginId)) {
+            reject(envelope, sender, NoticeSurfaceContract.ERROR_NOTICE_RATE_LIMITED)
+            return
+        }
+        val withdrawal = NoticeWithdrawal(pluginId, eventKey)
+        val outgoing = BusEnvelope(
+            path = BusPaths.NOTICE_WITHDRAW,
+            id = envelope.id,
+            payload = NoticeSurfaceContract.glassesWithdrawPayload(withdrawal),
+        )
+        sink.recordLocalRoute(outgoing, sender.uid, pluginId, PluginBusJournal.Verdict.OK)
+        if (!sink.pinLinkUp() || sink.sendRemote(outgoing) != null) {
+            synchronized(historyLock) { queueWithdrawal(withdrawal) }
+            sink.log("notice withdraw queued owner=$pluginId")
+        }
+    }
+
+    private fun queueWithdrawal(withdrawal: NoticeWithdrawal) {
+        pendingWithdrawals.remove(withdrawal)
+        pendingWithdrawals.add(withdrawal)
+        while (pendingWithdrawals.size > NoticeSurfaceContract.MAX_HISTORY_ENTRIES) {
+            pendingWithdrawals.remove(pendingWithdrawals.first())
+        }
+    }
+
+    /**
+     * The owner lost its grant, was disabled, uninstalled, or came back under another signer or
+     * id: the glasses forget every history entry it left. Sent even for an owner this process
+     * never saw notify, since the glasses' history may predate a phone hub restart.
+     */
+    fun purgeOwner(pluginId: String, reason: String) {
+        val version = launcherVersion()
+        if (version != null && !LauncherInteractiveContract.isActive(version)) return
+        val purge = BusEnvelope(
+            path = BusPaths.CORE_NOTICE_PURGE,
+            payload = NoticeSurfaceContract.purgePayload(pluginId),
+        )
+        synchronized(historyLock) {
+            historyOwners.remove(pluginId)
+            pendingWithdrawals.removeAll { it.ownerPluginId == pluginId }
+            if (version != null && sink.pinLinkUp() && sink.sendRemote(purge) == null) {
+                pendingPurges.remove(pluginId)
+                persist()
+                sink.log("notice history purged owner=$pluginId reason=$reason")
+                return
+            }
+            pendingPurges.add(pluginId)
+            persist()
+        }
+        sink.log("notice history purge queued owner=$pluginId reason=$reason")
+    }
+
+    private fun queuePurge(pluginId: String) {
+        val drain = synchronized(historyLock) {
+            pendingPurges.add(pluginId)
+            persist()
+            scheduledDrains.add(pluginId)
+        }
+        sink.log("notice history purge queued owner=$pluginId reason=owner_forget_budget")
+        if (drain) schedule(PURGE_DRAIN_DELAY_MS) { drainPurge(pluginId) }
+    }
+
+    /** One coalesced purge per owner and window, whatever else the owner sent meanwhile. */
+    private fun drainPurge(pluginId: String) {
+        synchronized(historyLock) { scheduledDrains.remove(pluginId) }
+        purgeIfPending(pluginId, "owner_forget")
+    }
+
+    /**
+     * Consumes [pluginId]'s owed purge, if it still is, in one step with its sending: the drain
+     * runs on the main thread and a show on a Binder thread, and whichever comes second must find
+     * nothing owed rather than purge again after the newer show. True when nothing is owed after.
+     */
+    private fun purgeIfPending(pluginId: String, reason: String): Boolean =
+        synchronized(historyLock) {
+            if (pluginId in pendingPurges) purgeOwner(pluginId, reason)
+            pluginId !in pendingPurges
+        }
+
+    /**
+     * After a grant or package change (revoke, disable, uninstall, a new signer or id), purges
+     * every owner the glasses may hold history for that is no longer an approved surfaces owner,
+     * and [changedOwner] on the same rule even if this process never saw it notify.
+     */
+    fun purgeOwnersWithoutAccess(isSurfaceOwner: (String) -> Boolean, reason: String, changedOwner: String? = null) {
+        (historyOwnerIds() + listOfNotNull(changedOwner))
+            .filterNot(isSurfaceOwner)
+            .forEach { purgeOwner(it, reason) }
+    }
+
+    /**
+     * The glasses announced. With the bundle they get what waited for them, purges first so a
+     * withdrawal never names an owner the glasses are about to forget; without it nothing is
+     * owed, since glasses without the bundle keep no history.
+     */
+    fun onGlassesAnnounced() {
+        synchronized(historyLock) {
+            if (!bundleNegotiated()) {
+                pendingPurges.clear()
+                pendingWithdrawals.clear()
+                persist()
+                return
+            }
+            for (owner in pendingPurges.toList()) {
+                val purge = BusEnvelope(
+                    path = BusPaths.CORE_NOTICE_PURGE,
+                    payload = NoticeSurfaceContract.purgePayload(owner),
+                )
+                if (sink.sendRemote(purge) != null) return
+                pendingPurges.remove(owner)
+                persist()
+                sink.log("notice history purged owner=$owner reason=announce")
+            }
+            for (withdrawal in pendingWithdrawals.toList()) {
+                val outgoing = BusEnvelope(
+                    path = BusPaths.NOTICE_WITHDRAW,
+                    payload = NoticeSurfaceContract.glassesWithdrawPayload(withdrawal),
+                )
+                if (sink.sendRemote(outgoing) != null) return
+                pendingWithdrawals.remove(withdrawal)
+            }
         }
     }
 
@@ -238,5 +484,10 @@ internal class PhoneNoticeRouter(
         if (sink.pinLinkUp()) {
             sink.sendRemote(BusEnvelope(path = BusPaths.NOTICE_HIDE, payload = result.payload))
         }
+    }
+
+    private companion object {
+        /** The notice budget's window: a deferred forget fits in the next one. */
+        const val PURGE_DRAIN_DELAY_MS = 1_000L
     }
 }

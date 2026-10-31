@@ -72,6 +72,31 @@ object BusPaths {
     const val ACTIVITY_END = "/activity/end"
     const val ACTIVITY_ACTION = "/activity/action"
     const val ACTIVITY_CLOSED = "/activity/closed"
+
+    /**
+     * Launcher bundle ([LauncherInteractiveContract]). Plugin to phone hub, owner-stamped like
+     * `/activity/start`, `surfaces` grant: the outcome of one activity command, a route geometry
+     * revision, and a compass heading. The phone forwards the last two to negotiated glasses.
+     */
+    const val ACTIVITY_RESULT = "/activity/result"
+    const val ACTIVITY_GEOMETRY = "/activity/geometry"
+    const val ACTIVITY_HEADING = "/activity/heading"
+
+    /**
+     * Launcher bundle. Plugin to phone hub, owner-stamped, `surfaces` grant: an event this plugin
+     * announced with an `eventKey` is no longer on the phone. The phone forwards it to the glasses
+     * with the owner it authenticated.
+     */
+    const val NOTICE_WITHDRAW = "/notice/withdraw"
+
+    /** Launcher bundle, plugin to phone: forget every notification of the sender on the glasses. */
+    const val NOTICE_FORGET = "/notice/forget"
+
+    /**
+     * Launcher bundle, phone to the plugin that sent `/notice/forget`: the phone hub holds the
+     * request durably now, so the plugin may stop keeping it. Carries `forId`.
+     */
+    const val NOTICE_FORGET_ACCEPTED = "/notice/forget/accepted"
     // Reserved page v1 paths; no running hub dispatches them yet.
     const val PAGE_REQUEST = "/page/request"
     const val PAGE_RESPONSE = "/page/response"
@@ -197,6 +222,31 @@ object BusPaths {
 
     /** Phone hub to glasses hub only; see [PhoneBatteryContract] for why it is not a plugin path. */
     const val PHONE_BATTERY = "/phone/battery"
+
+    // Launcher bundle hub-to-hub controls. All live under the reserved `/core` root: no plugin can
+    // send or receive them and no capability unlocks them.
+
+    /** Phone to glasses: remove every notification-history entry of one owner. */
+    const val CORE_NOTICE_PURGE = "/core/notice/purge"
+
+    /** Phone to glasses: the user's quick-action approvals; see [QuickActionPolicyContract]. */
+    const val CORE_POLICY_QUICK_ACTIONS = "/core/policy/quick-actions"
+
+    /** Composer capture engines; see [ComposeContract] for direction and payloads. */
+    const val CORE_COMPOSE_DICTATE_START = "/core/compose/dictate/start"
+    const val CORE_COMPOSE_DICTATE_PARTIAL = "/core/compose/dictate/partial"
+    const val CORE_COMPOSE_DICTATE_FINAL = "/core/compose/dictate/final"
+    const val CORE_COMPOSE_DICTATE_STOP = "/core/compose/dictate/stop"
+    const val CORE_COMPOSE_TYPE_START = "/core/compose/type/start"
+    const val CORE_COMPOSE_TYPE_TEXT = "/core/compose/type/text"
+    const val CORE_COMPOSE_TYPE_DONE = "/core/compose/type/done"
+    const val CORE_COMPOSE_TYPE_FINISH = "/core/compose/type/finish"
+    const val CORE_COMPOSE_TYPE_CANCEL = "/core/compose/type/cancel"
+
+    /** Ambient presentation preferences; see [AmbientPreferencesContract]. */
+    const val CORE_AMBIENT_SIZES_SET = "/core/ambient/sizes/set"
+    const val CORE_AMBIENT_SIZES = "/core/ambient/sizes"
+    const val CORE_AMBIENT_POLICY = "/core/ambient/policy"
     const val PLUGIN_OPEN = "/system/plugin/open"
     const val PLUGIN_CLOSE = "/system/plugin/close"
     const val PLUGIN_INPUT = "/system/plugin/input"
@@ -258,6 +308,16 @@ object BusCapabilityBits {
 
     /** Phone-hosted fast file lanes when no shared Wi-Fi lane is available. */
     const val GLASSES_FILES_HOTSPOT = 1 shl 15
+
+    /**
+     * The launcher bundle of [LauncherInteractiveContract]: interactive activities, typed and quick
+     * actions, the conversation, media and route page bodies, notice destinations and withdrawal.
+     * Exposed to plugins only when both hubs negotiated it, like [ACTIVITY_EXTRAS].
+     */
+    const val LAUNCHER_INTERACTIVE = 1 shl 16
+
+    /** Rendered map feedback v1 AND in-map attribution, negotiated through both hubs. */
+    const val RENDERED_MAP = 1 shl 17
 }
 
 object LinkStateBits {

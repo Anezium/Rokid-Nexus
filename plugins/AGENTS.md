@@ -21,7 +21,7 @@ Plugins are **normally dormant unless open**: the hub initiates everything. Your
 only between `PLUGIN_OPEN` and a final `PLUGIN_CLOSE`. Do not register yourself at boot, do
 not poll in the background, do not post notifications. The SDK holds a
 foreground-service session while you are open and drops it on close; the
-user-facing notification that names the live plugin belongs to the hub. Six
+user-facing notification that names the live plugin belongs to the hub. Ten
 sanctioned exceptions:
 
 1. A capability that Android forces into its own foreground service *while your
@@ -52,19 +52,88 @@ sanctioned exceptions:
    end with that job. Leaving the screen does not cancel it. No boot restart,
    polling, bus installer capability, or automatic retry is permitted.
 
-5. **Skill invocations** (hubs announcing skills v1): the hub may bind a
+5. **User-pulled pages**: a plugin whose service declares `rokidbus.plugin.pages`
+   may be bound without `PLUGIN_OPEN` to answer a page the wearer pulled in the
+   glasses' Nexus session, once both hubs announce page v1. The hub may keep that
+   binding only while one of its pages is pending or visible under its
+   120-second lease, and must release it after.
+   Answer from memory on the main thread; no foreground service, notification,
+   polling or background refresh is permitted for pages, and live revisions are
+   sent only on real changes while the page is visible.
+
+6. **User-enabled ongoing activities** (launcher bundle; SDK
+   `NexusActivityPreference` and `NexusUi.activitySettingRow` provide the standard
+   default-off user choice, see docs/PLUGIN_SDK.md): a plugin may publish an
+   activity with `persistence = ONGOING` only while the user has turned on its own
+   "Show in activities" setting, and only from events it already receives (its
+   own data changing, an alarm the user set) — never by polling. Turning the
+   setting off, a revoke, or the plugin being disabled ends it (`endActivity()`).
+   When the plugin disconnects, the hub keeps an inert offline snapshot on its own;
+   no service, foreground service or wake lock may be held to keep the entry
+   alive, and the entry revives only through a fresh start from a new
+   registration.
+
+   Floating presentation is a separate, user-owned Nexus choice. Offer
+   `NexusUi.activityDisplaySettingsRow(context, pluginId)` beside the opt-in
+   (or call `NexusActivityPreference.openDisplaySettings`). With launcher v4,
+   set `NexusActivity.eventKey` to a stable opaque id (at most 64 printable
+   characters) for each real event: a track id/digest or persisted task-list
+   revision. Keep it unchanged for pause, progress, covers and reconnect.
+   Nexus decides whether to keep a band, show it only at home, briefly reveal
+   it for 3/5/10 seconds, or show only its Activities card. Never simulate this
+   with repeated start/end, `maxDurationMs`, significant updates just to raise
+   media priority, polling, your own overlay or a service. The native timer
+   ending removes only the floating band, not the ongoing card. `eventKey`
+   never authorizes wake, priority, input, a new capability or `/core/ambient/*`.
+
+7. **Media Deck activity monitoring**: while the user has enabled Media Deck's
+   activity and granted it notification access, Media Deck may keep observing the
+   active media sessions through its notification listener and publish the
+   now-playing activity, even with its surface closed. Closing the surface does not
+   stop it; disabling the activity, revoking notification access or the grant, or
+   disabling the plugin stops it at once. No polling, no foreground service, no
+   automatic command retry after a reconnect.
+
+8. **Navigation walking journeys**: Navigation may run one explicit, user-started
+   walking journey in a foreground service of type `location`, with its own
+   notification carrying Stop. It requests location only while that journey runs
+   and stops on arrival, on Stop, or as soon as location permission is lost. No
+   boot start, background location, or journey the user did not start. Planning
+   the route sends the first accurate position and the chosen destination to
+   Transitous (a third-party, OpenStreetMap-based planner) once per journey.
+   While that journey runs and authenticated, unexpired rendered-map feedback
+   confirms one of its maps is drawn on the glasses, the phone may also
+   fetch the OpenStreetMap Foundation's vector tiles for the area those maps
+   show: only the tiles the visible views need, never ahead along the route or
+   for offline use, at most two at a time and thirty a minute, cached by their
+   HTTP freshness and credited on the map. The journey's end stops them, and
+   generic launcher support or page visibility never authorizes requests:
+   Text, collapse, hidden/covered maps and Commands have no map demand. Only
+   the selected Follow or Overview view counts, unless both are independently
+   drawn. Without both hubs' rendered-map/attribution support, keep route-only
+   guidance. Correlate feedback to the exact acknowledged publication's tile
+   cover, never the newest tracker position under an older view lease. Stable
+   renewals must not revise their page. Re-check demand before a request starts
+   and cancel it on expiry. Session replacement requires fresh negotiation.
+   Nothing is fetched for a journey that is not running. `INTERNET` is declared
+   for these two uses only; the phone screen says so before the journey starts,
+   and nothing else leaves the phone.
+
+9. **Skill invocations** (hubs announcing skills v1): the hub may bind a
    provider for one call to an operation the wearer approved, without
    `PLUGIN_OPEN`, and releases the binding when the call ends. The call does
    not open you: answer it and let go. While only the call keeps you running,
-   the hub refuses your surfaces, notices, pins, microphone, speech, TTS, and
-   camera traffic, and activities unless the operation declares `surfaces`
-   in `requires`. See §6 and `docs/PLUGIN_SDK.md` §3.6.
+   the hub refuses your surfaces, notices (withdrawals included), pins,
+   microphone, speech, TTS, and camera traffic, your page answers unless the
+   wearer asked for one of your pages, and activity traffic (results, geometry,
+   and heading included) unless the operation declares `surfaces` in
+   `requires`. See §6 and `docs/PLUGIN_SDK.md` §3.6.
 
-6. **Ongoing work the wearer started** (SDK `holdNexusOngoingWork`): a process
-   the wearer explicitly asked for and follows as an activity, such as
-   Transit's journey guidance, may keep the plugin's single session foreground
-   service until it ends, then must release it at once. Not a license to poll,
-   wait, or resume anything the wearer did not start.
+10. **Ongoing work the wearer started** (SDK `holdNexusOngoingWork`): a process
+    the wearer explicitly asked for and follows as an activity, such as
+    Transit's journey guidance, may keep the plugin's single session foreground
+    service until it ends, then must release it at once. Not a license to poll,
+    wait, or resume anything the wearer did not start.
 
 A phone plugin may also call an Android platform API directly under permissions
 declared in its own manifest. Those runtime permissions are separate from Nexus
@@ -111,7 +180,10 @@ Copy `plugins/sample` as the canonical template. The hard rules:
    session FGS runs fine with its notification suppressed on Android 13+. The
    exceptions are phone patching (§1, progress/completion only) and scheduled delivery: a plugin that delivers user-created
    reminders may declare `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`, and
-   `RECEIVE_BOOT_COMPLETED`, strictly for those deliveries.
+   `RECEIVE_BOOT_COMPLETED`, strictly for those deliveries. Navigation's walking
+   journey (§1, exception 8) may also declare `POST_NOTIFICATIONS`,
+   `FOREGROUND_SERVICE_LOCATION` and the location permissions, strictly for that
+   journey.
 6. `REQUEST_DELETE_PACKAGES` — required for the in-app Uninstall row
    (`NexusUi.uninstallCard`) to open the system uninstall dialog. Without it the
    `ACTION_DELETE` intent is silently rejected.
@@ -127,6 +199,7 @@ Copy `plugins/sample` as the canonical template. The hard rules:
 | Receive prefixes | non-empty, normalized, within your authorized namespace `/plugin/<id>/…` |
 | Signer | exactly one current signing certificate |
 | UID | not shared with another discovered plugin |
+| Optional metadata | `rokidbus.plugin.pages` = `1` opts into pages; `rokidbus.plugin.quickActions` lists quick-action families (`checklist`, `media`, comma-separated, unknown ignored). Neither is a capability, neither can invalidate the plugin, and quick actions still need the user's approval on the phone |
 
 Any violation makes the plugin an *invalid candidate*: it appears in Plugin access
 with the concrete reason visible when Developer details is enabled.
@@ -141,6 +214,13 @@ install → discovery → user approval (Plugin access) → glasses launcher ope
   → /surface/hide or /ink/hide (self-close), leased /surface/hide detach,
     or PLUGIN_CLOSE
   → unbind, FGS dropped, back to dormant
+
+pages (opted-in plugins, session backend, once both hubs announce page v1):
+  wearer selects a page → hub uses your live registration or binds you cold
+  (registration within the 8 s page budget) → /page/request → your answer on
+  /page/response → /page/visibility (lease) → optional live revisions and
+  confirmed (or user-approved quick, or composer) /page/action → /page/closed
+  → page-only binding released
 ```
 
 Facts you must build around:
@@ -168,6 +248,10 @@ Facts you must build around:
   sequence numbers; never hardcode the namespaced form.
 - Revocation, binder death, package removal, or link loss close you and hide your
   surfaces. Requests time out after 15 s by default.
+- **A page is not an open.** Page callbacks never call `onNexusOpen`/`onNexusClose`,
+  start the session foreground service, or release your sessions, and closing a
+  page leaves any immersion of yours untouched. Never answer a page by showing a
+  surface, opening yourself, or switching plugins.
 
 ## 6. Bus endpoints
 
@@ -184,6 +268,8 @@ Paths a plugin can **send to** (gated by capability):
 | `/camera/freeze/result`, `/camera/overlay`, `/camera/link/offer` | `camera` | Camera platform sends (signer/grant-bound). `/camera/link/offer` is bidirectional so an approved camera plugin can advertise a reverse transport role. `/camera/session/state` and `/camera/freeze/image/chunk` remain **receive-only** (declare them in RECEIVE_PREFIXES); sending them is rejected |
 | `/mediasync/settings`, `/mediasync/now` | `mediasync` | Photo sync control: partial settings updates (`autoSyncOnCharge`, `deleteAfterSync`; an empty request is a refresh) and a manual "sync now". `/mediasync/status` is **receive-only** (declare it in RECEIVE_PREFIXES); every other `/mediasync/…` path is hub-to-hub and rejected if you send it |
 | `/debug/adb/request` → `/debug/adb/reply` | `wireless_debugging` | High-risk wireless ADB control. Actions are `status`, `enable`, `start_pairing`, `cancel_pairing`, and `disable`. Replies are owner-scoped direct replies and need no receive prefix. The phone hub stamps the authenticated plugin id; plugins must not add or trust one themselves. Pairing codes expire after two minutes and must not be persisted or logged; code-bearing windows use `FLAG_SECURE`, and only an explicit user action may copy a sensitive-marked command to the Android clipboard. |
+| `/page/response`, `/page/result` | `surfaces` | Answers to the page requests and confirmed actions the hub recorded for you, sent by the SDK from your page callbacks and `publishPage`. Needs `rokidbus.plugin.pages`; the hub stamps your identity and refuses unsolicited or cross-owner pages. |
+| `/activity/result`, `/activity/geometry`, `/activity/heading`, `/notice/withdraw` | `surfaces` | Launcher bundle only (`supportsLauncherInteractive()`): the answer to an activity command, your activity's route geometry and compass heading (never queued; geometry needs the SPP data plane), and "this event is no longer on the phone". Use the SDK calls; the hub stamps your identity, and an older hub refuses these paths. |
 | `/skills/catalog/request`, `/skills/invoke`, `/skills/cancel`, `/skills/session/close` | `skills_client` | Look up and invoke the operations approved for you. Use the SDK (`requestSkillCatalog`, `invokeSkill`, …); answers come back on the owner-scoped `/skills/catalog/reply` and `/skills/result`, which need no receive prefix. |
 | `/skills/provider/result` | `skills_provider` | Your one answer to a delivered invocation. Use `NexusSkillInvocation`; invocations and cancellations arrive on the hub-only `/skills/provider/invoke` and `/skills/provider/cancel`. |
 | `/plugin/<yourId>/…` | — | Your private namespace (must match your declared receive prefixes) |
@@ -199,13 +285,23 @@ turning normal Wi-Fi off.
 Paths a plugin **receives** (reserved, hub-generated — you never send these):
 `/system/plugin/registration`, `/system/plugin/open`, `/system/plugin/close`,
 `/system/plugin/input`, `/glasses/device-info`, `/surface/text-committed`, plus
-deliveries into your `/plugin/<id>/…` namespace.
+deliveries into your `/plugin/<id>/…` namespace. An opted-in page provider also
+receives `/page/request`, `/page/action`, `/page/visibility` and `/page/closed`,
+and its effective page version on `/system/hub/capabilities`, owner-scoped and
+with no receive prefix (none may be declared under `/page`).
+`/map/rendered` is an owner-scoped direct callback, with no receive prefix,
+only after both hubs negotiate rendered-map feedback and attribution v1. Use
+`renderedMapViews` and `onNexusRenderedMapsChanged`; its short lease is not a
+page lease or permission to extend a journey. A plugin can never send it.
 Reserved sender roots you can never use: `/launcher`, `/surface/input`, `/ink/event`,
-`/core`, `/system`, `/security`, `/error`. Rejections and undeliverable traffic
+`/core`, `/system`, `/security`, `/error`, and every `/page` path except the two
+answers above. Rejections and undeliverable traffic
 come back on `/error` as `{code, forId, pluginId}` (hubs before 1.4.6 omitted
 `pluginId`, and the SDK dropped those errors unseen). `/core/native-apps/*`, `/core/remote-input/*`,
-`/core/navigation/*`, and `/core/pointer/*` are trusted phone-hub/glasses-hub
-controls, never plugin APIs.
+`/core/navigation/*`, `/core/pointer/*`, `/core/compose/*`, `/core/ambient/*`,
+`/core/policy/quick-actions` and `/core/notice/purge` are trusted
+phone-hub/glasses-hub controls, never plugin APIs: the hub composer, ambient
+sizes and quick-action approvals belong to the hubs and the user.
 
 Every approved, live registration receives glasses hardware signals without an
 additional capability grant. `onNexusLinkState` includes

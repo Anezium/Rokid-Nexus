@@ -87,14 +87,40 @@ internal object NotificationControl {
      * the time this runs; the visible inbox surface only has to look again.
      */
     fun notifyCaptured(notificationId: String) {
-        main.post { inbox?.onCaptureChanged(notificationId) }
+        main.post {
+            inbox?.onCaptureChanged(notificationId)
+            pageListener?.invoke()
+        }
     }
 
+    /**
+     * The repository or what it may show changed without a capture: access was lost, Relay was
+     * switched off, or a preview setting changed. Only a visible page looks again; no notice or
+     * reply follows from it.
+     */
+    fun notifyInboxChanged() {
+        main.post { pageListener?.invoke() }
+    }
+
+    /** The notice band's callbacks, when the listener is connected; the plugin service forwards to them. */
+    fun noticeCallbacks(): RelayNoticeRuntime? = listener?.noticeCallbacks
+
+    /** Told when the inbox changes, so a visible page can follow it; set by the plugin service. */
+    @Volatile
+    var pageListener: (() -> Unit)? = null
+
+    /** Applies changed settings: per-app policy prunes what it no longer admits, everywhere it shows. */
     fun refreshFromSettings(context: Context) {
-        ReplyRepository.prune(RelaySettings(context))
+        // What the policy no longer admits leaves the glasses too, listener attached or not. The
+        // user's decision is the trigger; what the inbox still holds only adds to it, since a
+        // detached listener or a restart leaves the glasses' copy behind an empty inbox.
+        val settings = RelaySettings(context)
+        val narrowed = RelayHistoryForget.narrowed(context, settings)
+        if (ReplyRepository.prune(settings).isNotEmpty() || narrowed) RelayHistoryForget.request(context)
         main.post {
             listener?.refreshFromSettings()
             inbox?.onSettingsChanged()
+            pageListener?.invoke()
         }
     }
 

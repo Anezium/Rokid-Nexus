@@ -1,12 +1,19 @@
 package com.anezium.rokidbus.glasses
 
+import com.anezium.rokidbus.shared.AmbientSize
+import com.anezium.rokidbus.shared.ForegroundAmbientMode
 import com.anezium.rokidbus.shared.PinSurfacePosition
 
-/** The glasses-owned context that determines how loudly an activity is presented. */
+/**
+ * The glasses-owned context that determines how loudly an activity is presented. [NEXUS_LAUNCHER]
+ * is the legacy launcher or an open Nexus session; [IDLE_HOME] the glasses' home (or nothing seen
+ * yet); [NATIVE_APP] a native app in front, where islands are capped at text (plan 028a §8.2).
+ */
 internal enum class ActivityPresentationContext {
     ACTIVE_SURFACE,
     NEXUS_LAUNCHER,
-    IDLE_OR_NATIVE_HOME,
+    IDLE_HOME,
+    NATIVE_APP,
     CAMERA_OVERLAY,
 }
 
@@ -71,8 +78,39 @@ internal fun selectActivityPresentation(
         ActivityPresentation.PULSE
     collapseState == ActivityCollapseState.ELAPSED ->
         ActivityPresentation.CHIP
+    // Over a native app an island never expands, whatever its collapse: capped at its text form.
+    context == ActivityPresentationContext.NATIVE_APP ->
+        ActivityPresentation.CHIP
     else ->
         ActivityPresentation.PANEL
+}
+
+/**
+ * The foreground's per-app mode over a presentation (plan 028a §8.2): residents keep it, signals
+ * keep only the flare of a significant update, nothing hides every island. Islands stay passive
+ * in every mode: this only decides what is drawn.
+ */
+internal fun applyForegroundMode(
+    presentation: ActivityPresentation,
+    mode: ForegroundAmbientMode,
+): ActivityPresentation = when (mode) {
+    ForegroundAmbientMode.RESIDENTS -> presentation
+    ForegroundAmbientMode.SIGNALS ->
+        if (presentation == ActivityPresentation.FLARE) presentation else ActivityPresentation.HIDDEN
+    ForegroundAmbientMode.NOTHING -> ActivityPresentation.HIDDEN
+}
+
+/**
+ * The size an island with an explicit ambient preference is drawn at (plan 028a §8.1): the
+ * preference itself, capped at text over a native app. Null keeps today's automatic chip/panel.
+ */
+internal fun ambientIslandSize(
+    preferred: AmbientSize?,
+    context: ActivityPresentationContext,
+): AmbientSize? = when {
+    preferred == null -> null
+    context == ActivityPresentationContext.NATIVE_APP -> AmbientSize.TEXT
+    else -> preferred
 }
 
 internal data class ActivityPrimaryCandidate(
@@ -106,9 +144,9 @@ internal fun canResolveActivityTap(
 /**
  * Selects the singular expanded activity.
  *
- * A significant update always wins. Before any activity has one, the first
- * still-live activity remains primary so merely starting a second process does
- * not make the HUD jump corners.
+ * The latest significant moment wins: a significant update, or the start of a
+ * new session, which the controller records the same way. Corners never move;
+ * only which island expands does. Without any, the first started stays primary.
  */
 internal fun selectPrimaryActivity(
     candidates: Collection<ActivityPrimaryCandidate>,

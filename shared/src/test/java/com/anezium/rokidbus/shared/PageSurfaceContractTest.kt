@@ -12,6 +12,17 @@ import org.junit.Test
 
 class PageSurfaceContractTest {
     @Test
+    fun `a page message needs the data plane exactly when its envelope outgrows one CXR message`() {
+        val overhead = FrameProtocol.toJsonBytes(BusEnvelope(path = BusPaths.PAGE_RESPONSE, payload = JSONObject().put("pad", ""))).size
+        val fits = JSONObject().put("pad", "x".repeat(BusConstants.CXR_CONTROL_MAX_BYTES - overhead))
+        val over = JSONObject().put("pad", "x".repeat(BusConstants.CXR_CONTROL_MAX_BYTES - overhead + 1))
+        assertFalse(PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, fits))
+        assertTrue(PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESPONSE, over))
+        // Multibyte text counts in UTF-8 bytes, as the transport does.
+        assertTrue(PageSurfaceContract.needsDataPlane(BusPaths.PAGE_RESULT, JSONObject().put("pad", "é".repeat(BusConstants.CXR_CONTROL_MAX_BYTES / 2))))
+    }
+
+    @Test
     fun `valid request round trips with all correlation and params`() {
         val payload = request().put("params", JSONObject().put("view", "route"))
         val parsed = valid(PageSurfaceContract.validateRequest(payload))
@@ -261,6 +272,33 @@ class PageSurfaceContractTest {
         assertEquals(524_288, PageSurfaceContract.MAX_SNAPSHOT_TOTAL_BYTES)
         assertEquals("rokidbus.plugin.pages", PageSurfaceContract.META_PLUGIN_PAGES)
         assertEquals("pageSessionVersion", PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION)
+    }
+
+    @Test
+    fun `a bounded result caps the whole payload including its replacement and identity`() {
+        val replacement = response().put("body", sizedObject(40_000))
+        val fits = result().put("replacement", replacement).put("pluginId", "maps")
+        valid(PageSurfaceContract.validateBoundedResult(fits))
+        // Each replacement fits its own page cap; together with the result they do not.
+        val padded = result().put("replacement", response().put("body", sizedObject(65_000)))
+            .put("providerRegistrationId", "x".repeat(600))
+        valid(PageSurfaceContract.validateResult(padded))
+        invalid(PageSurfaceContract.ERROR_PAGE_TOO_LARGE, PageSurfaceContract.validateBoundedResult(padded))
+        invalid(PageSurfaceContract.ERROR_INVALID_PAGE_REQUEST, PageSurfaceContract.validateBoundedResult(result().put("status", "maybe")))
+    }
+
+    @Test
+    fun `session versions are strict integers and negotiate only on both hubs at one`() {
+        assertEquals(1, PageSurfaceContract.parseSessionVersion(1))
+        assertEquals(1, PageSurfaceContract.parseSessionVersion(1L))
+        assertEquals(2, PageSurfaceContract.parseSessionVersion(2))
+        listOf(null, "1", 1.0, -1, Long.MAX_VALUE, true, JSONObject.NULL).forEach {
+            assertEquals("$it", 0, PageSurfaceContract.parseSessionVersion(it))
+        }
+        assertEquals(1, PageSurfaceContract.negotiatedSessionVersion(1, 1))
+        listOf(0 to 1, 1 to 0, 2 to 1, 1 to 2, 0 to 0).forEach { (local, remote) ->
+            assertEquals(0, PageSurfaceContract.negotiatedSessionVersion(local, remote))
+        }
     }
 
     private fun correlation() = PageSurfaceContract.correlationPayload(PageCorrelation("req-1", 1L, 1, "maps:route"))

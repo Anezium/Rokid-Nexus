@@ -6,7 +6,9 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.text.TextPaint
 import android.text.TextUtils
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -14,9 +16,11 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.glasses.page.OverflowLineView
 import com.anezium.rokidbus.shared.PinSurfaceEmphasis
 import com.anezium.rokidbus.shared.PinSurfacePosition
 import com.anezium.rokidbus.shared.PinSurfaceSize
+import kotlin.math.ceil
 
 object PinOverlayRenderer {
     private var service: AccessibilityService? = null
@@ -89,6 +93,16 @@ object PinOverlayRenderer {
         }
     }
 
+    /** The width [pin] is drawn at, for the activity island that shares its row. */
+    internal fun drawnWidthPx(context: Context, pin: NexusPinSurface): Int {
+        val view = PinPanelView(context).apply { render(pin) }
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(context.resources.displayMetrics.widthPixels, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        return view.measuredWidth
+    }
+
     private fun hide() {
         val currentRoot = root
         if (currentRoot != null) {
@@ -139,8 +153,12 @@ object PinOverlayRenderer {
      * The shared medium chip geometry. Activities instantiate this same view;
      * the pin renderer continues to use it with no leading glyph.
      */
-    internal class PinPanelView(context: Context) : LinearLayout(context) {
-        private val title = row(bold = true)
+    internal class PinPanelView(
+        context: Context,
+        /** An activity's chip moves a title wider than its line; a pin's title is a plain row. */
+        movingTitle: OverflowLineView? = null,
+    ) : LinearLayout(context) {
+        private val title = row(bold = true, view = movingTitle ?: TextView(context))
         /**
          * An activity's measure, stacked under the title beside the glyph, in
          * the room the glyph leaves there. Pins never use it.
@@ -197,6 +215,19 @@ object PinOverlayRenderer {
             }
         }
 
+        /**
+         * The narrowest an activity's chip, its glyph beside the title over the measure, keeps its
+         * text: the title line still shows one character at [size].
+         */
+        fun minStackedWidthPx(size: PinSurfaceSize): Int {
+            val titleSp = if (size == PinSurfaceSize.MEDIUM) MEDIUM_TITLE_SP else SMALL_TITLE_SP
+            val titlePaint = TextPaint(title.paint).apply {
+                textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, titleSp, resources.displayMetrics)
+            }
+            return paddingLeft + paddingRight + BusTheme.dp(context, GLYPH_SIZE_DP) + BusTheme.dp(context, 6) +
+                ceil(titlePaint.measureText("M")).toInt()
+        }
+
         fun render(pin: NexusPinSurface?) {
             val content = pin?.content
             render(
@@ -213,20 +244,28 @@ object PinOverlayRenderer {
             size: PinSurfaceSize,
             leadingGlyph: Drawable?,
             subtitleText: String? = null,
+            /** An activity's chip beside another occupant of its row stays inside this width. */
+            widthBudgetPx: Int? = null,
         ) {
             val medium = size == PinSurfaceSize.MEDIUM
-            val maxWidthPx = (
+            val fractionPx = (
                 resources.displayMetrics.widthPixels *
                     if (medium) MEDIUM_SCREEN_WIDTH_FRACTION else SMALL_SCREEN_WIDTH_FRACTION
                 ).toInt()
-
-            title.textSize = if (medium) MEDIUM_TITLE_SP else SMALL_TITLE_SP
-            title.maxWidth = maxWidthPx
-            title.text = titleText.orEmpty()
-            title.visibility = visibleIf(!titleText.isNullOrEmpty())
+            val maxWidthPx = widthBudgetPx?.let { (it - paddingLeft - paddingRight).coerceIn(0, fractionPx) } ?: fractionPx
             // With a subtitle the glyph stands beside both rows; without one it
             // stays the title's compound drawable, exactly as pins always drew.
             val stacked = leadingGlyph != null && !subtitleText.isNullOrEmpty()
+            val besideGlyphPx = if (stacked && widthBudgetPx != null) {
+                (maxWidthPx - BusTheme.dp(context, GLYPH_SIZE_DP) - BusTheme.dp(context, 6)).coerceAtLeast(0)
+            } else {
+                maxWidthPx
+            }
+
+            title.textSize = if (medium) MEDIUM_TITLE_SP else SMALL_TITLE_SP
+            title.maxWidth = besideGlyphPx
+            title.text = titleText.orEmpty()
+            title.visibility = visibleIf(!titleText.isNullOrEmpty())
             if (stacked) {
                 title.compoundDrawablePadding = 0
                 title.setCompoundDrawables(null, null, null, null)
@@ -245,7 +284,7 @@ object PinOverlayRenderer {
                 title.setCompoundDrawables(leadingGlyph, null, null, null)
             }
             subtitle.textSize = if (medium) MEDIUM_LINE_SP else SMALL_LINE_SP
-            subtitle.maxWidth = maxWidthPx
+            subtitle.maxWidth = besideGlyphPx
             subtitle.text = subtitleText.orEmpty()
             subtitle.visibility = visibleIf(stacked)
 
@@ -261,8 +300,8 @@ object PinOverlayRenderer {
             }
         }
 
-        private fun row(bold: Boolean = false) =
-            TextView(context).apply {
+        private fun row(bold: Boolean = false, view: TextView = TextView(context)) =
+            view.apply {
                 setTextColor(if (bold) BusTheme.phosphor else BusTheme.muted)
                 typeface = Typeface.create(
                     Typeface.MONOSPACE,

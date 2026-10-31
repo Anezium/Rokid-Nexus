@@ -11,6 +11,21 @@ import org.junit.Test
 
 class ActivitySurfaceContractTest {
     @Test
+    fun `event identity is bounded and patches preserve replace and clear it`() {
+        val content = (ActivitySurfaceContract.validateStart(startPayload().put("eventKey", "track-1")) as ActivitySurfaceValidationResult.Valid).content
+        assertEquals("track-1", content.eventKey)
+        assertEquals("track-1", ActivitySurfaceContract.toPayload("media:activity", content).getString("eventKey"))
+        assertEquals("track-1", (ActivitySurfaceContract.validateUpdate(JSONObject().put("secondary", "Paused")) as ActivitySurfacePatchResult.Valid).patch.applyTo(content).eventKey)
+        assertEquals("track-2", (ActivitySurfaceContract.validateUpdate(JSONObject().put("eventKey", "track-2")) as ActivitySurfacePatchResult.Valid).patch.applyTo(content).eventKey)
+        assertNull((ActivitySurfaceContract.validateUpdate(JSONObject().put("eventKey", JSONObject.NULL)) as ActivitySurfacePatchResult.Valid).patch.applyTo(content).eventKey)
+        listOf("x".repeat(65), "bad\nkey", 10, false).forEach { key ->
+            assertTrue(ActivitySurfaceContract.validateStart(startPayload().put("eventKey", key)) is ActivitySurfaceValidationResult.Invalid)
+            assertTrue(ActivitySurfaceContract.validateUpdate(JSONObject().put("eventKey", key)) is ActivitySurfacePatchResult.Invalid)
+        }
+        assertFalse(ActivitySurfaceContract.stripLauncherFields(ActivitySurfaceContract.toPayload("media:activity", content)).has("eventKey"))
+    }
+
+    @Test
     fun `empty slot assert uses an owner that no plugin can claim`() {
         val marker = ActivitySurfaceContract.emptySlotAssertPayload(seq = 42)
 

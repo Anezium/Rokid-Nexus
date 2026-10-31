@@ -1,6 +1,61 @@
 # Changelog
 
-## Unreleased
+## 2.0.0
+
+Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4 and Sample 1.0.6 ship alongside and keep working as before with older hubs. Plugin developers get SDK 0.24.0.
+
+### Glasses hub
+
+- **A new Nexus launcher.** Triple tap opens a stack: your live activities first (a route, what plays, a to-do list), then the latest notification, **Notifications** and **Applications**. Swipe moves, tap opens, double tap goes back. The stack keeps its order while it is open, so nothing jumps under your finger.
+- **An integrated media player.** Media Deck's launcher player shows its cover,
+  title, artist and progress, with Previous, Play/Pause and Next. Its activity
+  card has quick controls and Open player; one Back leaves the focused player.
+  Paused and idle states remain honest, and a paused player can be resumed.
+- **Bands on your terms.** Keep an activity in Nexus while its floating band
+  expires or stays hidden. Track changes scroll the full title and artist,
+  including while paused. Covers use bounded image caching and degrade safely
+  to text/controls when only the narrow transport is available.
+- A notification removed from the phone leaves the launcher's promoted cards
+  immediately, including below an open page, while its entry remains in
+  Notifications history. Selection follows the surviving card and never hands
+  an old press to its replacement.
+- Restarting the glasses no longer reuses command identifiers remembered by the
+  phone, fixing Play/Pause commands silently rejected after an update or restart.
+- **Pages instead of apps.** An activity or a notification opens its page inside Nexus: a conversation, a player with Previous, Play/Pause and Next, a route with its map, a checklist. **Open app** is still there when you want the plugin's full surface.
+- **Tap to act.** A focused activity command, plugin page row or **Open app** runs immediately, without a confirmation screen. A press begun before the target was drawn cannot act; stale, offline and pending actions keep their guards. Conversation **Send** still needs its own fresh tap after the draft is visible.
+- **Maps move smoothly.** Between two route updates a few seconds apart, the map and your position glide instead of jumping, and the map turns smoothly with your heading, on the islands, the route page, Whole route and full screen (with Navigation 0.3.0).
+- **Long names scroll.** A destination, street or instruction too wide for its line on the island, the launcher card or the route page scrolls to its end instead of stopping at "…", when the plugin sends it whole (Navigation 0.3.0 does).
+- With an older phone too, a plugin page action acts only for a press begun after its row was drawn, so an update never runs a different row.
+- **Notification history.** The last 30 notifications of the past 24 hours, in memory only. A message opens its exact conversation. A notification removed from the phone is marked removed and can no longer be answered, and nothing older than 24 hours is shown, even on a launcher left open.
+- **Reply from the glasses.** A conversation page offers Dictate (the glasses' microphone) and Type (the phone keyboard). Send needs a fresh tap after you saw it, and the result says the reply was handed to the app, never that it was delivered or read. What you dictated or typed is kept if the link drops or the notification goes away; it is never sent on its own.
+- **Navigation on the glasses.** A route shows as text, a minimap, a panel or a full map you can open from its card, with the real streets around a walking route. GPS loss is said plainly and the map turns north-up instead of guessing. A map needs a route Nexus plans itself, such as a walk started from Navigation: guidance read from Google Maps or Citymapper shows as text, and the route's Display choice marks Minimap and Panel unavailable instead of saving a size that changes nothing.
+- A one-to-one message no longer repeats its sender before each line, on its card and on the notification band; a group keeps every sender.
+- **Newest first.** A newly started activity goes above the ones already running, so a route you start while music plays leads the stack and expands. A track change or a plugin reconnecting does not move anything.
+- **Activities over an app.** For each app on the glasses you choose what stays visible while it is in front: your activities, alerts only, or nothing.
+- **Whole titles.** What plays reads in full on its card and its island: a title too long for its line scrolls slowly to its end and back while it is on screen. Folded, an activity's island is now its mark beside two lines, the title over the artist, with nothing left empty under them; expanded, its commands are drawn as icons whenever their names would not fit whole, never as "Pre…".
+- With an older phone hub, or with the **Classic launcher** chosen, the glasses keep the 1.8 launcher, and activities keep their classic panel and chip instead of the new map islands.
+
+### Phone hub
+
+- **Floating Activities.** Choose Automatic, Always visible, Home screen only,
+  On changes, or Activities only per plugin. On changes shows a brief band for
+  a real event for 3, 5 or 10 seconds; its retained Activities card is independent.
+  Plugins link to these user-owned settings through the SDK.
+- Readable Navigation permission guidance, a clear Allow/Manage action and
+  retained privacy explanation while Android reconnects its notification listener.
+
+### SDK 0.24.0
+
+- Launcher pages and delivered commands now share the service's existing quiet **Active on your glasses** notification, helping them keep answering while the phone is idle. Pages release it when covered, closed or their lease expires; commands and actions release it after the result (or the existing deadline for an asynchronous command). Existing surface, microphone and ongoing-work holds still compose. Plugins already declaring the session's `specialUse` foreground service need no manifest change; a rejected promotion remains non-fatal.
+- The launcher bundle, active only when both hubs negotiate it (`supportsLauncherInteractive()`): page providers and the conversation, media and route page templates; typed page and activity actions with hub-approved quick actions; activity destinations and commands; notice destinations, event keys, conversation events and `withdrawNotice(eventKey)`; `forgetNotices(onAccepted)` asks the glasses to forget every notification the plugin showed, kept by the phone until they do, with `onAccepted` once the phone holds it; route geometry and heading for activities.
+- Activity actions are no longer deprecated. On a negotiated launcher they are selectable from the activity's card and page; islands themselves stay passive, and older hubs ignore them as before. Plugins still need a full-surface or notice fallback for hubs without the bundle.
+- Launcher taps use `QUICK` when the existing policy and phone stamp allow it, `CONFIRMED` otherwise. The SDK and wire are unchanged; `CONFIRMED` no longer implies a glasses confirmation panel.
+- `supportsRenderedMaps`, `renderedMapViews`, `clearRenderedMapDemand()` and `onRenderedMapsChanged()` expose bounded, expiring hub-issued map demand.
+- `NexusActivity.headline` (optional, at most 40 printable characters, launcher bundle only) is the longer form of `primary`, such as a whole track title, that the glasses draw on the activity's card and island, scrolled when it does not fit. `primary` keeps its 12 characters and is what older hubs draw; the SDK and the phone drop the headline for them.
+- `NexusActivity.wholeSecondary` and `wholeDetail` (optional, at most 120 printable characters a line, launcher bundle only) carry `secondary` and `detail` uncut. The glasses scroll them where the bounded lines would end in an ellipsis; older hubs draw the bounded lines. `NexusGuidanceStep` passes them through.
+- `RouteGeometry.anchor` (optional `RouteAnchor(frame, x, y)`, decimetres) places a geometry's frame on the ground so the glasses glide between successive geometries of one `frame` instead of jumping. Older hubs ignore it.
+- `RouteGeometry.attribution` (optional, at most 40 printable characters) credits the source of a geometry's `street` and `major` paths. Older hubs ignore it.
+- Several model classes gained defaulted parameters. Source calls keep compiling; code built against 0.23.0 must be rebuilt against 0.24.0.
 
 ## 1.8.3
 
@@ -27,6 +82,14 @@ Update both Nexus hubs together.
 
 ### Phone hub
 
+- Map-render reports use live map negotiation directly, avoiding repeated Bluetooth-device discovery while preserving the current-revision checks. Ambient reports no longer wait behind activity or geometry writes; activity publication checks its negotiated support and its live link without discovering Bluetooth devices, so the phone keeps up with the glasses' feedback while a route page is open. Reports for geometry whose write has not succeeded are refused; the next draw renewal can acknowledge it after success.
+- Request a fresh plugin connection before delivering a launcher command or page action, and keep it bound until its answer or deadline. Whether this wakes an already-frozen plugin still needs device verification. A refused keep-alive bind still allows a live plugin to answer; losing that connection no longer ends its activity.
+- Settings → Glasses display: **Glasses launcher** (Default, New launcher, Classic launcher), the Navigation display size, and per-app behaviour over native apps.
+- Plugin access: **Show its activity on the glasses** and **Pin its activity**. The per-plugin one-tap switches are removed; retained quick-action approvals and wire validation are unchanged.
+- Plugin access: **Float over the glasses** turns a plugin's island and pin off on the glasses' home and over apps, while its card, pages and notifications stay; on by default, it needs the new launcher (the switch says so), and up to 64 plugins can be kept off.
+- **Type your reply.** When you choose Type on the glasses, the phone shows its keyboard, or a notification that opens it.
+- A plugin that is revoked, disabled, uninstalled or re-signed leaves the glasses' notification history, even if the glasses were away at the time.
+- Route maps report only what the glasses actually drew, under a short owner-scoped lease. Both hubs negotiate this feedback and in-map attribution together; Navigation keeps route-only guidance with an older peer.
 - Builds against CXR-L client 1.1.2 through CxrGlobal 0.3.0, and tells Hi Rokid which client version it speaks.
 - If Hi Rokid ends the glasses session itself, the hub now reports the link down right away instead of believing it is still up, and the status notification says "Hi Rokid ended the glasses session; tap to reconnect". It does not reconnect on its own.
 - The assist button is left to Rokid while Hi Rokid reports a native scene such as a call, a recording, navigation, a payment, translation, an update or the camera on the glasses, so a press over that scene no longer triggers the takeover and its exit burst; a scene reported in the middle of a takeover stops the remaining exit shots. Only explicit reports count; anything Nexus cannot read keeps the button with Nexus as before.

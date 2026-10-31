@@ -66,14 +66,28 @@ interface NexusPluginCallbacks {
     fun onNoticeAction(id: String) = Unit
 
     /** The wearer fired one of this plugin's current activity actions. */
-    @Deprecated("Glasses hubs 1.7.0 and later draw activity actions but never let the wearer select them. Put a command in a notice or a surface.")
     fun onActivityAction(id: String) = Unit
+
+    /**
+     * The wearer ran one of this plugin's activity commands on the revision they saw, between
+     * hubs that negotiated the launcher bundle. The return value is the outcome the glasses show;
+     * null sends none, and the glasses then say the command is unconfirmed rather than invent a
+     * success. The default forwards to [onActivityAction] and returns null, so a plugin written
+     * before commands existed keeps working and never reports anything it did not check.
+     */
+    fun onActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult? {
+        onActivityAction(command.actionId)
+        return null
+    }
 
     /**
      * This plugin's activity ended. Reasons are strings so a newer hub can add
      * one without an older SDK silently dropping the callback.
      */
     fun onActivityClosed(reason: String) = Unit
+
+    /** Rendered map feedback changed. Leases also expire silently; re-read before each fetch. */
+    fun onRenderedMapsChanged() = Unit
 
     /**
      * The wearer submitted or cancelled this card's editable field (see
@@ -122,4 +136,24 @@ interface NexusPluginCallbacks {
 
     fun onMessage(path: String, id: String, payload: JSONObject) = Unit
     fun onBinary(path: String, id: String, payload: JSONObject, data: ByteArray) = Unit
+
+    /**
+     * The glasses want one of this plugin's pages; what this returns is the answer. Delivered on
+     * the main thread to a plugin that opted in with `rokidbus.plugin.pages`, whether or not it
+     * is open: a page is consultation inside the Nexus session, never an [onOpen].
+     */
+    fun onPageRequest(request: NexusPageRequest): NexusPage = NexusPage.Unavailable
+
+    /**
+     * The wearer invoked one of a page's actions; what this returns is the result. [NexusPageAction.mode]
+     * says how: confirmed, quick (a typed action the user approved for this plugin) or compose
+     * (the hub composer's Send, with its text).
+     */
+    fun onPageAction(action: NexusPageAction): NexusPageResult = NexusPageResult.rejected()
+
+    /** A page was covered or uncovered, or its visible lease renewed. */
+    fun onPageVisibility(visibility: NexusPageVisibility) = Unit
+
+    /** A page left the glasses. It is not [onClose]: an open immersion of this plugin is untouched. */
+    fun onPageClosed(closed: NexusPageClosed) = Unit
 }

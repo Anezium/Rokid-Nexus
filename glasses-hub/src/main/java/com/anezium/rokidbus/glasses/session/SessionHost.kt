@@ -18,7 +18,17 @@ internal interface SessionWindow {
 
     fun remove()
 
+    /** The plain-text summary of a screen; a window that draws [present] may ignore it. */
     fun show(screen: HostScreen)
+
+    /** The full screen to draw, when the host was given a way to build it. */
+    fun present(screen: SessionScreen) = Unit
+
+    /**
+     * Runs [action] once what was last presented has been drawn. A window that draws nothing of
+     * its own has nothing to wait for.
+     */
+    fun afterDraw(action: () -> Unit) = action()
 }
 
 /**
@@ -26,13 +36,14 @@ internal interface SessionWindow {
  * [SessionEffect.DetachHost], never between the gate, the root and a page. A window that cannot
  * be added aborts the session once: a session with no window would own every key invisibly.
  *
- * It draws text rows only: the gate's hint, one row per root stop, and a frame's title with its
- * state. It never reads a page beyond its title and state; templates are drawn in PR3.
+ * [screenFor] is the plain-text summary of each state. When [screens] is given, the window is also
+ * handed the full screen built from the same state, typed templates included.
  */
 internal class SessionHost(
     private val window: SessionWindow,
     private val abort: () -> Unit,
     private val log: (String) -> Unit,
+    private val screens: ((SessionState, SessionStatus?) -> SessionScreen)? = null,
 ) {
     var isAttached: Boolean = false
         private set
@@ -56,6 +67,12 @@ internal class SessionHost(
     fun render(state: SessionState, status: SessionStatus?) {
         if (!isAttached) return
         window.show(screenFor(state, status))
+        screens?.let { window.present(it(state, status)) }
+    }
+
+    /** [action] once the latest render is drawn; never for a window that is gone. */
+    fun afterDraw(action: () -> Unit) {
+        if (isAttached) window.afterDraw(action)
     }
 
     companion object {
@@ -105,6 +122,9 @@ internal class SessionHost(
 
         private fun statusText(status: SessionStatus): String = when (status) {
             is SessionStatus.OpenFailed -> "Could not open ${status.pluginId} (${status.reason.name.lowercase()})"
+            is SessionStatus.LaunchFailed -> "Could not open ${status.label}"
+            SessionStatus.FrameLimit -> "Too many pages open"
+            SessionStatus.NotAvailable -> "Not available here"
         }
     }
 }

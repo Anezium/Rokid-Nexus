@@ -8,11 +8,14 @@ internal enum class NavSource(val packageName: String, val label: String, vararg
     OSMAND("net.osmand", "OsmAnd", "net.osmand.plus"),
     YANDEX_MAPS("ru.yandex.yandexmaps", "Yandex Maps"),
     MAPS_ME("com.mapswithme.maps.pro", "maps.me"),
+
+    /** A walking journey the wearer started in Navigation itself; never a notification's source. */
+    NEXUS("com.anezium.rokidbus.plugin.nav", "Walking route"),
     ;
 
     companion object {
         fun of(packageName: String): NavSource? = values().firstOrNull {
-            it.packageName == packageName || packageName in it.aliases
+            it != NEXUS && (it.packageName == packageName || packageName in it.aliases)
         }
     }
 }
@@ -73,6 +76,11 @@ internal data class NavGuidance(
     val detail: List<String> = emptyList(),
     val badge: String? = null,
     val track: NavTrack? = null,
+    /**
+     * The place [secondary] names, as the app wrote it and before the activity line's bound:
+     * for the route page's wider street field and the activity's whole line, which scrolls.
+     */
+    val street: String? = null,
     /** A second quantity for [primary]: the distance of a walk timed in minutes. */
     val measure: String? = null,
     val progressPercent: Int? = null,
@@ -83,6 +91,8 @@ internal data class NavGuidance(
     val arrived: Boolean = false,
     /** The whole instruction, for the plugin's own card where there is room for it. */
     val instruction: String? = null,
+    /** [detail] before its bound, for the activity's lines that scroll. */
+    val wholeDetail: List<String> = emptyList(),
 )
 
 /** Stops or stages of a ride, mirroring the SDK track without depending on it in parsers. */

@@ -3,6 +3,16 @@ package com.anezium.rokidbus.plugin.relay
 import android.view.KeyEvent
 import com.anezium.rokidbus.client.plugin.NexusCard
 import com.anezium.rokidbus.client.plugin.NexusCardLine
+import com.anezium.rokidbus.client.PluginRegistrationResult
+import com.anezium.rokidbus.client.plugin.NexusActionType
+import com.anezium.rokidbus.client.plugin.NexusNoticeCloseReason
+import com.anezium.rokidbus.client.plugin.NexusPage
+import com.anezium.rokidbus.client.plugin.NexusPageAction
+import com.anezium.rokidbus.client.plugin.NexusPageActionMode
+import com.anezium.rokidbus.client.plugin.NexusPageClosed
+import com.anezium.rokidbus.client.plugin.NexusPageRequest
+import com.anezium.rokidbus.client.plugin.NexusPageResult
+import com.anezium.rokidbus.client.plugin.NexusPageVisibility
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.client.plugin.NexusReader
 import com.anezium.rokidbus.client.plugin.NexusReaderSegment
@@ -15,10 +25,16 @@ import com.anezium.rokidbus.client.plugin.NexusSpeechSession
 import com.anezium.rokidbus.client.plugin.NexusSpeechState
 import com.anezium.rokidbus.client.plugin.NexusSpeechStopReason
 import com.anezium.rokidbus.client.plugin.NexusSurfaceSession
+import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 
-/** Menu-launched inbox. The notification-band runtime remains a separate, untouched flow. */
+/**
+ * Menu-launched inbox, read-only session pages, and the owner of Relay's one client. The
+ * notification band keeps this service bound while it needs the bus and hears its callbacks
+ * through here; see [RelayBus].
+ */
 class RelayPluginService : NexusPluginService() {
     private enum class ThreadMode {
         READING,
@@ -26,6 +42,9 @@ class RelayPluginService : NexusPluginService() {
         REVIEW,
         VOICE_FAILURE,
         SENT,
+
+        /** The reply's authority went before it could be sent: the words stay, Send does not. */
+        UNSENT,
     }
 
     /**
@@ -57,6 +76,121 @@ class RelayPluginService : NexusPluginService() {
     private var speechFinalReceived = false
     private var speechGeneration = 0
     private var speech: NexusSpeechSession? = null
+    private var pageScheduled: Runnable? = null
+    private val pageTime = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+
+    // Pages never speak, mark read or touch a notification; only the composer's Send acts, below.
+    private val pages = RelayPageProvider<NexusPageRequest>(
+        pageIdOf = NexusPageRequest::pageId,
+        floorOf = NexusPageRequest::minimumRevision,
+        publish = { request, page -> nexusClient?.publishPage(request, page) ?: NexusSdkResult.NOT_REGISTERED },
+        build = { pageId, revision ->
+            RelayPages.page(
+                pageId,
+                revision,
+                ReplyRepository.threadEntries(),
+                settings.hideInboxPreviews(),
+                conversation = nexusClient?.supportsLauncherInteractive() == true,
+            ) {
+                pageTime.format(java.util.Date(it))
+            }
+        },
+        now = android.os.SystemClock::elapsedRealtime,
+        schedule = { delayMs, task ->
+            pageScheduled?.let(main::removeCallbacks)
+            val runnable = Runnable { pageScheduled = null; task() }
+            pageScheduled = runnable
+            main.postDelayed(runnable, delayMs)
+        },
+        cancelScheduled = {
+            pageScheduled?.let(main::removeCallbacks)
+            pageScheduled = null
+        },
+    )
+
+    override fun onCreate() {
+        super.onCreate()
+        nexusClient?.let(RelayBus::serviceCreated)
+        RelayHistoryForget.baseline(this)
+        RelayHistoryForget.flush(this)
+        NotificationControl.pageListener = { main.post { pages.inboxChanged() } }
+    }
+
+    override fun onDestroy() {
+        NotificationControl.pageListener = null
+        pages.forget()
+        nexusClient?.let(RelayBus::serviceDestroyed)
+        super.onDestroy()
+    }
+
+    private val composer = RelayComposeHandler(
+        threadIdOfPage = ReplyRepository::threadIdForPage,
+        hasAuthority = ReplyRepository::hasReplyAuthority,
+        send = { threadId, text -> ReplyRepository.sendReply(applicationContext, threadId, text) },
+        changed = NotificationControl::notifyInboxChanged,
+    )
+
+    override fun onNexusPageRequest(request: NexusPageRequest): NexusPage = pages.onRequest(request)
+
+    override fun onNexusPageAction(action: NexusPageAction): NexusPageResult = composer.handle(
+        invocationId = action.invocationId,
+        pageId = action.pageId,
+        actionId = action.actionId,
+        compose = action.mode == NexusPageActionMode.COMPOSE,
+        composeSendTyped = action.typed == NexusActionType.ComposeSend,
+        text = action.text,
+    )
+
+    override fun onNexusPageVisibility(visibility: NexusPageVisibility) =
+        pages.onVisibility(visibility.pageId, visibility.visible)
+
+    override fun onNexusPageClosed(closed: NexusPageClosed) = pages.onClosed(closed.pageId)
+
+    // The band's callbacks arrive on this, Relay's only client, and belong to the band.
+    override fun onNexusRegistrationState(result: Int) {
+        if (result != PluginRegistrationResult.APPROVED) pages.forget()
+        if (result == PluginRegistrationResult.APPROVED) {
+            nexusClient?.let { RelayHistoryForget.registered(this, it, it.registrationGeneration) }
+        }
+        NotificationControl.noticeCallbacks()?.onRegistrationState(result)
+    }
+
+    override fun onNexusLinkState(state: Int) {
+        if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) pages.forget()
+        RelayHistoryForget.flush(this)
+        NotificationControl.noticeCallbacks()?.onLinkState(state)
+    }
+
+    override fun onNexusNoticeAction(id: String) {
+        NotificationControl.noticeCallbacks()?.onNoticeAction(id)
+    }
+
+    override fun onNexusNoticeClosed(reason: NexusNoticeCloseReason) {
+        NotificationControl.noticeCallbacks()?.onNoticeClosed(reason)
+    }
+
+    override fun onNexusSurfaceTextCommitted(surfaceId: String, text: String, cancelled: Boolean) {
+        NotificationControl.noticeCallbacks()?.onSurfaceTextCommitted(surfaceId, text, cancelled)
+    }
+
+    /**
+     * The band's reply card was adopted on an idle HUD. That open, its input and its close
+     * belong to the band, whose own client used to take them as no-ops; the inbox stays shut.
+     */
+    private var bandAdopted = false
+
+    override fun onNexusOpen(openType: String) {
+        val band = NotificationControl.noticeCallbacks()
+        if (openType == PluginOpenTypes.ADOPTED && band?.ownsReplyCard == true) {
+            bandAdopted = true
+            // The session service is the inbox's; the band never had one.
+            stopNexusSessionForeground()
+            band.onOpen(openType)
+            return
+        }
+        bandAdopted = false
+        onNexusOpen()
+    }
 
     override fun onNexusOpen() {
         // One client per plugin id on the bus: the band steps aside while the
@@ -71,6 +205,11 @@ class RelayPluginService : NexusPluginService() {
     }
 
     override fun onNexusClose() {
+        if (bandAdopted) {
+            bandAdopted = false
+            NotificationControl.noticeCallbacks()?.onClose()
+            return
+        }
         NotificationControl.inboxClosed(this)
         invalidateSpeech()
         entries = emptyList()
@@ -80,6 +219,10 @@ class RelayPluginService : NexusPluginService() {
     }
 
     override fun onNexusInput(event: NexusInputEvent) {
+        if (bandAdopted) {
+            NotificationControl.noticeCallbacks()?.onInput(event)
+            return
+        }
         if (event.action != KeyEvent.ACTION_DOWN) return
         when (event.keyCode) {
             KeyEvent.KEYCODE_DPAD_RIGHT,
@@ -163,6 +306,7 @@ class RelayPluginService : NexusPluginService() {
             ThreadMode.READING -> startListening()
             ThreadMode.LISTENING,
             ThreadMode.SENT,
+            ThreadMode.UNSENT,
             -> Unit
             ThreadMode.REVIEW,
             ThreadMode.VOICE_FAILURE,
@@ -220,7 +364,7 @@ class RelayPluginService : NexusPluginService() {
         if (remaining <= 0L) 0 else ((remaining + 999L) / 1000L).toInt()
     }
 
-    /** Returns to the list once "Sent" has been read, if nothing else moved since. */
+    /** Returns to the list once "Sent" has been read, if nothing else moved since; the thread itself stays. */
     private fun leaveSentThread() {
         if (threadMode != ThreadMode.SENT || selection.view != RelayInboxView.THREAD) return
         resetThreadMode()
@@ -291,9 +435,9 @@ class RelayPluginService : NexusPluginService() {
 
     /** Returns whether the glasses took the surface; the countdown depends on it. */
     private fun renderThread(show: Boolean): Boolean {
-        // Not while confirming a send: the repository has already dropped the
-        // conversation, so refreshing here would lose the entry mid-render and
-        // bounce the wearer to the list before they could read "Sent".
+        // Not while confirming a send: the thread may be removed under it (Relay clears an
+        // answered notification), and refreshing here would bounce the wearer to the list
+        // before they could read "Sent".
         if (threadMode != ThreadMode.SENT) refreshEntries()
         val entry = currentEntry()
         if (entry == null) {
@@ -372,6 +516,18 @@ class RelayPluginService : NexusPluginService() {
                     ),
                 )
             }
+            // The wearer's words stay on screen, plainly not sent, for as long as they stay here.
+            ThreadMode.UNSENT -> buildList {
+                addAll(messageRows(snapshot.renderedText, snapshot.sender).takeLast(LISTENING_CONTEXT_MESSAGES))
+                add(
+                    NexusCardLine(
+                        text = transcript.orEmpty(),
+                        badge = "You",
+                        tone = NexusRowTone.DIM,
+                    ),
+                )
+                add(noteRow(threadStatus ?: UNSENT_NOTE))
+            }
         }.takeLast(RelayInboxCatalog.MAX_CARD_LINES)
 
         val instruction = when (threadMode) {
@@ -380,6 +536,7 @@ class RelayPluginService : NexusPluginService() {
             ThreadMode.REVIEW -> "scroll · tap · back cancels"
             ThreadMode.VOICE_FAILURE -> "tap to try again · back cancels"
             ThreadMode.SENT -> "back"
+            ThreadMode.UNSENT -> "back"
         }
         val footer = listOf(snapshot.appLabel.trim().take(MAX_FOOTER_SOURCE_CHARS), instruction)
             .filter(String::isNotBlank)
@@ -551,22 +708,29 @@ class RelayPluginService : NexusPluginService() {
                 transcript = null
                 threadStatus = null
                 threadMode = ThreadMode.SENT
-                // Confirm it, then hand the wearer back their list. The
-                // conversation is finished and the repository has already
-                // dropped it, so staying in a thread that no longer exists only
-                // makes them press Back to be told the same thing.
+                // Confirm it, then hand the wearer back their list, as Relay
+                // always has after a reply.
                 main.postDelayed(::leaveSentThread, SENT_LINGER_MS)
             }
-            ReplySendResult.Missing -> {
-                transcript = null
-                threadStatus = "Reply is no longer available."
-                threadMode = ThreadMode.READING
-            }
+            // The reply can no longer go: keep what the wearer said in view instead of
+            // dropping it, and offer nothing that would try again.
+            ReplySendResult.Missing,
+            ReplySendResult.NoFreeFormInput,
+            -> keepUnsent()
             ReplySendResult.Blank -> threadStatus = "Reply failed: empty reply"
-            ReplySendResult.NoFreeFormInput -> threadStatus = "Reply failed: reply unavailable"
-            is ReplySendResult.Failed -> threadStatus = "Reply failed: ${result.causeClass}"
+            is ReplySendResult.Failed -> if (result.authorityLost) {
+                keepUnsent()
+            } else {
+                threadStatus = "Not confirmed · check on the phone"
+            }
         }
         renderThread(show = false)
+    }
+
+    private fun keepUnsent() {
+        cancelSendCountdown()
+        threadStatus = UNSENT_NOTE
+        threadMode = ThreadMode.UNSENT
     }
 
     private fun showVoiceFailure(reason: String) {
@@ -671,6 +835,7 @@ class RelayPluginService : NexusPluginService() {
         const val SURFACE_ID = "relay-inbox"
         const val LIST_CONTENT_KEY = "relay-inbox-v1"
         const val THREAD_CONTENT_PREFIX = "relay-thread-"
+        const val UNSENT_NOTE = "Not sent · reply from the phone"
         const val MAX_CARD_TITLE_CHARS = 120
         const val MAX_CARD_LINE_CHARS = 240
         const val MAX_FOOTER_SOURCE_CHARS = 80

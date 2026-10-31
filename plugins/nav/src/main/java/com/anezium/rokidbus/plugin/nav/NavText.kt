@@ -117,14 +117,20 @@ internal object NavText {
         return null
     }
 
-    /** At most [max] characters, cut at a word where one is close, with an ellipsis. */
+    /**
+     * At most [max] characters, cut at a word where one is close, with an ellipsis. A separator
+     * the cut leaves at the end ("Gare de Fontainebleau,") goes too: it announced a part that is
+     * no longer there.
+     */
     fun fit(value: String, max: Int): String {
         val trimmed = value.trim().replace(Regex("\\s+"), " ")
         if (trimmed.length <= max) return trimmed
         val room = max - 1
         val cut = trimmed.lastIndexOf(' ', room).takeIf { it >= room * 2 / 3 } ?: room
-        return trimmed.substring(0, cut).trimEnd() + "…"
+        return trimmed.substring(0, cut).trimEnd().trimEnd(*CUT_SEPARATORS).trimEnd() + "…"
     }
+
+    private val CUT_SEPARATORS = charArrayOf(',', ';', ':', '·', '-', '–', '(', '/')
 
     /**
      * Apps print "80\u00A0m" with no-break spaces (U+00A0, U+202F, U+2007),

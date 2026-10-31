@@ -18,6 +18,8 @@ import com.anezium.rokidbus.shared.PinSurfaceEmphasis
 import com.anezium.rokidbus.shared.NoticeAction
 import com.anezium.rokidbus.shared.NoticeCloseReason
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
+import com.anezium.rokidbus.shared.PageSurfaceContract
+import com.anezium.rokidbus.shared.PageTemplateContract
 import com.anezium.rokidbus.shared.PinSurfaceLine
 import com.anezium.rokidbus.shared.PinSurfacePosition
 import com.anezium.rokidbus.shared.PinSurfaceSize
@@ -787,6 +789,16 @@ data class NexusNoticeImage(
  * @property lines Structured alternative to [body]. Empty entries are dropped;
  * an empty result is absent from the wire.
  * @property backdrop Hide the rest of the glasses display behind this notice.
+ * @property destination Launcher bundle: one of this plugin's own pages the
+ * event leads to, opened from the glasses' notification history.
+ * @property eventKey Launcher bundle: this plugin's own opaque id for the event
+ * (a safe id), so [NexusPluginClient.withdrawNotice] can say it is gone.
+ * @property conversation Launcher bundle: the event is a message in the thread
+ * at [destination]. Needs both, and the thread's conversation page uses
+ * [eventKey] as its `threadKey`.
+ *
+ * Without [NexusPluginClient.supportsLauncherInteractive] the three launcher
+ * fields are dropped before sending.
  */
 data class NexusNotice(
     val title: String? = null,
@@ -799,8 +811,15 @@ data class NexusNotice(
     val wakeDisplay: Boolean = false,
     val lines: List<String> = emptyList(),
     val backdrop: Boolean = false,
+    val destination: NexusPageDestination? = null,
+    val eventKey: String? = null,
+    val conversation: Boolean = false,
 ) {
     init {
+        require(eventKey == null || NoticeSurfaceContract.isValidEventKey(eventKey)) { "eventKey must be a safe id" }
+        require(!conversation || (destination != null && eventKey != null)) {
+            "A conversation event needs a destination and an eventKey"
+        }
         val normalizedLines = normalizedNoticeLines(lines)
         require(title == null || title.trim().length <= NoticeSurfaceContract.MAX_TITLE_CHARS)
         require(body == null || body.trim().length <= NoticeSurfaceContract.MAX_BODY_CHARS)
@@ -834,6 +853,9 @@ data class NexusNotice(
             ttlMs?.let { put("ttlMs", it) }
             if (wakeDisplay) put("wakeDisplay", true)
             if (backdrop) put("backdrop", true)
+            destination?.let { put(NoticeSurfaceContract.FIELD_DESTINATION, PageTemplateContract.encodeDestination(it.toContract())) }
+            eventKey?.let { put(NoticeSurfaceContract.FIELD_EVENT_KEY, it) }
+            if (conversation) put(NoticeSurfaceContract.FIELD_CONVERSATION, true)
             image?.let { metadata ->
                 if (imageBytes != null) putNoticeImage(metadata, imageBytes)
             }
@@ -962,23 +984,28 @@ sealed interface NexusActivityProgress {
  * the platform's `dot` fallback.
  * @property label Human-readable command label. The platform owns whether and
  * where it is shown.
+ * @property typed Launcher bundle: a media transport type (`MediaPrevious`, `MediaPlay`,
+ * `MediaPause`, `MediaNext`), which lets the user approve the command to run on one tap. Any
+ * other type is refused on an activity.
  */
-@Deprecated("Glasses hubs 1.7.0 and later draw activity actions but never let the wearer select them. Put a command in a notice or a surface.")
 data class NexusActivityAction(
     val id: String,
     val glyph: String,
     val label: String,
+    val typed: NexusActionType? = null,
 ) {
     init {
         require(id.trim().isNotEmpty())
         require(GlyphContract.isWellFormedName(glyph))
         require(label.trim().isNotEmpty())
+        require(typed == null || typed.isMedia) { "An activity action may only be typed media" }
     }
 
     internal fun toContract(): ActivityAction = ActivityAction(
         id = id.trim(),
         glyph = glyph.trim(),
         label = label.trim(),
+        typed = typed?.toContract(),
     )
 }
 
@@ -1036,8 +1063,7 @@ data class NexusActivityTrack(
  * @property eta Optional trailing value, capped at 8 trimmed characters.
  * @property detail Up to two panel-only detail lines, each capped at 32
  * trimmed characters.
- * @property actions Up to three one-shot, platform-rendered actions. Glasses
- * hubs 1.7.0 and later draw them but never select them.
+ * @property actions Up to three one-shot, platform-rendered actions.
  * @property maxDurationMs Optional safety deadline, clamped on start to one
  * minute through twelve hours. Null means the activity lasts until ended,
  * evicted, or disconnected.
@@ -1053,8 +1079,33 @@ data class NexusActivityTrack(
  * the chip under it. Glasses without activity extras show [primary] alone.
  * @property track Optional extra: stops or stages, drawn instead of the
  * progress bar. Send [progress] as well for glasses without activity extras.
+ * @property destination Launcher bundle: one of this plugin's own pages, opened
+ * directly from the card with its params. Never an [NexusPluginCallbacks.onOpen].
+ * @property activation Launcher bundle: what the first tap does. Null means the
+ * destination when there is one, else the commands when there are any, else the
+ * hub's own summary of the activity.
+ * @property defaultActionId Launcher bundle: the command focused first; null is
+ * the first action.
+ * @property persistence Launcher bundle: [NexusActivityPersistence.ONGOING] only
+ * while the user enabled this activity in the plugin's own settings.
+ * @property headline Launcher bundle: the longer form of [primary], at most 40
+ * printable characters, drawn where there is room for it (the launcher card,
+ * the island) and scrolled there when it is still too wide. [primary] stays
+ * required and is what every other surface, and every older hub, draws.
+ * @property wholeSecondary Launcher bundle: [secondary] uncut, at most 120
+ * printable characters, such as a whole destination or street name. The lines
+ * that scroll a text wider than their room draw it; [secondary] stays the form
+ * every other surface, and every older hub, draws.
+ * @property wholeDetail Launcher bundle: [detail] uncut, up to two lines of at
+ * most 120 characters, drawn instead of [detail] where a line scrolls.
+ *
+ * Using a launcher-bundle field other than [headline] and the whole lines (or a
+ * typed action) also requires every action id to be a safe id (printable ASCII
+ * without spaces, at most 128) and unique. [headline] and the whole lines are
+ * presentation only.
+ * Without [NexusPluginClient.supportsLauncherInteractive] these fields are
+ * dropped before sending and the activity is an ordinary one.
  */
-@Suppress("DEPRECATION")
 data class NexusActivity(
     val glyph: String,
     val primary: String,
@@ -1062,15 +1113,44 @@ data class NexusActivity(
     val progress: NexusActivityProgress? = null,
     val eta: String? = null,
     val detail: List<String> = emptyList(),
-    @Deprecated("Glasses hubs 1.7.0 and later draw activity actions but never let the wearer select them. Put a command in a notice or a surface.")
     val actions: List<NexusActivityAction> = emptyList(),
     val maxDurationMs: Long? = null,
     val wakeDisplay: Boolean = false,
     val badge: String? = null,
     val track: NexusActivityTrack? = null,
     val measure: String? = null,
+    val destination: NexusPageDestination? = null,
+    val activation: NexusActivityActivation? = null,
+    val defaultActionId: String? = null,
+    val persistence: NexusActivityPersistence = NexusActivityPersistence.SESSION,
+    val headline: String? = null,
+    val wholeSecondary: String? = null,
+    val wholeDetail: List<String> = emptyList(),
+    val artwork: com.anezium.rokidbus.shared.LauncherArtwork? = null,
+    /** Launcher v4: opaque identity of the latest real event, at most 64 printable characters. */
+    val eventKey: String? = null,
 ) {
     init {
+        require(eventKey == null || (eventKey.length <= ActivitySurfaceContract.MAX_EVENT_KEY_CHARS && eventKey.none(Char::isISOControl))) {
+            "eventKey must be at most 64 printable characters"
+        }
+        require(activation != NexusActivityActivation.DESTINATION || destination != null) {
+            "Destination activation needs a destination"
+        }
+        require(activation != NexusActivityActivation.COMMANDS || actions.isNotEmpty()) {
+            "Commands activation needs an action"
+        }
+        require(defaultActionId == null || actions.any { it.id.trim() == defaultActionId }) {
+            "defaultActionId must name one of the actions"
+        }
+        val interactive = destination != null || activation != null || defaultActionId != null ||
+            persistence == NexusActivityPersistence.ONGOING || actions.any { it.typed != null }
+        if (interactive) {
+            val ids = actions.map { it.id.trim() }
+            require(ids.all(PageSurfaceContract::isValidId) && ids.toSet().size == ids.size) {
+                "Interactive activity action ids must be unique safe ids"
+            }
+        }
         require(GlyphContract.isWellFormedName(glyph))
         require(primary.trim().isNotEmpty())
         require(primary.trim().length <= ActivitySurfaceContract.MAX_PRIMARY_CHARS)
@@ -1084,6 +1164,16 @@ data class NexusActivity(
         require(actions.size <= ActivitySurfaceContract.MAX_ACTIONS)
         require(badge == null || badge.trim().length <= ActivitySurfaceContract.MAX_BADGE_CHARS)
         require(measure == null || measure.trim().length <= ActivitySurfaceContract.MAX_MEASURE_CHARS)
+        require(
+            headline == null ||
+                headline.trim().let { it.length <= ActivitySurfaceContract.MAX_HEADLINE_CHARS && it.none(Char::isISOControl) },
+        ) { "headline must be at most ${ActivitySurfaceContract.MAX_HEADLINE_CHARS} printable characters" }
+        require(
+            wholeSecondary == null ||
+                wholeSecondary.trim().let { it.length <= ActivitySurfaceContract.MAX_WHOLE_CHARS && it.none(Char::isISOControl) },
+        ) { "wholeSecondary must be at most ${ActivitySurfaceContract.MAX_WHOLE_CHARS} printable characters" }
+        require(wholeDetail.size <= ActivitySurfaceContract.MAX_DETAIL_LINES)
+        require(wholeDetail.all { it.trim().length <= ActivitySurfaceContract.MAX_WHOLE_CHARS })
     }
 
     internal fun toStartPayload(): JSONObject = ActivitySurfaceContract.toPayload(
@@ -1116,5 +1206,14 @@ data class NexusActivity(
         badge = badge?.trim()?.takeIf { it.isNotEmpty() },
         measure = measure?.trim()?.takeIf { it.isNotEmpty() },
         track = track?.toContract(),
+        destination = destination?.toContract(),
+        activation = activation?.contract,
+        defaultActionId = defaultActionId,
+        persistence = persistence.contract,
+        headline = headline?.trim()?.takeIf { it.isNotEmpty() },
+        wholeSecondary = wholeSecondary?.trim()?.takeIf { it.isNotEmpty() },
+        eventKey = eventKey?.trim()?.takeIf { it.isNotEmpty() },
+        wholeDetail = wholeDetail.map(String::trim),
+        artwork = artwork,
     )
 }

@@ -50,4 +50,25 @@ class ImageArtworkEncoderTest {
                 }
             }
         }
+    @Test fun `launcher covers reuse JPEG with continuous tones within the page budget`() {
+        val source = gradientBitmap(512, 512)
+        val encoded = try { ImageArtworkEncoder.encode(source, com.anezium.rokidbus.shared.LauncherArtwork.MAX_IMAGE_BYTES) }
+            finally { source.recycle() }
+        assertNotNull(encoded)
+        encoded!!
+        assertEquals(256, encoded.width)
+        assertTrue(encoded.bytes.size <= 32768)
+        val cover = com.anezium.rokidbus.shared.LauncherArtwork(encoded.width, encoded.height,
+            java.util.Base64.getEncoder().encodeToString(encoded.bytes), "jpeg")
+        val body = com.anezium.rokidbus.shared.PageTemplateContract.encode(
+            com.anezium.rokidbus.shared.PageBody.Media("Track", com.anezium.rokidbus.shared.MediaPlaybackState.PAUSED, artwork = cover))
+        assertTrue(body.toString().toByteArray().size < com.anezium.rokidbus.shared.PageSurfaceContract.MAX_PAGE_BYTES - 4096)
+        val decoded = android.graphics.BitmapFactory.decodeByteArray(encoded.bytes, 0, encoded.bytes.size)
+        assertNotNull(decoded)
+        val pixels = IntArray(decoded.width * decoded.height)
+        decoded.getPixels(pixels, 0, decoded.width, 0, 0, decoded.width, decoded.height)
+        assertTrue("the cover retains continuous tones instead of two-colour dithering", pixels.toSet().size > 256)
+        decoded.recycle()
+    }
+
 }

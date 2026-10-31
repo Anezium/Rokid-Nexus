@@ -90,11 +90,18 @@ internal class PhoneNoticeState(
     private val recentMessagesByPlugin = mutableMapOf<String, ArrayDeque<Long>>()
     private var active: CanonicalPhoneNotice? = null
 
+    /**
+     * [launcherBundle] says whether the glasses negotiated the launcher bundle. Without it the
+     * destination, event key and conversation flag are dropped before anything is kept, so the
+     * glasses get exactly the notice they understand. A destination outside the owner's own pages
+     * is refused either way: no plugin may point the wearer at another plugin's page.
+     */
     @Synchronized
     fun show(
         ownerPluginId: String,
         payload: JSONObject,
         binary: ByteArray? = null,
+        launcherBundle: Boolean = false,
     ): PhoneNoticeShowResult {
         val expectedSurfaceId = "$ownerPluginId:${NoticeSurfaceContract.LOCAL_SURFACE_ID}"
         if (payload.optString("surfaceId") != expectedSurfaceId ||
@@ -106,7 +113,8 @@ internal class PhoneNoticeState(
         val validation = NoticeSurfaceContract.validateShow(payload, binary)
         val clientToken = NoticeSurfaceContract.clientToken(payload)
         if (validation !is NoticeSurfaceValidationResult.Valid ||
-            (payload.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN) && clientToken == null)
+            (payload.has(NoticeSurfaceContract.FIELD_CLIENT_TOKEN) && clientToken == null) ||
+            !NoticeSurfaceContract.destinationAllowed(validation.content, ownerPluginId)
         ) {
             return PhoneNoticeShowResult.Rejected(NoticeSurfaceContract.ERROR_INVALID_NOTICE)
         }
@@ -116,7 +124,11 @@ internal class PhoneNoticeState(
         }
 
         val previous = active
-        val content = validation.content
+        val content = if (launcherBundle) {
+            validation.content
+        } else {
+            validation.content.copy(destination = null, eventKey = null, conversation = false)
+        }
         val identity = NoticeInteractionIdentity(newToken(), newToken())
         val notice = CanonicalPhoneNotice(
             ownerPluginId = ownerPluginId,
@@ -316,6 +328,18 @@ internal class PhoneNoticeState(
         .put("localSurfaceId", NoticeSurfaceContract.LOCAL_SURFACE_ID)
         .put("ownerPluginId", ownerPluginId)
         .put("seq", sequence.incrementAndGet())
+
+    /** Whether the owner's budget would admit one more message now; spends nothing. */
+    @Synchronized
+    fun hasBudget(ownerPluginId: String): Boolean {
+        val window = recentMessagesByPlugin[ownerPluginId] ?: return true
+        val now = nowMs()
+        return window.count { now - it < RATE_WINDOW_MS } < NoticeSurfaceContract.MAX_MESSAGES_PER_SECOND
+    }
+
+    /** A withdraw spends the same budget as a show, so it cannot be used to flood the link. */
+    @Synchronized
+    fun admitWithdraw(ownerPluginId: String): Boolean = admit(ownerPluginId, nowMs())
 
     /**
      * Sliding one-second window shared by show and update, so a plugin cannot

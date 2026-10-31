@@ -1,6 +1,8 @@
 // Adapted from the Rokid-Nexus fork by alvarosw (https://github.com/alvarosw/Rokid-Nexus), Apache-2.0.
 package com.anezium.rokidbus.glasses.input
 
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
+
 /** Which physical source a key came from; classified once, by device name. */
 internal enum class DeviceClass {
     R08,
@@ -65,6 +67,40 @@ internal enum class LauncherBackend {
     companion object {
         val DEFAULT = LEGACY
 
+        /**
+         * The default once the phone's last announcement negotiated the launcher bundle (plan 028a
+         * §8.3). LEGACY remains the rollback, through either explicit choice, and the fallback
+         * before any announcement and for older phones.
+         */
+        val BUNDLE_DEFAULT = SESSION
+
         fun parse(value: String?): LauncherBackend? = entries.firstOrNull { it.name == value }
+
+        /**
+         * The backend nobody chose, from the bundle version the phone last announced (persisted,
+         * never the live link): [bundleDefault] over the bundle, [DEFAULT] otherwise.
+         */
+        fun defaultFor(announcedBundleVersion: Int?, bundleDefault: LauncherBackend = BUNDLE_DEFAULT): LauncherBackend =
+            if (LauncherBackendSelection.bundleActive(announcedBundleVersion)) bundleDefault else DEFAULT
+
+        /** The phone's `launcherBackend` capability value, or null for no opinion. */
+        fun fromPhone(value: String?): LauncherBackend? = when (value) {
+            LauncherInteractiveContract.BACKEND_SESSION -> SESSION
+            LauncherInteractiveContract.BACKEND_LEGACY -> LEGACY
+            else -> null
+        }
+
+        /**
+         * Plan 028a §8.3: the phone's explicit choice, then the glasses' stored `launcher.backend`,
+         * then the default. Each choice keeps its own record, so switching never erases another.
+         */
+        fun resolve(
+            phone: String?,
+            stored: String?,
+            announcedBundleVersion: Int?,
+            bundleDefault: LauncherBackend = BUNDLE_DEFAULT,
+        ): LauncherBackend =
+            // The phone's choice is stored by enum name and announced in wire form; both read the same.
+            (fromPhone(phone) ?: parse(phone)) ?: parse(stored) ?: defaultFor(announcedBundleVersion, bundleDefault)
     }
 }

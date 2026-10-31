@@ -73,6 +73,55 @@ rendering remain outside this emulator check.
    bigText, and visible expanded RemoteViews IDs/text at far/close/arrival steps.
    A generic service title or screenshot of an arrow alone is insufficient.
 
+## Street map check (walking route)
+
+Observed in the bounded [2026-10-18 device smoke](../../docs/NAV_OSM_DEVICE_SMOKE_20261018.md):
+route-page and full-map Follow/Overview streets, names and credit; ambient Minimap
+and Panel streets; Text without a map; cached street rendering with Wi-Fi and
+mobile data off; foreground hiding and permission teardown. This was a stationary
+indoor run, not a physical walk. Device traffic tracing and old-peer hardware
+combinations remain unobserved. The owner also rejected the generic per-plugin
+size editor; its Navigation-only correction is still open.
+
+Repeatable checklist with both hubs built from this change and a walking route
+to a public place:
+
+1. Before starting, the phone screen states the Transitous request and the
+   OpenStreetMap tile downloads, and links to the copyright page.
+2. Ambient Minimap and Panel, and the route page's Follow and Overview, show
+   dim streets around the bright route, a few street names, and
+   "© OpenStreetMap" bottom right. The route page's Street map fact credits
+   OpenStreetMap.
+3. With the route page closed, Text, automatic collapse, foreground hiding,
+   notice cover and data-plane loss produce no tile requests. On a route long
+   enough for disjoint Follow/Overview tiles, only the selected view requests
+   tiles; Commands requests none unless an independent ambient map is drawn.
+   Let feedback expire without another draw: queued work must not start.
+   Check with a phone proxy or `adb shell dumpsys netstats`, without logging
+   coordinates. These checks remain unobserved on a device.
+4. Airplane mode mid-route: stored tiles still drawn, missing ones route only,
+   guidance unaffected, GPS status unchanged.
+5. Stop, End from the glasses, and revoking location each end tile requests.
+
+Also check old-phone/new-glasses and new-phone/old-glasses: route-only maps,
+no OSM tile traffic, and the original launcher fallback. Dense/hostile inputs
+over the aggregate preparation bound must remain route-only while Stop and
+permission teardown stay responsive. Timing has not been measured on a phone.
+
+## Later HUD correction and device boundary
+
+The Navigation-only display preference and HUD layout correction were independently
+accepted at production `7162e617`, with inspected test-only follow-ups through
+canonical `0aa3eb1b`. All three current signed APKs installed successfully. Actual
+phone UI confirms the Navigation-only choices and restored Automatic preference.
+The stationary current-build route test obtained no first acceptable GPS fix and
+ended without computing a map; the owner declined moving the phone. Current-build
+map/native-row appearance and End-from-glasses therefore remain unverified.
+Temporary permissions and preferences were restored and the journey service is
+absent. See [the HUD device report](../../docs/NAV_HUD_DEVICE_CHECK_20261018.md)
+for exact observed evidence and limits. Older OSM screenshots are not current HUD
+acceptance images.
+
 ## Adversarial review and resolution
 
 One Synara worktree review thread (`agent-fc4cd4fa487452b4ddfe191680401551`)
@@ -83,7 +132,7 @@ follow-up continued that same thread; no second review thread was created.
 
 | Finding | Independent verification and action |
 | --- | --- |
-| Medium: OsmAnd `0 m • ` would publish a false new step | Rejected as a false positive. The parser trims the title first; `0 m •` no longer contains the space-terminated separator and fails the distance check. Tests with both exact captured summaries confirm null. The listener intentionally clears unreadable guidance; retaining an old turn after route deviation would contradict the fail-closed contract. |
+| Medium: OsmAnd `0 m • ` would publish a false new step | Rejected as a false positive. The parser trims the title first; `0 m •` no longer contains the space-terminated separator and fails the distance check. Tests with both exact captured summaries confirm null. The listener keeps the last readable guidance for at most ten seconds from the first unreadable post; further unreadable posts never extend that deadline. This accepted bound avoids restarting the activity and losing its launcher position during notification rewrites or reroutes. Readable recovery updates the same activity; expiry clears it, and notification removal or switching the source off still clears it promptly. |
 | Medium: mixed-language OsmAnd description becomes the street | Confirmed in the probe's French title / English cached description pairs. Street extraction now requires the actual title maneuver prefix; otherwise only confirmed title/ETA fields are used. Both captured pairs are regression tests. Locale changes may still change step identity; no stale street or maneuver is retained to suppress that change. |
 | Low: the OsmAnd detailed card includes the following leg's distance | Confirmed. The instruction now uses the current title and extracted street, excluding the raw description's following-leg suffix. The captured 15 m / 100 m case asserts the complete card instruction. |
 

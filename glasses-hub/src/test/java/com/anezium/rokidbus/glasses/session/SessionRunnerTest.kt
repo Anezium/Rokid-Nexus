@@ -2,10 +2,16 @@
 package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.shared.PageSurfaceContract
+import com.anezium.rokidbus.shared.ActivityAction
+import com.anezium.rokidbus.shared.ActivityActivation
+import com.anezium.rokidbus.shared.ActivityCommandResult
+import com.anezium.rokidbus.shared.ActivityCommandStatus
+import com.anezium.rokidbus.shared.PageActionType
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -33,7 +39,10 @@ class SessionRunnerTest {
         }
     }
 
-    private class Fixture(val onEffect: (SessionEffect, SessionRunner) -> Unit = { _, _ -> }) {
+    private class Fixture(
+        val interactive: Boolean = false,
+        val onEffect: (SessionEffect, SessionRunner) -> Unit = { _, _ -> },
+    ) {
         var now = 0L
         val timer = FakeTimer()
         val effects = ArrayList<SessionEffect>()
@@ -44,6 +53,8 @@ class SessionRunnerTest {
                 PageItemResolver { page ->
                     page.actions.map { if (it.kind == "immersion") PageItem.Launch(it.id) else PageItem.Invoke(it.id) }
                 },
+                quickGate = QuickGate { _, _, _ -> interactive },
+                launcherActive = { interactive },
             ),
             clock = { now },
             timer = timer,
@@ -94,6 +105,50 @@ class SessionRunnerTest {
             at(3_100, SessionEvent.PageResponse(page, 3_100))
             assertTrue(runner.state is SessionState.InPage)
         }
+    }
+
+    @Test
+    fun `recreated runners do not reuse request ids or accept earlier command results`() {
+        val before = Fixture()
+        before.showImmersion()
+        val after = Fixture()
+        after.showImmersion()
+        val oldRequest = before.effects.filterIsInstance<SessionEffect.RequestPage>().single().request
+        val newRequest = after.effects.filterIsInstance<SessionEffect.RequestPage>().single().request
+        assertEquals(oldRequest.correlation.sessionGeneration, newRequest.correlation.sessionGeneration)
+        assertNotEquals(oldRequest.correlation.requestId, newRequest.correlation.requestId)
+        assertTrue(PageSurfaceContract.isValidId(newRequest.correlation.requestId))
+
+        fun issue(f: Fixture) = run {
+            f.runner.dispatch(SessionEvent.ActivityStarted(ActivityStop(
+                id = "media:activity", pageId = LocalPages.activityPageId("media"), text = "Song",
+                pinned = true, ownerPluginId = "media", ownerLabel = "Media Deck", seq = 7,
+                activation = ActivityActivation.COMMANDS,
+                commands = listOf(ActivityAction("play", "play", "Play", PageActionType.MediaPlay, hubQuick = true)),
+                defaultActionId = "play",
+            )))
+            f.at(1_000, SessionEvent.TripleTap(1_000))
+            f.fireTimer()
+            f.at(1_900, SessionEvent.FocusShown(requireNotNull(SessionFocus.tokenOf(f.runner.model)), 1_900))
+            f.at(2_000, SessionEvent.Enter(2_000))
+            f.at(2_100, SessionEvent.FocusShown(requireNotNull(SessionFocus.tokenOf(f.runner.model)), 2_100))
+            f.at(2_200, SessionEvent.Enter(2_200))
+            f.effects.filterIsInstance<SessionEffect.SendActivityCommand>().single().command
+        }
+        val first = Fixture(interactive = true)
+        val previous = issue(first)
+        val second = Fixture(interactive = true)
+        val current = issue(second)
+        assertNotEquals(previous.invocationId, current.invocationId)
+        assertTrue(PageSurfaceContract.isValidId(current.invocationId))
+        val stale = ActivityCommandResult(previous.activityId, previous.invocationId, ActivityCommandStatus.DONE)
+        second.at(2_300, SessionEvent.ActivityResult(stale, 2_300))
+        assertEquals(current.invocationId, second.runner.model.pendingCommands.getValue("media").invocationId)
+        val result = ActivityCommandResult(current.activityId, current.invocationId, ActivityCommandStatus.DONE)
+        second.at(2_400, SessionEvent.ActivityResult(result, 2_400))
+        assertTrue(second.runner.model.pendingCommands.isEmpty())
+        second.at(2_500, SessionEvent.ActivityResult(result, 2_500))
+        assertTrue(second.runner.model.pendingCommands.isEmpty())
     }
 
     @Test

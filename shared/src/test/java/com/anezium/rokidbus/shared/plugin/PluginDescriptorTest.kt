@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.shared.plugin
 
 import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.shared.PageSurfaceContract
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -179,6 +180,31 @@ class PluginDescriptorTest {
         assertEquals(
             PluginDescriptorParseResult.Invalid("CONFLICTING_METADATA"),
             PluginDescriptorParser.parse(entries),
+        )
+    }
+
+    @Test
+    fun `page opt in is additive metadata that never invalidates a plugin`() {
+        fun pages(entries: List<Pair<String, String?>>): Int {
+            val result = PluginDescriptorParser.parse(validMetadata().entries.map { it.key to it.value } + entries)
+            assertTrue("$result", result is PluginDescriptorParseResult.Valid)
+            return (result as PluginDescriptorParseResult.Valid).descriptor.pageSessionVersion
+        }
+        assertEquals(0, pages(emptyList()))
+        assertEquals(1, pages(listOf(PageSurfaceContract.META_PLUGIN_PAGES to "1")))
+        assertEquals(1, pages(listOf(PageSurfaceContract.META_PLUGIN_PAGES to " 1 ")))
+        listOf("2", "true", "", null, "01").forEach { assertEquals("$it", 0, pages(listOf(PageSurfaceContract.META_PLUGIN_PAGES to it))) }
+        // Conflicting entries mean no pages, not an invalid plugin.
+        assertEquals(0, pages(listOf(PageSurfaceContract.META_PLUGIN_PAGES to "1", PageSurfaceContract.META_PLUGIN_PAGES to "2")))
+        assertEquals(1, pages(listOf(PageSurfaceContract.META_PLUGIN_PAGES to "1", PageSurfaceContract.META_PLUGIN_PAGES to "1")))
+        // Unknown keys stay tolerated; an unknown capability still invalidates.
+        assertEquals(1, pages(listOf(PageSurfaceContract.META_PLUGIN_PAGES to "1", "rokidbus.plugin.future" to "x")))
+        assertEquals(
+            PluginDescriptorParseResult.Invalid("UNKNOWN_CAPABILITY"),
+            PluginDescriptorParser.parse(
+                validMetadata() + (BusConstants.META_PLUGIN_CAPABILITIES to "surfaces,pages") +
+                    (PageSurfaceContract.META_PLUGIN_PAGES to "1"),
+            ),
         )
     }
 

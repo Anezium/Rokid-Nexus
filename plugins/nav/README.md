@@ -6,10 +6,13 @@ the distance or the stops left, the street or the stop, and the arrival time.
 A new step flares; the moment a turn is a few metres away, or the stop to get
 off at is next, is urgent. When the app stops guiding, the activity ends.
 
-Navigation reads notifications and nothing else. It needs Notification Access,
+Navigation reads notifications and nothing else for those apps. It needs Notification Access,
 and ignores unknown packages and disabled sources before reading their text.
 Each parser also checks its navigation channel/category and ongoing state.
 Guidance lives in process memory only; nothing is stored.
+
+It can also guide a walking route of its own, which the wearer starts on the
+phone (see [Walking routes](#walking-routes)).
 
 ## What it reads
 
@@ -83,6 +86,126 @@ planner Transit's journey guidance uses, so the panel behaves the same
 whichever plugin guides. The maneuver and vehicle glyphs come from the SDK's
 `NexusGuidanceGlyphs`; only the `route` mark is Navigation's own. A recorded
 transcript test pins Navigation's activity traffic across that move.
+## Walking routes
+
+On the plugin screen, search a place (Transitous geocoding), pick it and tap
+Start walking. Precise location is asked for at that tap, never before. The
+first accurate fix and the destination go to Transitous once, for one walking
+itinerary; transit legs are never turned into walking guidance, and a failed
+plan ends the journey instead of retrying. Then a foreground service of type
+`location`, with its own notification carrying Stop, reads location only
+while the journey runs.
+
+Progress only comes from recent, accurate fixes near the route and only moves
+forward. When the signal is lost the last trusted position is kept with its
+age (stale) instead of being moved; before any trusted fix there is no
+position at all. The compass heading is only the bearing of a fresh fix taken
+while walking, never carried over to an older one.
+
+The journey ends on arrival, on Stop (its notification, the phone screen, or
+End on the glasses' route page), as soon as location permission is removed,
+when no route was planned within two minutes, after ten minutes without GPS
+and after twelve hours. It is never started at boot or restarted by the
+system, and nothing about it is stored. While it runs it owns the route:
+other apps' guidance is ignored, and picked up again from what they post when
+it ends. Route data: Transitous and OpenStreetMap contributors. Map data
+© OpenStreetMap contributors, under the Open Database License.
+
+### Street map
+
+A walking route's maps draw the real streets around it, from OpenStreetMap.
+The phone downloads the OpenStreetMap Foundation's vector tiles
+(`vector.openstreetmap.org`, Shortbread schema 1, served to zoom 14), keeps
+the walkable streets and their names, and sends them to the glasses inside the
+route's own geometry, where the hub draws them dim under the bright route.
+Nothing heavier runs on the glasses.
+
+- **Only for maps on the glasses.** Tiles are asked for only while the
+  journey runs and both hubs confirm the map was actually drawn. Feedback
+  expires after five seconds and is checked again before each request; Text,
+  automatic collapse, hidden/covered maps and Commands authorize no tiles.
+  Only the selected Follow or Overview view counts, unless both are drawn
+  independently. Each acknowledgment names the accepted publication revision:
+  only its recorded tile cover is requested, never a new area under an older
+  Follow lease. A new footprint waits for its own delivered/drawn frame, including
+  when publication is throttled or refused. Stable draw renewals do not revise
+  pages or cancel pending tiles. Unknown feedback and either older hub keep route-only
+  guidance, even with launcher support. That is at most
+  four zoom-14 tiles for the follow view and nine tiles, from zoom 14 down to
+  12, for the whole route. Nothing is fetched along the route ahead, for
+  offline use, before a route is planned, or after the journey ends; a request
+  in flight for a view that went away is cancelled.
+- **Gently.** Two requests at a time and thirty a minute at most, with the
+  app's own User-Agent and no `no-cache`. A failed tile waits at least thirty
+  seconds before it is asked again, a `429` or `503` pauses every request for
+  at least a minute, and a tile that came is not asked again within a minute.
+- **Cached on the phone.** Tiles are kept in the app's cache directory (at
+  most 32 MiB and 1,024 tiles, least recently used first, none older than 30
+  days) by their HTTP freshness: the service currently allows five minutes,
+  then a tile is shown while it is checked again with `If-Modified-Since`.
+  A 304 preserves omitted cache metadata; `no-cache` remains revalidated and
+  `no-store` evicts disk and RAM even if demand ends immediately after the response
+  or during decoding; cancelled results cannot restore streets. Offline, stored tiles remain useful
+  unless their policy requires successful revalidation (`no-cache`).
+  The cache holds map tiles only,
+  never a journey, and Android may clear it at any time.
+- **Route first.** The route, the wearer, the next turn, the destination and
+  the planner's street names are fitted first and never change. Streets fill
+  what is left of the geometry's budget (24 paths, 1,024 points, 16 KiB, of
+  which streets take at most 8 KiB), nearest to the route and the wearer
+  first, major roads ahead of footways. Connected streets are packed into a
+  few paths that only ever stroke real streets; in dense areas, small
+  disconnected footways and the farthest streets are left out. A few real
+  street names are added where they fit, after the planner's.
+  Before view processing, tiles exceeding an aggregate 16,000 vertices or
+  2,000,000 estimated simplification steps degrade to route-only. Candidate
+  edges are capped at 512 and name searches at 256 vertices.
+- **Honest when absent.** A tile that has not arrived, failed or does not
+  exist leaves that part of the map as the route alone; nothing is drawn in
+  its place. A whole route too wide for nine zoom-12 tiles (from about ten
+  kilometres across, depending on latitude) shows the route alone. Street tiles never hold up or
+  end guidance, and the GPS status is shown on its own.
+- **Credited.** Every map that shows streets says "© OpenStreetMap" in its
+  bottom-right corner, the route page adds a "Street map" fact (or says the
+  map shows the route alone for now), and the phone screen links to
+  OpenStreetMap's copyright page. Both hubs must negotiate the new rendered-map
+  and attribution support before any OSM street data is fetched or published;
+  either older peer retains route-only guidance.
+- **Privacy.** OpenStreetMap receives requests for the tiles shown, which
+  reveal roughly where the wearer is (a zoom-14 tile is 2.4 km across at the
+  equator, about 1.6 km in Paris), and the phone's IP address; never the position,
+  destination or anything identifying the wearer. The phone screen says so
+  before a journey starts.
+
+The tile address is fixed in the app (`OsmShortbreadSource`) and built from
+tile numbers only. Moving to another Shortbread provider is a change to that
+one object, shipped as an update; there is no setting for it.
+
+## Pages
+
+With the glasses' Nexus session and hubs that both support pages, the
+Navigation card in the session opens `nav:main`: the same guidance as a page,
+with the turn or leg, its distance or stops, the street, the arrival time when
+the app gives one, the source and when it was received. It follows the route
+while it is on screen, at most twice a second, and says so plainly when there
+is no route or no Notification Access. Its Commands row opens `nav:commands`,
+which only offers the full app, behind the hub's labelled launch step. Pages are
+read-only and leave the card and the activity as they are.
+
+When both hubs negotiated the launcher bundle, the activity opens `nav:main`
+directly and it is a route page instead. A walking route carries the next
+turn, its distance, street and time left, facts, and two maps the hub draws
+(follow, heading-up; whole route, north-up) from the planned route and the
+real streets around it ([Street map](#street-map)) and a few street names,
+with the position live, stale with its age, or none. The map (at most once a
+second) and the heading (at most five a second) follow the activity over the
+data plane only; with only the control link up they are dropped, never
+queued, and the text guidance is unchanged.
+The page's End the journey action stops it after the hub's confirmation.
+Guidance read from another app has no geometry behind it, so its route page
+is text only, with no position and no street drawn. A Citymapper ride shows
+a stop ribbon from the stops it counted: only the stop to get off at is
+named, and a vehicle placed between two stops is flagged as an estimate.
 
 ## Settings
 
@@ -92,6 +215,8 @@ app's live route on the glasses at once and ignores its guidance until it is
 switched back on, so nobody has to uninstall the plugin to keep one app off
 the HUD. Switched back on, a route already running is picked up straight away.
 The screen also asks for Notification Access and shows the route it sees.
+Above the switches it plans and starts walking routes, and shows the running
+one with its Stop. The app switches never affect a walking route.
 
 ## Requirements
 
@@ -101,7 +226,10 @@ The screen also asks for Notification Access and shows the route it sees.
 - Google Maps or Citymapper set to English, French or Korean, the wordings the
   plugin reads. Korean is read from the apps' own Korean strings and has not
   yet been checked on a real trip in Korea.
-- Notification Access for Navigation (Settings button in the plugin screen).
+- Notification Access for Navigation (Settings button in the plugin screen),
+  to follow other apps. Walking routes need precise location instead, asked
+  for when one is started, and the internet for the one Transitous request
+  and the street map tiles.
 
 See [validation evidence and device checklist](VALIDATION.md) for observed
 formats, mode limits and the remaining phone/glasses checks.

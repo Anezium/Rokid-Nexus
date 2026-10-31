@@ -42,6 +42,7 @@ class RelaySettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        RelayHistoryForget.baseline(this)
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
         content = NexusUi.contentColumn(this)
@@ -160,7 +161,10 @@ class RelaySettingsActivity : Activity() {
                 "Hide previews in the inbox",
                 "The list names senders · open a conversation to read",
                 settings.hideInboxPreviews(),
-            ) { enabled -> settings.setHideInboxPreviews(enabled) },
+            ) { enabled ->
+                settings.setHideInboxPreviews(enabled)
+                NotificationControl.notifyInboxChanged()
+            },
             NexusUi.block(),
         )
         content.addView(BusTheme.gap(this, 8))

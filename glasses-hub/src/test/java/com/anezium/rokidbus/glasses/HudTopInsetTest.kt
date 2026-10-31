@@ -70,6 +70,48 @@ class HudTopInsetTest {
     }
 
     @Test
+    fun `manual inset observers still hear accepted ROM row changes`() {
+        val preferences = reset()
+        HudTopInset.set(context, manualDp = 40, auto = false)
+        val observed = mutableListOf<Int>()
+        val unobserve = HudTopInset.observe(context) { observed += it }
+        try {
+            assertEquals(listOf(40), observed)
+            HudTopInset.onRomRowMeasured(context, centerYpx = 524, density = 1.5f)
+            assertEquals(listOf(40, 40), observed)
+            assertEquals(107, preferences.getInt("auto_inset_dp", -1))
+            HudTopInset.onRomRowMeasured(context, centerYpx = 525, density = 1.5f)
+            assertEquals(listOf(40, 40), observed)
+            HudTopInset.onRomRowMeasured(context, centerYpx = 544, density = 1.5f)
+            assertEquals(listOf(40, 40, 40), observed)
+            assertEquals(40, HudTopInset.current(context))
+            assertEquals(40, preferences.getInt("top_inset_dp", -1))
+            assertFalse(preferences.getBoolean("auto", true))
+        } finally {
+            unobserve()
+            reset()
+        }
+    }
+
+    @Test
+    fun `restoring a different measured row also invalidates a manual layout`() {
+        val preferences = reset()
+        HudTopInset.set(context, manualDp = 40, auto = false)
+        val observed = mutableListOf<Int>()
+        val unobserve = HudTopInset.observe(context) { observed += it }
+        try {
+            preferences.edit().putInt("auto_inset_dp", 107).commit()
+            assertEquals(40, HudTopInset.restore(context))
+            assertEquals(listOf(40, 40), observed)
+            assertEquals(40, HudTopInset.restore(context))
+            assertEquals(listOf(40, 40), observed)
+        } finally {
+            unobserve()
+            reset()
+        }
+    }
+
+    @Test
     fun `persisted modes and inset values are sanitized on restore`() {
         val preferences = context.getSharedPreferences("hud_position", Context.MODE_PRIVATE)
         preferences.edit()

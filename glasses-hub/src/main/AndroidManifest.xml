@@ -48,6 +48,11 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- The foreground resolver tells the home from native apps. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
     </queries>
 
     <application
@@ -169,7 +174,8 @@
 
         <receiver
             android:name=".SetLauncherBackendReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.DUMP">
             <intent-filter>
                 <action android:name="com.anezium.rokidbus.glasses.action.SET_LAUNCHER_BACKEND" />
             </intent-filter>

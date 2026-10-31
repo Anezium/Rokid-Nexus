@@ -186,4 +186,19 @@ class PathRulesTest {
         assertTrue(PathRules.isDirectReply(BusPaths.INK_EVENT))
         assertTrue(PathRules.isOwnerScoped(BusPaths.INK_EVENT))
     }
+
+    @Test
+    fun `the whole page root is reserved and can never be a receive prefix`() {
+        listOf("/page", "/page/request", "/page/response", "/page//closed", "/page/x/y").forEach { path ->
+            assertTrue(path, PathRules.isReserved(path) || PathRules.normalizeAbsolute(path) == null)
+        }
+        assertTrue(PathRules.isPagePath("/page/response"))
+        assertTrue(PathRules.isPagePath("/page"))
+        assertFalse(PathRules.isPagePath("/pages/response"))
+        assertFalse(PathRules.isPagePath("/plugin/page"))
+        listOf("/page", "/page/request", "/page/response").forEach { prefix ->
+            assertFalse(prefix, PathRules.isAllowedReceivePrefix(prefix, "relay", PluginCapability.entries.toSet()))
+        }
+        assertFalse(PathRules.isDirectReply("/page/request"))
+    }
 }

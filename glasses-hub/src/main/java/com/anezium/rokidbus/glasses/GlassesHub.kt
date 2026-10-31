@@ -21,12 +21,15 @@ import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.ui.NexusGlyphs
 import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
+import com.anezium.rokidbus.shared.AmbientPreferencesContract
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.ComposeContract
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.FrameProtocol
+import com.anezium.rokidbus.shared.RenderedMapContract
 import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.GlassesAccessibilityCheckContract
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
@@ -34,6 +37,7 @@ import com.anezium.rokidbus.shared.GlassesKeyboardContract
 import com.anezium.rokidbus.shared.GlassesKeyboardReply
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.GlyphContract
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
 import com.anezium.rokidbus.ink.InkWire
 import com.anezium.rokidbus.shared.LinkStateBits
@@ -54,6 +58,7 @@ import com.anezium.rokidbus.shared.TtsContract
 import com.anezium.rokidbus.shared.WirelessAdbAction
 import com.anezium.rokidbus.shared.WirelessAdbContract
 import com.anezium.rokidbus.shared.WirelessAdbReply
+import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.plugin.PathRules
 import com.anezium.rokidbus.shared.GlassesFilesHotspotPolicy
 import com.anezium.rokidbus.shared.GlassesFilesRequest
@@ -87,6 +92,8 @@ object GlassesHub {
         val id: String,
         val displayName: String,
         val iconKey: String? = null,
+        /** The page version the phone vouches this approved plugin provides; 0 for none. */
+        val pageSessionVersion: Int = 0,
     )
 
     private data class Registration(
@@ -159,6 +166,9 @@ object GlassesHub {
     @Volatile private var cxrUp = false
     @Volatile private var phoneConnected = false
     @Volatile private var remotePhoneCapabilities = PhoneHubCapabilities(0, null)
+    @Volatile private var remoteRenderedMaps = false
+    /** The last announcement negotiated the launcher bundle; a link loss does not change it. */
+    @Volatile private var launcherBundleAnnounced = false
 
     private val aidl = object : IBusService.Stub() {
         override fun apiVersion(): Int = BusConstants.API_VERSION
@@ -207,6 +217,7 @@ object GlassesHub {
         val applicationContext = context.applicationContext
         appContext = applicationContext
         GlassesKeyboardKeeper.start(applicationContext)
+        AmbientPreferences.start(applicationContext)
         RemoteInputHubBridge.initialize { path, payload ->
             sendRemote(BusEnvelope(path = path, payload = payload)) == null
         }
@@ -249,12 +260,22 @@ object GlassesHub {
     fun onSppConnected(connected: Boolean) {
         phoneConnected = connected || CxrBusBridge.isUp()
         NexusSession.onPhoneLink(phoneConnected)
+        ActivityController.onPhoneLink(phoneConnected)
+        // CXR stayed: only the pages that needed SPP are lost.
+        if (!connected && phoneConnected) {
+            NexusSession.onDataPlaneLost()
+            // Geometry and heading only travel over SPP: a map frozen at its last fix would keep
+            // claiming a live position while the text guidance moves on.
+            RouteLive.clear()
+        }
         if (!phoneConnected) {
             clearRemotePhoneCapabilities()
             AssistantDisplayEpisode.end(DisplayHoldReleaseReason.LINK_LOSS)
             RemotePointerHubBridge.onLinkLost()
             SurfaceController.onPhoneLinkLost()
             NoticeController.onPhoneLinkLost()
+            RouteLive.clear()
+            AmbientPreferences.onLinkLost()
         }
         notifyLinkState()
         if (connected) {
@@ -268,12 +289,15 @@ object GlassesHub {
         cxrUp = connected
         phoneConnected = connected || SppServerManager.isConnected()
         NexusSession.onPhoneLink(phoneConnected)
+        ActivityController.onPhoneLink(phoneConnected)
         if (!phoneConnected) {
             clearRemotePhoneCapabilities()
             AssistantDisplayEpisode.end(DisplayHoldReleaseReason.LINK_LOSS)
             RemotePointerHubBridge.onLinkLost()
             SurfaceController.onPhoneLinkLost()
             NoticeController.onPhoneLinkLost()
+            RouteLive.clear()
+            AmbientPreferences.onLinkLost()
         }
         notifyLinkState()
         if (connected) {
@@ -292,6 +316,13 @@ object GlassesHub {
             MediaSyncEngine.trafficMonitor.note(envelope.path)
             // Anything else in the subtree is dropped here, never handed to local subscribers.
             if (!GlassesFilesService.handle(envelope)) log("files route dropped path=${envelope.path}")
+            return
+        }
+        // Page answers go to the session alone, before any generic route; no plugin subscribes to them.
+        if (PathRules.isPagePath(envelope.path)) {
+            if (envelope.binary == null) {
+                NexusSession.onRemotePage(PathRules.normalizeAbsolute(envelope.path) ?: envelope.path, envelope.payload)
+            }
             return
         }
         if (envelope.path == RemoteInputContract.COMMAND_PATH ||
@@ -324,6 +355,45 @@ object GlassesHub {
         }
         if (envelope.path == BusPaths.HUB_CAPABILITIES) {
             updateRemotePhoneCapabilities(envelope.payload)
+            return
+        }
+        // Launcher-bundle traffic from the phone reaches the session alone, never anyone else. A
+        // policy may arrive before the phone's capabilities do, so it is kept either way: the
+        // quick gate itself requires the negotiated bundle, and a result matches only a command
+        // these glasses sent, which they send only over the bundle.
+        if (envelope.path == BusPaths.CORE_POLICY_QUICK_ACTIONS || envelope.path == BusPaths.ACTIVITY_RESULT) {
+            when {
+                envelope.binary != null -> log("launcher bundle message dropped path=${envelope.path}")
+                envelope.path == BusPaths.ACTIVITY_RESULT -> NexusSession.onActivityResult(envelope.payload)
+                else -> NexusSession.onQuickActionPolicy(envelope.payload)
+            }
+            return
+        }
+        // Navigation geometry and heading (owner stamped by the phone) and the ambient preferences
+        // (trusted hub-to-hub): each has one consumer here, and each gates on the bundle itself.
+        if (envelope.path == BusPaths.ACTIVITY_GEOMETRY || envelope.path == BusPaths.ACTIVITY_HEADING ||
+            envelope.path == AmbientPreferencesContract.SIZES_PATH || envelope.path == AmbientPreferencesContract.POLICY_PATH
+        ) {
+            when {
+                envelope.binary != null -> log("launcher bundle message dropped path=${envelope.path}")
+                envelope.path == BusPaths.ACTIVITY_GEOMETRY -> RouteLive.onGeometry(envelope.payload)
+                envelope.path == BusPaths.ACTIVITY_HEADING -> RouteLive.onHeading(envelope.payload)
+                envelope.path == AmbientPreferencesContract.SIZES_PATH -> AmbientPreferences.onSizes(envelope.payload)
+                else -> AmbientPreferences.onPolicy(envelope.payload)
+            }
+            return
+        }
+        // Notification history and composer traffic: the session alone. The phone stamped the
+        // withdraw's owner; the purge and the capture engines are trusted hub-to-hub routes.
+        if (envelope.path == BusPaths.NOTICE_WITHDRAW || envelope.path == BusPaths.CORE_NOTICE_PURGE ||
+            envelope.path in ComposeContract.phoneToGlassesPaths
+        ) {
+            when {
+                envelope.binary != null -> log("launcher bundle message dropped path=${envelope.path}")
+                envelope.path == BusPaths.NOTICE_WITHDRAW -> NexusSession.onNoticeWithdraw(envelope.payload)
+                envelope.path == BusPaths.CORE_NOTICE_PURGE -> NexusSession.onNoticePurge(envelope.payload)
+                else -> NexusSession.onCompose(envelope.path, envelope.payload)
+            }
             return
         }
         if (envelope.path == BusPaths.GLASSES_SELFARM_MANUAL) {
@@ -616,6 +686,10 @@ object GlassesHub {
 
     internal fun launcherEntryOpensSurface(pluginId: String): Boolean = pluginId != CAMERA_LAUNCHER_ID
 
+    /** A plugin's catalog name, or null when it is not in the launcher catalog. */
+    internal fun launcherDisplayName(pluginId: String): String? =
+        allLauncherEntries().firstOrNull { it.id == pluginId }?.displayName
+
     fun launcherDrawable(context: Context, entry: LauncherEntry): Drawable {
         NexusPluginIcons.drawableForBuiltIn(entry.iconKey)?.let { resourceId ->
             return requireNotNull(context.getDrawable(resourceId))
@@ -727,6 +801,8 @@ object GlassesHub {
                 BusCapabilityBits.GLASSES_FILES or
                 BusCapabilityBits.GLASSES_FILES_LANE or
                 BusCapabilityBits.GLASSES_FILES_HOTSPOT or
+                BusCapabilityBits.LAUNCHER_INTERACTIVE or
+                BusCapabilityBits.RENDERED_MAP or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             pinSurfaceVersion = PinSurfaceContract.VERSION,
@@ -751,6 +827,8 @@ object GlassesHub {
             coreReady = onboarding.coreReady,
             maintenanceReady = onboarding.maintenanceReady,
             ttsVersion = if (ttsAvailable) TtsContract.VERSION else 0,
+            pageSessionVersion = GLASSES_PAGE_SESSION_VERSION,
+            launcherInteractiveVersion = LauncherInteractiveContract.VERSION,
         )
         val error = sendRemote(
             BusEnvelope(
@@ -1237,6 +1315,9 @@ object GlassesHub {
                                 id = id,
                                 displayName = item.optString("displayName", id),
                                 iconKey = item.optString("iconKey").takeIf { it.isNotBlank() },
+                                pageSessionVersion = PageSurfaceContract.parseSessionVersion(
+                                    item.opt(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION),
+                                ),
                             ),
                         )
                     }
@@ -1338,6 +1419,32 @@ object GlassesHub {
 
     internal fun isPhoneConnected(): Boolean = phoneConnected
 
+    /**
+     * The launcher-bundle version both hubs run over the current link, 0 when either lacks it or
+     * the link is down; a disconnect resets the phone's side. Nothing of the bundle acts below 1.
+     */
+    internal fun launcherInteractiveVersion(): Int =
+        if (phoneConnected) PhoneHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(remotePhoneCapabilities) else 0
+
+    internal fun launcherInteractiveActive(): Boolean = LauncherInteractiveContract.isActive(launcherInteractiveVersion())
+
+    internal fun renderedMapsActive(): Boolean = launcherInteractiveActive() && remoteRenderedMaps && SppServerManager.isConnected()
+
+    /**
+     * The link went while the bundle was negotiated and no announcement has come since: what the
+     * bundle validated may still be shown, read-only. Nothing may act on it, and the next
+     * announcement, whatever it negotiates, ends it.
+     */
+    internal fun launcherBundleHeldThroughLoss(): Boolean = launcherBundleAnnounced && !launcherInteractiveActive()
+
+    /** Both hubs on session/page v1 over the current link; a disconnect resets the phone's side. */
+    internal fun pageSessionSupported(): Boolean =
+        phoneConnected &&
+            PageSurfaceContract.negotiatedSessionVersion(
+                GLASSES_PAGE_SESSION_VERSION,
+                remotePhoneCapabilities.pageSessionVersion,
+            ) == PageSurfaceContract.VERSION
+
     internal fun isWifiHubOwned(): Boolean {
         val context = appContext ?: return wifiOwnership?.isHubOwned() == true
         return wifiOwnership?.isHubOwned() == true ||
@@ -1402,7 +1509,9 @@ object GlassesHub {
     }
 
     private fun updateRemotePhoneCapabilities(payload: JSONObject) {
+        val released = launcherBundleHeldThroughLoss()
         val advertised = PhoneHubCapabilitiesContract.parse(payload)
+        remoteRenderedMaps = RenderedMapContract.negotiated(advertised.features, BusCapabilityBits.RENDERED_MAP)
         phoneFilesHotspotSupported = advertised.features and BusCapabilityBits.GLASSES_FILES_HOTSPOT != 0
         val next = PhoneHubCapabilitiesContract.create(
             features = supportedPhoneCapabilities(advertised.features),
@@ -1410,7 +1519,12 @@ object GlassesHub {
             activityAlwaysExpanded = advertised.activityAlwaysExpanded,
             hudTopInsetDp = advertised.hudTopInsetDp,
             hudPositionAuto = advertised.hudPositionAuto,
+            pageSessionVersion = advertised.pageSessionVersion,
+            launcherInteractiveVersion = advertised.launcherInteractiveVersion,
+            launcherBackend = advertised.launcherBackend,
         )
+        // Whatever this announcement negotiates is the truth from now on, an older phone's included.
+        launcherBundleAnnounced = LauncherInteractiveContract.isActive(PhoneHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(next))
         appContext?.let {
             ActivityController.setAlwaysExpanded(it, next.activityAlwaysExpanded)
             HudTopInset.set(
@@ -1418,9 +1532,18 @@ object GlassesHub {
                 manualDp = next.hudTopInsetDp,
                 auto = next.hudPositionAuto,
             )
+            // Every announcement states the phone's backend choice, absent meaning no opinion, and
+            // the bundle it negotiates; the launcher default follows this, never the live link.
+            NexusInput.onPhoneAnnounced(it, next.launcherBackend, PhoneHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(next))
         }
         val previous = remotePhoneCapabilities
-        if (next == previous) return
+        if (next == previous) {
+            // Still an answer: an older phone's all-default announcement equals what a link loss
+            // cleared to, and the collection that loss kept at the bundle's size must follow it.
+            ActivityController.onLauncherNegotiated(launcherInteractiveVersion())
+            if (released) NexusSession.onLauncherNegotiated()
+            return
+        }
         remotePhoneCapabilities = next
         log(
             "phone capabilities cameraConsumerReady=" +
@@ -1428,7 +1551,20 @@ object GlassesHub {
                 " phoneAssistedSetup=${supportsPhoneAssistedSetup(next.features)}",
         )
         if (next.features != previous.features) notifyLinkState()
-        if (cameraLauncherEntry(next) != cameraLauncherEntry(previous)) notifyLauncherEntries()
+        if (next.launcherInteractiveVersion != previous.launcherInteractiveVersion) {
+            onLauncherNegotiation()
+        } else {
+            // A reconnect to the same or an older phone re-sizes a collection a link loss kept.
+            ActivityController.onLauncherNegotiated(launcherInteractiveVersion())
+            if (released) NexusSession.onLauncherNegotiated()
+        }
+        if (next.pageSessionVersion != previous.pageSessionVersion) {
+            // A version-only change: the session and the catalog follow it, and nothing replays.
+            NexusSession.onPageSupport(pageSessionSupported())
+            notifyLauncherEntries()
+        } else if (cameraLauncherEntry(next) != cameraLauncherEntry(previous)) {
+            notifyLauncherEntries()
+        }
     }
 
     private fun allLauncherEntries(): List<LauncherEntry> =
@@ -1457,6 +1593,15 @@ object GlassesHub {
         phoneFilesHotspotSupported = false
         remotePhoneCapabilities = PhoneHubCapabilities(0, null)
         if (cameraLauncherEntry(previous) != null) notifyLauncherEntries()
+        if (previous.launcherInteractiveVersion != 0) onLauncherNegotiation(linkLost = true)
+    }
+
+    /** The activity tier and the session follow the negotiated launcher bundle as it changes. */
+    private fun onLauncherNegotiation(linkLost: Boolean = false) {
+        val version = launcherInteractiveVersion()
+        log("launcher bundle negotiated version=$version")
+        ActivityController.onLauncherNegotiated(version, linkLost)
+        NexusSession.onLauncherNegotiated()
     }
 
     private fun errorEnvelope(id: String, code: String): BusEnvelope =
@@ -1845,5 +1990,11 @@ object GlassesHub {
     /** Long enough to read a code and type it on the phone; short enough to never strand the screen. */
     private const val MANUAL_SETUP_SCREEN_TIMEOUT_MS = 5 * 60_000L
     private const val CAMERA_LAUNCHER_ID = "camera"
+
+    /**
+     * The session/page version these glasses announce: what lets a phone route pages here. The
+     * pages stay unreachable on the LEGACY backend whatever is negotiated.
+     */
+    private const val GLASSES_PAGE_SESSION_VERSION = PageSurfaceContract.VERSION
     private const val CAMERA_CLIENT_ID = "glasses-camera-domain"
 }

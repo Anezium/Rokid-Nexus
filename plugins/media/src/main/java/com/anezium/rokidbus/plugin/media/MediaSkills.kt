@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.media
 
+import com.anezium.rokidbus.media.session.MediaPlaybackPhase
 import com.anezium.rokidbus.shared.skills.SkillErrorCodes
 import com.anezium.rokidbus.shared.skills.SkillProviderChoice
 import com.anezium.rokidbus.shared.skills.SkillProviderReference
@@ -91,5 +92,12 @@ internal class MediaSkills(private val access: MediaSkillAccess) {
     companion object {
         const val NOW_PLAYING = "get_now_playing"
         const val PAUSE = "pause"
+
+        /** The catalog's state, from the one phase the surface, the activity and the page read. */
+        fun stateOf(phase: MediaPlaybackPhase): String = when (phase) {
+            MediaPlaybackPhase.PLAYING -> "playing"
+            MediaPlaybackPhase.PAUSED -> "paused"
+            MediaPlaybackPhase.STOPPED -> "stopped"
+        }
     }
 }

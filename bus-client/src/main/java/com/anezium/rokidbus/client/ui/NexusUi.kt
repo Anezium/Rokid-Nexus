@@ -535,16 +535,55 @@ object NexusUi {
             )
         }
 
+    /** Standard user opt-in for any plugin that offers an ongoing activity. */
+    fun activitySettingRow(
+        context: Context,
+        control: Switch,
+        description: String = com.anezium.rokidbus.client.plugin.NexusActivityPreference.DESCRIPTION,
+    ): LinearLayout = switchRow(context, com.anezium.rokidbus.client.plugin.NexusActivityPreference.TITLE, description, control, wrapSub = true)
+
     /**
-     * Label on the left, switch on the right: the canonical toggle row. [sub]
-     * carries the consequence of flipping it, which most toggles need and most
-     * screens forget.
+     * Standard companion to Keep in activities; Nexus owns these display choices. Shaped like a
+     * plugin settings row: title and a wrapping note on the left, an uppercase action on the right.
      */
+    fun activityDisplaySettingsRow(context: Context, pluginId: String): LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(context, 4), dp(context, 16), dp(context, 4), dp(context, 16))
+        background = pressed(context, Color.TRANSPARENT, 8)
+        isClickable = true
+        isFocusable = true
+        contentDescription = "Floating band. Choose in Nexus when it appears over your glasses"
+        addView(
+            LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(rowTitle(context, "Floating band").apply { textSize = 14f })
+                addView(BusTheme.gap(context, 5))
+                addView(rowSub(context, "When it appears over your glasses, chosen in Nexus").apply { maxLines = 2 })
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dp(context, 12)
+            },
+        )
+        addView(
+            metaLabel(context, "CHOOSE \u203A", INK2).apply {
+                textSize = 12f
+                letterSpacing = 0.04f
+            },
+        )
+        setOnClickListener {
+            if (!com.anezium.rokidbus.client.plugin.NexusActivityPreference.openDisplaySettings(context, pluginId)) {
+                android.widget.Toast.makeText(context, "Update Rokid Nexus to choose when it floats.", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     fun switchRow(
         context: Context,
         label: String,
         sub: String? = null,
         control: Switch = switch(context),
+        wrapSub: Boolean = false,
     ): LinearLayout =
         LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -555,7 +594,7 @@ object NexusUi {
                     addView(rowTitle(context, label))
                     if (sub != null) {
                         addView(BusTheme.gap(context, 4))
-                        addView(rowSub(context, sub))
+                        addView(if (wrapSub) cardBody(context, sub) else rowSub(context, sub))
                     }
                 },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),

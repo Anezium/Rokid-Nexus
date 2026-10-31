@@ -10,8 +10,13 @@ import android.util.Log
 class RelayNotificationListener : NotificationListenerService() {
     private val runtime by lazy { RelayNoticeRuntime(applicationContext) }
 
+    /** Where the plugin service forwards the notice's callbacks. */
+    internal val noticeCallbacks: RelayNoticeRuntime
+        get() = runtime
+
     override fun onCreate() {
         super.onCreate()
+        RelayHistoryForget.baseline(this)
         NotificationControl.instanceCreated(this)
     }
 
@@ -29,13 +34,19 @@ class RelayNotificationListener : NotificationListenerService() {
         ingest(sbn, mayShow = true)
     }
 
+    /**
+     * The notification left the phone, for whatever reason: answered or read there, swiped, or
+     * cleared by Relay itself after a reply. That ends its reply authority, and nothing more is
+     * concluded from it. The band stops offering to send, the glasses are told the event is gone,
+     * and a visible thread page follows with its reply withdrawn but its text still readable.
+     */
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         sbn ?: return
-        ReplyRepository.forget(sbn)
-        runtime.onNotificationInvalidated(ReplyRepository.stableId(sbn.key))
+        val id = ReplyRepository.stableId(sbn.key)
+        if (ReplyRepository.forget(sbn)) runtime.onRemoved(id)
         // Answering on the phone empties the row here too, while the wearer is
         // looking straight at it.
-        NotificationControl.notifyCaptured(ReplyRepository.stableId(sbn.key))
+        NotificationControl.notifyCaptured(id)
     }
 
     /**
@@ -49,22 +60,26 @@ class RelayNotificationListener : NotificationListenerService() {
      */
     override fun onListenerDisconnected() {
         RelayDiagnostics.recordListenerDisconnected(this)
+        val component = ComponentName(this, RelayNotificationListener::class.java)
+        val accessGranted = accessGranted(component)
+        // Access revoked: the glasses forget what they were shown, too. A mere rebind keeps it.
+        if (!accessGranted) RelayHistoryForget.request(this)
         ReplyRepository.clear()
+        NotificationControl.notifyInboxChanged()
         NotificationControl.detach(this)
         runtime.shutdown()
         Log.w(TAG, "notification listener disconnected")
         super.onListenerDisconnected()
         if (!RelayGuardianService.requestImmediateHealthEvaluation()) {
-            val component = ComponentName(this, RelayNotificationListener::class.java)
-            val manager = getSystemService(NotificationManager::class.java)
-            val accessGranted = try {
-                manager?.isNotificationListenerAccessGranted(component) == true
-            } catch (_: RuntimeException) {
-                false
-            }
             RelayDiagnostics.recordAccessState(this, accessGranted)
             if (accessGranted) requestRebind(component)
         }
+    }
+
+    private fun accessGranted(component: ComponentName): Boolean = try {
+        getSystemService(NotificationManager::class.java)?.isNotificationListenerAccessGranted(component) == true
+    } catch (_: RuntimeException) {
+        false
     }
 
     override fun onDestroy() {
@@ -83,7 +98,10 @@ class RelayNotificationListener : NotificationListenerService() {
 
     internal fun refreshFromSettings() {
         if (!RelaySettings(this).enabled()) {
+            // Switched off means kept nowhere: what the glasses were shown goes too.
+            RelayHistoryForget.request(this)
             ReplyRepository.clear()
+            NotificationControl.notifyInboxChanged()
             runtime.shutdown()
             return
         }
@@ -120,27 +138,30 @@ class RelayNotificationListener : NotificationListenerService() {
 
         val action = sbn.notification.findRepliableAction()
         val notificationId = ReplyRepository.stableId(sbn.key)
-        if (action == null && ReplyRepository.contains(notificationId)) {
-            ReplyRepository.dropAuthority(notificationId)
-            runtime.onNotificationInvalidated(notificationId)
+        // A repost without Reply ends the reply authority even while paused or filtered. The event
+        // is still on the phone, so nothing is withdrawn; its page stops offering Send.
+        if (action == null && ReplyRepository.dropAuthority(sbn)) {
+            runtime.onReplyAuthorityLost(notificationId)
             NotificationControl.notifyCaptured(notificationId)
         }
         if (!settings.enabled()) return finish("disabled", accepted = false)
-        if (settings.pauseWhilePhoneScreenOn() && interactive) {
-            return finish("paused", accepted = false)
-        }
-
         if (!settings.admits(
                 sbn.packageName,
                 repliable = action != null,
                 ongoing = sbn.isOngoing || sbn.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0,
                 groupSummary = sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0,
             )) {
-            val id = ReplyRepository.stableId(sbn.key)
-            ReplyRepository.dropAuthority(id)
-            runtime.onNotificationInvalidated(id)
-            NotificationControl.notifyCaptured(id)
-            return finish("filtered", accepted = false)
+            val replyable = ReplyRepository.contains(notificationId)
+            if (ReplyRepository.dropActive(sbn)) {
+                if (replyable) runtime.onReplyAuthorityLost(notificationId)
+                NotificationControl.notifyCaptured(notificationId)
+            }
+            return finish(if (action == null) "no_action" else "filtered", accepted = false)
+        }
+        // Paused only holds back what is admitted: a repost the policy now refuses still ends
+        // its earlier version above, or a deferred band could announce it after the pause.
+        if (settings.pauseWhilePhoneScreenOn() && interactive) {
+            return finish("paused", accepted = false)
         }
 
         val capture = ReplyRepository.capture(this, sbn, action)

@@ -125,6 +125,10 @@
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.LAUNCHABLE"
                 android:value="true" />
+            <!-- Read-only pages for the glasses' Nexus session; not a capability. -->
+            <meta-data
+                android:name="rokidbus.plugin.pages"
+                android:value="1" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.GUARDIAN_SERVICE"
                 android:value="com.anezium.rokidbus.plugin.relay.RelayGuardianService" />

@@ -10,25 +10,30 @@ import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.provider.Settings
 import com.anezium.rokidbus.plugin.media.MediaPauseOutcome
 import com.anezium.rokidbus.plugin.media.MediaSkillAccess
 import com.anezium.rokidbus.plugin.media.MediaSkillSession
+import com.anezium.rokidbus.plugin.media.MediaSkills
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicLong
 
-/** Skill calls use their own short-lived controller callback and never start the HUD monitor. */
+/**
+ * Skill calls use their own short-lived controller callback and never start the HUD monitor.
+ * This class deliberately knows nothing of [MediaDeckMonitorHub], the activity publisher or
+ * Media Deck's preferences: a skill reference names one session token, and a selection made
+ * through it reaches only that token, freshly found among the live controllers. Nothing here can
+ * retarget the HUD's player, turn on "Show in activities", subscribe a watcher, or touch the
+ * revisions the activity offered as commands.
+ */
 internal class AndroidMediaSkillAccess(context: Context) : MediaSkillAccess {
     private val context = context.applicationContext
     private val manager = this.context.getSystemService(MediaSessionManager::class.java)
     private val listener = ComponentName(this.context, MediaDeckNotificationListenerService::class.java)
     private val main = Handler(Looper.getMainLooper())
 
-    override fun hasAccess(): Boolean = Settings.Secure.getString(context.contentResolver,
-        "enabled_notification_listeners").orEmpty().split(':')
-        .any { ComponentName.unflattenFromString(it) == listener }
+    override fun hasAccess(): Boolean = isMediaDeckListenerEnabled(context)
 
     private fun controllers(): List<MediaController> = manager?.getActiveSessions(listener).orEmpty()
 
@@ -133,12 +138,7 @@ internal class AndroidMediaSkillAccess(context: Context) : MediaSkillAccess {
         context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(packageName, 0)).toString()
     }.getOrDefault("").trim().ifBlank { packageName.substringAfterLast('.') }.take(80)
 
-    private fun state(playback: PlaybackState?): String = when (playback?.state) {
-        PlaybackState.STATE_PLAYING, PlaybackState.STATE_BUFFERING, PlaybackState.STATE_CONNECTING,
-        PlaybackState.STATE_FAST_FORWARDING, PlaybackState.STATE_REWINDING -> "playing"
-        PlaybackState.STATE_PAUSED -> "paused"
-        else -> "stopped"
-    }
+    private fun state(playback: PlaybackState?): String = MediaSkills.stateOf(MediaPlayback.phaseOf(playback?.state))
 
     private companion object {
         // A headless skill lease destroys its Service after each call; refs live until process death.

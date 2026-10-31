@@ -2,10 +2,11 @@ package com.anezium.rokidbus.glasses
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.PixelFormat
-import android.graphics.Typeface
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -13,21 +14,43 @@ import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.Choreographer
 import android.view.KeyEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.widget.LinearLayout
-import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.glasses.input.InputArbiter
 import com.anezium.rokidbus.glasses.input.InputContext
 import com.anezium.rokidbus.glasses.input.InputDecision
 import com.anezium.rokidbus.glasses.input.KeyEventAdapter
 import com.anezium.rokidbus.glasses.input.LauncherBackend
+import com.anezium.rokidbus.glasses.input.LauncherBackendSelection
 import com.anezium.rokidbus.glasses.input.RawKeyEvent
 import com.anezium.rokidbus.glasses.input.RoutedIntent
+import com.anezium.rokidbus.glasses.session.HistoryEntry
 import com.anezium.rokidbus.glasses.session.HostScreen
+import com.anezium.rokidbus.glasses.page.SessionScreenView
+import com.anezium.rokidbus.glasses.session.ActivityFeed
+import com.anezium.rokidbus.glasses.session.activitySourceOf
+import com.anezium.rokidbus.glasses.session.AppEntry
+import com.anezium.rokidbus.glasses.session.AppKind
+import com.anezium.rokidbus.glasses.session.FrameStatus
+import com.anezium.rokidbus.glasses.session.LocalPages
+import com.anezium.rokidbus.glasses.session.ComposeClient
+import com.anezium.rokidbus.glasses.session.NoticeEntry
+import com.anezium.rokidbus.glasses.session.NotificationHistory
+import com.anezium.rokidbus.glasses.session.RootStops
+import com.anezium.rokidbus.glasses.session.SessionScreen
+import com.anezium.rokidbus.glasses.session.SessionScreens
+import com.anezium.rokidbus.glasses.session.SessionWire
+import com.anezium.rokidbus.glasses.session.TypedPageItems
+import com.anezium.rokidbus.shared.NoticeSurfaceContract
+import com.anezium.rokidbus.shared.PageCorrelation
+import com.anezium.rokidbus.shared.PageSurfaceContract
+import com.anezium.rokidbus.shared.PageSurfaceRequest
+import com.anezium.rokidbus.shared.PageTemplateContract
 import com.anezium.rokidbus.glasses.session.NoticeArrivals
+import com.anezium.rokidbus.glasses.session.OpenApp
 import com.anezium.rokidbus.glasses.session.OpenFailure
 import com.anezium.rokidbus.glasses.session.SessionEffect
 import com.anezium.rokidbus.glasses.session.SessionEffectSink
@@ -40,7 +63,16 @@ import com.anezium.rokidbus.glasses.session.SessionState
 import com.anezium.rokidbus.glasses.session.SessionStatus
 import com.anezium.rokidbus.glasses.session.SessionTimer
 import com.anezium.rokidbus.glasses.session.SessionWindow
+import com.anezium.rokidbus.glasses.session.CommandFacts
+import com.anezium.rokidbus.glasses.session.IconRef
+import com.anezium.rokidbus.glasses.session.LauncherQuickGate
+import com.anezium.rokidbus.glasses.session.QuickPolicyState
+import com.anezium.rokidbus.glasses.session.SessionFocus
+import com.anezium.rokidbus.glasses.session.FramePanel
+import com.anezium.rokidbus.glasses.session.LiveRoute
+import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.QuickActionPolicyContract
 import com.anezium.rokidbus.shared.SetupCompletionMode
 import com.anezium.rokidbus.shared.SetupPairingResult
 import com.anezium.rokidbus.shared.SetupNote
@@ -107,6 +139,8 @@ class RokidBusAccessibilityService : AccessibilityService() {
         )
         SurfaceOverlayRenderer.onServiceConnected(this)
         PinOverlayRenderer.onServiceConnected(this)
+        AmbientForeground.onServiceConnected(applicationContext)
+        AmbientForeground.onWindowsChanged(this)
         ActivityController.onServiceConnected(applicationContext)
         NoticeController.onServiceConnected(applicationContext) {
             performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
@@ -166,6 +200,10 @@ class RokidBusAccessibilityService : AccessibilityService() {
         wirelessDebuggingAutomator?.onAccessibilityEvent(event)
         developerOptionsEnabler?.onAccessibilityEvent(event)
         StatusBadgeOverlayRenderer.onAccessibilityEvent(event)
+        if (event != null && (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED)) {
+            AmbientForeground.onWindowsChanged(this)
+        }
         if (event != null && isNativeAssistantDismissArmed()) {
             val packageName = event.packageName?.toString().orEmpty()
             if (packageName in NATIVE_ASSISTANT_PACKAGES) {
@@ -238,6 +276,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         PinOverlayRenderer.onServiceDestroyed(this)
         ActivityOverlayRenderer.onServiceDestroyed(this)
         ActivityController.onServiceDestroyed()
+        AmbientForeground.onServiceDestroyed()
         NoticeController.onServiceDestroyed()
         SurfaceOverlayRenderer.onServiceDestroyed(this)
         NoticeOverlayRenderer.onServiceDestroyed(this)
@@ -1370,8 +1409,9 @@ private fun SelfArmManualTarget.requiresWifi(): Boolean =
     this == SelfArmManualTarget.WIRELESS_DEBUGGING || this == SelfArmManualTarget.PAIRING_DIALOG
 
 /**
- * The running Nexus session: the PR1 reducer behind its runner, the one overlay window that
- * draws it, and the bus. Only the input arbiter opens it, and only on the session backend.
+ * The running Nexus session: the reducer behind its runner, the one overlay window that draws
+ * it, its hub-authored local pages, and the bus. Only the input arbiter opens it, and only on the
+ * session backend.
  */
 internal object NexusSession {
     private val main = Handler(Looper.getMainLooper())
@@ -1381,14 +1421,102 @@ internal object NexusSession {
     private var statusFresh = false
     private var renderedState: SessionState? = null
     private var noticeUnsubscribe: (() -> Unit)? = null
+
+    /**
+     * The session's timer runs on the uptime clock, which stands still in a deep sleep, so a
+     * notification can pass its display bound while the screen is off. Waking looks again at
+     * once instead of drawing that copy until the late tick.
+     */
+    private val wakeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_ON) runOnMain { runner.dispatch(SessionEvent.Tick(SystemClock.uptimeMillis())) }
+        }
+    }
+    private var wakeContext: Context? = null
     private var surfaceUnsubscribe: (() -> Unit)? = null
+    private var activityUnsubscribe: (() -> Unit)? = null
+    private var launcherUnsubscribe: (() -> Unit)? = null
+    private var routeUnsubscribe: (() -> Unit)? = null
+    private var ambientUnsubscribe: (() -> Unit)? = null
+
+    /** Owners whose live geometry the route pages' rows were last built with. */
+    private val liveMapOwners = mutableSetOf<String>()
     private var noticeArmed: Boolean? = null
     private val noticeArrivals = NoticeArrivals()
     private var editableFocused: Boolean? = null
     private var surfaceShownId: String? = null
     private var phoneLinked: Boolean? = null
+    private var launcherEntries: List<GlassesHub.LauncherEntry> = emptyList()
+
+    /** The history the open local page was last answered from, so a change refreshes it. */
+    private var renderedHistory: NotificationHistory? = null
+    private var renderedVisible: List<String> = emptyList()
+    private var renderedTop: Pair<Int, String>? = null
+    private val timeFormat = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+
+    /** The user's quick-action approvals as the phone last sent them; none until it does. */
+    private val quickPolicy = QuickPolicyState()
+    private val quickGate = LauncherQuickGate(GlassesHub::launcherInteractiveVersion) { quickPolicy.policy }
+
+    /** The activity tier's latest snapshot, replayed into the feed when the catalog changes. */
+    private var latestActivities = ActivityRenderState()
+
+    /** The last focus identity the window was asked to acknowledge, so each is acknowledged once. */
+    private var acknowledgedFocus: String? = null
+    private var launcherWasActive = false
+
+    private val activityFeed = ActivityFeed(
+        ownerLabel = ::pluginLabel,
+        // Over the launcher bundle an entry without a destination or commands opens the hub's
+        // summary; a v1 pair keeps opening the owner's main page when it provides one.
+        pageIdFor = { owner ->
+            if (!GlassesHub.launcherInteractiveActive() && providerPagesReady(owner)) {
+                PageTemplateContract.mainPageId(owner)
+            } else {
+                LocalPages.activityPageId(owner)
+            }
+        },
+        wallClock = System::currentTimeMillis,
+        launchable = ::ownerLaunchable,
+        iconOf = ::pluginIcon,
+    )
+    private val items = TypedPageItems(
+        isLocalPage = PageTemplateContract::isLocalPageId,
+        providerPageAllowed = { pageId -> PageTemplateContract.namespaceOf(pageId)?.let(::providerPagesReady) == true },
+        quickGate = quickGate,
+        extended = GlassesHub::launcherInteractiveActive,
+        liveGeometry = RouteLive::geometry,
+        ambientSize = AmbientPreferences::size,
+    )
+    private val localPages = LocalPages(
+        history = { runner.model.history },
+        activities = activityFeed::current,
+        applications = ::applications,
+        providerPagesReady = ::providerPagesReady,
+        formatTime = ::formatTime,
+        wallClock = System::currentTimeMillis,
+        linkLost = { runner.model.linkLost },
+    )
+    private val screens = SessionScreens(
+        items = items,
+        pluginLabel = ::pluginLabel,
+        formatTime = ::formatTime,
+        wallTimeOf = { sessionMs -> System.currentTimeMillis() - (SystemClock.uptimeMillis() - sessionMs) },
+        wallClock = System::currentTimeMillis,
+        liveRoute = { owner -> LiveRoute(RouteLive.geometry(owner), RouteLive.heading(owner)) },
+        pluginIcon = ::pluginIcon,
+        localIcon = localPages::iconOf,
+    )
     private val runner = SessionRunner(
-        reducer = SessionReducer(),
+        reducer = SessionReducer(
+            items,
+            isLocalPage = PageTemplateContract::isLocalPageId,
+            quickGate = quickGate,
+            launcherActive = GlassesHub::launcherInteractiveActive,
+            wallClock = System::currentTimeMillis,
+            ownerApp = { owner -> if (ownerLaunchable(owner)) OpenApp(owner, pluginLabel(owner) ?: owner) else null },
+            sessionClock = SystemClock::uptimeMillis,
+        ),
         clock = SystemClock::uptimeMillis,
         timer = HandlerSessionTimer(main),
         sink = Sink,
@@ -1398,14 +1526,36 @@ internal object NexusSession {
     val state: SessionState get() = runner.state
     val generation: Long get() = runner.model.generation
 
+    /** A composer capture runs: triple tap is not recognised over it (plan 028a §5.4). */
+    val captureActive: Boolean get() = runner.model.capture != null
+
     fun onServiceConnected(service: AccessibilityService) {
         runOnMain {
             appContext = service.applicationContext
-            host = SessionHost(SessionOverlayWindow(service), abort = { dispatch(SessionEvent.Abort) }, log = ::log)
+            host = SessionHost(
+                SessionOverlayWindow(service) { event -> dispatch(event) },
+                abort = { dispatch(SessionEvent.Abort) },
+                log = ::log,
+                screens = { state, status ->
+                    screens.screen(state, status, runner.model.generation, CommandFacts.of(runner.model))
+                },
+            )
             noticeUnsubscribe?.invoke()
             noticeUnsubscribe = NoticeController.observe { runOnMain(::onNoticeChanged) }
             surfaceUnsubscribe?.invoke()
             surfaceUnsubscribe = SurfaceController.observe { surface -> runOnMain { onSurfaceChanged(surface) } }
+            launcherUnsubscribe?.invoke()
+            launcherUnsubscribe = GlassesHub.observeLauncher { entries -> runOnMain { onLauncherEntries(entries) } }
+            activityUnsubscribe?.invoke()
+            activityUnsubscribe = ActivityController.observe { render -> runOnMain { onActivities(render) } }
+            routeUnsubscribe?.invoke()
+            routeUnsubscribe = RouteLive.observe { owner -> runOnMain { onRouteLive(owner) } }
+            ambientUnsubscribe?.invoke()
+            ambientUnsubscribe = AmbientPreferences.observe { runOnMain(::redrawRoutePage) }
+            if (wakeContext == null) {
+                service.registerReceiver(wakeReceiver, IntentFilter(Intent.ACTION_SCREEN_ON))
+                wakeContext = service
+            }
             // Ahead of every observer, so a surface the session closes unseen reaches no renderer;
             // installing it also reconciles the surface already active.
             if (!SurfaceController.setPresentationGate(::onSurfacePresented)) {
@@ -1423,6 +1573,17 @@ internal object NexusSession {
             noticeUnsubscribe = null
             surfaceUnsubscribe?.invoke()
             surfaceUnsubscribe = null
+            launcherUnsubscribe?.invoke()
+            launcherUnsubscribe = null
+            activityUnsubscribe?.invoke()
+            activityUnsubscribe = null
+            routeUnsubscribe?.invoke()
+            routeUnsubscribe = null
+            ambientUnsubscribe?.invoke()
+            ambientUnsubscribe = null
+            wakeContext?.let { context -> runCatching { context.unregisterReceiver(wakeReceiver) } }
+            wakeContext = null
+            AmbientPreferences.preview(null)
             SurfaceController.setPresentationGate(null)
             // Whatever is presented while the service is away is reconciled afresh on reconnect.
             surfaceShownId = null
@@ -1437,6 +1598,184 @@ internal object NexusSession {
             if (connected == phoneLinked) return@runOnMain
             phoneLinked = connected
             runner.dispatch(if (connected) SessionEvent.LinkRestored else SessionEvent.LinkLost)
+            // Approvals last only as long as the link: none until the phone sends them again.
+            if (!connected && quickPolicy.reset()) runner.dispatch(SessionEvent.LauncherFactsChanged)
+        }
+    }
+
+    /**
+     * The pair's launcher bundle changed: cards, quick actions and page bodies follow it. Losing
+     * it with the link still up leaves provider pages inert, as their bodies and stamps were read
+     * under it; nothing is replayed, and the wearer's Retry asks again.
+     */
+    fun onLauncherNegotiated() {
+        runOnMain {
+            val active = GlassesHub.launcherInteractiveActive()
+            if (launcherWasActive && !active && GlassesHub.isPhoneConnected()) runner.dispatch(SessionEvent.PageSupportLost)
+            launcherWasActive = active
+            runner.dispatch(SessionEvent.LauncherFactsChanged)
+            onActivities(latestActivities)
+        }
+    }
+
+    /** `/core/policy/quick-actions`: the latest approvals by revision; a malformed one changes nothing. */
+    fun onQuickActionPolicy(payload: JSONObject) {
+        runOnMain {
+            val policy = QuickActionPolicyContract.parse(payload)
+            if (policy == null) {
+                log("quick-action policy dropped reason=MALFORMED")
+                return@runOnMain
+            }
+            if (quickPolicy.apply(policy)) runner.dispatch(SessionEvent.LauncherFactsChanged)
+        }
+    }
+
+    /** An owner's `/activity/result`, forwarded by the phone for a command these glasses sent. */
+    fun onActivityResult(payload: JSONObject) {
+        runOnMain {
+            val result = SessionWire.activityResult(payload)
+            if (result == null) {
+                log("activity result dropped reason=MALFORMED")
+                return@runOnMain
+            }
+            runner.dispatch(SessionEvent.ActivityResult(result, SystemClock.uptimeMillis()))
+        }
+    }
+
+    /**
+     * `/notice/withdraw` as the phone forwards it, with the owner it authenticated: the event left
+     * the phone. Accepted before the phone's capabilities arrive, like a purge: the phone flushes
+     * withdrawals queued during a link loss right after reconnecting, and a withdrawal only takes
+     * authority away. The armed band is left exactly as it is.
+     */
+    fun onNoticeWithdraw(payload: JSONObject) {
+        runOnMain {
+            val withdrawal = NoticeSurfaceContract.parseGlassesWithdraw(payload)
+            if (withdrawal == null) {
+                log("notice withdraw dropped reason=MALFORMED")
+                return@runOnMain
+            }
+            runner.dispatch(SessionEvent.NoticeWithdrawn(withdrawal.ownerPluginId, withdrawal.eventKey))
+        }
+    }
+
+    /** `/core/notice/purge`: the phone revoked, disabled, removed or re-signed an owner. */
+    fun onNoticePurge(payload: JSONObject) {
+        runOnMain {
+            val owner = NoticeSurfaceContract.parsePurge(payload)
+            if (owner == null) {
+                log("notice purge dropped reason=MALFORMED")
+                return@runOnMain
+            }
+            runner.dispatch(SessionEvent.NoticePurged(owner))
+        }
+    }
+
+    /**
+     * The phone's capture engines, `/core/compose/...`: they reach the composer only over the
+     * launcher bundle, and only for the capture they name.
+     */
+    fun onCompose(path: String, payload: JSONObject) {
+        runOnMain {
+            if (!GlassesHub.launcherInteractiveActive()) {
+                log("compose message dropped path=$path reason=NOT_NEGOTIATED")
+                return@runOnMain
+            }
+            val message = ComposeClient.inbound(path, payload)
+            if (message == null) {
+                log("compose message dropped path=$path reason=MALFORMED")
+                return@runOnMain
+            }
+            runner.dispatch(SessionEvent.ComposeReceived(message, SystemClock.uptimeMillis()))
+        }
+    }
+
+    /** SPP went away while CXR stayed: pages that needed SPP go inert, the small ones go on. */
+    fun onDataPlaneLost() {
+        runOnMain { if (phoneLinked == true) runner.dispatch(SessionEvent.DataPlaneLost) }
+    }
+
+    /** The pair's page version changed with the link up; without support provider pages go inert. */
+    fun onPageSupport(supported: Boolean) {
+        runOnMain { if (!supported) runner.dispatch(SessionEvent.PageSupportLost) }
+    }
+
+    /**
+     * A page answer from the phone. It enters only stamped for the owner of the page it names,
+     * and is judged by the reducer against the frame it claims; a `nexus:` page never comes in.
+     */
+    fun onRemotePage(path: String, payload: JSONObject) {
+        runOnMain {
+            val now = SystemClock.uptimeMillis()
+            when (path) {
+                BusPaths.PAGE_RESPONSE ->
+                    if (SessionWire.acceptsResponse(payload)) runner.dispatch(SessionEvent.PageResponse(payload, now))
+                BusPaths.PAGE_RESULT -> {
+                    val top = (runner.state as? SessionState.InPage)?.frames?.lastOrNull()?.pageId
+                    if (SessionWire.acceptsResult(payload, top)) runner.dispatch(SessionEvent.PageResult(payload, now))
+                }
+                else -> log("session page drop path=$path reason=DIRECTION")
+            }
+        }
+    }
+
+    /** Both hubs on page v1 over the current link. */
+    private fun pagesNegotiated(): Boolean = GlassesHub.pageSessionSupported()
+
+    private fun providerPagesReady(pluginId: String): Boolean =
+        pagesNegotiated() && launcherEntries.any { it.id == pluginId && it.pageSessionVersion == PageSurfaceContract.VERSION }
+
+    private fun pluginLabel(pluginId: String): String? = launcherEntries.firstOrNull { it.id == pluginId }?.displayName
+
+    /** A plugin's mark as the launcher catalog draws it: its own icon key, else its default mark. */
+    private fun pluginIcon(pluginId: String): IconRef =
+        IconRef.Plugin(pluginId, launcherEntries.firstOrNull { it.id == pluginId }?.iconKey)
+
+    private fun formatTime(wallMs: Long): String = timeFormat.format(java.util.Date(wallMs))
+
+    /** G6: Nexus plugins then native apps, as the shipped launcher merges them, each with a stable key. */
+    private fun applications(): List<AppEntry> {
+        val context = appContext ?: return emptyList()
+        val nativeApps = runCatching { NativeAppsController.discover(context) }.getOrDefault(emptyList())
+        return LauncherMenuCatalog.merge(launcherEntries, nativeApps).map { entry ->
+            when (entry) {
+                is LauncherMenuEntry.Plugin -> {
+                    val id = entry.entry.id
+                    val kind = when {
+                        !GlassesHub.launcherEntryOpensSurface(id) -> AppKind.CAMERA
+                        providerPagesReady(id) -> AppKind.PAGES
+                        else -> AppKind.IMMERSION
+                    }
+                    // The camera is the hub's own catalog entry: its catalog mark, as the launcher draws it.
+                    AppEntry(entry.stableId, entry.displayName, kind, id, IconRef.Plugin(id, entry.entry.iconKey))
+                }
+                is LauncherMenuEntry.NativeApp ->
+                    AppEntry(entry.stableId, entry.displayName, AppKind.NATIVE, icon = IconRef.Native(entry.entry.packageName))
+            }
+        }
+    }
+
+    /** The owner's full app is a Nexus plugin entry of the Applications catalog that opens a surface. */
+    private fun ownerLaunchable(pluginId: String): Boolean =
+        launcherEntries.any { it.id == pluginId } && GlassesHub.launcherEntryOpensSurface(pluginId)
+
+    private fun onLauncherEntries(entries: List<GlassesHub.LauncherEntry>) {
+        launcherEntries = entries
+        refreshLocalPage { it == RootStops.APPLICATIONS_PAGE_ID }
+        // A card's name, icon and Open app follow the catalog.
+        onActivities(latestActivities)
+    }
+
+    /** The whole collection reaches the session, offline entries included; see [activitySourceOf]. */
+    private fun onActivities(render: ActivityRenderState) {
+        latestActivities = render
+        val interactive = GlassesHub.launcherInteractiveActive()
+        val held = !interactive && GlassesHub.launcherBundleHeldThroughLoss()
+        val sources = render.collection.map { entry -> activitySourceOf(entry, interactive, held) }
+        val events = activityFeed.update(sources)
+        events.forEach(runner::dispatch)
+        if (events.isNotEmpty()) {
+            refreshLocalPage { it == RootStops.ACTIVITIES_PAGE_ID || it.startsWith(LocalPages.ACTIVITY_PAGE_PREFIX) }
         }
     }
 
@@ -1450,7 +1789,74 @@ internal object NexusSession {
             noticeArmed = armed
             runner.dispatch(if (armed) SessionEvent.NoticeArmed else SessionEvent.NoticeCleared)
         }
-        noticeArrivals.onNotice(NoticeController.activeNotice())?.let(runner::dispatch)
+        val notice = NoticeController.activeNotice()
+        noticeArrivals.onNotice(notice)?.let { arrival ->
+            val active = notice ?: return@let
+            val owner = active.ownerPluginId
+            val label = pluginLabel(owner) ?: owner.ifBlank { LocalPages.TITLE_NOTIFICATION }
+            val at = System.currentTimeMillis()
+            val content = active.content
+            // The launcher-bundle fields count only over a pair that negotiated them, and a
+            // destination only inside its owner's own namespace.
+            val bundle = GlassesHub.launcherInteractiveActive() && owner.isNotBlank() &&
+                NoticeSurfaceContract.destinationAllowed(content, owner)
+            // The band already carries what the owner's redaction and hide policy let through.
+            val entry = NoticeEntry(
+                ownerPluginId = owner,
+                sourceLabel = label,
+                title = content.title,
+                body = content.body,
+                lines = content.lines,
+                atWallMs = at,
+                destination = content.destination.takeIf { bundle },
+                eventKey = content.eventKey.takeIf { bundle },
+                conversation = bundle && content.conversation,
+                icon = owner.ifBlank { null }?.let { id -> IconRef.Plugin(id, launcherEntries.firstOrNull { it.id == id }?.iconKey) },
+            )
+            runner.dispatch(
+                arrival.copy(
+                    preview = arrival.preview.copy(pageId = RootStops.NOTICE_PAGE_ID, sourceLabel = label, atWallMs = at),
+                    entry = entry,
+                ),
+            )
+        }
+    }
+
+    /**
+     * A visible local page follows its sources live: same request, a newer revision, the
+     * selection kept by its stable key and a vanished row left as a tombstone.
+     */
+    private fun refreshLocalPage(affected: (String) -> Boolean) {
+        val page = runner.state as? SessionState.InPage ?: return
+        val frame = page.frames.last()
+        val shown = frame.status as? FrameStatus.Shown ?: return
+        if (!PageTemplateContract.isLocalPageId(frame.pageId) || !affected(frame.pageId)) return
+        val request = PageSurfaceRequest(
+            PageCorrelation(shown.requestId, runner.model.generation, page.frames.size, frame.pageId),
+            SessionReducer.REASON_REFRESH,
+            frame.paramsJson,
+        )
+        runner.dispatch(SessionEvent.PageResponse(localPages.answer(request, live = true), SystemClock.uptimeMillis()))
+    }
+
+    /**
+     * An owner's live geometry or heading moved. A map appearing or leaving changes a route page's
+     * rows, which is a new focus target; anything else only redraws the open page of that owner.
+     */
+    private fun onRouteLive(owner: String) {
+        val present = RouteLive.geometry(owner) != null
+        val changed = if (present) liveMapOwners.add(owner) else liveMapOwners.remove(owner)
+        if (changed) {
+            runner.dispatch(SessionEvent.LauncherFactsChanged)
+            return
+        }
+        val top = (runner.state as? SessionState.InPage)?.frames?.lastOrNull() ?: return
+        if (PageTemplateContract.namespaceOf(top.pageId) == owner) host?.render(runner.state, status)
+    }
+
+    /** An ambient size changed: an open route page's Display row says it. Nothing else moves. */
+    private fun redrawRoutePage() {
+        if (runner.state is SessionState.InPage) host?.render(runner.state, status)
     }
 
     private fun onSurfaceChanged(surface: NexusSurface?) {
@@ -1488,21 +1894,21 @@ internal object NexusSession {
                 SessionEffect.DetachHost -> detach()
                 // The base was never touched: lifting the band's suppression is all a restore does.
                 is SessionEffect.RestoreUnderneath -> NoticeController.setSessionOverlayActive(false)
-                is SessionEffect.RequestPage -> send(BusPaths.PAGE_REQUEST, effect.request.toPayload())
-                is SessionEffect.SendAction -> send(BusPaths.PAGE_ACTION, effect.action.toPayload())
-                is SessionEffect.SendVisibility -> send(
-                    BusPaths.PAGE_VISIBILITY,
-                    JSONObject()
-                        .put("pageId", effect.pageId)
-                        .put("visible", effect.visible)
-                        .apply { effect.leaseUntilMs?.let { put("leaseUntilMs", it) } },
-                )
-                is SessionEffect.SendClosed -> send(
-                    BusPaths.PAGE_CLOSED,
-                    JSONObject().put("pageId", effect.pageId).put("reason", effect.reason),
-                )
+                is SessionEffect.RequestPage -> requestPage(effect)
+                is SessionEffect.SendAction ->
+                    if (!SessionWire.isLocal(effect.action.pageId)) send(BusPaths.PAGE_ACTION, effect.action.toPayload())
+                is SessionEffect.SendVisibility ->
+                    SessionWire.visibilityPayload(effect, SystemClock.uptimeMillis())?.let { send(BusPaths.PAGE_VISIBILITY, it) }
+                is SessionEffect.SendClosed -> SessionWire.closedPayload(effect)?.let { send(BusPaths.PAGE_CLOSED, it) }
+                // Sent once: a lost one is shown unconfirmed at its deadline, never sent again.
+                is SessionEffect.SendActivityCommand ->
+                    send(BusPaths.ACTIVITY_ACTION, ActivitySurfaceContract.commandPayload(effect.command))
+                // Never queued for a link that is down: a capture lost with the link is cancelled here.
+                is SessionEffect.SendCompose -> ComposeClient.outbound(effect.message).let { (path, payload) -> send(path, payload) }
                 is SessionEffect.SendLauncherOpen -> openPlugin(effect)
                 is SessionEffect.CloseSurface -> SurfaceController.closeUnseen(effect.surfaceId)
+                is SessionEffect.LaunchLocal -> launchLocal(effect)
+                is SessionEffect.SaveAmbientSize -> AmbientPreferences.edit(effect.ownerPluginId, effect.size)
                 is SessionEffect.ShowStatus -> {
                     status = effect.status
                     statusFresh = true
@@ -1526,6 +1932,81 @@ internal object NexusSession {
             }
             renderedState = model.state
             host?.render(model.state, status)
+            acknowledgeFocus(model)
+            // The display page's swiped size is previewed on the island while it is open, and
+            // only then: saving, Back, a pop or the session closing all end the preview.
+            val display = ((model.state as? SessionState.InPage)?.frames?.lastOrNull()?.panel as? FramePanel.Display)
+                ?.takeIf { it.moved }
+            AmbientPreferences.preview(display?.let { it.ownerPluginId to it.size })
+            // The hub's notification pages follow the history live: arrivals, seen, withdrawn, an
+            // entry passing the 24-hour display bound, and a page coming back on top after Back.
+            val top = (model.state as? SessionState.InPage)?.frames?.let { it.size to it.last().pageId }
+            val visible = model.history.visible(System.currentTimeMillis()).map(HistoryEntry::id)
+            if (model.history != renderedHistory || visible != renderedVisible || top != renderedTop) {
+                renderedHistory = model.history
+                renderedVisible = visible
+                renderedTop = top
+                refreshLocalPage { it == RootStops.NOTICE_PAGE_ID || it == RootStops.NOTIFICATIONS_PAGE_ID }
+            }
+        }
+
+        /**
+         * The fresh-contact rule's draw acknowledgement (plan 028a §5.3): once the frame showing a
+         * new focused target is drawn, the reducer hears when, and only a press begun after that
+         * may act on it. Each target is acknowledged once; nothing is acknowledged without a window.
+         */
+        private fun acknowledgeFocus(model: SessionModel) {
+            val token = SessionFocus.tokenOf(model)
+            if (token == null) {
+                acknowledgedFocus = null
+                return
+            }
+            val current = host
+            if (token == acknowledgedFocus || current == null || !current.isAttached) return
+            acknowledgedFocus = token
+            current.afterDraw { dispatch(SessionEvent.FocusShown(token, SystemClock.uptimeMillis())) }
+        }
+
+        /**
+         * Local pages are answered in-process, through the same runner and correlation; provider
+         * pages go to the phone only over a negotiated pair, and are honestly unavailable otherwise.
+         */
+        private fun requestPage(effect: SessionEffect.RequestPage) {
+            val request = effect.request
+            val now = SystemClock.uptimeMillis()
+            if (SessionWire.isLocal(request.correlation.pageId)) {
+                runner.dispatch(SessionEvent.PageResponse(localPages.answer(request, live = true), now))
+                return
+            }
+            if (!pagesNegotiated()) {
+                runner.dispatch(
+                    SessionEvent.PageResponse(
+                        PageSurfaceContract.correlationPayload(request.correlation)
+                            .put("error", PageSurfaceContract.ERROR_PAGE_UNAVAILABLE),
+                        now,
+                    ),
+                )
+                return
+            }
+            send(BusPaths.PAGE_REQUEST, SessionWire.requestPayload(effect, now))
+        }
+
+        /** G6: a native app or the hub camera, revalidated now; success closes the session cleanly. */
+        private fun launchLocal(effect: SessionEffect.LaunchLocal) {
+            val context = appContext
+            val launched = when {
+                context == null -> false
+                effect.key.startsWith(NATIVE_PREFIX) ->
+                    NativeAppsController.launch(context, effect.key.removePrefix(NATIVE_PREFIX)) == null
+                effect.key.startsWith(PLUGIN_PREFIX) -> {
+                    val id = effect.key.removePrefix(PLUGIN_PREFIX)
+                    launcherEntries.any { it.id == id } && !GlassesHub.launcherEntryOpensSurface(id) &&
+                        GlassesHub.openLauncherEntry(id).startsWith("launcherOpen=true")
+                }
+                else -> false
+            }
+            log("Session local launch launched=$launched")
+            runner.dispatch(SessionEvent.LocalLaunchFinished(effect.key, effect.label, launched))
         }
 
         private fun attach() {
@@ -1544,9 +2025,12 @@ internal object NexusSession {
             appContext?.let { RingFocusBroadcastCoordinator.setLauncherShown(it, shown = true) }
             // A new session starts linked; tell it if the phone is already gone.
             if (!GlassesHub.isPhoneConnected()) dispatch(SessionEvent.LinkLost)
+            // The activity tier presents in the session's context while it is up, explicitly.
+            ActivityController.setSessionOpen(true)
         }
 
         private fun detach() {
+            ActivityController.setSessionOpen(false)
             host?.detach()
             NoticeController.setSessionOverlayActive(false)
             appContext?.let { RingFocusBroadcastCoordinator.setLauncherShown(it, shown = false) }
@@ -1566,24 +2050,34 @@ internal object NexusSession {
             }
         }
 
+        /** Page traffic is never queued for a link that is down: it is dropped and logged by id. */
         private fun send(path: String, payload: JSONObject) {
             if (!GlassesHub.sendToPhone(path, payload)) log("session send dropped path=$path")
         }
     }
+
+    private const val NATIVE_PREFIX = "app:"
+    private const val PLUGIN_PREFIX = "plugin:"
 }
 
 // Adapted from the Rokid-Nexus fork by alvarosw (https://github.com/alvarosw/Rokid-Nexus), Apache-2.0.
-/** The session's one opaque overlay; it holds the screen on only while it exists. */
-private class SessionOverlayWindow(private val service: AccessibilityService) : SessionWindow {
+/**
+ * The session's one opaque overlay; it holds the screen on only while it exists. It is not
+ * focusable: every key reaches the session through the input arbiter, never this window.
+ */
+private class SessionOverlayWindow(
+    private val service: AccessibilityService,
+    private val report: (SessionEvent) -> Unit,
+) : SessionWindow {
     private val windowManager: WindowManager? = service.getSystemService(WindowManager::class.java)
-    private var root: LinearLayout? = null
+    private var root: SessionScreenView? = null
     private var insetUnsubscribe: (() -> Unit)? = null
 
     override fun add(): Boolean {
         val manager = windowManager ?: return false
-        val view = LinearLayout(service).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(BusTheme.glassesBg)
+        val view = SessionScreenView(service).apply {
+            onDocumentPaged = report
+            onContentOverflowed = report
         }
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -1594,7 +2088,7 @@ private class SessionOverlayWindow(private val service: AccessibilityService) : 
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
-            PixelFormat.OPAQUE,
+            PixelFormat.TRANSLUCENT,
         )
         val added = runCatching { manager.addView(view, params) }
             .onFailure { logError("Session host window could not be added", it) }
@@ -1602,7 +2096,7 @@ private class SessionOverlayWindow(private val service: AccessibilityService) : 
         if (!added) return false
         root = view
         insetUnsubscribe = HudTopInset.observe(service) { inset ->
-            view.setPadding(dp(18), dp(16 + HudTopInset.sanitize(inset)), dp(18), dp(12))
+            view.setTopInsetPx(BusTheme.dp(service, HudTopInset.sanitize(inset)))
         }
         return true
     }
@@ -1614,29 +2108,23 @@ private class SessionOverlayWindow(private val service: AccessibilityService) : 
         root = null
     }
 
-    override fun show(screen: HostScreen) {
-        val view = root ?: return
-        view.removeAllViews()
-        screen.title?.let { view.addView(line(it, 20f, BusTheme.text, bold = true)) }
-        screen.rows.forEach { row ->
-            val marker = if (row.selected) "› " else "  "
-            val color = if (row.selected) BusTheme.phosphor else BusTheme.text
-            view.addView(line(marker + row.text, 18f, color, bold = row.selected))
-        }
-        screen.status?.let { view.addView(line(it, 14f, BusTheme.dim)) }
+    /** The full screen is drawn by [present]; the plain summary needs no drawing of its own. */
+    override fun show(screen: HostScreen) = Unit
+
+    override fun present(screen: SessionScreen) {
+        root?.show(screen)
     }
 
-    private fun line(value: String, sizeSp: Float, color: Int, bold: Boolean = false): TextView =
-        TextView(service).apply {
-            text = value
-            textSize = sizeSp
-            setTextColor(color)
-            typeface = Typeface.create(Typeface.MONOSPACE, if (bold) Typeface.BOLD else Typeface.NORMAL)
-            includeFontPadding = false
-            setPadding(0, dp(6), 0, dp(6))
+    /**
+     * The next frame's callback runs before its traversal; a message posted from it runs after
+     * that frame was laid out and drawn, so the time it reads is never before the draw.
+     */
+    override fun afterDraw(action: () -> Unit) {
+        val view = root ?: return
+        Choreographer.getInstance().postFrameCallback {
+            if (root === view) view.post { if (root === view) action() }
         }
-
-    private fun dp(value: Int): Int = BusTheme.dp(service, value)
+    }
 }
 
 /** One pending task on the main looper, posted on the uptime clock the runner reads. */
@@ -1677,10 +2165,48 @@ internal object NexusInput {
     var backend: LauncherBackend = LauncherBackend.DEFAULT
         private set
 
+    @Volatile
+    private var selection: LauncherBackendSelection? = null
+
+    /** What a negotiated bundle selects when nobody chose; fixed for the life of the process. */
+    @Volatile
+    private var bundleDefault = LauncherBackend.BUNDLE_DEFAULT
+
+    /** Plan 028a §8.3 over the persisted choices and last announced bundle, never the live link. */
+    private fun selection(context: Context): LauncherBackendSelection =
+        selection ?: synchronized(this) {
+            selection ?: LauncherBackendSelection(ActivityPresentationSettings.backendStore(context), ::switchTo, bundleDefault)
+                .also { selection = it }
+        }
+
+    /**
+     * For tests: the state of a new process whose bundle default is [default], so an offline boot
+     * can be driven through the host. Nothing is resolved until the service connects.
+     */
+    internal fun restartProcess(default: LauncherBackend) {
+        synchronized(this) {
+            bundleDefault = default
+            selection = null
+            backend = LauncherBackend.DEFAULT
+        }
+    }
+
     fun onServiceConnected(service: AccessibilityService) {
         this.service = service
-        backend = LauncherBackend.parse(ActivityPresentationSettings.launcherBackend(service)) ?: LauncherBackend.DEFAULT
+        // A boot before the phone connects resolves from what the last announcement left.
+        backend = selection(service).current()
+        ActivityController.onLauncherBackendChanged()
         log("Launcher backend=${backend.name}")
+    }
+
+    /**
+     * The phone announced its capabilities: [value] is its explicit backend, null for no opinion,
+     * and [negotiatedBundleVersion] the launcher bundle both hubs share by this announcement. Both
+     * are recorded apart from the glasses' own choice, which the phone's outranks without erasing.
+     * A link loss never comes here, so it never moves the launcher or aborts an open session.
+     */
+    fun onPhoneAnnounced(context: Context, value: String?, negotiatedBundleVersion: Int) {
+        selection(context).onPhoneAnnounced(value, negotiatedBundleVersion)
     }
 
     fun onServiceDestroyed() {
@@ -1696,12 +2222,17 @@ internal object NexusInput {
     /** A key delivered to a Nexus window: only a press the filter never routed is decided here. */
     fun onWindowKey(event: KeyEvent): Boolean = decide(event) { arbiter.onWindowKey(it) }
 
+    /** The glasses' own explicit choice: stored as `launcher.backend`, applied unless the phone's outranks it. */
+    fun setBackend(context: Context, next: LauncherBackend) {
+        val effective = selection(context).onGlassesChoice(next)
+        if (effective != next) log("Launcher backend ${next.name} stored; the phone's explicit ${effective.name} applies")
+    }
+
     /**
      * Switches the launcher backend. The active one closes first, so at most one launcher ever
-     * has a window and only the new one receives the global gesture.
+     * has a window and only the new one receives the global gesture. No setting is touched.
      */
-    fun setBackend(context: Context, next: LauncherBackend) {
-        ActivityPresentationSettings.setLauncherBackend(context.applicationContext, next.name)
+    private fun switchTo(next: LauncherBackend) {
         runOnMain {
             if (next == backend) return@runOnMain
             when (backend) {
@@ -1711,6 +2242,7 @@ internal object NexusInput {
             backend = next
             arbiter.reset()
             scheduleTick()
+            ActivityController.onLauncherBackendChanged()
             log("Launcher backend=${next.name}")
         }
     }
@@ -1774,6 +2306,7 @@ internal object NexusInput {
         // The plan's armed notice: interactive, action-bearing, paged or backdrop. It reads false
         // while the camera overlay or an open session suppresses the band.
         override val noticeArmed: Boolean get() = NoticeController.ownsRingInput()
+        override val captureActive: Boolean get() = NexusSession.captureActive
         override val legacyShown: Boolean get() = LauncherOverlayRenderer.isShown()
         override val surfaceOwnsKeys: Boolean get() = SurfaceController.activeSurface() != null
         override val activeSurfaceId: String? get() = SurfaceController.activeSurface()?.surfaceId

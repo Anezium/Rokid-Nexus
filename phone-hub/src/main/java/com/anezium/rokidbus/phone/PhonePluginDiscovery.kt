@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.os.Build
 import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.shared.PageSurfaceContract
+import com.anezium.rokidbus.shared.QuickActionPolicyContract
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParseResult
 import com.anezium.rokidbus.shared.plugin.PluginDescriptorParser
@@ -162,6 +164,8 @@ class PhonePluginDiscovery(private val packageManager: PackageManager) {
             BusConstants.META_PLUGIN_SETTINGS_ACTIVITY,
             BusConstants.META_PLUGIN_LAUNCHABLE,
             BusConstants.META_PLUGIN_GUARDIAN_SERVICE,
+            PageSurfaceContract.META_PLUGIN_PAGES,
+            QuickActionPolicyContract.META_PLUGIN_QUICK_ACTIONS,
             BusConstants.META_PLUGIN_SKILLS,
             BusConstants.META_PLUGIN_SKILLS_CLIENT,
         )

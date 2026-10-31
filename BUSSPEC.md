@@ -1272,6 +1272,51 @@ A notice with actions still dies on its TTL. There is no hold-open rule, no
 scrolling inside the band, and no text entry: a notice is a question with a
 short life, not a menu. Anything the wearer needs to browse is a surface.
 
+### Destinations, event keys and withdrawal (launcher bundle)
+
+Between hubs that negotiated the launcher bundle, a `/notice/show` may carry
+three more fields. They are show-only: an update carrying one is
+`INVALID_NOTICE`. A phone strips them before forwarding to glasses without the
+bundle, and the SDK drops them itself when the bundle is not negotiated.
+
+- `destination` — `{pageId, params?}`: one of the owner's own provider pages,
+  params within 2,048 bytes, checked against the authenticated owner on the
+  phone.
+- `eventKey` — the owner's opaque id for this event: printable ASCII without
+  spaces, at most 128 characters.
+- `conversation` — `true` when the event is a message in the thread at
+  `destination`; it then needs both `destination` and `eventKey`. A
+  conversation provider uses the same value for `eventKey` and for that page's
+  `threadKey`.
+
+`/notice/withdraw` (plugin to phone, `surfaces`, owner-stamped) carries
+`{surfaceId: "notice", eventKey}`: the event is no longer on the phone. The phone
+stamps the owner and forwards `{ownerPluginId, eventKey}` to the glasses, which
+mark the matching history entries withdrawn and withdraw reply authority for
+that thread. It is not proof that anything was read or delivered.
+
+`/notice/forget` (plugin to phone, `surfaces`, owner-stamped) carries only
+`{surfaceId: "notice"}`: the user told the owner to stop keeping what it showed
+(a source turned off, the plugin switched off, its own access revoked). The
+phone handles it exactly like a revoked owner, with `/core/notice/purge` for the
+authenticated owner: the obligation is coalesced per owner and kept in its
+durable purge ledger across a link loss and its own restart. Past the shared
+notice budget it is still kept and sent once the budget's one-second window has
+passed, and always before any newer `/notice/show` from that owner, so it never
+erases a later event: a show whose owner still owes a purge that cannot be sent
+now is refused with `capability_not_available`, as for a link that is down, and a
+show the owner's budget refuses leaves a deferred purge to its drain. Once the obligation is on disk the phone answers the
+sender alone with `/notice/forget/accepted` `{pluginId, forId}` (owner-scoped,
+delivered without a receive prefix); only then may the plugin stop keeping the
+request. A plugin can never name another owner, and nothing in it identifies an
+event.
+`/core/notice/purge` `{ownerPluginId}` (phone to glasses only) removes every
+history entry of that owner on revoke, disable, uninstall or a signer change.
+The phone keeps, by owner id only, the owners whose notices reached a history
+and the purges it has not delivered, across its own restarts; at startup and on
+every package or grant change it purges each of those owners that is no longer
+an approved surfaces owner, and an undelivered purge goes at the next announce.
+
 ## Activity protocol v1
 
 An activity is a structured, live description of an ongoing real-world process:
@@ -1305,9 +1350,17 @@ Phone to glasses:
 Glasses to phone to the owning plugin:
 
 - `/activity/action` — `{activityId, id}`, where `id` is the selected action's
-  plugin-supplied identifier.
+  plugin-supplied identifier. Between hubs that negotiated the launcher bundle
+  it is a command instead: see "Interactive activities" below.
 - `/activity/closed` — `{activityId, reason}`, where `reason` is one of
   `owner | replaced | disconnect | max-duration`.
+
+Plugin to phone, launcher bundle only (`surfaces` grant, owner-stamped like a
+start; see "Interactive activities"):
+
+- `/activity/result` — the outcome of one command.
+- `/activity/geometry` and `/activity/heading` — route geometry and compass
+  heading for the owner's activity, forwarded to negotiated glasses.
 
 Returned activity traffic is owner-scoped, like notice input: the phone hub
 delivers it only to the activity owner. The plugin uses the local surface ID
@@ -1392,15 +1445,22 @@ spring from one form's bounds to the next while the content of each form is
 revealed inside it. The outgoing content fades out first, so two forms never
 show at once. Every transition is glasses-local.
 
-- **chip** — the ambient corner form, delegated to the medium pin panel view:
-  glyph plus `primary` on the title row and `secondary` below.
+- **chip** — the ambient corner form. Without `measure`: the glyph, as tall as
+  the two lines beside it, then `primary` over `secondary`, and nothing under
+  them. With `measure`: the medium pin panel view, as described under
+  `measure`. Over a pair with the launcher bundle the glasses draw `headline`,
+  when sent, in place of `primary` in every form; a title wider than its line
+  scrolls to its end after a short hold and back, without changing the
+  island's size, and only while the island is shown on a lit display.
 - **panel** — the expanded form: large glyph, `primary` at up to 24sp,
   `secondary` at 13sp, trailing `eta`, progress when present, detail at 11sp,
   and the action row. It uses a pure-black background and the shared hairline
   border. `primary` is fitted rather than ellipsized: it shrinks to 20sp beside
   the ETA, and if it still does not fit, the ETA moves to the end of the
   secondary row and `primary` takes the largest size from 24sp down to 16sp
-  that fits alone.
+  that fits alone; a headline still too wide at 16sp scrolls. The action row
+  never cuts a label: labels show only when every one fits whole, otherwise
+  the row is glyphs alone.
 - **flare** — a significant update springs the island from its corner into
   the shared notice-band geometry in about 0.4 s, holds for about 3.5 s, and
   folds back into the activity's steady form.
@@ -1508,39 +1568,49 @@ there and are not governed by this budget.
 
 ### Capacity, corners, and primary selection
 
-Activity v1 holds at most two activities alongside the existing one pin. The
-pin keeps its chosen corner and new activities take free corners. Even with all
-three residents, one of the four corners remains unused.
+Without the launcher bundle, a pair holds at most two activities
+(`MAX_ACTIVE_ACTIVITIES`) alongside the existing one pin. The pin keeps its
+chosen corner and new activities take free corners. Even with all three
+residents, one of the four corners remains unused.
 
-At activity capacity, a third start replaces the least-recently-updated
+At that capacity, a third start replaces the least-recently-updated
 non-primary activity. If there is no non-primary candidate, the oldest started
 activity is the deterministic fallback. The replaced owner receives
 `/activity/closed` with reason `replaced`. Restarting or updating an existing
 owner retains its corner rather than making the HUD jump.
 
-Exactly one activity is primary because only one expanded panel and action row
-can be active. The activity with the latest significant update is primary; if
-none has a significant update, the oldest started activity is primary.
-Significant updates affect primary selection even when their flare is throttled
-to a pulse or hidden by the camera. Non-primary activities remain chips.
+With the launcher bundle the logical collection holds up to eight entries, one
+per owner, while the corners still hold two; see "Interactive activities"
+below for its admission, eviction and order.
+
+Exactly one activity is primary because only one expanded panel can be shown.
+The activity with the latest significant moment is primary. A significant
+update is one; the start of a new session is another, so a route started over
+playing media goes above it. Starting again a surface that is already resident
+(a re-registration, a lost send) keeps the moment it had. A start never flares
+or wakes the display. Significant updates affect primary selection even when
+their flare is throttled to a pulse or hidden by the camera. Non-primary activities remain chips.
 
 ### Actions and input arbitration
 
-Since glasses hub 1.7.0 activities are passive: every key goes through one
-input arbiter, and an activity never claims one, on either launcher backend.
-Up to three platform-rendered action glyphs are still drawn, but nothing
-selects them and the glasses never emit `/activity/action`, so a center tap
-over an island reaches whatever is underneath, a native app included. The
-route stays valid on the phone for older glasses hubs. Actions are one-shot
-commands only: there is no text entry, scrolling, plugin layout, or fourth
-action.
+Activity islands take no input on either launcher backend: they are passive, and
+native apps and surfaces keep every key. A v1 `actions` row is not reachable
+from the islands, so a v1 activity's actions are never invoked from them and its
+owner is not opened by tapping an island.
 
-Older glasses hubs let the primary activity claim keys on the idle layer only
-(no active surface, visible notice, visible launcher, or camera overlay): with
-no actions, center tap opened the owner through `/system/plugin/open`; with
-actions, forward/backward selected one and center tap emitted
-`/activity/action`. BACK is never claimed or forwarded by an activity, and
-activity windows never take focus.
+Commands are reached only inside the Nexus session, between hubs that
+negotiated the launcher bundle: a commands-first card enters command focus,
+and a fresh Enter runs the focused command immediately, in quick mode when
+the retained policy allows it and confirmed mode otherwise (see "Launcher bundle v1"). Actions
+stay one-shot commands: no text entry, scrolling, plugin layout, or fourth
+action. Anything more involved is a page or a surface. BACK is never claimed or
+forwarded by an activity, and activity windows never take focus.
+
+Glasses hubs before 1.7.0 let the primary activity claim keys on the idle layer
+only (no active surface, visible notice, visible launcher, or camera overlay):
+with no actions, center tap opened the owner through `/system/plugin/open`; with
+actions, forward/backward selected one and center tap emitted `/activity/action`.
+The phone keeps that route valid for them.
 
 ### Lifecycle, reconnect, and errors
 
@@ -1568,8 +1638,7 @@ rendered activities and advances the sequence floor before accepting the
 resends. Each resend carries the remaining `maxDurationMs`, not the original
 duration; a sub-minute remainder uses the start contract's 60-second wire floor
 while the phone retains and enforces the exact original deadline. This prevents
-a ghost activity from surviving a phone-hub restart or continuing to claim
-idle-layer input.
+a ghost activity from surviving a phone-hub restart.
 
 Activity errors mirror pins and notices:
 
@@ -1579,32 +1648,288 @@ Activity errors mirror pins and notices:
   plugin.
 - `CAPABILITY_NOT_AVAILABLE` — activity v1 was not announced or the glasses
   cannot accept the activity.
+- `ACTIVITY_DISABLED` — launcher bundle: the user turned this plugin's activity
+  off on the phone; the start is refused and its current entry ends.
 
-## Session and page protocol v1 (specified, not active)
+### Interactive activities (launcher bundle)
 
-No hub version implements this protocol yet. PR1 reserves the wire names and
-provides isolated validation and reducer tests only; it changes no running input,
-provider binding, capability announcement, or plugin behaviour. The activity and
-notice protocols above describe today's shipped behaviour.
+Between hubs that negotiated the launcher bundle (see "Launcher bundle v1"),
+an activity is also a collection entry with an optional destination and inline
+commands. Every field below is optional; a phone strips all of them before
+forwarding to glasses without the bundle, and the SDK drops them itself when
+the bundle is not negotiated.
+
+```json
+{
+  "surfaceId": "media:activity", "ownerPluginId": "media", "seq": 77,
+  "kind": "activity", "glyph": "music", "primary": "Teardrop (M…",
+  "headline": "Teardrop (Mad Professor remix)",
+  "secondary": "Massive Attack",
+  "actions": [
+    {"id": "prev", "glyph": "previous", "label": "Previous", "typed": {"type": "media.previous"}},
+    {"id": "play", "glyph": "play", "label": "Play", "typed": {"type": "media.play"}, "hubQuick": true},
+    {"id": "next", "glyph": "next", "label": "Next", "typed": {"type": "media.next"}}
+  ],
+  "destination": {"pageId": "media:now", "params": {"session": "spotify"}},
+  "activation": "commands",
+  "defaultActionId": "play",
+  "persistence": "ongoing",
+  "state": "live", "userPinned": false, "knownAtWallMs": 1760100000000
+}
+```
+
+Plugin fields, with patch semantics on `/activity/update` like the rest:
+
+- `destination` — `{pageId, params?}`: one of the owner's own provider pages
+  (`<ownerPluginId>:<suffix>`, never `nexus:`), with `params` a JSON object of at
+  most 2,048 bytes under the page nesting and number rules. The phone checks the
+  owner on start and update; the glasses check it again.
+- `activation` — `destination` or `commands`. When absent: a destination makes
+  the card open it; else any action makes the first tap enter command focus;
+  else the card opens the hub's summary `nexus:activity:<owner>`. An explicit
+  mode without its prerequisite is `INVALID_ACTIVITY`.
+- `defaultActionId` — names one of the actions; the command focused first.
+  Default: the first action.
+- `persistence` — `session` (default) or `ongoing`. `ongoing` declares a
+  standing entry the user enabled in the plugin ("Show in activities").
+- `headline` — at most 40 characters, none of them a control character: the
+  longer form of `primary`, such as a whole track title, for the surfaces with
+  room for it. The glasses draw it instead of `primary` on the launcher card and
+  in every form of the island, and a headline still wider than its line scrolls
+  there in place. `primary` stays required, keeps its 12 characters, and is what
+  glasses without the bundle draw. A headline is presentation only: it does not
+  tighten the action-id rule below.
+- `wholeSecondary` — at most 120 characters, none of them a control character:
+  `secondary` uncut, such as a whole destination or street name. The lines that
+  scroll a text wider than their room draw it instead of `secondary`: the
+  launcher card, the folded island, and the guidance island's street.
+  `wholeDetail` — up to two entries of at most 120 characters: `detail` uncut,
+  drawn instead of it where a line scrolls, such as the panel's next
+  instruction. Both are presentation only, like `headline`, and glasses without
+  the bundle draw `secondary` and `detail`. An update that sets `secondary` or
+  `detail` without its whole form clears that whole form, so a line never
+  scrolls a text its bounded form no longer says.
+- per action, `typed` — only `media.previous`, `media.play`, `media.pause` or
+  `media.next`. Any other value, known or not, is `INVALID_ACTIVITY`.
+- Once any of these fields (or a typed action) is used, every action id must be
+  a page-style id (printable ASCII without spaces, at most 128) and ids must be
+  unique. Payloads without them keep the permissive v1 rules. A receiver checks
+  these rules on the content an update produces, not only on the update.
+
+Hub stamps, phone to glasses only: the phone deletes any plugin-supplied copy
+and writes its own, like `ownerPluginId` and `seq`. `state` is `live` or
+`offline`; `userPinned` is the user's pin on the phone; `knownAtWallMs` is the
+wall-clock time the content was last confirmed live; per action, `hubQuick:
+true` marks a quick-eligible type whose family the user approved for this
+owner. Glasses read stamps only from the phone; a stamp on a type that can never
+be quick does not stand.
+
+**Collection.** Two ambient corners (`MAX_AMBIENT_ACTIVITIES`) and a logical
+collection of up to eight entries (`MAX_COLLECTION_ACTIVITIES`), one per owner.
+The effective capacity is 8 with the bundle and 2 without. The phone is
+authoritative: on a capacity drop (the glasses re-announce without the bundle)
+it trims to two deterministically and sends `closed(replaced)` to evicted live
+owners before resending. When a new owner starts at capacity, the first match
+is evicted: offline entries (oldest `knownAtWallMs`), then unpinned live
+non-primary entries (least recently updated), then the unpinned primary, then
+pinned entries (least recently updated); evicted live owners get
+`closed(replaced)`. Only the primary plus one other get corner islands, and an
+offline entry never does. The glasses order the collection: user-pinned first,
+then live before offline, then primary, then the latest significant moment
+(update or new session start),
+then the earliest start, then owner id. The root promotes at most two entries,
+frozen per session; the Activities page lists them all.
+
+**Offline snapshots.** When an owner's last registration leaves (not a revoke,
+disable or uninstall), an entry with `persistence: ongoing` or `userPinned`
+becomes `state: offline`: its content and destination stay, its actions are
+dropped, it gets a new `seq` so every older revision is stale, and it has no
+island. The phone keeps at most eight such snapshots in its own store and
+restores them as offline after a hub restart while the grant is still approved
+with `surfaces`. An offline destination still opens (the page broker's cold
+bind revalidates grant and registration); its commands are inert. Only a fresh
+`/activity/start` from a new approved registration revives it, with a new
+`seq`; no service is held alive to keep an entry. An owner `end`, the user
+disabling or unpinning a non-ongoing offline entry, revoke, plugin disable,
+uninstall and a signer or id change remove it promptly, persisted snapshot
+included. Other entries end on disconnect as in v1.
+
+**User preferences.** Per plugin grant key, the phone stores `enabled`
+(default true) and `pinned` (default false), separate from grants and live
+state and purged with the grant. With `enabled` false the phone refuses that
+owner's starts with `ACTIVITY_DISABLED` and ends its entry; `pinned` is stamped
+as `userPinned`. Editing them never goes through the grant teardown; a change
+resends the affected entry.
+
+**Commands.** With the bundle, the glasses send the command shape on
+`/activity/action`:
+
+```json
+{"activityId": "media:activity", "id": "play", "invocationId": "c-41-1", "seq": 77, "mode": "quick"}
+```
+
+`invocationId` is fresh and a page-style id; `seq` is the revision the wearer
+saw; `mode` is `confirmed` or `quick`. Invocation and request ids are opaque and
+must remain fresh across glasses process or runner restarts: the phone and
+providers can still remember earlier ids. A runtime namespace preserves replay
+protection without reusing a restarted session counter.
+The phone requires all three and checks:
+owner live with a single registration, entry live (not offline), `seq` equal to
+its canonical `seq`, action still declared, `quick` only for a quick-eligible
+type whose family the owner's policy approves now, at most one pending command
+per owner, and an eight-second deadline. It then delivers
+`{activityId, id, invocationId, seq, typed?}` to the owner, with `typed` taken
+from its own canonical copy, never from the glasses. Old glasses keep sending,
+and getting delivered, the v1 `{activityId, id}`.
+
+The phone holds the provider while a command is pending, independently of its
+page, skill and immersion sessions, and releases the hold on result, deadline,
+failed delivery or cancellation. A refused keep-alive bind does not suppress
+delivery to a live registration. Losing that connection cancels its pending
+command; activity loss is determined by the registration lifecycle. Android
+wake and foreground-service policy is described in `docs/PLUGIN_SDK.md`; it
+adds no wire fields, grants or deadlines.
+
+The owner answers on `/activity/result`:
+
+```json
+{"surfaceId": "activity", "activityId": "media:activity", "invocationId": "c-41-1", "status": "done", "message": "Playing"}
+```
+
+`status` is `done`, `rejected` or `stale`; `message` is at most 64 characters.
+The phone stamps the owner, forwards the result to the glasses that hold the
+pending invocation, and drops a late or unknown result. A command without a
+result by its deadline is shown unconfirmed and is never resent; nothing is
+replayed after a reconnect.
+
+**Route geometry and heading.** `/activity/geometry` carries
+`{surfaceId: "activity", revision, geometry}` with the "Route geometry" schema
+of "Launcher bundle v1". Latest wins by `revision`. It is data plane only: the
+phone drops it when only CXR control is up and never queues it, and text
+guidance never depends on it. It is cleared when the activity ends or goes
+offline. `/activity/heading` carries `{surfaceId: "activity", deg, accuracyDeg?,
+atWallMs}` with `deg` in `0 <= deg < 360` and `accuracyDeg` in `0..180`; the
+phone keeps at most five a second per owner. The glasses smooth the heading and
+treat one older than three seconds as absent.
+
+## Session and page protocol v1
+
+Only the `SESSION` launcher backend opens the session described here; the
+`LEGACY` backend keeps the classic launcher and notice behaviour. `SESSION` is
+the default when the phone's last capabilities announcement negotiated the
+launcher bundle, and `LEGACY` otherwise; an explicit choice (the phone's, then
+the glasses' `launcher.backend`, switched with the
+`com.anezium.rokidbus.glasses.action.SET_LAUNCHER_BACKEND` broadcast) outranks
+the default; see "Launcher backend". Both hubs negotiate the page protocol
+separately from the backend, so support can be announced while page UI and page
+requests stay unreachable on `LEGACY`.
+
+Version 1 specifies consultation: a root built from live state, four typed hub
+templates, authenticated provider routing, and labelled immersion launches. A hub
+announces `pageSessionVersion: 1` only once it implements every requirement below
+for its side; until both hubs of a pair do, pages stay unreachable. Version 1 by
+itself does not cover a foreground resolver, per-app ambient modes, notification
+history, late notice replies or a composer, maps, images, or Ink page bodies.
+The launcher bundle, negotiated separately (see "Launcher bundle v1"), adds the
+collection of interactive activities, typed and quick actions, the
+`conversation`, `media` and `route` bodies with the hub composer and route maps,
+notification history with exact-thread destinations, and ambient preferences;
+everything it adds is described where it changes this protocol, and nothing of
+it applies to a pair without it. Activity islands take no input on either
+backend.
 
 ### Base, session, and anchored frames
 
 The base is the native app or exclusive Nexus immersion underneath. A Nexus
 session is a hub-owned excursion over that base, with an anchored root and up to
-six frames **including the root** (five provider pages). Closing the session
-restores the still-live base without forwarding BACK or emitting
-`PLUGIN_CLOSE(switch)`. Immersions are not stacked in v1. Opening a consultation
-page never calls `/launcher/open`, `/surface/show`, or `/ink/show`.
+six frames **including the root** (five pages). Closing the session restores the
+still-live base without forwarding BACK or emitting `PLUGIN_CLOSE(switch)`.
+Immersions are not stacked in v1. Opening a consultation page never calls
+`/launcher/open`, `/surface/show`, or `/ink/show`.
 
-The root has at most six stops, in this order: pinned activity, second activity,
-latest notification preview, `Activities · n` when more than two activities are
-live, `Notifications · n`, Applications. Optional stops are omitted when absent.
-Root order, stop membership, card sizes, and selection anchors are frozen until
-the session closes. Newly started activities wait for the next session; ended
-activities stay in place as Ended. Arriving notices update the existing preview
-and the shell counter without moving selection or inserting a stop. The root
-builder accepts any number of activities; the shipped two-activity capacity
-remains unchanged until a later negotiated activity contract.
+The root has at most six stops, in this order: the head activity, a second
+activity, the current notification preview, `Activities · n` when more than two
+activities are live, `Notifications · n`, Applications. Optional stops are
+omitted when absent. The head activity is the shipped primary activity at the
+moment the session opens. Root order, stop membership and card sizes are frozen
+from the accepted triple tap until the session closes, except that a withdrawn
+notification preview is removed; surviving selection follows its identity and a
+replacement target requires a fresh contact. Values inside a card may update
+in place. Newly started activities wait for the next session. An activity
+that ends stays in place as Ended and inert until the session closes; STEP moves
+past it normally and SELECT on it does nothing. Arriving notices update the
+existing preview and counter without moving selection or inserting a stop. The
+root builder accepts any number of activities. Without the launcher bundle the
+capacity stays two. With it, the collection holds up to eight and the root order
+is: up to two activity cards (user-pinned first, see "Interactive activities"),
+then one notification stop, then `Activities · n` when the collection holds
+more than the promoted cards, then `Notifications · n`, then Applications, still
+at most six stops and frozen per session.
+
+With the launcher bundle a destination-first card opens its destination page
+directly, with its params: no detail page, no `onNexusOpen`/`onNexusClose`, no
+change underneath. A commands-first card's first tap enters command focus on
+`defaultActionId` and never executes. In focus, STEP moves along the plugin
+commands and then hub-owned navigation slots. A card with a destination has
+`Open page`; typed media labels it `Open player` and omits the redundant full-app
+slot. Other launchable owners retain `Open app` when available in Applications.
+The selected live commands-first card previews the strip without a selected
+control. A fresh SELECT in command focus runs the focused one immediately,
+in quick or confirmed mode; BACK leaves focus first. An offline entry still opens its
+destination, its commands are inert, and Open app stays available. `Open app`
+launches directly on a fresh tap, and a destination page opened
+from an activity ends with a hub row `Open app` for a launchable owner.
+
+Media page controls are part of the player, not a separate Back destination:
+one BACK pops that media frame even with a transport button focused. It returns
+to its containing Nexus menu. Card command focus, confirmation panels, composer
+capture and full-map commands retain their existing Back behavior.
+
+`Notifications · n` counts the readable notices the hub retains in memory, which
+is at most one: the current notice, or the last one after it was dismissed or
+expired. It is not a history and survives no restart. Its page is a local
+document of that notice's source, time and content, with the shipped redaction
+and hidden-preview policy applied; it carries no armed answer, dismissal or
+reply. A Relay notice page offers a navigation row to Relay's own thread list;
+without the launcher bundle there is no authenticated thread reference in the
+notice wire, so the hub never guesses an exact thread from sender or text.
+
+With the launcher bundle the glasses keep a notification history instead: in
+memory, never persisted, newest first, at most 30 entries and a 24-hour display
+age (a display bound, not a reply lease). An entry holds its owner, its
+`eventKey` and `destination` when the notice carried them, the conversation
+flag, its label, the text as shown on the band (the owner's redaction and the
+wearer's hide choices preserved), its arrival time, and a local state `new`,
+`seen`, `handed_off` or `withdrawn`. A withdraw marks matching entries
+withdrawn and removes their promoted launcher preview, including beneath an open
+page. History entries remain consultable in Notifications. A surviving root
+selection keeps its identity; replacing a withdrawn selected preview requires a
+fresh contact after the new target is drawn. A purge removes the owner's entries, then refreshes every root
+already open or beneath a page from the remaining history: a stop that still
+references the purged owner after that refresh becomes an inert `Notification
+removed` placeholder in the same slot, while a generic preview may instead
+follow a surviving entry of another owner; a link loss keeps entries but leaves them read-only
+until the phone is back. The root's notification stop is
+an aggregate card (`<n> conversations`, opening the owner's main page) when the
+newest live conversation entries come from more than one thread of one owner;
+else a conversation card for the newest conversation entry, which opens its
+exact `destination` directly and keeps its identity under focus while resolving
+in place to handed off until withdrawn; else the generic preview of the newest
+non-withdrawn entry. A root with only withdrawn entries has no notification
+preview. The armed band is unchanged.
+
+Applications lists Nexus plugins and native apps as the shipped launcher catalog
+merges them. A plugin that provides pages and is reachable over a negotiated
+pair opens its `<pluginId>:main` page. Every other plugin row carries the app's
+name alone; selecting it shows a local panel naming the plugin and saying the
+app opens over the glasses screen, with Open preselected and Cancel, and only SELECT on
+Open launches the immersion. BACK cancels; a late surface of a cancelled launch
+is closed unseen. Native apps and the hub camera launch locally and close the
+session on success. A page failure never turns into a launch. Entering
+Applications from the root freezes its entries and their order: refreshes and
+More pages keep that order, labels and availability follow the catalog by entry
+key, a removed entry stays in place as an inert row, an entry added since waits
+for the next entry, and a launch still checks the catalog as it is when it runs.
 
 ### Gate and gesture ownership
 
@@ -1612,8 +1937,8 @@ Triple tap opens a visible Opening… gate for 800 ms. All touchpad classificati
 and ring gestures are absorbed during the gate, including classifications that
 arrive later for contacts begun inside it. Input ownership stays with the captured
 gesture through repeats and UP; it is never retargeted to a dying layer. The
-host must identify the source first, pass reserved hardware keys, apply the gate,
-recognise GLOBAL from validated touchpad contacts, then dispatch to the session.
+host identifies the source first, passes reserved hardware keys, applies the gate,
+recognises GLOBAL from validated touchpad contacts, then dispatches to the session.
 The ring is an optional accelerator and has no GLOBAL gesture.
 
 | Context | Tap / SELECT | Swipe / STEP | BACK | Triple tap / GLOBAL |
@@ -1624,11 +1949,12 @@ The ring is an optional accelerator and has no GLOBAL gesture.
 | Unarmed notice or expired window | underneath | underneath | underneath | opens root; notice remains consultable |
 | Opening gate | absorbed | absorbed | absorbed | absorbed |
 | Session root | open selected page | bounded selection, no wrap | close and restore base | stay at root |
-| Page | activate item or open next frame | selection, document page, or bounded adjustment | pop one frame | return to same root |
-| Composer (later delivery) | pause editing and review | consumed | leave to mode choice, keep draft | suspend draft and return to root |
+| Page | activate row or open next frame; from read text, reach its rows | row selection, or a page of read text | from the rows of read text, return to the text; otherwise pop one frame | return to same root |
+| Activity command focus (launcher bundle) | run the focused command, fresh contact only | next command, then Open app | leave focus | return to same root |
+| Composer capture (launcher bundle) | finish to a draft, nothing sent | consumed | cancel, previous draft kept | not recognised: finish or cancel first |
 | Focused editable field in an immersion | field | field | field | disabled, preserving Bluetooth keyboard protection |
 
-An armed notice is an opaque host-supplied fact: the detector must not recognise
+An armed notice is an opaque host-supplied fact: the detector does not recognise
 triple tap while any visible notice can claim input, and the reducer also refuses
 it. The first contacts would otherwise spend the notice answer before recognition.
 The shipped notice dispatcher keeps all its claims: interactive/action notices
@@ -1636,65 +1962,172 @@ claim confirm, multi-action or paged notices claim directions, BACK dismisses a
 visible band, backdrop notices claim otherwise unhandled classifications, camera
 suppresses notice input, and editable fields reclaim confirm/directions. A notice
 arriving inside a session only updates snapshots and counters; its deadline
-continues, and hidden answers/dismissals cannot fire. Activity islands become
-passive everywhere when this design is activated in later deliveries. Outside a
-session, notice, legacy launcher, surface/editor, then native pass-through keep
-their ownership order. Long press and two-finger gestures belong to firmware.
-The HUD is 480×640 portrait at 240 dpi with green monochrome additive optics.
+continues, and hidden answers/dismissals cannot fire. Outside a session, notice,
+legacy launcher, surface/editor, then native pass-through keep their ownership
+order. Long press and two-finger gestures belong to firmware. The HUD is 480×640
+portrait at 240 dpi with green monochrome additive optics.
 
 ### Paths, provider identity, and payloads
 
-The six reserved paths carry JSON objects:
+The six page paths carry JSON objects. The whole `/page` root is reserved: a
+plugin may send only `/page/response` and `/page/result`, and only about work
+the hub recorded for it; it can declare no `/page` receive prefix, and the four
+hub-to-provider paths are delivered to their one owner, never fanned out.
 
 | Path | Direction | Fields |
 |---|---|---|
 | `/page/request` | hub → provider | `requestId`, `sessionGeneration`, `frameIndex`, `pageId`, optional `params` object, `reason`: `open`, `refresh`, or `retry` |
 | `/page/response` | provider → hub | `requestId`, `sessionGeneration`, `frameIndex`, `pageId`, then a page or `error` |
-| `/page/action` | hub → provider | `invocationId`, `sessionGeneration`, `frameIndex`, `pageId`, `revision` seen by the wearer, `actionId` |
-| `/page/result` | provider → hub | `invocationId`, `status`: `done`, `rejected`, or `stale`, optional `message` (64 characters), optional `replacement` containing a full page response |
+| `/page/action` | hub → provider | `invocationId`, `sessionGeneration`, `frameIndex`, `pageId`, `revision` seen by the wearer, `actionId`; launcher bundle: optional `mode` (`confirmed`, `quick` or `compose`, absent = `confirmed`), `text` (compose only), and the phone's copy of the action's `typed` |
+| `/page/result` | provider → hub | `invocationId`, `status`: `done`, `rejected`, or `stale`, optional `message` (64 characters), optional `replacement` containing a full page response; launcher bundle: optional `code` (printable ASCII, at most 32) |
 | `/page/visibility` | hub → provider | `pageId`, `visible` boolean; `leaseUntilMs` required when visible and absent when covered |
 | `/page/closed` | hub → provider | `pageId`, `reason`: `back`, `session_closed`, `timeout`, `link_lost`, `replaced`, or `frame_limit` |
 
 `sessionGeneration` and `revision` are nonnegative JSON integers representable as
 signed 64-bit values. `frameIndex` is an integer from 0 through 5; 0 names the
-root, and the first provider frame is 1. Every id is a nonempty string of printable
+root, and the first page frame is 1. Every id is a nonempty string of printable
 ASCII without whitespace, at most 128 characters. These page identities have a
-broader grammar than descriptor plugin ids and cannot confer provider authority.
-The phone hub stamps the authenticated plugin id on provider traffic and delivers
-callbacks only to that owner. The glasses hub never trusts an owner supplied in
-the payload; correlation also requires the authenticated provider registration.
+broader grammar than descriptor plugin ids and confer no provider authority.
+
+A provider's pages live in its own namespace, `<pluginId>:<suffix>`, and its
+conventional entry page is `<pluginId>:main`; the complete id still obeys the
+id rules above. Pages the glasses hub draws itself use `nexus:` and are answered
+in-process by the glasses hub: they never travel on the bus and stay readable
+without a phone. No plugin may provide or author a `nexus:` page.
+
+Additive transport metadata rides on the existing paths; old fields keep their
+meaning and unknown fields stay ignorable:
+
+| Field | On | Meaning |
+|---|---|---|
+| `pluginId` | every page path | The authenticated owner. The phone hub stamps it from the verified sender on responses and results, overwriting anything supplied, and uses it to route the four hub paths to their owner. |
+| `providerRegistrationId` | the four hub paths | Opaque registration epoch the phone hub generates. The phone records work against the exact registration, binder and grant that received it, and stamps the sender's current epoch on answers; an echoed epoch is never trusted, and replacing a registration cancels its work even for the same app. |
+| `sessionGeneration`, `frameIndex` | visibility, closed | The frame the call concerns. A page id alone cannot tell two frames apart; refresh keeps the frame identity while the request id changes. |
+| `remainingTimeoutMs` | request | What is left of the glasses' absolute eight-second budget when sent, never above 8,000. The glasses' own deadline stays authoritative on arrival. |
+| `minimumRevision` | request | The revision floor the frame retains, when it retains one, so a cold provider can answer without rolling back. |
+| `leaseDurationMs` | visible visibility | What is left of the lease on the glasses when sent, 1 to 120,000. `leaseUntilMs` stays a glasses-clock deadline the phone and provider treat as opaque; a provider times its lease with this duration on its own clock. Covered visibility has neither. |
 
 A successful `/page/response` additionally requires `revision`, `template`,
 `title` (at most 48 characters), `body` (an object), `actions` (an array), and
 `live` (a boolean). Each action is `{id, label, kind, confirm}`: label is at most
 24 characters, kind is `hub`, `plugin`, or `immersion`, and confirm is a strict
-boolean. Action ids must be unique within a page. Templates are `summary`,
-`selectableList`, `document`, `commands`, `conversation`, `media`, `route`, and
-`ink`. Template-specific body fields remain opaque to PR1. An optional `data`
-object inside `body` is the template dataset; if an additive top-level `data`
-object is supplied, the same dataset cap applies there. `ink` requires the
-existing `ink_surface` grant; the renderer will enforce it in a later delivery.
-An error response carries the four correlation fields and `error` instead of
-any successful-page fields. A replacement in a result is a successful response
-for the same session, frame, and page, with a higher revision.
+boolean. Action ids must be unique within a page. With the launcher bundle a
+`plugin` action may add `typed` (see "Typed actions"; an unknown type leaves an
+ordinary action, a malformed known one is `INVALID_PAGE`, and on other kinds it
+is ignored), and the phone stamps `hubQuick: true` on approved quick actions
+after deleting any a provider supplied. Action targets still carry no params. An optional `data` object
+inside `body` is the template dataset; if an additive top-level `data` object is
+supplied, the same dataset cap applies there. An error response carries the four
+correlation fields and `error` instead of any successful-page fields. A
+replacement in a result is a successful response for the same session, frame,
+and page, with a higher revision.
 
 ```json
 {
-  "requestId": "session-1-request-1", "sessionGeneration": 1,
-  "frameIndex": 1, "pageId": "navigation:route", "reason": "open",
-  "params": {"view": "route"}
+  "requestId": "s1-r1", "sessionGeneration": 1, "frameIndex": 1,
+  "pageId": "nav:main", "reason": "open", "remainingTimeoutMs": 7940
 }
 ```
 
 ```json
 {
-  "requestId": "session-1-request-1", "sessionGeneration": 1,
-  "frameIndex": 1, "pageId": "navigation:route", "revision": 1,
-  "template": "summary", "title": "Route", "body": {"text": "300 m, right"},
-  "actions": [{"id": "mute", "label": "Mute", "kind": "plugin", "confirm": true}],
-  "live": true
+  "requestId": "s1-r1", "sessionGeneration": 1, "frameIndex": 1,
+  "pageId": "nav:main", "revision": 4, "template": "summary",
+  "title": "Navigation",
+  "body": {"primary": "Turn right", "secondary": "Rue de Rivoli",
+           "facts": [{"id": "distance", "label": "Distance", "value": "300 m"}],
+           "items": [{"id": "commands", "label": "Commands",
+                      "target": {"pageId": "nav:commands"}}]},
+  "actions": [], "live": true
 }
 ```
+
+### Typed template bodies
+
+The envelope is validated first, for size and correlation, with the body kept
+opaque. The body is then decoded by the one shared typed codec before anything
+is drawn or acted on. Every page-capable pair draws four templates. A pair that
+negotiated the launcher bundle also draws `conversation`, `media` and `route`;
+without it they remain valid envelope names that are unavailable: such a page is
+shown as needing a newer Nexus and never opens an immersion instead. Each
+template has its own decoder: an unknown or unavailable template is never read
+as another one. `ink` stays reserved, and no Ink page profile is announced.
+
+| Template | Body |
+|---|---|
+| `summary` | optional `primary`, `secondary`, `text` strings; optional `facts` array of `{id, label, value}`; optional `items` |
+| `selectableList` | required `items` array; optional `emptyText` |
+| `document` | required `segments` array of `{id, kind, text}`, kind `header`, `prose` or `aside`; optional `items`, `footer` |
+| `commands` | required `items` array; optional `text` |
+| `conversation` (bundle) | required `threadKey` (page-style id); optional `caption` (64); required `messages` (at most 64, oldest first) of `{id, role, sender?, text, status?}`; optional `composer` `{recipient, sendActionId, maxChars, replyable, unavailableText?, unavailableSub?}` |
+| `media` (bundle) | required `title` (120, nonblank) and `state`; optional `artist`, `album` (120), `source` (48), `status` (120); `controls` (at most 3 action ids, swipe order); optional `defaultControl` |
+| `route` (bundle) | required `position` (`live`, `stale` or `none`); optional `maneuver` `{glyph, distance, street?, eta?}`, `facts` (at most 6), `follow` and `overview` geometry, `ribbon`, `fixAgeS` |
+
+The bundle bodies have rules of their own:
+
+- `conversation`: `role` is `received`, `ours` or `unknown`; sides come from it
+  alone and `unknown` gets no side. `sender` is at most 48 characters, `text` at
+  most 2,000. `status` is `handed_off` or `unconfirmed`; there are no
+  per-message times and no read or delivery marks, and the capture time lives in
+  `caption`, one per page. `composer.sendActionId` must name a page action typed
+  `compose.send`; `recipient` is at most 48 characters, `maxChars` 1 through
+  1,000, and `unavailableText`/`unavailableSub` at most 64. A provider uses the
+  same value for `threadKey` and for its notices' `eventKey`.
+- `media`: `state` is `playing`, `paused`, `stopped`, `none` or `unavailable`.
+  Every control names a page action typed `media.*`, ids are unique, and
+  `defaultControl` is one of them. Controls are the hub's command strip, not
+  rows.
+- `route`: `maneuver.glyph` is at most 32 lowercase letters, digits and hyphens;
+  `distance` at most 16 characters, `street` 120, `eta` 32. `follow` and
+  `overview` follow the "Route geometry" schema. `ribbon` is `{line?, stops,
+  between?, note?}`: `line` at most 16 characters, up to 16 `stops` of `{name
+  (32), time? (8), state}` with `state` `passed`, `upcoming` or `alight`,
+  `between` `{after, fraction}` with the vehicle `fraction` (0..1) of the way
+  from stop `after` to the next, and `note` at most 160 characters. The whole
+  page still fits 65,536 bytes.
+- No row of any template may target an action typed `compose.send`: a send is
+  reached only through the composer.
+
+A row is `{id, label, sub?, enabled?, target?, checked?}`; `enabled` defaults to
+true. With the launcher bundle, the optional boolean `checked` draws a checkbox
+mark; it is meant for a row whose target is an action typed `setChecked`. A
+target is exactly one of `{pageId, params?}` or `{actionId}`; a row without one
+is readable but inert, and a disabled row can be selected but SELECT does
+nothing. Row, fact and segment ids follow the page id rules and are unique within
+their array. A provider's navigation targets stay in its own namespace; an
+action target names one of the envelope's `actions` and confers no authority of
+its own. Unknown fields are ignored; wrong types, duplicate ids, missing or
+undeclared targets make the page `INVALID_PAGE`. Bodies carry text only: no
+markup, no URL is fetched, nothing is executed.
+
+| Body limit | Value |
+|---|---:|
+| Rows / facts / document segments | 64 / 16 / 240 |
+| Row and fact label, summary `primary` | 120 characters |
+| `sub`, `secondary`, `footer`, `emptyText`, fact `value` | 240 characters |
+| Summary and commands `text`, each segment | 4,096 characters |
+| Serialized row target `params` | 2,048 bytes |
+
+Characters count UTF-16 code units, as the title and action label limits do.
+These limits add to the envelope's; the whole response still fits 65,536 bytes,
+and a document provider sizes its page to that whole budget. A provider may
+shorten its own text before sending; the hub never truncates a received page.
+
+A document is read page by page through its text measured at the HUD, inside
+the chrome and the current top inset, before its rows. Summary and commands
+text is drawn as is when it fits the viewport together with the page's first
+row and each fact is whole in its capped lines; when it does not, the glasses
+read it the same way as a document, each fact as one `label · value` line.
+Text found too long opens in reading, whenever it is found: on opening, on a
+Retry, or later by a live revision, a refresh or a larger inset. When the
+wearer then holds a row past the first, or a row a newer revision removed, the
+rows and that selection stay instead, and BACK reaches the text. Once found
+too long, the text stays read that way until the frame is opened or retried
+again, even if a later revision or a smaller inset would let it fit. STEP
+pages the measured text, SELECT reaches the rows and never acts on the text,
+and BACK from the rows returns to the text before it pops the frame. The
+reading position names text, not a screen, so it survives relayout, live
+revisions, cover and uncover.
 
 ### Limits, correlation, and errors
 
@@ -1711,31 +2144,33 @@ for the same session, frame, and page, with a higher revision.
 | Id / title / action label / result message | 128 / 48 / 24 / 64 characters |
 | Actions per page | 64 |
 | Serialized `params` / dataset `data` object | 2,048 bytes each |
-| Entire serialized page response | 65,536 bytes |
+| Entire serialized page response, or result with its replacement | 65,536 bytes |
 | Sum of retained frame snapshots | 524,288 bytes |
 | JSON nesting depth, payload object counted as level 1 | 8 levels |
 | Text form of any JSON number | 32 characters |
 
 Byte limits use `toString().toByteArray(Charsets.UTF_8).size`, including object
-syntax and correlation fields, not character counts or transport compression.
-Pages above the small CXR control-plane limit require SPP. Oversize values are
+syntax, correlation fields and transport metadata, not character counts or
+transport compression; the phone hub rechecks a response after stamping it.
+Pages above the small CXR control-plane limit need SPP. Oversize values are
 rejected rather than truncated. Validation walks a payload iteratively before
 serializing it: deeper nesting, any string longer than 65,536 characters, any
 number whose text exceeds 32 characters, any value that is not a JSON object,
 array, string, number, boolean, or null, or a value whose minimum serialized
 size already exceeds its cap is rejected first, and a value that cannot be
-serialized is invalid. The future host must still
-bound raw ingress before parsing. Before accepting a snapshot that would exceed
-the cumulative bound, evict the oldest covered snapshots while retaining their
-page ids for a later refresh.
+serialized is invalid. Where raw ingress bytes are available they are bounded
+before parsing. Before accepting a snapshot that would exceed the cumulative
+bound, the hub evicts the oldest covered snapshots while retaining their page
+ids for a later refresh.
 
 - `INVALID_PAGE_REQUEST`: request, action, result, visibility, or closed shape,
   enum, id, or parameter validation failed.
-- `INVALID_PAGE`: invalid response shape, template, action, label, dataset,
-  nesting, or serialization.
-- `PAGE_TOO_LARGE`: the whole response exceeds 65,536 UTF-8 bytes.
+- `INVALID_PAGE`: invalid response shape, template, body, target, action, label,
+  dataset, nesting, or serialization.
+- `PAGE_TOO_LARGE`: the whole response, or result, exceeds 65,536 UTF-8 bytes.
 - `PAGE_TIMEOUT`: no usable page arrived by the absolute eight-second deadline.
-- `PAGE_UNAVAILABLE`: the provider cannot supply the page.
+- `PAGE_UNAVAILABLE`: the provider cannot supply the page, or the phone hub
+  invalidated the provider's work.
 - `FRAME_LIMIT`: opening another frame would exceed the six-frame stack.
 - `STALE_GENERATION`: request/session/frame/page correlation no longer matches.
 - `UNCONFIRMED_ACTION`: an invocation has no result by its eight-second deadline.
@@ -1743,65 +2178,530 @@ page ids for a later refresh.
 Only the visible top frame may have a pending request. Another SELECT while
 loading is ignored. Responses to a cancelled, popped, timed-out, superseded, or
 closed request are dropped and never reopen a session. Retry always creates a
-fresh request id. Refresh preserves the previous snapshot while validating it;
-at two seconds a still-loading hint appears, and at eight seconds the frame
-becomes Unavailable with the dated last snapshot, Retry, and Back. It never falls
-back to immersion automatically. Deadlines are judged on each reply's arrival
-time, not on the next timer tick: a response to a pending request arriving at or
-after that request's deadline times the frame out, and a result arriving at or
-after its invocation deadline leaves the action Unconfirmed. Live revisions
-answer no pending request, so no request deadline applies to them; they follow
-the lease alone and are accepted strictly before `leaseUntilMs`, dropped at or
-after it. They also require the visible frame, its
-current session/request identity, `live: true`, and a strictly
-higher revision; covered, stale, or duplicate revisions are dropped. Revisions
-stay monotonic per frame across refresh and retry: a correlated response below
-the highest revision already shown is dropped as stale, and an equal revision
-keeps the displayed content.
+fresh request id. Refresh preserves the previous snapshot, readable but inert,
+while validating it; at two seconds a still-loading hint appears, and at eight
+seconds the frame becomes unavailable with the dated last snapshot, Retry, and
+Back. An unavailable frame draws the failure, dated, over its retained content,
+dimmed and inert: summary text and facts, list rows, or a document, never its
+actions. Content too tall for that space is read page by page from the reading
+position the wearer had reached; SELECT then reaches only Retry and Back, and
+BACK from them returns to the content before it pops the frame. It never falls
+back to immersion automatically. Deadlines are judged on
+each reply's arrival time, not on the next timer tick: a response to a pending
+request arriving at or after that request's deadline times the frame out, and a
+result arriving at or after its invocation deadline leaves the action
+unconfirmed. The phone hub never hands an action to its provider at or after
+that deadline, even when its delivery waited and no timer ran. Live revisions answer no pending request, so no request deadline
+applies to them; they follow the lease alone and are accepted strictly before
+`leaseUntilMs`, dropped at or after it. They also require the visible frame, its
+current session/request identity, `live: true`, and a strictly higher revision;
+covered, stale, or duplicate revisions are dropped. Revisions stay monotonic per
+frame across refresh and retry: a correlated response below the highest
+revision already shown is dropped as stale, and an equal revision keeps the
+displayed content. An equal revision is therefore only for content the provider
+knows to be identical: a provider that rebuilds a page without knowing that, as
+after its service was destroyed and bound cold again, answers strictly above
+`minimumRevision`. When a refresh or a Retry is answered with the very snapshot
+the frame retained, a document keeps the pages already measured for it, so
+reading goes on paging from there. A refusal to open a seventh frame allocates nothing: the hub
+shows a local status and sends no close for any frame.
 
 ### Visibility, actions, link loss, and negotiation
 
 Covering a frame sends `visible: false`, drops its lease, and invalidates pending
-work. Uncovering sends `visible: true` with a fresh hub-clock lease and requests
+work, including an action already queued for its provider. Uncovering sends `visible: true` with a fresh lease and requests
 `reason: refresh`, keeping the snapshot displayed. A page displayed on a frame
 that holds no lease (its first display, or after Retry) also sends `visible: true`
 with a fresh lease; a refreshed, uncovered frame keeps the lease sent on uncover.
-A visible Shown frame renews
-its lease when a tick falls within 30 seconds of expiry. No scheduler or transport
-runs inside the reducer; it only returns effects for a future host.
+A visible frame renews its lease within 30 seconds of expiry. A lease that
+expires without renewal voids that frame's live context on the phone.
 
-An action uses a fresh invocation id and the revision the wearer saw. A pending
-invocation blocks another SELECT. `done`, `stale`, and `rejected` clear it;
-rejection keeps the page. A lost acknowledgement becomes Unconfirmed and is
-never retried automatically. Actions requiring confirmation and all notice
-answers must pass hub confirmation (Cancel preselected) before an invocation;
-notice answers keep their existing reply-token validation. Page items are
-resolved by the future template host, not by PR1's opaque-body validator.
+The glasses hub invokes a plugin row immediately on a tap, whatever its
+`confirm` flag says. With or without the launcher bundle, the tap must keep the
+fresh-contact rule (see "Launcher bundle v1"): only a press begun after the
+current target was drawn acts. The invocation stays bound to the provider
+registration, page, action and shown revision; loading, unavailable and
+invalidated frames cannot act, and a frame with an invocation pending sends no
+second one. Each tap creates one invocation with a fresh id and the shown
+revision. Its mode is `quick` only for a quick-eligible type stamped `hubQuick`
+whose family the latest `/core/policy/quick-actions` approves for that owner;
+otherwise it is `confirmed`. Without the bundle, the tap invokes in `confirmed`
+mode with the existing v1 guards and the draw acknowledgement binding it to the
+shown revision. `confirmed` names the wire mode, not a dialog.
+The composer's own Send remains separate and sends `mode: compose` with its text.
 
-On link loss all frames become inert Unavailable, preserve bounded snapshots,
-and invalidate leases, pending requests, and invocations. Local BACK still pops
-frames without sending effects to the disconnected provider. The session stays
-open. Restoration does not replay requests or actions; explicit Retry after
-fresh authorization is required. SPP loss and total disconnection must be
-distinguished by the future host. Base restoration only promises a still-live
-base; an Ink immersion closes on link loss under its existing contract.
+With the bundle the phone keeps each frame's full action map, not ids only, and
+checks the mode: `quick` only for a quick-eligible typed action whose family
+the owner's policy approves at that moment; `compose` only for an action typed
+`compose.send` on a `conversation` page whose composer names it, with non-blank
+text of at most the composer's `maxChars` (and never above 1,000); `confirmed`
+never for `compose.send`. It delivers `mode`, `text` and its own copy of
+`typed` to the provider, and the SDK checks the mode against its own sent page
+once more. A result `code` refines the outcome; the hub acts on
+`authority_lost` only: the composer keeps the text and stops offering Send for
+it. The phone hub forwards, and the SDK dispatches, an
+action only for a frame whose current request was answered with a valid page
+that was sent on, at its shown revision and naming an action that page
+advertised, while the frame is visible under an unexpired lease; the phone hub
+checks this again when the queued delivery runs, and the SDK against its own
+lease. A refresh suspends that right until its own answer is sent, and a
+refused, invalid or below-floor answer, or a failed send, clears it. A pending invocation
+blocks another SELECT. `done`, `stale`, and `rejected` clear it; rejection keeps
+the page. A lost acknowledgement becomes Unconfirmed and is never resent. A
+provider's `kind: hub` action gives it no hub control and is rejected; only
+hub-authored local navigation is handled. `kind: immersion` can only open that
+provider's own full app, directly on a fresh tap. Notice answers keep
+their existing reply-token validation and are not offered from pages yet.
 
-Grant revocation and replacement of the provider's registration are cancellation
-boundaries too. The hub invalidates that provider's pending requests,
-invocations, and leases; rejects any later response or result correlated with
-the earlier registration, even when its ids still match; and sends nothing more
-to it. Its frames become inert Unavailable, and Retry requires the provider's
-fresh authorization before a new request is sent. This specifies the future
-host; PR1 adds no runtime wiring for it.
+On total link loss all provider frames become inert unavailable, keep bounded
+snapshots, and lose leases, pending requests, and invocations; local `nexus:`
+frames stay readable. Local BACK still pops frames without sending anything to
+the disconnected provider. The session stays open. Restoration replays nothing;
+an explicit Retry with fresh authorization is required. Losing only SPP while
+CXR stays up ends just the frames whose last page sent to the glasses needed the
+data plane, that is whose envelope exceeds the 3 KiB CXR message: the phone hub
+drops them and tells their provider `link_lost`, the glasses hub keeps their
+snapshots inert by the same rule, and smaller pages go on over CXR. A page that
+needs SPP and whose send had started when SPP went, before the phone hub
+recorded it as sent, counts as lost too, never as shown; one still waiting to be
+sent when SPP dropped and came back is sent over the new session and counts.
+Nothing replays when SPP returns. Base
+restoration only promises a still-live base; an Ink immersion closes on link
+loss under its existing contract.
 
-Future support will require **both** hub announcements on
-`/system/hub/capabilities` to include additive `pageSessionVersion: 1`. PR1 only
-reserves the field name and never announces it. Unknown announcement fields are
-ignored; a mixed/old pair keeps today's launcher, activities, and immersions.
-Provider opt-in is additive descriptor metadata `rokidbus.plugin.pages` with
-string value `"1"`, never a new `PluginCapability` value. Template pages reuse
-`surfaces`, authored Ink pages reuse `ink_surface`, and API v3 and old-plugin
-immersion entry points remain intact. No `/core/*` route becomes a plugin power.
+Grant revocation, package removal, provider death and replacement of the
+provider's registration are cancellation boundaries too. The phone hub cancels
+that provider's pending requests, invocations and leases, sends a hub-stamped,
+correlated `PAGE_UNAVAILABLE` on `/page/response` for each affected retained
+frame, rejects any later reply tied to the earlier registration even when its
+ids still match, and sends nothing more to it. The glasses hub treats that
+trusted invalidation as owner-scoped: it cancels that owner's work and keeps its
+snapshots inert in every affected frame, even with no request pending and under
+a pending full-app launch.
+
+Provider binding is separate from immersion. To answer a request the phone hub
+must use the provider's live registration, or bind its plugin service cold
+through its own connection, within at most five seconds of the eight-second
+budget; a cold failure is a correlated error, never a launch or a rebind loop. It
+must never open the plugin, adopt a surface, acknowledge an open, or close, hide,
+unbinds, mutes or refocuses a live base immersion, even one of the same plugin.
+It keeps a page-only `BIND_AUTO_CREATE | BIND_IMPORTANT` binding while that plugin
+has a visible leased page, a pending request or an action awaiting its result or
+existing deadline. Expiry of the visible lease alone does not release an action
+already delivered; covering or closing still cancels it. The hub tells the owner
+about a close before unbinding, and releases
+the binding when no demand remains. Page traffic is never queued while a link is
+down, between the hubs or between a provider and the phone hub: the SDK sends a
+page answer, revision or result over the live Binder or drops it, and a send
+that failed grants no publishing or action right. The phone hub applies a
+page's revision, actions and transport needs to its frame only once that page
+was sent to the glasses; a page it could not send, an answer, a live revision or
+a result's replacement, or one needing SPP when SPP was lost between the start
+of its send and its recording, ends the frame on both sides, with a small
+correlated
+`PAGE_UNAVAILABLE` to the glasses and `link_lost` to the provider. Logs carry
+ids, sizes and error codes, never page text.
+
+Pages need **both** hub announcements on `/system/hub/capabilities` to carry
+`pageSessionVersion: 1` over the current link; an absent, malformed, negative or
+newer value means unsupported, and support resets on disconnect, hub restart and
+a replacement connection. When the negotiated version changes while the link
+stays up, the glasses hub tells the session and its launcher catalog: without
+support every provider frame turns inert and Applications offers the full apps,
+and support coming back replays nothing. The phone hub then tells each opted-in provider its
+effective version with an owner-scoped `/system/hub/capabilities` message
+carrying `pluginId`, `pageSessionVersion` (1 or 0) and, from a phone that
+implements the launcher bundle, `launcherInteractiveVersion` (the negotiated
+bundle version, 0 without it), at registration and on every change; plugins
+without the metadata receive nothing new, and a missing update means
+unsupported. Provider opt-in is additive descriptor metadata
+`rokidbus.plugin.pages` with string value `"1"`; any other value means no pages
+and never invalidates the plugin or its grant. It is never a new
+`PluginCapability` value. Template pages need the `surfaces` grant. A mixed or
+old pair keeps today's launcher, activities and immersions, and API v3 and the
+old-plugin immersion entry points remain intact. No `/core/*` route becomes a
+plugin power.
+
+## Launcher bundle v1
+
+The launcher bundle completes the Nexus launcher: interactive activities
+("Interactive activities"), typed and quick actions, the `conversation`,
+`media` and `route` page bodies, notice destinations and withdrawal, route
+geometry, the hub composer, ambient preferences and the launcher backend
+choice. It is one additive negotiation beside every existing tier; no existing
+version is raised. HUD copy is English, like the rest of the session chrome.
+
+### Negotiation and old peers
+
+- The glasses announce feature bit `65536` (`LAUNCHER_INTERACTIVE`, `1 shl 16`)
+  and `launcherInteractiveVersion: 1`. Bits 13–15 belong to the released
+  `/core/files` explorer and its lanes.
+- The phone announces `launcherInteractiveVersion: 1` in its own capabilities.
+- The pair runs `min(local, remote)` when both are at least 1, else 0. Unlike
+  the exact-match tier versions, every later bundle version must be a superset
+  of the one before, so a newer peer runs the older bundle with an older one.
+  `pageSessionVersion`, `activitySurfaceVersion`, `activityExtrasVersion` and
+  `noticeSurfaceVersion` keep their exact-match rules unchanged.
+- Nothing in the bundle is active unless the negotiated version is at least 1.
+- Plugins learn it from the plugin-visible bit `65536`, exposed only while both
+  hubs negotiated the bundle (like `ACTIVITY_EXTRAS`), and page providers also
+  from `launcherInteractiveVersion` on their owner-scoped
+  `/system/hub/capabilities`.
+- New fields are optional everywhere. A phone strips every bundle field from
+  activities, notices and pages before forwarding to glasses that did not
+  negotiate it, and keeps the v1 behaviours there: eviction at two, end on
+  disconnect, every page action in confirmed wire mode. Older glasses retain
+  their confirmation panels; these glasses invoke on a tap even with an older
+  phone. Glasses never act on a bundle field
+  unless the phone negotiated the bundle. Old plugins keep working unchanged.
+
+### Cover and player anchors (bundle v2)
+
+Current hubs announce `launcherInteractiveVersion: 4`; v1 above remains the
+baseline. Version 2 adds optional `artwork` on an activity and a `media` page body:
+`{"encoding":"mono1","width":96,"height":96,"data":"..."}`. Dimensions are
+integers from 1 through 128. Standard Base64 `data` is at most 2,732 characters
+and decodes to exactly ceil(width * height / 8) bytes, never more than 2,048.
+Pixels are row-major, most significant bit first; 1 is phosphor, 0 transparent.
+No URI, network request or new capability is involved. Missing activity patch
+artwork preserves the old value; explicit null clears it. Malformed previews
+invalidate the containing start, update or typed media body.
+
+A `media` body may also carry `positionMs` and `durationMs` (integer milliseconds,
+0 through 604800000), `playbackSpeed` (finite number, -16 through 16, default 1)
+and `advancing` (boolean; absent follows PLAYING). Position is an anchor at
+publication; local drawing advances it while visible. Providers publish real
+seek/speed/state changes, not periodic progress ticks. Bundle v1 peers get these
+fields stripped from activities, page bodies and result replacement bodies;
+their existing typed controls and text remain usable. No exact-match tier
+version changes.
+
+### Detailed covers (bundle v3)
+
+Version 3 also accepts `artwork.encoding: "jpeg"` with integer `width` and
+`height` from 1 through 256. `data` is standard Base64, at most 43,692 characters
+decoding to at most 32,768 bytes. The JPEG header's dimensions must match; the
+renderer also checks decoded bounds before allocating its bitmap. The compressed
+cap leaves room for Base64 and Media Deck's metadata inside the 65,536-byte page
+limit; the full envelope remains subject to that limit. JPEG preserves continuous
+tones and uses filtered scaling in the player, card and compact pin. This reuses
+the media image encoder, with a tighter compressed cap for inline page transport.
+If an activity image cannot fit the available CXR-only transport, the phone clears
+only the outgoing artwork and delivers the text and controls with the same stamped
+identity and sequence. Canonical state retains the JPEG for an SPP reconnect resend.
+No URI, network fetch, binary asset reference or additional grant is introduced.
+
+Mono1 remains valid unchanged. With bundle v2, JPEG becomes explicit artwork null
+in SDK and phone output, including page-result replacement bodies: older peers
+show their glyph fallback and never retain a previous track's cover. Bundle v1
+still strips the artwork key completely. `supportsLauncherImageArtwork()` reports
+whether the pair negotiated v3; `supportsLauncherArtwork()` still reports v2 or
+later.
+
+### Typed actions
+
+`typed` is an optional object on a page action (`kind: plugin`) or an activity
+action. It states what the action means as an explicit desired state, never a
+toggle:
+
+| `typed` | Family | Quick-eligible |
+|---|---|---|
+| `{"type": "setChecked", "checked": true}` | `checklist` | yes |
+| `{"type": "media.previous"}`, `media.play`, `media.pause`, `media.next` | `media` | yes |
+| `{"type": "compose.send"}` | none | never |
+
+Play and pause are separate desired states bound to the visible revision. A
+`compose.send` action is reached only through a conversation's composer. On a
+page, an unknown type leaves an ordinary confirmed action; on an activity only
+`media.*` is allowed. The hub keeps its own copy and hands it to the provider;
+it never takes a type from the glasses.
+
+### Quick-action policy
+
+- A plugin declares the families it offers in descriptor metadata
+  `rokidbus.plugin.quickActions`, comma-separated (`checklist`, `media`; unknown
+  values ignored; conflicting entries declare none). It is not a capability and
+  never invalidates the plugin or its grant.
+- The retained per-plugin approvals still control quick wire mode. Plugin access
+  no longer offers quick-action switches: every launcher action runs on a tap.
+  Nothing is approved by default, a newly declared family is never grandfathered,
+  and revoke, disable, uninstall or a signer change clears the approvals. The
+  stored policy and phone validation are unchanged; a removed approval rejects
+  pending quick invocations at once.
+- The phone stamps `hubQuick: true` on a page or activity action only when its
+  type is quick-eligible and its family approved, after deleting any
+  `hubQuick` a plugin supplied, and sends `/core/policy/quick-actions`
+  `{revision, approvals: {pluginId: [family]}}` to the glasses on link-up and on
+  every change.
+- The glasses use quick mode only when the bundle is negotiated, the
+  action is stamped, the latest policy approves its family for the owner, and
+  the fresh-contact rule holds; otherwise the same tap invokes in confirmed
+  mode. The phone checks again at invocation; the glasses check is never the
+  only gate.
+- Untyped actions, deletes and external effects use confirmed mode on a fresh
+  tap. Immersion and full-app rows launch directly. `compose.send` is never a
+  row or quick: only the conversation composer's deliberate Send reaches it.
+  No plugin field can make itself quick.
+
+### Fresh contact
+
+An Enter that would cause an effect (a quick or confirmed plugin action, an
+activity command, the composer's Send, an app launch including native apps and
+Camera in Applications) is accepted only if its press began strictly after the
+focused target was displayed: after the host's
+draw acknowledgement of the frame that showed that focus. A new revision, a new
+selection, a panel or a focus mode each reset it. The press start is the
+touchpad contact-down time paired with that Enter, or the ring tap's down time.
+A rejected Enter is absorbed silently.
+
+### Route geometry
+
+The `follow` and `overview` of a `route` page and the payload of
+`/activity/geometry` share one schema:
+
+```json
+{
+  "spanMeters": 400,
+  "paths": [
+    {"role": "street", "points": [0, 500, 1000, 500]},
+    {"role": "completed", "points": [500, 1000, 500, 700]},
+    {"role": "route", "points": [500, 700, 500, 500, 800, 500]}
+  ],
+  "labels": [{"text": "Rue de Rivoli", "x": 620, "y": 480, "priority": 0}],
+  "position": {"x": 500, "y": 700, "quality": "live", "fixAgeS": 1},
+  "turn": {"x": 500, "y": 500},
+  "destination": {"x": 800, "y": 500},
+  "stops": [{"x": 300, "y": 400, "label": "A"}],
+  "attribution": "© OpenStreetMap",
+  "anchor": {"frame": 41, "x": 12345, "y": -6789}
+}
+```
+
+- The frame is north-up in a local metric projection, 1,000 units spanning
+  `spanMeters` (above 0, at most 50,000); the hub rotates it for heading-up
+  views. Every coordinate is an integer from 0 through 1,000.
+- `paths`: at most 24, each of role `street`, `major`, `route`, `completed` or
+  `stop`, with at least two points as flat `x0, y0, x1, y1, …` pairs, and at most
+  1,024 points in total.
+- `labels`: at most 4, text at most 24 characters, priority 0 (most important)
+  through 3. `stops`: at most 4, label at most 4 characters.
+- `attribution`: optional, 1 to 40 printable characters crediting the source
+  of the `street` and `major` paths. The glasses draw it in the bottom-right
+  corner of every map size. Providers requiring that credit must gate street
+  data on the separately negotiated `RENDERED_MAP` bit below; older hub pairs
+  keep route-only guidance because they cannot guarantee preservation and display.
+- `anchor`: optional. `x` and `y` are integer decimetres (at most 100,000,000
+  either way) from a point that stays put for every geometry sharing the
+  integer `frame`, along the frame's own axes, to the frame's centre. Two
+  geometries of one `frame` and one `spanMeters` differ only by where they are
+  centred, so the glasses glide the map and the wearer from one to the next
+  over the time between them instead of jumping, and ease the heading the same
+  way. A new route, or anything that moves that point, takes a new `frame`;
+  without an anchor, a geometry is drawn where it says at once. Older hubs
+  ignore it.
+- `position.quality`: `live`, `stale` (the last fix, with its age in
+  `fixAgeS`) or `none` (no position; any coordinates are ignored).
+- The serialized geometry is at most 16 KiB. Anything outside the schema is
+  refused, never clamped.
+- Providers clip with Liang-Barsky, never by clamping vertices, to a window
+  that covers the rotated viewport. With a degraded position the hub draws
+  north-up, a dashed route and a dot without an arrow, and prefixes distances
+  with `~`.
+
+### Rendered map feedback v1
+
+`BusCapabilityBits.RENDERED_MAP` (`1 << 17`) means both in-map attribution and
+rendered-view feedback v1. Each hub advertises its own bit in `features`;
+the phone exposes it to approved plugins only with the launcher bundle, the
+glasses' bit and authenticated SPP up. Generic launcher support is insufficient.
+Rendered-map negotiation is cleared when that authenticated session is lost or
+replaced, independently of retained launcher support. Until a fresh peer
+announcement, the replacement connection exposes no rendered-map capability.
+Announcements retain their originating SPP session or current CXR generation;
+callbacks captured before retirement cannot seed support for its replacement.
+Old phone/new glasses and new phone/old glasses therefore remain route-only
+for Navigation's OSM data. The old launcher fallback is unchanged.
+
+`/map/rendered` is a hub-generated, owner-scoped direct callback, never a
+plugin send path or receive prefix. It grants no `/core/*` access. The glasses
+send immediately over authenticated SPP, without a reconnect queue, only after
+the real map renderer draws a fully visible, attached map. A render heartbeat
+requests another draw every 2 seconds while that view exists; the timer itself
+does not renew authorization. Text, automatic collapse, hidden foreground
+policy, an absent map, page Commands, frame cover, detach and window hiding
+produce no positive feedback. A covering notice suppresses feedback. Follow
+and Overview are reported only when selected; both can authorize tiles only
+when independently drawn maps exist.
+
+The hub-to-hub payload has `kind` (`ambient` or `page`), `id`, `revision`,
+`view` (`follow` or `overview`), `visible` (boolean), and an opaque `token`
+(1..64 printable characters). Ambient authority additionally has `seq`, with
+`id` equal to the phone-stamped activity surface id and `revision` equal to
+the forwarded geometry revision. Page authority additionally has
+`sessionGeneration`, `frameIndex` (1..5) and `requestId`, with `id` equal to
+the page id and `revision` equal to the accepted route page revision. The phone
+checks the live owner/sequence/geometry or accepted request/frame/revision,
+unexpired page lease, grant and single current registration. A negative event
+may revoke its exact token after an intervening revision of the same owner.
+
+Only `{pluginId, kind, token, view, revision, visible, leaseMs: 5000}` reaches
+that owner's SDK, plus `pageId` for page feedback. Revision identifies the
+owner's accepted page or forwarded activity geometry. Session/frame/request
+authority and other owners' identities never reach a plugin. An absent or
+malformed publication identity fails closed. A consumer correlates this
+acknowledgment to the footprint of that exact publication; a view enum alone
+never authorizes a new area. A throttled, refused or undrawn replacement
+authorizes no new footprint. No tile keys are accepted from a feedback sender.
+There are at most two SDK slots, ambient Follow and one selected page view.
+A new token/view replaces its slot; an old token's hide cannot clear its
+replacement. Unknown, absent, malformed or expired feedback fails closed.
+SPP loss, registration reset, end/close and page hide clear applicable slots;
+expiry is checked on read. Consumers must re-check before every network request
+and cancel work when demand disappears, including expiry; Navigation schedules
+one deadline for the earliest SDK slot, independently of its guidance tick.
+Feedback never opens
+a plugin, binds a provider, starts a journey or extends any existing lease.
+Stable renewals reconcile demand and expiry without revising the page they
+acknowledge. A same-view content revision replaces its acknowledgment after
+drawing, without an artificial hide; actual Commands, hiding and removal revoke it.
+
+### Composer capture (`/core/compose/*`)
+
+The composer is glasses-owned and generic: one global draft in glasses memory
+(`{ownerPluginId, threadKey, destination, recipient, text, state}` with `state`
+`ready`, `unconfirmed` or `authorityLost`), never persisted. Its capture engines
+are hub-to-hub only; no plugin capability unlocks them. Each capture has a fresh
+`captureId` of 8 to 64 letters, digits, `_` or `-`; a message for any other id
+is stale and ignored. Text is at most 1,000 UTF-16 code units; a recognizer
+result beyond that is cut before sending.
+
+| Path | Direction | Payload |
+|---|---|---|
+| `/core/compose/dictate/start` | glasses → phone | `{captureId, language?}` |
+| `/core/compose/dictate/partial` | phone → glasses | `{captureId, text}` |
+| `/core/compose/dictate/final` | phone → glasses | `{captureId, reason, text?}` |
+| `/core/compose/dictate/stop` | glasses → phone | `{captureId, cancel}` |
+| `/core/compose/type/start` | glasses → phone | `{captureId, initialText, maxChars}` (1..1,000) |
+| `/core/compose/type/text` | phone → glasses | `{captureId, text}` |
+| `/core/compose/type/done` | phone → glasses | `{captureId, committed, text?}` |
+| `/core/compose/type/finish` | glasses → phone | `{captureId}` (tap) |
+| `/core/compose/type/cancel` | glasses → phone | `{captureId}` (BACK) |
+
+Dictation runs the hub speech engine on the glasses PCM only, with no phone
+microphone fallback. `reason` is `completed`, `cancelled`, `no_speech`, `busy`,
+`mic_unavailable`, `link_lost` or `error`; only `completed`, with non-blank
+text, yields a draft, and every other reason shows `Glasses mic unavailable` /
+`use Type` and focuses Type. `stop` with `cancel: false` finishes, with
+`cancel: true` cancels. Typing opens the phone's keyboard prompt (directly when
+possible, else as a heads-up, which needs the notification grant only from
+Android 13) and never starts the glasses microphone; when neither can come up the
+phone ends the capture at once with an uncommitted `type/done`. A commit
+carries its text, and an empty committed text is the only explicit discard. A
+link loss during a capture cancels it and keeps the previous draft.
+
+Send is offered only while the current page is a live conversation whose
+`threadKey` and owner equal the draft's and whose composer is `replyable`, and
+only for a fresh focus that keeps the fresh-contact rule. `done` hands the draft
+off (`handed to the app`) and clears it. The glasses keep the sent text on the
+frame it was sent from until that page carries the reply. Copies are counted,
+never matched by id or place: the page carries it once it shows more `ours`
+messages with the same text, spacing aside, than it showed when the reply was
+sent plus the earlier replies in that text still waiting there, counting from
+the oldest message shown then that it still shows (older history added above
+it is never a copy). A message may take another id (Relay replaces its record
+of a reply with the app's copy) and identical replies' copies may come in any
+order. A reply is never hidden before a copy is shown for it; a provider that
+drops earlier `ours` messages in that text (a bounded log) can leave a reply
+drawn twice until its frame ends. Other messages never end it; the frame
+closing, an answer from another provider registration, or the owner's purge or
+invalidation does. A page carrying an unconfirmed reply shows it instead of the
+draft's bubble; the draft stays, for Type only. `authority_lost`, `replyable: false`,
+a withdrawn event for the draft's thread, or the page going away keeps the text
+but never sends it as is. `stale` keeps the draft and needs a new Send on the
+new revision. No result in time shows `unconfirmed · check on the phone`, keeps
+the text and focuses Type next. Nothing is retried or resent on reconnect, and
+the draft never goes to another recipient.
+
+### Ambient preferences (`/core/ambient/*`)
+
+Launcher bundle v4 adds optional activity `eventKey` on start and update, at
+most 64 printable characters. Omission in a patch retains the key; explicit
+null clears it without announcing an event. A changed non-null key identifies
+a real event independently of `significant`, priority, wake-display and
+command identity. The SDK and phone strip it for peers below v4. A live initial
+start may present once; canonical reconnect resends with an already-seen key
+do not restart it. Never use a changing clock or transport revision as a key.
+
+The trusted policy additionally carries `activityDisplays: {pluginId:
+{mode, durationMs}}`, at most 64 entries, with modes `automatic`, `persistent`,
+`home`, `events`, `hidden` and duration 3000, 5000 or 10000 ms (default 5000).
+Unknown mode values drop that entry; invalid ids, shapes, durations or bounds
+reject the snapshot. Omitted maps retain the legacy automatic behavior.
+Choices are phone-owned and scoped to the currently approved signed plugin.
+They are purged with its grant and sent on changes and link-up. No plugin can
+write this policy or choose a duration through activity content.
+
+`events` shows a compact native band for a changed event key or a significant
+update, then animates it away. Ordinary updates do not extend that deadline.
+`persistent` keeps the existing form over home and apps; `home` shows it only
+on home; `hidden` leaves the activity in the collection without a band.
+`automatic` preserves foreground app rules. Camera, Nexus session visibility
+and per-app `nothing` override all modes. Offline snapshots start no event.
+Temporary entries consume no resident corner after expiry, do not change
+collection priority, and retain their card and destination. Presentation
+expiry is not activity end and does not use `maxDurationMs`. Classic keeps
+its prior display behavior. For older glasses, event/home choices downgrade
+to hidden owners; the SDK settings link does not silently change a choice.
+
+- Per-owner island size `text`, `minimap` or `panel` (absent: the hub's
+  automatic choice). The phone stores it and is authoritative. A glasses edit
+  applies locally at once and is sent as `/core/ambient/sizes/set`
+  `{ownerPluginId, size}` (`size` null returns it to automatic); edits made
+  offline are queued, latest per owner, and sent before the next phone snapshot
+  is applied. The phone broadcasts the whole map, `/core/ambient/sizes`
+  `{revision, sizes: {pluginId: size}}`, on link-up and on every change. The
+  full-map excursion never writes a size.
+- Per-app foreground mode `residents`, `signals` or `nothing`, edited on the
+  phone's Native apps page and sent as `/core/ambient/policy`
+  `{revision, modes: {package: mode}}`. Home gets `residents` and an app the
+  policy does not name gets `signals`. A glasses foreground resolver
+  (accessibility window events, with Nexus overlays and input methods excluded)
+  tells home from apps; over an app the hub caps islands at `text`. Islands stay
+  passive, and native apps and surfaces keep their input.
+- Per-plugin "Float over the glasses", on the phone's Plugin access page (on by
+  default), stored with that plugin's other activity choices and dropped with
+  its grant. The policy carries the plugins turned off as `hiddenOwners:
+  [pluginId]` (at most 64; absent from an older phone, ignored by older
+  glasses, both meaning every plugin shows). The phone refuses to turn a 65th
+  plugin off, so every switch that says off is in the list and none is dropped
+  to fit. The row says it needs the new launcher and names Classic when that is
+  the phone's launcher choice. The phone sends the list with the policy
+  on link-up, on every change and when such a plugin's grant goes. On the
+  glasses such an owner gets no island (no chip, panel, flare or display wake,
+  over the home or any app) and its held pin is not drawn; its collection entry,
+  card, pages and notices are unchanged, it stays the collection's primary when
+  it is, and the other owners' islands expand in its place. Turned back on, the
+  current island and the held pin show again without the plugin sending.
+- These preferences apply only to the `SESSION` launcher over a phone whose last
+  announcement negotiated the bundle (a link loss keeps them, as it keeps the
+  backend). With an older phone or the `LEGACY` backend, islands are presented
+  as before the bundle: automatic sizes, no foreground mode, an app in front
+  treated as the home. Stored preferences stay for the next `SESSION` use.
+- A value this build does not know drops that entry, leaving its default.
+
+### Launcher backend
+
+`PhoneHubCapabilities.launcherBackend` is `session` or `legacy` when the user
+chose explicitly on the phone, and absent otherwise. The glasses resolve it as:
+the phone's explicit choice, then the glasses' stored `launcher.backend`, then
+the default. The default is `SESSION` when the phone's **last** capabilities
+announcement negotiated the launcher bundle, and `LEGACY` before any
+announcement, for an older phone and for an invalid version. The glasses persist
+only that negotiated version and the phone's choice, with no peer identity; a
+link loss re-resolves nothing, so an outage never switches or closes the open
+launcher, and only a new announcement changes the default. `LEGACY` stays the
+rollback through either explicit choice, and no setting is reset. The exported
+backend receivers require `android.permission.DUMP`, which adb shell keeps.
 
 ## Camera contract
 
@@ -2304,7 +3204,14 @@ released when no invocation needs it. While a provider is bound only by a
 lease, the hub refuses its surface, Ink, notice, pin, microphone, speech, TTS,
 and camera traffic, and it cannot be adopted as foreground. It may start or
 update an activity only while running an operation that lists `surfaces` in
-`requires`. A bind refusal is `unavailable`.
+`requires`; the launcher bundle's owner-stamped `/activity/result`,
+`/activity/geometry`, and `/activity/heading` follow the same activity rule,
+and `/notice/withdraw` is notice traffic. Page answers (`/page/*`) are refused
+too, unless the wearer asked the glasses for one of the provider's pages: the
+page broker's own binding for that request counts as a display session. The
+refusal is the bus error `SKILL_LEASE_DENIED`, checked for every
+plugin-originated path, the page route included. A bind refusal is
+`unavailable`.
 
 Hub to provider, `/skills/provider/invoke`:
 
@@ -2385,16 +3292,24 @@ unknown fields are ignorable in both directions, so fields only ever get added.
 - Glasses → phone (`GlassesHubCapabilitiesContract`): `version`, renderer
   `features` bits, `imageSurfaceVersion`, `pinSurfaceVersion`,
   `noticeSurfaceVersion`, `activitySurfaceVersion`, `inkSurfaceVersion`,
-  `ttsVersion`, `maxImageBytes`, the glasses app
+  `editableSurfaceVersion`, `activityExtrasVersion`, `ttsVersion`,
+  `pageSessionVersion`, `launcherInteractiveVersion` (see "Launcher bundle v1"),
+  `maxImageBytes`, the glasses app
   `versionName` (drives the phone-side glasses update checker), and
   `setupComplete` (self-arm onboarding state; the phone preserves the last
-  known value across link loss — only a live announcement can lower it).
+  known value across link loss — only a live announcement can lower it), with
+  the rest of the setup progress fields.
 - Phone → glasses (`PhoneHubCapabilitiesContract`): `version`, `features` bits
   (including `CAMERA_CONSUMER_READY`), and `cameraConsumerName` — the display
   name the glasses launcher uses for the synthesized camera entry (present
   only while a consumer is ready, ≤ 80 chars). The additive
   `activityAlwaysExpanded` boolean carries the wearer's platform setting; it
-  defaults to `false` when absent and is never plugin-controlled.
+  defaults to `false` when absent and is never plugin-controlled. Also
+  `hudTopInsetDp` (0..120) and `hudPositionAuto`, the wearer's HUD position
+  settings; `pageSessionVersion`; `launcherInteractiveVersion`; and, only when
+  the user chose one on the phone, `launcherBackend` (`session` or `legacy`).
+  The glasses rebuild these capabilities field by field, so a new phone field
+  must be carried through there too.
 
 ## Transport selection (hub-side routing)
 
@@ -2519,15 +3434,25 @@ fun startActivity(activity: NexusActivity): NexusSdkResult
 fun updateActivity(
     activity: NexusActivity,
     significant: Boolean = false,
+    urgent: Boolean = false,
 ): NexusSdkResult
 fun endActivity(): NexusSdkResult
 val supportsActivitySurface: Boolean
+
+// Launcher bundle.
+fun supportsLauncherInteractive(): Boolean
+fun sendActivityCommandResult(command: NexusActivityCommand, result: NexusActivityCommandResult): NexusSdkResult
+fun publishActivityGeometry(revision: Long, geometry: RouteGeometry): NexusSdkResult
+fun publishActivityHeading(deg: Double, accuracyDeg: Double? = null): NexusSdkResult
+fun withdrawNotice(eventKey: String): NexusSdkResult
 ```
 
-`NexusPluginCallbacks` receives `onActivityAction(id: String)` and
-`onActivityClosed(reason: String)`. `NexusPluginService` exposes them as
-`onNexusActivityAction(id: String)` and
-`onNexusActivityClosed(reason: String)`.
+`NexusPluginCallbacks` receives `onActivityAction(id: String)`,
+`onActivityCommand(command: NexusActivityCommand): NexusActivityCommandResult?`
+(launcher bundle; its default calls `onActivityAction` and returns null, which
+sends no result) and `onActivityClosed(reason: String)`. `NexusPluginService`
+exposes them as `onNexusActivityAction(id: String)`,
+`onNexusActivityCommand(command)` and `onNexusActivityClosed(reason: String)`.
 
 The typed Ink wrapper is session-scoped because the phone retains compiled
 state between data patches:
@@ -2612,8 +3537,11 @@ Hub manifests use `<queries><intent><action android:name="com.anezium.rokidbus.a
 ## Trusted core phone controls v1
 
 Native-app discovery, remote text input, and system navigation are hub-owned
-features. Every path begins `/core/`, is reserved by `PathRules`, and is
-consumed before plugin routing. No plugin capability authorizes sending or
+features, as are the launcher bundle's composer capture (`/core/compose/*`),
+ambient preferences (`/core/ambient/*`), quick-action policy
+(`/core/policy/quick-actions`) and history purge (`/core/notice/purge`),
+described in "Launcher bundle v1". Every path begins `/core/`, is reserved by
+`PathRules`, and is consumed before plugin routing. No plugin capability authorizes sending or
 subscribing to these paths, and no external registration can impersonate either
 hub. All payloads are versioned JSON; binary bodies are invalid, except the file
 chunks on `/core/files/data` described under *Glasses files*.

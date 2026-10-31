@@ -38,6 +38,10 @@ internal class AndroidNexusPluginTransport(
         return client.trySend(path, id, payload)
     }
 
+    override fun sendImmediate(path: String, id: String, payload: JSONObject): Boolean {
+        return client.trySendImmediate(path, id, payload)
+    }
+
     override fun sendBinary(path: String, id: String, payload: JSONObject, data: ByteArray): Boolean {
         return client.trySendBinary(path, id, payload, data)
     }

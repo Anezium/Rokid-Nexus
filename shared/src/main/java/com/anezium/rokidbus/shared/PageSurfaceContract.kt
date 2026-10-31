@@ -27,7 +27,19 @@ data class PageSurfaceRequest(
         .apply { paramsJson?.let { put("params", JSONObject(it)) } }
 }
 
-data class PageSurfaceAction(val id: String, val label: String, val kind: String, val confirm: Boolean)
+/**
+ * [typed] is the hub's meaning of the action, when the provider declared one this build knows;
+ * an unknown type leaves an ordinary action. [hubQuick] is the phone's stamp that the user approved
+ * this action's family; it is only ever read from a payload the phone forwarded.
+ */
+data class PageSurfaceAction(
+    val id: String,
+    val label: String,
+    val kind: String,
+    val confirm: Boolean,
+    val typed: PageActionType? = null,
+    val hubQuick: Boolean = false,
+)
 
 sealed interface PageSurfaceResponse {
     val correlation: PageCorrelation
@@ -48,6 +60,11 @@ sealed interface PageSurfaceResponse {
     data class Error(override val correlation: PageCorrelation, val code: String) : PageSurfaceResponse
 }
 
+/**
+ * [mode] is one of [PageSurfaceContract.invocationModes]; [text] is the composer's text and exists
+ * only for [PageSurfaceContract.MODE_COMPOSE]. [typed] is filled in by the phone from its own copy
+ * of the page, never taken from the glasses.
+ */
 data class PageSurfaceInvocation(
     val invocationId: String,
     val sessionGeneration: Long,
@@ -55,7 +72,11 @@ data class PageSurfaceInvocation(
     val pageId: String,
     val revision: Long,
     val actionId: String,
+    val mode: String = PageSurfaceContract.MODE_CONFIRMED,
+    val text: String? = null,
+    val typed: PageActionType? = null,
 ) {
+    /** A confirmed invocation without text or type serializes exactly as it did before modes existed. */
     fun toPayload(): JSONObject = JSONObject()
         .put("invocationId", invocationId)
         .put("sessionGeneration", sessionGeneration)
@@ -63,19 +84,26 @@ data class PageSurfaceInvocation(
         .put("pageId", pageId)
         .put("revision", revision)
         .put("actionId", actionId)
+        .apply {
+            if (mode != PageSurfaceContract.MODE_CONFIRMED) put("mode", mode)
+            text?.let { put("text", it) }
+            typed?.let { put(PageActionTypeContract.FIELD_TYPED, PageActionTypeContract.encode(it)) }
+        }
 }
 
+/** [code] is a machine-readable refinement; hubs act on [PageSurfaceContract.CODE_AUTHORITY_LOST] only. */
 data class PageSurfaceResult(
     val invocationId: String,
     val status: String,
     val message: String?,
     val replacement: PageSurfaceResponse.Page?,
+    val code: String? = null,
 )
 
 data class PageSurfaceVisibility(val pageId: String, val visible: Boolean, val leaseUntilMs: Long?)
 data class PageSurfaceClosed(val pageId: String, val reason: String)
 
-/** Reserved page v1 contract. No running hub announces or dispatches it yet. */
+/** Session/page v1 envelopes, limits and correlation; typed bodies live in [PageTemplateContract]. */
 object PageSurfaceContract {
     const val VERSION = 1
     const val GATE_MS = 800L
@@ -104,6 +132,17 @@ object PageSurfaceContract {
     const val META_PLUGIN_PAGES = "rokidbus.plugin.pages"
     const val CAPABILITY_FIELD_PAGE_SESSION_VERSION = "pageSessionVersion"
 
+    // Additive transport metadata on the existing page routes. The phone hub stamps the first
+    // two from the authenticated sender; nothing a plugin supplies for them is trusted.
+    const val FIELD_PLUGIN_ID = "pluginId"
+    const val FIELD_PROVIDER_REGISTRATION_ID = "providerRegistrationId"
+    /** On a request: what is left of the glasses' absolute page budget when it was sent. */
+    const val FIELD_REMAINING_TIMEOUT_MS = "remainingTimeoutMs"
+    /** On a request: the revision floor the frame retains, when it retains one. */
+    const val FIELD_MINIMUM_REVISION = "minimumRevision"
+    /** On a visible visibility: what is left of the lease on the glasses when it was sent. */
+    const val FIELD_LEASE_DURATION_MS = "leaseDurationMs"
+
     const val TEMPLATE_SUMMARY = "summary"
     const val TEMPLATE_SELECTABLE_LIST = "selectableList"
     const val TEMPLATE_DOCUMENT = "document"
@@ -122,6 +161,20 @@ object PageSurfaceContract {
     const val ERROR_STALE_GENERATION = "STALE_GENERATION"
     const val ERROR_UNCONFIRMED_ACTION = "UNCONFIRMED_ACTION"
 
+    // Launcher bundle: how an invocation was reached. Absent on the wire means confirmed.
+    const val MODE_CONFIRMED = "confirmed"
+    const val MODE_QUICK = "quick"
+    const val MODE_COMPOSE = "compose"
+
+    /** The composer's text, in UTF-16 code units; a page's composer may ask for less. */
+    const val MAX_COMPOSE_TEXT_CHARS = 1_000
+    const val MAX_RESULT_CODE_CHARS = 32
+
+    /** The one result code hubs interpret: the composer's reply authority is gone. */
+    const val CODE_AUTHORITY_LOST = "authority_lost"
+
+    val invocationModes: Set<String> = setOf(MODE_CONFIRMED, MODE_QUICK, MODE_COMPOSE)
+
     val templates: Set<String> = setOf(
         TEMPLATE_SUMMARY, TEMPLATE_SELECTABLE_LIST, TEMPLATE_DOCUMENT, TEMPLATE_COMMANDS,
         TEMPLATE_CONVERSATION, TEMPLATE_MEDIA, TEMPLATE_ROUTE, TEMPLATE_INK,
@@ -130,16 +183,44 @@ object PageSurfaceContract {
         ERROR_INVALID_PAGE_REQUEST, ERROR_INVALID_PAGE, ERROR_PAGE_TOO_LARGE, ERROR_PAGE_TIMEOUT,
         ERROR_PAGE_UNAVAILABLE, ERROR_FRAME_LIMIT, ERROR_STALE_GENERATION, ERROR_UNCONFIRMED_ACTION,
     )
+    const val KIND_HUB = "hub"
+    const val KIND_PLUGIN = "plugin"
+    const val KIND_IMMERSION = "immersion"
+
     private val requestReasons = setOf("open", "refresh", "retry")
-    private val actionKinds = setOf("hub", "plugin", "immersion")
+    private val actionKinds = setOf(KIND_HUB, KIND_PLUGIN, KIND_IMMERSION)
     private val resultStatuses = setOf("done", "rejected", "stale")
     private val closeReasons = setOf("back", "session_closed", "timeout", "link_lost", "replaced", "frame_limit")
     private val pageFields = setOf("revision", "template", "title", "body", "actions", "live", "data")
+
+    /**
+     * A peer's announced session/page version as this build reads it: a nonnegative integer, or
+     * 0 for anything absent, malformed, negative or not an integer.
+     */
+    fun parseSessionVersion(value: Any?): Int = when (value) {
+        is Int -> sanitizeSessionVersion(value)
+        is Long -> if (value in 0..Int.MAX_VALUE) value.toInt() else 0
+        else -> 0
+    }
+
+    fun sanitizeSessionVersion(value: Int): Int = value.coerceAtLeast(0)
+
+    /** Pages need both hubs on exactly this version; anything else, including a newer one, is unsupported. */
+    fun negotiatedSessionVersion(local: Int, remote: Int): Int =
+        if (local == VERSION && remote == VERSION) VERSION else 0
 
     fun isValidId(value: String): Boolean =
         value.isNotEmpty() && value.length <= MAX_ID_CHARS && value.all { it.code in 33..126 }
 
     fun serializedBytes(payload: JSONObject): Int = payload.toString().toByteArray(Charsets.UTF_8).size
+
+    /**
+     * Whether a page message travels on the SPP data plane: the hubs carry a JSON envelope over
+     * CXR only when it fits [BusConstants.CXR_CONTROL_MAX_BYTES], so with SPP gone a bigger
+     * answer, revision or result cannot arrive. Both hubs judge a frame by this one rule.
+     */
+    fun needsDataPlane(path: String, payload: JSONObject): Boolean =
+        FrameProtocol.toJsonBytes(BusEnvelope(path = path, payload = payload)).size > BusConstants.CXR_CONTROL_MAX_BYTES
 
     fun validateRequest(payload: JSONObject): PageSurfaceValidationResult<PageSurfaceRequest> =
         validate(ERROR_INVALID_PAGE_REQUEST) {
@@ -149,9 +230,14 @@ object PageSurfaceContract {
             PageSurfaceRequest(readCorrelation(payload), enumValue(payload, "reason", requestReasons), params)
         }
 
+    /**
+     * [hubStamps] reads the phone's `hubQuick` stamps; leave it false for anything a provider sent,
+     * so a plugin can never stamp itself quick. A stamp only stands on a quick-eligible typed action.
+     */
     fun validateResponse(
         payload: JSONObject,
         pending: PageSurfaceRequest? = null,
+        hubStamps: Boolean = false,
     ): PageSurfaceValidationResult<PageSurfaceResponse> = validate(ERROR_INVALID_PAGE) {
         val serialized = boundedJson(payload, MAX_PAGE_BYTES, "response", ERROR_PAGE_TOO_LARGE)
         val correlation = readCorrelation(payload)
@@ -169,9 +255,16 @@ object PageSurfaceContract {
             checkShape(array.length() <= MAX_ACTIONS, "too many actions")
             val actions = (0 until array.length()).map { index ->
                 val entry = array.opt(index) as? JSONObject ?: fail("action must be an object")
+                val kind = enumValue(entry, "kind", actionKinds)
+                // A type only means something on a plugin action; elsewhere it is ignored like any unknown field.
+                val typed = if (kind == KIND_PLUGIN) typedValue(entry) else null
+                val stamped = hubStamps && entry.has(QuickActionPolicyContract.FIELD_HUB_QUICK) &&
+                    boolean(entry, QuickActionPolicyContract.FIELD_HUB_QUICK)
                 PageSurfaceAction(
                     id(entry, "id"), text(entry, "label", MAX_ACTION_LABEL_CHARS),
-                    enumValue(entry, "kind", actionKinds), boolean(entry, "confirm"),
+                    kind, boolean(entry, "confirm"),
+                    typed = typed,
+                    hubQuick = stamped && typed?.quickEligible == true,
                 )
             }
             checkShape(actions.map { it.id }.distinct().size == actions.size, "action ids must be unique")
@@ -183,29 +276,148 @@ object PageSurfaceContract {
         }
     }
 
+    /**
+     * An invocation. `mode` absent is [MODE_CONFIRMED]; `text` comes with [MODE_COMPOSE] and only
+     * with it, non-blank and within [MAX_COMPOSE_TEXT_CHARS]. Whether the mode suits the action is
+     * the hubs' check against their own copy of the page; see [modeAllowedFor].
+     */
     fun validateAction(payload: JSONObject): PageSurfaceValidationResult<PageSurfaceInvocation> =
         validate(ERROR_INVALID_PAGE_REQUEST) {
+            val mode = if (payload.has("mode")) enumValue(payload, "mode", invocationModes) else MODE_CONFIRMED
+            val text = if (payload.has("text")) composeText(payload) else null
+            checkShape((mode == MODE_COMPOSE) == (text != null), "text comes with a compose invocation and only with one")
             PageSurfaceInvocation(
                 id(payload, "invocationId"), long(payload, "sessionGeneration"), frameIndex(payload),
                 id(payload, "pageId"), long(payload, "revision"), id(payload, "actionId"),
+                mode = mode,
+                text = text,
+                typed = typedValue(payload),
             )
         }
 
-    fun validateResult(payload: JSONObject): PageSurfaceValidationResult<PageSurfaceResult> =
+    fun validateResult(payload: JSONObject, hubStamps: Boolean = false): PageSurfaceValidationResult<PageSurfaceResult> =
         validate(ERROR_INVALID_PAGE_REQUEST) {
             val replacement = if (payload.has("replacement")) {
-                when (val result = validateResponse(objectValue(payload, "replacement"))) {
+                when (val result = validateResponse(objectValue(payload, "replacement"), hubStamps = hubStamps)) {
                     is PageSurfaceValidationResult.Invalid -> fail(result.reason, result.error)
                     is PageSurfaceValidationResult.Valid -> result.value as? PageSurfaceResponse.Page
                         ?: fail("replacement must be a successful page")
                 }
             } else null
+            val code = if (payload.has("code")) {
+                val value = payload.opt("code") as? String ?: fail("code must be a string")
+                checkShape(isValidResultCode(value), "code must be 1..$MAX_RESULT_CODE_CHARS printable ASCII characters")
+                value
+            } else null
             PageSurfaceResult(
                 id(payload, "invocationId"), enumValue(payload, "status", resultStatuses),
                 if (payload.has("message")) text(payload, "message", MAX_MESSAGE_CHARS) else null,
                 replacement,
+                code,
             )
         }
+
+    /**
+     * [validateResult] behind a bound on the whole result, replacement and transport identity
+     * included, so a result can never carry more than one complete page.
+     */
+    fun validateBoundedResult(payload: JSONObject, hubStamps: Boolean = false): PageSurfaceValidationResult<PageSurfaceResult> =
+        validate(ERROR_INVALID_PAGE_REQUEST) {
+            boundedJson(payload, MAX_PAGE_BYTES, "result", ERROR_PAGE_TOO_LARGE)
+            when (val result = validateResult(payload, hubStamps)) {
+                is PageSurfaceValidationResult.Valid -> result.value
+                is PageSurfaceValidationResult.Invalid -> fail(result.reason, result.error)
+            }
+        }
+
+    fun isValidResultCode(value: String): Boolean =
+        value.isNotEmpty() && value.length <= MAX_RESULT_CODE_CHARS && value.all { it.code in 33..126 }
+
+    /**
+     * Whether an invocation of [mode] may reach an action of [typed]: quick only for a
+     * quick-eligible type, compose only for `compose.send`, and a send never as a confirmed
+     * action, so the composer's deliberate Send is the only way to it. The user's policy, the
+     * composer's page and every frame check stay the hubs' own.
+     */
+    fun modeAllowedFor(mode: String, typed: PageActionType?): Boolean = when (mode) {
+        MODE_CONFIRMED -> typed !is PageActionType.ComposeSend
+        MODE_QUICK -> typed?.quickEligible == true
+        MODE_COMPOSE -> typed is PageActionType.ComposeSend
+        else -> false
+    }
+
+    /**
+     * [params] serialized, when it is a JSON object within [MAX_PARAMS_BYTES] that keeps the
+     * nesting and number rules every page value keeps; null otherwise.
+     */
+    fun boundedParams(params: JSONObject): String? = try {
+        boundedJson(params, MAX_PARAMS_BYTES, "params")
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * A copy of a page response, or of a result with its replacement, without any `hubQuick`.
+     * The phone runs this on everything a provider sends before it stamps its own.
+     */
+    fun stripHubStamps(payload: JSONObject): JSONObject = rewrite(payload, editAction = { action ->
+        action.remove(QuickActionPolicyContract.FIELD_HUB_QUICK)
+    })
+
+    /** [stripHubStamps], then `hubQuick: true` on the actions named in [quickActionIds]. */
+    fun withHubQuick(payload: JSONObject, quickActionIds: Set<String>): JSONObject = rewrite(payload, editAction = { action ->
+        action.remove(QuickActionPolicyContract.FIELD_HUB_QUICK)
+        if (action.optString("id") in quickActionIds) action.put(QuickActionPolicyContract.FIELD_HUB_QUICK, true)
+    })
+
+    /**
+     * A copy without the launcher bundle's page fields, for glasses that did not negotiate it:
+     * actions lose `typed` and `hubQuick`, rows lose `checked`. The new templates need no
+     * stripping; such glasses already show them as needing a newer Nexus.
+     */
+    fun stripLauncherFields(payload: JSONObject): JSONObject = rewrite(
+        payload,
+        editAction = { action ->
+            action.remove(PageActionTypeContract.FIELD_TYPED)
+            action.remove(QuickActionPolicyContract.FIELD_HUB_QUICK)
+        },
+        editPage = { page ->
+            val items = page.optJSONObject("body")?.optJSONArray("items")
+            if (items != null) {
+                for (index in 0 until items.length()) items.optJSONObject(index)?.remove(PageTemplateContract.FIELD_CHECKED)
+            }
+        },
+    )
+
+    /** Edits a copy: every action and the page itself, and the same in a result's replacement. */
+    private fun rewrite(
+        payload: JSONObject,
+        editAction: (JSONObject) -> Unit,
+        editPage: (JSONObject) -> Unit = {},
+    ): JSONObject {
+        val copy = JSONObject(payload.toString())
+        listOfNotNull(copy, copy.optJSONObject("replacement")).forEach { page ->
+            val actions = page.optJSONArray("actions")
+            if (actions != null) {
+                for (index in 0 until actions.length()) actions.optJSONObject(index)?.let(editAction)
+            }
+            editPage(page)
+        }
+        return copy
+    }
+
+    private fun typedValue(entry: JSONObject): PageActionType? = when (val read = PageActionTypeContract.readField(entry)) {
+        is PageActionTypeRead.Known -> read.type
+        PageActionTypeRead.Absent, is PageActionTypeRead.Unknown -> null
+        is PageActionTypeRead.Invalid -> fail(read.reason)
+    }
+
+    private fun composeText(payload: JSONObject): String {
+        val value = payload.opt("text") as? String ?: fail("text must be a string")
+        checkShape(value.isNotBlank(), "text must not be blank")
+        checkShape(value.length <= MAX_COMPOSE_TEXT_CHARS, "text exceeds $MAX_COMPOSE_TEXT_CHARS characters")
+        return value
+    }
 
     fun validateVisibility(payload: JSONObject): PageSurfaceValidationResult<PageSurfaceVisibility> =
         validate(ERROR_INVALID_PAGE_REQUEST) {

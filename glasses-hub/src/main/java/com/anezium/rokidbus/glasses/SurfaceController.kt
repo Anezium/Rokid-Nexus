@@ -398,6 +398,11 @@ object SurfaceController {
         inkRendererLayer.detach(view)
     }
 
+    /** Hears every Ink store handed to an attached view; tests watch the projection boundary. */
+    internal fun observeInkProjection(observer: ((InkHudView, InkNodeStore) -> Unit)?) {
+        inkRendererLayer.projectionObserver = observer
+    }
+
     internal fun onInkFrameDrawn(
         surfaceId: String,
         seq: Long,
@@ -466,6 +471,7 @@ object SurfaceController {
         surface: NexusSurface,
         forcedPath: SurfaceDisplayPath? = null,
         launcherShow: Boolean = false,
+        stagedInk: InkRendererLayer.StagedInk? = null,
     ) {
         val completesRingHandoff =
             launcherShow && launcherReturnCoordinator.onSurfaceShown(surface.surfaceId)
@@ -501,7 +507,7 @@ object SurfaceController {
                 active = true,
                 completesHandoff = completesRingHandoff,
             )
-            publishAndDisplay(context, surface, forcedPath, isHandoff)
+            publishAndDisplay(context, surface, forcedPath, isHandoff, stagedInk)
         }
     }
 
@@ -513,7 +519,7 @@ object SurfaceController {
         pendingInk = surface
         inkRendererLayer.submit(
             surface = surface,
-            onCommitted = {
+            onStaged = { staged ->
                 if (
                     pendingInk?.surfaceId == surface.surfaceId &&
                     pendingInk?.seq == surface.seq
@@ -523,7 +529,7 @@ object SurfaceController {
                 if (launcherShow) {
                     inkPresentationGate.arm(surface.surfaceId, surface.seq)
                 }
-                showOrUpdate(context, surface, launcherShow = launcherShow)
+                showOrUpdate(context, surface, launcherShow = launcherShow, stagedInk = staged)
             },
         )
     }
@@ -627,15 +633,24 @@ object SurfaceController {
      * only while [surface] is still the active one. The gate closes the late surface of an open
      * the wearer cancelled before any renderer hears of it; announcing or displaying it after
      * that would draw content that was closed unseen. False when the surface was not displayed.
+     *
+     * An Ink surface arrives with its decoded content [stagedInk] still uncommitted: it becomes
+     * the renderer's state, and reaches an attached view, only once the gate has let it through.
      */
     private fun publishAndDisplay(
         context: Context,
         surface: NexusSurface,
         forcedPath: SurfaceDisplayPath?,
         isHandoff: Boolean,
+        stagedInk: InkRendererLayer.StagedInk? = null,
     ): Boolean {
         presentationGate?.let { gate ->
             runCatching { gate(surface) }.onFailure { logError("Surface presentation gate failed", it) }
+        }
+        if (active !== surface) return false
+        if (stagedInk != null && !stagedInk.commit()) {
+            log("Ink content superseded before presentation id=${surface.surfaceId} seq=${surface.seq}")
+            return false
         }
         if (active !== surface) return false
         notifyListeners(surface)

@@ -15,6 +15,12 @@ built-in plugins.
 The wire/SDK contract (artifact coordinates, service base class, payload
 limits, approval flow) is specified in [PLUGIN_SDK.md](PLUGIN_SDK.md); this
 guide covers how to structure and skin a plugin so it feels native.
+For an ongoing card, use `NexusActivityPreference` and
+`NexusUi.activitySettingRow`; put `NexusUi.activityDisplaySettingsRow(context,
+pluginId)` beside it. Keeping the card and choosing when its floating band
+appears are separate decisions. Nexus owns the presentation choices and timing;
+publish a stable `eventKey` on real events instead of drawing your own popup or
+repeatedly ending and restarting the card. See the launcher v4 section in the SDK.
 For the complete self-contained plugin contract — endpoints, limits,
 lifecycle, and publishing — see [`plugins/AGENTS.md`](../plugins/AGENTS.md).
 
@@ -185,7 +191,16 @@ the HUD returns `SURFACE_BUSY`. Give up quietly rather than retry-looping.
 Android may keep an enabled notification-listener component alive, but that
 listener must remain idle until the plugin is open. While open, the SDK
 promotes the plugin service to a special-use foreground service so OEM app
-freezers leave it alone; when closed, it returns the plugin to dormant state.
+freezers leave it alone. SDK 0.24.0 shares that same quiet notification with
+launcher pages during their request/display handoff and visible leases, and
+with delivered page actions and activity commands through sending their result
+(an asynchronous command is bounded by its existing deadline). Page cover,
+close, lease expiry and registration loss release page demand. Once no session
+or work hold remains, the SDK demotes the service. Keep the `specialUse` type,
+subtype property and foreground-service permissions shown in the manifest;
+plugins already declaring them need no manifest change. Missing declarations
+or an OS rejection are non-fatal but leave the process without this protection.
+An important hub binding alone does not exempt a process from Samsung Freecess.
 
 **Pins are the first exception**, and they are deliberately narrow. A dormant
 plugin may wake on a phone-side event, connect, send a single `/pin/show` or
@@ -195,7 +210,7 @@ The exception buys you one push, not a foothold: no surface is opened, nothing
 is adopted as foreground, and you must not keep the connection, an engine, or a
 polling loop alive between pushes. The pin outlives your process on its own,
 and `ttlMs` bounds it if you never come back. Anything that needs to keep
-running still needs an open surface or the active audio lease described below.
+running must stay within one of the explicit session or work lifetimes described here.
 
 **Scheduled delivery is the second**, and it is narrower still: a plugin may
 wake at a moment the wearer explicitly scheduled through it — an alarm,

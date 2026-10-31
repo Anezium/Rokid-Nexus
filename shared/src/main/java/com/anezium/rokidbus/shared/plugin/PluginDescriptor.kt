@@ -1,6 +1,9 @@
 package com.anezium.rokidbus.shared.plugin
 
 import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.shared.PageSurfaceContract
+import com.anezium.rokidbus.shared.QuickActionFamily
+import com.anezium.rokidbus.shared.QuickActionPolicyContract
 
 data class PluginDescriptor(
     val id: String,
@@ -18,6 +21,16 @@ data class PluginDescriptor(
      * plugin that declares none simply has no custom glyphs.
      */
     val glyphsResId: Int? = null,
+    /**
+     * The page protocol version this plugin provides, from `rokidbus.plugin.pages`; 0 when it
+     * provides no pages. Additive metadata: it is not a capability and needs no approval.
+     */
+    val pageSessionVersion: Int = 0,
+    /**
+     * The quick-action families this plugin offers, from `rokidbus.plugin.quickActions`. Additive
+     * metadata, never a capability: it lets the user approve them, it approves nothing itself.
+     */
+    val quickActionFamilies: Set<QuickActionFamily> = emptySet(),
     /**
      * Raw resource holding the skill catalog, resolved cross-package by the phone hub without
      * starting the plugin. Null when the plugin declares no catalog, or declared one the hub
@@ -138,6 +151,21 @@ object PluginDescriptorParser {
             ?.trim()
             ?.toIntOrNull()
             ?.takeIf { it != 0 }
+        // Page opt-in never invalidates an otherwise valid plugin: anything but one agreed
+        // supported value, conflicting entries included, simply means no pages.
+        val pageValues = metadata.filter { it.first == PageSurfaceContract.META_PLUGIN_PAGES }
+            .map { it.second?.trim() }
+            .toSet()
+        val pageSessionVersion = if (pageValues == setOf(PAGES_VALUE_V1)) PageSurfaceContract.VERSION else 0
+        // Likewise for quick actions, fail-closed: conflicting entries declare no family at all.
+        val quickValues = metadata.filter { it.first == QuickActionPolicyContract.META_PLUGIN_QUICK_ACTIONS }
+            .map { it.second?.trim() }
+            .toSet()
+        val quickActionFamilies = if (quickValues.size == 1) {
+            QuickActionPolicyContract.parseDeclaredFamilies(quickValues.single())
+        } else {
+            emptySet()
+        }
         val launchable = when (values[BusConstants.META_PLUGIN_LAUNCHABLE]?.trim()?.lowercase()) {
             null, "", "true" -> true
             "false" -> false
@@ -155,9 +183,13 @@ object PluginDescriptorParser {
                 iconKey = iconKey,
                 iconDrawableResId = iconDrawableResId,
                 glyphsResId = glyphsResId,
+                pageSessionVersion = pageSessionVersion,
+                quickActionFamilies = quickActionFamilies,
                 skillsCatalogResId = skillsCatalogResId,
                 skillsDeclared = skillsDeclared || PluginCapability.SKILLS_PROVIDER in declaredCapabilities,
             ),
         )
     }
+
+    private const val PAGES_VALUE_V1 = "1"
 }

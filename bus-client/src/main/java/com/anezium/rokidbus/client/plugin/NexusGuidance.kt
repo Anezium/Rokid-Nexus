@@ -58,6 +58,10 @@ data class NexusGuidanceStep(
     val stepKey: String,
     val imminent: Boolean = false,
     val arrived: Boolean = false,
+    /** [secondary] uncut, for the lines that scroll it; see [NexusActivity.wholeSecondary]. */
+    val wholeSecondary: String? = null,
+    /** [detail] uncut; see [NexusActivity.wholeDetail]. */
+    val wholeDetail: List<String> = emptyList(),
 ) {
     /** The activity for this step. [maxDurationMs] and [wakeDisplay] only matter on a start. */
     fun toActivity(maxDurationMs: Long? = null, wakeDisplay: Boolean = false): NexusActivity = NexusActivity(
@@ -72,12 +76,15 @@ data class NexusGuidanceStep(
         badge = badge,
         track = track,
         measure = measure,
+        wholeSecondary = wholeSecondary,
+        wholeDetail = wholeDetail,
     )
 
     internal fun visibleEquals(other: NexusGuidanceStep): Boolean =
         glyph == other.glyph && primary == other.primary && secondary == other.secondary &&
             eta == other.eta && detail == other.detail && badge == other.badge && measure == other.measure &&
-            track == other.track && progressPercent == other.progressPercent
+            track == other.track && progressPercent == other.progressPercent &&
+            wholeSecondary == other.wholeSecondary && wholeDetail == other.wholeDetail
 }
 
 /** What to send for one piece of guidance. */

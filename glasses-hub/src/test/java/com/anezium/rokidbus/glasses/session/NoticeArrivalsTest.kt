@@ -34,6 +34,7 @@ class NoticeArrivalsTest {
         val after = model.state as SessionState.Root
         assertEquals(root.stops.map(RootStop::id), after.stops.map(RootStop::id))
         assertEquals(root.selected, after.selected)
+        // Both are arrivals, and both are in the history the root counts.
         assertEquals(2, after.stops.single { it.kind == RootStopKind.NOTIFICATIONS }.count)
     }
 

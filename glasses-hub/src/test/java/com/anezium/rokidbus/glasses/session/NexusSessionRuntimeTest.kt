@@ -1,0 +1,310 @@
+package com.anezium.rokidbus.glasses.session
+
+import com.anezium.rokidbus.shared.PageDestination
+import android.content.Intent
+import android.accessibilityservice.AccessibilityService
+import android.os.Looper
+import android.os.SystemClock
+import android.view.accessibility.AccessibilityEvent
+import com.anezium.rokidbus.glasses.GlassesHub
+import com.anezium.rokidbus.glasses.NexusSession
+import com.anezium.rokidbus.shared.BusEnvelope
+import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.NoticeSurfaceContract
+import com.anezium.rokidbus.shared.PageBody
+import com.anezium.rokidbus.shared.PageCorrelation
+import com.anezium.rokidbus.shared.PageSurfaceContract
+import com.anezium.rokidbus.shared.PageSurfaceValidationResult
+import com.anezium.rokidbus.shared.PageTemplateContract
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.LooperMode
+import java.time.Duration
+
+/**
+ * The real session runtime behind a connected service window, with no phone: local pages answer
+ * in-process, Applications follows the launcher catalog, unchanged plugins launch on a tap,
+ * and nothing from the phone can author a hub page.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [32])
+@LooperMode(LooperMode.Mode.PAUSED)
+class NexusSessionRuntimeTest {
+    class OverlayService : AccessibilityService() {
+        override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+        override fun onInterrupt() = Unit
+    }
+
+    private lateinit var service: OverlayService
+
+    @Before
+    fun setUp() {
+        service = Robolectric.setupService(OverlayService::class.java)
+        NexusSession.onServiceConnected(service)
+        GlassesHub.onRemoteEnvelope(
+            BusEnvelope(
+                path = BusPaths.LAUNCHER_LIST,
+                payload = JSONObject().put(
+                    "plugins",
+                    JSONArray()
+                        .put(JSONObject().put("id", "lens").put("displayName", "Lens"))
+                        .put(JSONObject().put("id", "relay").put("displayName", "Relay").put("pageSessionVersion", 1)),
+                ),
+            ),
+        )
+        idle()
+    }
+
+    @After
+    fun tearDown() {
+        NexusSession.dispatch(SessionEvent.Abort)
+        // The runtime is a process singleton: forget what a test fed it.
+        NexusSession.dispatch(SessionEvent.ActivityEnded("relay:local"))
+        NexusSession.onServiceDestroyed()
+        GlassesHub.onRemoteEnvelope(BusEnvelope(path = BusPaths.LAUNCHER_LIST, payload = JSONObject().put("plugins", JSONArray())))
+        idle()
+    }
+
+    private fun idle() = shadowOf(Looper.getMainLooper()).idle()
+
+    private fun now() = SystemClock.uptimeMillis()
+
+    private fun send(event: SessionEvent) {
+        NexusSession.dispatch(event)
+        idle()
+    }
+
+    private fun openRoot() {
+        send(SessionEvent.TripleTap(now()))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(PageSurfaceContract.GATE_MS + 50))
+        assertTrue("${NexusSession.state}", NexusSession.state is SessionState.Root)
+    }
+
+    private fun top(): Frame = (NexusSession.state as SessionState.InPage).frames.last()
+
+    private fun body(frame: Frame): PageBody {
+        val page = (frame.status as FrameStatus.Shown).snapshot.page
+        return (PageTemplateContract.decode(page, null) as PageSurfaceValidationResult.Valid).value
+    }
+
+    @Test
+    fun `an open notice page and list empty themselves when their entry passes the display bound`() {
+        val owner = "expiry-probe"
+        val entry = NoticeEntry(
+            owner, "Probe", "Buy the surprise gift", null,
+            atWallMs = System.currentTimeMillis() - NoticeSurfaceContract.MAX_HISTORY_AGE_MS + 1_000,
+        )
+        try {
+            send(SessionEvent.NoticeArrived(NoticePreview(RootStops.NOTICE_PAGE_ID, entry.text), entry))
+            openRoot()
+            val stops = (NexusSession.state as SessionState.Root).stops
+            val preview = stops.indexOfFirst { it.kind == RootStopKind.NOTICE_PREVIEW }
+            assertTrue("$stops", preview >= 0)
+            repeat(preview) { send(SessionEvent.Step(1, now())) }
+            send(SessionEvent.Enter(now()))
+            assertEquals("${NexusSession.state}", RootStops.NOTICE_PAGE_ID, top().pageId)
+            assertTrue(page(top()).contains("surprise gift"))
+
+            // No arrival or withdrawal: only the clock crosses the bound, and the open page follows.
+            // The history is dated by the real wall clock, so real time has to pass too.
+            Thread.sleep(1_500)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(3_000))
+            assertFalse(page(top()).contains("surprise gift"))
+
+            send(SessionEvent.Back(now()))
+            val notifications = (NexusSession.state as SessionState.Root).stops.indexOfFirst { it.kind == RootStopKind.NOTIFICATIONS }
+            repeat(notifications) { send(SessionEvent.Step(1, now())) }
+            send(SessionEvent.Enter(now()))
+            assertEquals(RootStops.NOTIFICATIONS_PAGE_ID, top().pageId)
+            assertFalse(page(top()).contains("surprise gift"))
+        } finally {
+            send(SessionEvent.NoticePurged(owner))
+        }
+    }
+
+    private fun page(frame: Frame): String = (frame.status as FrameStatus.Shown).snapshot.page.toString()
+
+    /**
+     * A notification that passes the 24-hour bound a few seconds from now, by the real wall clock:
+     * enough for a cold first test to reach its page before it does.
+     */
+    private fun nearlyExpired(owner: String, text: String, conversation: Boolean = false) = NoticeEntry(
+        ownerPluginId = owner,
+        sourceLabel = "Probe",
+        title = if (conversation) "Mika" else text,
+        body = if (conversation) text else null,
+        atWallMs = System.currentTimeMillis() - NoticeSurfaceContract.MAX_HISTORY_AGE_MS + MARGIN_MS,
+        destination = if (conversation) PageDestination("$owner:thread", JSONObject().put("t", "1").toString()) else null,
+        eventKey = if (conversation) "t1" else null,
+        conversation = conversation,
+    )
+
+    private fun arrive(entry: NoticeEntry) = send(SessionEvent.NoticeArrived(NoticePreview(RootStops.NOTICE_PAGE_ID, entry.text), entry))
+
+    private fun rootStop(kind: RootStopKind): Int = (NexusSession.state as SessionState.Root).stops.indexOfFirst { it.kind == kind }
+
+    /** Real time passes, then only the production timer runs: no event, no manual tick. */
+    private fun crossBound() {
+        Thread.sleep(MARGIN_MS + 500)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(3_000))
+    }
+
+    @Test
+    fun `a loaded Notifications list covered by its entry comes back without it after the bound`() {
+        val owner = "relay"
+        try {
+            arrive(nearlyExpired(owner, "Buy the surprise gift"))
+            openRoot()
+            repeat(rootStop(RootStopKind.NOTIFICATIONS)) { send(SessionEvent.Step(1, now())) }
+            send(SessionEvent.Enter(now()))
+            assertEquals(RootStops.NOTIFICATIONS_PAGE_ID, top().pageId)
+            assertTrue(page(top()), page(top()).contains("surprise gift"))
+            send(SessionEvent.Enter(now()))
+            assertEquals("${NexusSession.state}", RootStops.NOTICE_PAGE_ID, top().pageId)
+
+            crossBound()
+            send(SessionEvent.Back(now()))
+
+            assertEquals(RootStops.NOTIFICATIONS_PAGE_ID, top().pageId)
+            assertFalse(page(top()).contains("surprise gift"))
+        } finally {
+            send(SessionEvent.NoticePurged(owner))
+        }
+    }
+
+    @Test
+    fun `a Notifications list left open empties itself when only the timer runs`() {
+        val owner = "relay"
+        try {
+            arrive(nearlyExpired(owner, "Buy the surprise gift"))
+            openRoot()
+            repeat(rootStop(RootStopKind.NOTIFICATIONS)) { send(SessionEvent.Step(1, now())) }
+            send(SessionEvent.Enter(now()))
+            assertEquals(RootStops.NOTIFICATIONS_PAGE_ID, top().pageId)
+            assertTrue(page(top()).contains("surprise gift"))
+
+            crossBound()
+
+            assertEquals(RootStops.NOTIFICATIONS_PAGE_ID, top().pageId)
+            assertFalse(page(top()).contains("surprise gift"))
+        } finally {
+            send(SessionEvent.NoticePurged(owner))
+        }
+    }
+
+    @Test
+    fun `a frozen conversation evicted by younger arrivals still leaves on the production timer`() {
+        val owner = "expiry-evicted"
+        try {
+            arrive(nearlyExpired(owner, "le code est 4417", conversation = true))
+            openRoot()
+            val card = (NexusSession.state as SessionState.Root).stops[rootStop(RootStopKind.NOTICE_PREVIEW)]
+            assertEquals(NoticeCardKind.CONVERSATION, card.notice?.kind)
+            repeat(NoticeSurfaceContract.MAX_HISTORY_ENTRIES) { index ->
+                arrive(NoticeEntry(owner, "Probe", "Item $index", null, atWallMs = System.currentTimeMillis()))
+            }
+            assertTrue((NexusSession.state as SessionState.Root).stops.toString().contains("4417"))
+
+            crossBound()
+
+            assertFalse((NexusSession.state as SessionState.Root).stops.toString().contains("4417"))
+        } finally {
+            send(SessionEvent.NoticePurged(owner))
+        }
+    }
+
+    @Test
+    fun `waking the screen looks again before the session timer runs`() {
+        val owner = "expiry-wake"
+        try {
+            arrive(nearlyExpired(owner, "Buy the surprise gift"))
+            openRoot()
+            assertTrue((NexusSession.state as SessionState.Root).stops.toString().contains("surprise gift"))
+
+            // A deep sleep stops the uptime clock the timer runs on: real time passes, it does not.
+            Thread.sleep(MARGIN_MS + 500)
+            idle()
+            assertTrue((NexusSession.state as SessionState.Root).stops.toString().contains("surprise gift"))
+            service.sendBroadcast(Intent(Intent.ACTION_SCREEN_ON))
+            idle()
+
+            assertFalse((NexusSession.state as SessionState.Root).stops.toString().contains("surprise gift"))
+        } finally {
+            send(SessionEvent.NoticePurged(owner))
+        }
+    }
+
+    @Test
+    fun `local pages answer in-process without a phone`() {
+        openRoot()
+        val root = NexusSession.state as SessionState.Root
+        assertEquals(listOf(RootStopKind.NOTIFICATIONS, RootStopKind.APPLICATIONS), root.stops.map(RootStop::kind))
+        assertEquals(0, root.stops.first().count)
+        send(SessionEvent.Enter(now()))
+        assertEquals(RootStops.NOTIFICATIONS_PAGE_ID, top().pageId)
+        assertTrue(top().status is FrameStatus.Shown)
+        assertEquals(0, (body(top()) as PageBody.SelectableList).items.size)
+    }
+
+    @Test
+    fun `Applications lists the catalog and tries to launch an unchanged plugin on one tap`() {
+        openRoot()
+        send(SessionEvent.Step(1, now()))
+        send(SessionEvent.Enter(now()))
+        assertEquals(RootStops.APPLICATIONS_PAGE_ID, top().pageId)
+        val rows = (body(top()) as PageBody.SelectableList).items
+        // Without a negotiated pair even a page provider is offered as its full app.
+        assertEquals(listOf("Lens", "Relay"), rows.map { it.label })
+        assertTrue(rows.all { it.sub == null })
+
+        // With no phone to carry it, the direct open fails back to Applications.
+        send(SessionEvent.Enter(now()))
+        assertTrue("${NexusSession.state}", NexusSession.state is SessionState.InPage)
+        assertEquals(RootStops.APPLICATIONS_PAGE_ID, top().pageId)
+        assertNull(top().panel)
+    }
+
+    @Test
+    fun `the phone can neither author a hub page nor answer for another owner`() {
+        openRoot()
+        send(SessionEvent.Enter(now()))
+        val before = top()
+        val shown = before.status as FrameStatus.Shown
+        val forged = PageSurfaceContract.correlationPayload(PageCorrelation(shown.requestId, NexusSession.generation, 1, RootStops.NOTIFICATIONS_PAGE_ID))
+            .put("revision", shown.revision + 1).put("template", "selectableList").put("title", "Forged")
+            .put("body", JSONObject().put("items", JSONArray().put(JSONObject().put("id", "x").put("label", "Forged"))))
+            .put("actions", JSONArray()).put("live", true).put(PageSurfaceContract.FIELD_PLUGIN_ID, "relay")
+        GlassesHub.onRemoteEnvelope(BusEnvelope(path = BusPaths.PAGE_RESPONSE, payload = forged))
+        GlassesHub.onRemoteEnvelope(BusEnvelope(path = BusPaths.PAGE_REQUEST, payload = forged))
+        idle()
+        assertEquals(before, top())
+    }
+
+    @Test
+    fun `a provider page with no phone says so and never becomes a launch`() {
+        send(SessionEvent.ActivityStarted(ActivityStop("relay:local", "relay:main", "Ana: hi", pinned = true)))
+        openRoot()
+        send(SessionEvent.Enter(now()))
+        assertEquals(SessionReducer.UNAVAILABLE_LINK_LOST, (top().status as FrameStatus.Unavailable).reason)
+        assertTrue(NexusSession.state is SessionState.InPage)
+        // Retry stays local while the phone is gone; still no launch.
+        send(SessionEvent.Enter(now()))
+        assertTrue(NexusSession.state is SessionState.InPage)
+    }
+
+    private companion object {
+        const val MARGIN_MS = 3_000L
+    }
+}

@@ -15,6 +15,7 @@ internal object MapsMeParser {
             glyph = NavText.ROUTE_GLYPH,
             primary = NavText.fit(distance, ActivitySurfaceContract.MAX_PRIMARY_CHARS),
             secondary = street?.let { NavText.fit(it, ActivitySurfaceContract.MAX_SECONDARY_CHARS) },
+            street = street,
             stepKey = "${NavSource.MAPS_ME.name}|${street.orEmpty()}",
             instruction = listOfNotNull(distance, street).joinToString(" · "),
         )

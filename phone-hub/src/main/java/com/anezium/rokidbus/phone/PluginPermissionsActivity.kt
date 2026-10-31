@@ -6,6 +6,7 @@ import com.anezium.rokidbus.client.ui.PluginCustomIcon
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.os.Bundle
@@ -16,6 +17,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.shared.ActivityDisplayMode
+import com.anezium.rokidbus.shared.AmbientPreferencesContract
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.skills.SkillEffect
 import com.anezium.rokidbus.shared.skills.SkillOperation
@@ -184,8 +187,22 @@ class PluginPermissionsActivity : Activity() {
                 card.addView(assistantTakeoverRow(), NexusUi.block())
                 card.addView(BusTheme.gap(this, 8))
             }
+            if (capability == PluginCapability.SURFACES && live && capability in selected) {
+                activityRows(principal).forEach { row ->
+                    card.addView(row, NexusUi.block())
+                    card.addView(BusTheme.gap(this, 8))
+                }
+            } else if (capability == PluginCapability.SURFACES && live) {
+                // Activity preferences apply only while the surfaces grant is selected.
+                card.addView(
+                    NexusUi.cardBody(this, "Allow \"Show on your glasses\" to manage its activity."),
+                    NexusUi.block(),
+                )
+                card.addView(BusTheme.gap(this, 8))
+            }
         }
 
+        // Skills keep their own section and store, apart from the activity rows above.
         if (principal.skills != PluginSkillsState.Absent) {
             card.addView(BusTheme.gap(this, 6))
             skillsSection(card, principal, live)
@@ -244,6 +261,164 @@ class PluginPermissionsActivity : Activity() {
                 NexusUi.block(),
             )
         }
+    }
+
+    /**
+     * The everyday choices under the `surfaces` grant: whether this plugin's activity shows and
+     * whether it is pinned. Neither goes through [applyDecision]: that path tears the plugin
+     * down, these only re-send its activity.
+     */
+    private fun activityRows(principal: PhonePluginPrincipal): List<LinearLayout> {
+        val key = principal.grantKey()
+        val preferences = PhoneActivityPreferences.shared(applicationContext)
+        val preference = preferences.preferenceFor(key)
+        return listOf(
+            switchRow(
+                title = "Show its activity on the glasses",
+                note = "Its live card among the glasses activities. Off ends the one it shows now and refuses new ones.",
+                checked = preference.enabled,
+            ) { checked ->
+                preferences.setEnabled(key, checked)
+                BusHubService.onActivityPreferencesChanged(key)
+            },
+            switchRow(
+                title = "Pin its activity",
+                note = "Always first, never pushed out by another plugin's. Kept as last known when the plugin stops.",
+                checked = preference.pinned,
+            ) { checked ->
+                preferences.setPinned(key, checked)
+                BusHubService.onActivityPreferencesChanged(key)
+            },
+            floatingRow(key, preferences, preference),
+            displayRow(key, preference),
+        )
+    }
+
+    /**
+     * Opens the user-owned floating choices for this plugin, with the current one as its value.
+     * A plugin kept off the glasses reads as Activities only, which is what that switch means.
+     */
+    private fun displayRow(key: PluginGrantKey, preference: PhoneActivityPreference): LinearLayout {
+        val mode = if (preference.floating) preference.display.mode else ActivityDisplayMode.HIDDEN
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = NexusUi.pressed(context, Color.TRANSPARENT, 8)
+            setPadding(0, NexusUi.dp(context, 4), 0, NexusUi.dp(context, 4))
+            isClickable = true
+            isFocusable = true
+            contentDescription = "Floating band: ${ActivityDisplaySettingsActivity.label(mode)}. Change"
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(
+                        TextView(context).apply {
+                            text = "Floating band"
+                            textSize = 13f
+                            setTextColor(NexusUi.INK)
+                        },
+                    )
+                    addView(
+                        TextView(context).apply {
+                            text = "When it floats over the glasses, and for how long on changes"
+                            textSize = 10f
+                            setTextColor(NexusUi.INK3)
+                        },
+                    )
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(
+                NexusUi.metaLabel(context, ActivityDisplaySettingsActivity.label(mode).uppercase(), NexusUi.GREEN).apply {
+                    textSize = 11f
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginEnd = NexusUi.dp(context, 6)
+                },
+            )
+            addView(NexusUi.chevron(context))
+            setOnClickListener {
+                startActivity(
+                    Intent(this@PluginPermissionsActivity, ActivityDisplaySettingsActivity::class.java)
+                        .putExtra(ActivityDisplaySettingsActivity.EXTRA_PLUGIN_ID, key.pluginId)
+                        .putExtra(ActivityDisplaySettingsActivity.EXTRA_PLUGIN_PACKAGE, key.packageName),
+                )
+            }
+        }
+    }
+
+    /**
+     * Whether this plugin's island and pin float over the glasses' home and apps. Like the rows
+     * above it never goes through [applyDecision]: it only re-sends the glasses' ambient policy.
+     * Only the new launcher honours it, which the note says, naming Classic when the user chose
+     * it. Once the most plugins the policy can name are kept off, the others' switches stay on.
+     */
+    private fun floatingRow(
+        key: PluginGrantKey,
+        preferences: PhoneActivityPreferences,
+        preference: PhoneActivityPreference,
+    ): LinearLayout {
+        val room = preferences.canKeepOffGlasses(key)
+        val note = when {
+            !room ->
+                "Its island and pin over the home and your apps. ${AmbientPreferencesContract.MAX_HIDDEN_OWNERS} " +
+                    "plugins already stay off the glasses, the most allowed: let one of them float again first."
+            PhoneLauncherBackendStore(this).choice() == PhoneLauncherBackendChoice.LEGACY ->
+                "Its island and pin over the home and your apps. The Classic launcher you chose always " +
+                    "shows them; this choice applies with the new launcher."
+            else ->
+                "Its island and pin over the home and your apps, with the new launcher. Off hides only " +
+                    "those: its card, pages and notifications stay."
+        }
+        return switchRow(
+            title = "Float over the glasses",
+            note = note,
+            checked = preference.floating,
+            enabled = room,
+        ) { checked ->
+            if (preferences.setFloating(key, checked)) onKeptOffGlassesChanged()
+        }
+    }
+
+    private fun switchRow(
+        title: String,
+        note: String,
+        checked: Boolean,
+        enabled: Boolean = true,
+        onChanged: (Boolean) -> Unit,
+    ): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        addView(
+            LinearLayout(this@PluginPermissionsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(
+                    TextView(this@PluginPermissionsActivity).apply {
+                        text = title
+                        textSize = 13f
+                        setTextColor(NexusUi.INK)
+                    },
+                )
+                addView(
+                    TextView(this@PluginPermissionsActivity).apply {
+                        text = note
+                        textSize = 10f
+                        setTextColor(NexusUi.INK3)
+                    },
+                )
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+        )
+        addView(
+            NexusUi.switch(this@PluginPermissionsActivity).apply {
+                isChecked = checked
+                isEnabled = enabled
+                setOnCheckedChangeListener { _, value ->
+                    onChanged(value)
+                    render()
+                }
+            },
+        )
     }
 
     /**
@@ -311,6 +486,10 @@ class PluginPermissionsActivity : Activity() {
         }
     }
 
+    /**
+     * Like the launcher's activity rows, a skill switch never goes through [applyDecision]: it
+     * writes only the digest-bound approval and tells the hub, with no plugin teardown.
+     */
     private fun skillRow(
         client: PhonePluginPrincipal,
         provider: PhonePluginPrincipal,
@@ -588,6 +767,8 @@ class PluginPermissionsActivity : Activity() {
         private const val EXTRA_PLUGIN_ID = "plugin_id"
         private const val PREFERENCES = "plugin_access_ui"
         private const val KEY_DEVELOPER_DETAILS = "developer_details"
+        /** Re-sends the glasses' ambient policy after a Float over the glasses change; tests watch it. */
+        @Volatile internal var onKeptOffGlassesChanged: () -> Unit = { BusHubService.onAmbientPolicyChanged() }
 
         fun intent(context: Context, target: PluginGrantTarget): Intent =
             Intent(context, PluginPermissionsActivity::class.java)

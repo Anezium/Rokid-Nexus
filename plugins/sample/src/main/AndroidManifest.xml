@@ -59,6 +59,18 @@
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES"
                 android:value="/plugin/hello,/system/plugin,/stt,/tts/started,/tts/done,/audio" />
+            <!-- The todo example: pages (the Applications row then opens hello:main), the
+                 checklist family the user may approve to run on one tap, and the activity's
+                 glyph. Descriptor metadata, not capabilities: the existing grant is kept. -->
+            <meta-data
+                android:name="rokidbus.plugin.pages"
+                android:value="1" />
+            <meta-data
+                android:name="rokidbus.plugin.quickActions"
+                android:value="checklist" />
+            <meta-data
+                android:name="com.anezium.rokidbus.plugin.GLYPHS"
+                android:resource="@array/nexus_glyphs" />
             <meta-data
                 android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY"
                 android:value=".HelloActivity" />

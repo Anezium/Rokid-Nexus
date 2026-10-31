@@ -1,8 +1,10 @@
 package com.anezium.rokidbus.shared.plugin
 
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.RenderedMapContract
 
 object PathRules {
+    private const val PAGE_ROOT = "/page"
     private val reservedRoots = setOf(
         "/core",
         "/launcher",
@@ -10,9 +12,12 @@ object PathRules {
         "/system",
         "/security",
         "/error",
+        // Page traffic is brokered by the hubs; a provider's two answers are intercepted earlier.
+        PAGE_ROOT,
         "/skills",
     )
     private val hubOnlyPaths = setOf(
+        RenderedMapContract.PATH,
         BusPaths.TTS_CANCEL,
         BusPaths.SKILLS_CATALOG_REPLY,
         BusPaths.SKILLS_RESULT,
@@ -57,6 +62,9 @@ object PathRules {
         return isHubOnly(normalized) || reservedRoots.any { matchesPrefix(normalized, it) }
     }
 
+    /** Any path under the session/page root, which no generic route or receive prefix may carry. */
+    fun isPagePath(path: String): Boolean = normalizeAbsolute(path)?.let { matchesPrefix(it, PAGE_ROOT) } == true
+
     fun isHubOnly(path: String): Boolean =
         normalizeAbsolute(path)?.let(hubOnlyPaths::contains) == true
 
@@ -80,7 +88,9 @@ object PathRules {
      * third-party plugin to discover it needed one.
      */
     fun isDirectReply(path: String): Boolean = when (normalizeAbsolute(path)) {
+        RenderedMapContract.PATH -> true
         BusPaths.NOTICE_CLOSED, BusPaths.NOTICE_INPUT, BusPaths.NOTICE_ACTION,
+        BusPaths.NOTICE_FORGET_ACCEPTED,
         BusPaths.ACTIVITY_ACTION, BusPaths.ACTIVITY_CLOSED,
         BusPaths.TTS_STARTED, BusPaths.TTS_DONE,
         BusPaths.CAMERA_SNAPSHOT_RESULT, BusPaths.CAMERA_SNAPSHOT_ERROR,
@@ -94,7 +104,9 @@ object PathRules {
     }
 
     fun isOwnerScoped(path: String): Boolean = when (normalizeAbsolute(path)) {
+        RenderedMapContract.PATH -> true
         BusPaths.NOTICE_CLOSED, BusPaths.NOTICE_INPUT, BusPaths.NOTICE_ACTION,
+        BusPaths.NOTICE_FORGET_ACCEPTED,
         BusPaths.ACTIVITY_ACTION, BusPaths.ACTIVITY_CLOSED,
         BusPaths.TTS_STARTED, BusPaths.TTS_DONE,
         BusPaths.CAMERA_SNAPSHOT_RESULT, BusPaths.CAMERA_SNAPSHOT_ERROR,
@@ -107,11 +119,27 @@ object PathRules {
         else -> matchesPrefix(path, "/system/plugin")
     }
 
+    /**
+     * The launcher bundle's plugin-to-phone paths. Like `/activity/start` they carry the local
+     * `surfaceId` and the phone stamps the authenticated owner; no plugin ever receives them.
+     */
+    fun isLauncherOwnerPath(path: String): Boolean = normalizeAbsolute(path)?.let { it in launcherOwnerPaths } == true
+
+    private val launcherOwnerPaths = setOf(
+        BusPaths.ACTIVITY_RESULT,
+        BusPaths.ACTIVITY_GEOMETRY,
+        BusPaths.ACTIVITY_HEADING,
+        BusPaths.NOTICE_WITHDRAW,
+        BusPaths.NOTICE_FORGET,
+    )
+
     fun requiredCapability(path: String): PluginCapability? = when (normalizeAbsolute(path)) {
         "/surface/show", "/surface/update", "/surface/hide",
         BusPaths.PIN_SHOW, BusPaths.PIN_HIDE,
         BusPaths.NOTICE_SHOW, BusPaths.NOTICE_UPDATE, BusPaths.NOTICE_HIDE,
         BusPaths.ACTIVITY_START, BusPaths.ACTIVITY_UPDATE, BusPaths.ACTIVITY_END,
+        BusPaths.ACTIVITY_RESULT, BusPaths.ACTIVITY_GEOMETRY, BusPaths.ACTIVITY_HEADING,
+        BusPaths.NOTICE_WITHDRAW, BusPaths.NOTICE_FORGET,
         -> PluginCapability.SURFACES
         BusPaths.INK_SHOW, BusPaths.INK_UPDATE, BusPaths.INK_HIDE ->
             PluginCapability.INK_SURFACE
