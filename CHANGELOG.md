@@ -2,10 +2,15 @@
 
 ## Unreleased
 
+## 1.8.2
+
+Update both Nexus hubs together.
+
 ### Glasses hub
 
 - After a reboot, the shell watchdog restarts R08 Access Bridge's two helpers when R08 is armed, without reopening ADB port 5555. Before this, R08's ring actions stayed dead after every reboot on glasses running Nexus.
 - The watchdog and command bridge no longer risk spinning a CPU core forever when a process they inspect exits at that moment (toybox `tr` loops on that read error).
+- When the watchdog declines to restart R08's helpers (package missing or disabled, helper missing, unsafe file owner or mode), it logs the reason once.
 
 ### Phone hub
 
