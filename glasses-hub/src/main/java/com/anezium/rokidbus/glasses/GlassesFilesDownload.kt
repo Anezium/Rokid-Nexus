@@ -291,6 +291,8 @@ internal class GlassesFilesDownload(
 
         /** Bytes read, -1 at the end, or null once [keepWaiting] says the worker has somewhere else to be. */
         fun read(buffer: ByteArray, keepWaiting: () -> Boolean): Int? {
+            // Start the deadline before dispatch: the read may enter before execute returns.
+            val deadline = now() + GlassesFilesContract.SOURCE_STALL_MS
             val task = FutureTask<Int> {
                 if (closed) throw IOException("closed")
                 val input = stream ?: openSource(file).also { opened ->
@@ -301,7 +303,6 @@ internal class GlassesFilesDownload(
             }
             pending = task
             laneIo.execute(task)
-            val deadline = now() + GlassesFilesContract.SOURCE_STALL_MS
             while (true) {
                 try {
                     return task.get(POLL_MS, TimeUnit.MILLISECONDS).also { pending = null }

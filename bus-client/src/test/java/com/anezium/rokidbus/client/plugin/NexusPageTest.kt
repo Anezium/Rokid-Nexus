@@ -35,8 +35,10 @@ class NexusPageTest {
             this.listener = listener
         }
         override fun send(path: String, id: String, payload: JSONObject): Boolean {
+            // The test clears the hooks as soon as entered is signalled.
+            val pendingRelease = release
             entered?.countDown()
-            release?.await(5, TimeUnit.SECONDS)
+            pendingRelease?.await(5, TimeUnit.SECONDS)
             sends += path to JSONObject(payload.toString())
             sendIds += id
             return accept
