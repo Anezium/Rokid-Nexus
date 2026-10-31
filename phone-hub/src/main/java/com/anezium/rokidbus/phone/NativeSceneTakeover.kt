@@ -9,10 +9,10 @@ import org.json.JSONTokener
  * from a third-party session: a call, a recording, navigation, a payment, an update.
  *
  * The scene names are client-l 1.1.2's own (`SCENES_TAKEOVER`). client-l matches them as
- * substrings anywhere in the report; the format is undocumented and no device capture exists yet,
- * so this reads only positive evidence instead: a JSON array of names, or a top-level object entry
- * set to `true`, `1` or `"true"`. Any other shape reads as nothing running, which keeps the
- * assist button with Nexus, as before scene reports were used at all.
+ * substrings anywhere in the report. Global Hi Rokid sends active names separated by commas
+ * (a single name when only one scene is active). Match whole names, and also accept a JSON array
+ * of names or top-level object entries set to `true`, `1` or `"true"`. Unknown formats read as
+ * nothing running, preserving the previous assist behavior.
  */
 internal object NativeSceneTakeover {
     val SCENES: List<String> = listOf(
@@ -34,6 +34,7 @@ internal object NativeSceneTakeover {
 
     private const val SHAPE_MAX_KEYS = 16
     private val SHAPE_KEY = Regex("[A-Za-z_][A-Za-z0-9_]{0,39}")
+    private val SCENE_NAMES = Regex("[A-Za-z_][A-Za-z0-9_]*(\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*)*")
 
     fun running(scenesJson: String?): Set<String> =
         when (val report = parse(scenesJson)) {
@@ -42,16 +43,18 @@ internal object NativeSceneTakeover {
                 SCENES.filterTo(LinkedHashSet()) { it in names }
             }
             is JSONObject -> SCENES.filterTo(LinkedHashSet()) { isSet(report.opt(it)) }
+            is List<*> -> SCENES.filterTo(LinkedHashSet()) { it in report }
             else -> emptySet()
         }
 
     /**
-     * The report's structure without its values, safe for release logs: `array[n]`,
+     * The report's structure without its values, safe for release logs: `names[n]`, `array[n]`,
      * `object{key,…}` limited to identifier-like keys, `other` or `empty`.
      */
     fun shape(scenesJson: String?): String =
         when (val report = parse(scenesJson)) {
             is JSONArray -> "array[${report.length()}]"
+            is List<*> -> "names[${report.size}]"
             is JSONObject -> {
                 val keys = report.keys().asSequence().toList()
                 val shown = keys.filter { SHAPE_KEY.matches(it) }.sorted().take(SHAPE_MAX_KEYS)
@@ -75,6 +78,7 @@ internal object NativeSceneTakeover {
     private fun parse(scenesJson: String?): Any? {
         val text = scenesJson?.trim().orEmpty()
         if (text.isEmpty()) return null
+        if (SCENE_NAMES.matches(text)) return text.split(',').map(String::trim)
         return runCatching { JSONTokener(text).nextValue() }.getOrDefault(Unit)
     }
 

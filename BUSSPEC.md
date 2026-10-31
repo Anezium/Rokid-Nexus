@@ -3862,7 +3862,7 @@ start/batch end and helper start/30-second maintenance retry cleanup, so app pro
 death or an early cleanup deadline cannot discard the obligation.
 Other Android versions, unknown helper commands and unconfirmed results mean
 not forgotten; they never fail a transfer or block ownership reconciliation.
-The current helper version is `2026-10-21.7`; its existing APK self-update and normal
+The current helper version is `2026-10-31.1`; its existing APK self-update and normal
 re-arm paths are unchanged. No SSID, passphrase, BSSID, or device identity is logged
 or stored by cleanup. Outcome-only receipts are `<nonce>.connect-result` for the
 files target confirmation and `<nonce>.files-result` for numeric cleanup.

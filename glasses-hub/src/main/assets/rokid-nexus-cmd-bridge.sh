@@ -10,7 +10,7 @@ SEENFILE="$BASE/$NAME.seen"
 PENDING_DISABLE="$BASE/$NAME.pending-disable"
 CHANNEL="/sdcard/Android/data/com.anezium.rokidbus.glasses/files/cmd_bridge"
 DOORBELL="$CHANNEL/doorbell"
-VERSION="2026-10-21.7"
+VERSION="2026-10-31.1"
 FILES_NETWORKS="$BASE/$NAME.files-networks"
 FILES_NETWORK_LIMIT=8
 CAPTURE_DIR="/sdcard/DCIM/Camera"
@@ -52,7 +52,8 @@ log_line() {
 }
 
 pid_cmdline() {
-  tr '\000' ' ' < "/proc/$1/cmdline" 2>/dev/null
+  # Read through cat: toybox tr spins forever on the read error of a process exiting meanwhile.
+  cat "/proc/$1/cmdline" 2>/dev/null | tr '\000' ' '
 }
 
 is_bridge_pid() {

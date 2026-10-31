@@ -21,6 +21,29 @@ Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4
 - **Whole titles.** What plays reads in full on its card and its island: a title too long for its line scrolls slowly to its end and back while it is on screen. Folded, an activity's island is now its mark beside two lines, the title over the artist, with nothing left empty under them; expanded, its commands are drawn as icons whenever their names would not fit whole, never as "Pre…".
 - With an older phone hub, or with the **Classic launcher** chosen, the glasses keep the 1.8 launcher, and activities keep their classic panel and chip instead of the new map islands.
 
+## 1.8.3
+
+Update both Nexus hubs together. The 1.8.2 release published the glasses APK only; this release also ships the phone changes described below under 1.8.2.
+
+### Phone hub
+
+- Recognizes Global Hi Rokid's native scene reports, which contain active names separated by commas rather than JSON. A native prompter was previously read as no scene running, bypassing the assist takeover guard. Scene names are matched exactly; JSON reports remain supported.
+- Tapping the "Hi Rokid ended the glasses session" notification reconnects even when the Nexus home screen already exists in the background. Merely returning to Nexus does not automatically reclaim the session, and a stopped hub stays stopped.
+
+### Glasses hub
+
+- Includes the R08 helper restart and shell CPU fixes from 1.8.2, with a matching app version.
+
+## 1.8.2
+
+Update both Nexus hubs together.
+
+### Glasses hub
+
+- After a reboot, the shell watchdog restarts R08 Access Bridge's two helpers when R08 is armed, without reopening ADB port 5555. Before this, R08's ring actions stayed dead after every reboot on glasses running Nexus.
+- The watchdog and command bridge no longer risk spinning a CPU core forever when a process they inspect exits at that moment (toybox `tr` loops on that read error).
+- When the watchdog declines to restart R08's helpers (package missing or disabled, helper missing, unsafe file owner or mode), it logs the reason once.
+
 ### Phone hub
 
 - Map-render reports use live map negotiation directly, avoiding repeated Bluetooth-device discovery while preserving the current-revision checks. Ambient reports no longer wait behind activity or geometry writes; activity publication checks its negotiated support and its live link without discovering Bluetooth devices, so the phone keeps up with the glasses' feedback while a route page is open. Reports for geometry whose write has not succeeded are refused; the next draw renewal can acknowledge it after success.

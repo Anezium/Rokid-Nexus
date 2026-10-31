@@ -34,14 +34,34 @@ class NativeSceneTakeoverTest {
     }
 
     @Test
+    fun `Global Hi Rokid names the active scenes as comma separated text`() {
+        assertEquals(setOf("wordTipsRunning"), NativeSceneTakeover.running("wordTipsRunning"))
+        assertEquals(
+            setOf("phoneCallRunning", "videoRecordRunning"),
+            NativeSceneTakeover.running(" phoneCallRunning, videoRecordRunning,unknownScene "),
+        )
+        assertEquals(emptySet<String>(), NativeSceneTakeover.running("aiChatRunning"))
+        assertEquals("names[1]", NativeSceneTakeover.shape("wordTipsRunning"))
+        assertEquals("names[2]", NativeSceneTakeover.shape("phoneCallRunning,videoRecordRunning"))
+    }
+
+    @Test
+    fun `text scenes match whole names and do not treat false assignments as active`() {
+        listOf(
+            "notwordTipsRunning", "wordTipsRunningEnded", "wordTipsRunning=false",
+            "wordTipsRunning:false", "wordTipsRunning stopped", "wordTipsRunning,",
+        ).forEach { report ->
+            assertEquals(report, emptySet<String>(), NativeSceneTakeover.running(report))
+        }
+    }
+
+    @Test
     fun `any other shape reads as nothing running`() {
         listOf(
             """{"scenes":["cameraPageRunning"]}""",
             """{"scenes":{"phoneCallRunning":true}}""",
             """{"scene":"phoneCallRunning","state":"end"}""",
             """{"phoneCallRunningState":"idle"}""",
-            "otaRunning",
-            "phoneCallRunning,videoRecordRunning",
             """{"phoneCallRunning":""",
         ).forEach { report ->
             assertEquals(report, emptySet<String>(), NativeSceneTakeover.running(report))
@@ -57,7 +77,7 @@ class NativeSceneTakeoverTest {
             NativeSceneTakeover.shape("""{"scene":"Navigating to 12 Rue X","phoneCallRunning":true}"""),
         )
         assertEquals("object{a,+1}", NativeSceneTakeover.shape("""{"a":1,"has space":2}"""))
-        assertEquals("other", NativeSceneTakeover.shape("otaRunning"))
+        assertEquals("names[1]", NativeSceneTakeover.shape("otaRunning"))
         assertEquals("other", NativeSceneTakeover.shape("""{"broken":"""))
     }
 

@@ -153,7 +153,7 @@ or unopenable FIFO falls back to the sleep-based poll. The line is
 is a 32-byte value generated once, kept app-private and baked into the deployed script. Arguments
 that could contain `:` travel base64-encoded. The bridge re-validates everything itself and refuses
 on any surprise: unknown command, malformed nonce, replayed nonce, bad token, wrong shape.
-The current allow-list (helper `2026-10-21.7`) is `wifi_enable`, `wifi_disable`,
+The current allow-list (helper `2026-10-31.1`) is `wifi_enable`, `wifi_disable`,
 `wifi_connect`, `wifi_connect_files`, `wifi_forget`, `wifi_cleanup_files`,
 `delete_capture`, `adb_wifi_enable`, and `adb_wifi_disable`. The Wireless ADB
 plugin uses the last two only to toggle the transport; pairing start/stop uses

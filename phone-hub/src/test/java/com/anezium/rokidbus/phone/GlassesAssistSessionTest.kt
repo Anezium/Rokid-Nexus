@@ -10,6 +10,19 @@ class GlassesAssistSessionTest {
     private val session = GlassesAssistSession()
 
     @Test
+    fun `a native prompter text report protects the scene until it ends`() {
+        session.onScenesReport("wordTipsRunning")
+        assertEquals(setOf("wordTipsRunning"), session.scenes)
+        assertEquals(Press.NATIVE_SCENE, session.onPressStart(linkUp = true, takeoverEnabled = true))
+        assertFalse(session.isHeld)
+        assertTrue(session.nativeSceneRunning())
+
+        session.onScenesReport("")
+        assertFalse(session.nativeSceneRunning())
+        assertEquals(Press.TAKE_OVER, session.onPressStart(linkUp = true, takeoverEnabled = true))
+    }
+
+    @Test
     fun `a press is held only once every gate passes`() {
         assertEquals(Press.TAKE_OVER, session.onPressStart(linkUp = true, takeoverEnabled = true))
         assertTrue(session.isHeld)

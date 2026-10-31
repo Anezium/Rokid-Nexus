@@ -42,6 +42,7 @@ private const val BLUETOOTH_PERMISSION_REQUEST = 20
 private const val NOTIFICATION_PERMISSION_REQUEST = 22
 private const val PREF_NOTIFICATIONS_ANSWERED = "onboarding_notifications_answered"
 private const val PREF_ADB_DEBUGGING_ACKNOWLEDGED = "onboarding_adb_debugging_acknowledged"
+internal const val ACTION_NOTIFICATION_RECONNECT = "com.anezium.rokidbus.phone.NOTIFICATION_RECONNECT"
 
 /** Companion home: fixed status/settings menubar, setup cards, plugin list, store entry and hub toggle. */
 class MainActivity : Activity() {
@@ -83,6 +84,17 @@ class MainActivity : Activity() {
         ) { event -> handleHubEvent(event) }.also { it.connect() }
         if (savedToken().isNotBlank() && BusHubService.isEnabled(this)) {
             logLine("Saved Hi Rokid token present")
+            BusHubService.start(this)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == ACTION_NOTIFICATION_RECONNECT &&
+            savedToken().isNotBlank() && BusHubService.isEnabled(this) &&
+            BusHubService.canRunHub(this)
+        ) {
             BusHubService.start(this)
         }
     }
