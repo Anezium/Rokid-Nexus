@@ -5,9 +5,12 @@ written to be read by a developer or handed verbatim to a coding agent. Where th
 document states a limit or a rule, the hub or SDK enforces it in code — violating it
 does not degrade gracefully, it gets your traffic rejected or your process crashed.
 
-Companion documents: [docs/PLUGIN_SDK.md](../docs/PLUGIN_SDK.md) (wire/AIDL
-specification), [docs/PLUGINS.md](../docs/PLUGINS.md) (visual design & settings-screen
-kit). This file is the contract; those are the deep dives.
+Companion documents: [docs/PLUGIN_SDK.md](../docs/PLUGIN_SDK.md) (public typed SDK),
+[BUSSPEC.md](../BUSSPEC.md) (wire authority), and
+[docs/PLUGINS.md](../docs/PLUGINS.md) (visual design & settings-screen kit).
+This file gives agent-facing implementation rules; use the SDK guide and wire
+specification for their respective contracts. Nexus 2.0.0 ships SDK 0.24.0;
+plugins built against 0.23.0 must be rebuilt against 0.24.0.
 
 ## 1. What a plugin is
 
@@ -57,9 +60,17 @@ sanctioned exceptions:
    glasses' Nexus session, once both hubs announce page v1. The hub may keep that
    binding only while one of its pages is pending or visible under its
    120-second lease, and must release it after.
-   Answer from memory on the main thread; no foreground service, notification,
-   polling or background refresh is permitted for pages, and live revisions are
-   sent only on real changes while the page is visible.
+   Answer from memory on the main thread. Since SDK 0.24.0,
+   `NexusPluginService` shares its quiet session foreground notification with
+   page requests, their bounded display handoff, visible leases and actions
+   through their results. It releases that demand on an unavailable or unsent
+   answer, visibility false, close, lease expiry or registration loss; other
+   legitimate session demand may still keep the service foreground. Declare
+   the same `specialUse` type and permissions used for surfaces. An OS refusal
+   leaves the callbacks usable without promotion; a standalone
+   `NexusPluginClient` does not gain this service lifecycle automatically.
+   Never add a page-specific service or notification, polling or background
+   refresh. Send live revisions only on real changes while the page is visible.
 
 6. **User-enabled ongoing activities** (launcher bundle; SDK
    `NexusActivityPreference` and `NexusUi.activitySettingRow` provide the standard

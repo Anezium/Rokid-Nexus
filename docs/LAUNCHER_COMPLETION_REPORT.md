@@ -187,10 +187,14 @@ This section supersedes the status paragraphs above, which are kept as history.
   dying between accepting and persisting a forget.
   Hardware: the Relay-off forget was observed on the glasses on `cdc260bc`'s build (history
   emptied, phone log `notice history purged owner=relay reason=owner_forget`).
-- **Versions prepared, not released.** Hubs 1.9.0 (10900), Relay 1.4.0 (15), Navigation 0.3.0 (4),
+- **Historical preparation snapshot, superseded by Nexus 2.0.0.** The candidate used
+  hubs 1.9.0 (10900), Relay 1.4.0 (15), Navigation 0.3.0 (4),
   Media Deck 1.0.4 (5), Sample 1.0.6 (7); SDK notes for 0.24.0 are in `CHANGELOG.md`. The SDK
-  dependency pins in `README.md` and the SDK guide stay on `sdk-v0.23.0` until that tag exists.
-  This replaces release gate F3 below.
+  dependency pins were held on `sdk-v0.23.0` until the new tag existed.
+  That preparation replaced release gate F3 below. Nexus 2.0.0 and SDK 0.24.0
+  were published on 2026-10-31, alongside those plugin versions; the current
+  `README.md` and SDK guide use `sdk-v0.24.0`. See `CHANGELOG.md` for the released
+  versions rather than this historical candidate's hub version.
 - **Float over the glasses** (owner request, 2026-10-24): a per-plugin switch on Plugin access keeps
   that plugin's island and pin off the glasses' home and apps, carried as the ambient policy's
   `hiddenOwners`; its card, pages and notifications are unchanged. Covered by
