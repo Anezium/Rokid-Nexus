@@ -100,7 +100,7 @@ feature has not, the roadmap names it.
   plugins surface update badges; the apps themselves self-update (phone from
   GitHub releases, glasses over CXR).
 - **Thirteen plugins ship**: Assistant, Relay, Navigation, Lens, Feeds, Transit,
-  Lyrics, Media Deck, Photos Sync, Patcher, Wireless ADB, Tasker, and the
+  Lyrics, Media Deck, Photos Sync (deprecated), Patcher, Wireless ADB, Tasker, and the
   copyable Sample. All are external headless APKs; the hubs contain no built-ins.
 - **Plugins work for each other without knowing each other.** With Skills, a
   provider publishes typed operations and an approved caller, Assistant first,
