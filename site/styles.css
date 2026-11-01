@@ -298,7 +298,8 @@ code {
   letter-spacing: .085em;
   text-transform: uppercase;
   color: rgba(237, 242, 239, .8);
-  background: linear-gradient(transparent, rgba(3, 8, 5, .94));
+  /* Opaque by mid-height so the capture's own hint row never shows through. */
+  background: linear-gradient(transparent, rgba(3, 8, 5, .96) 55%);
 }
 
 .optic--phone {
@@ -319,6 +320,9 @@ code {
   .hero__inner { grid-template-columns: 1fr; }
   .hero__optic { max-width: 480px; margin-inline: auto; width: 100%; }
   .hero__field { right: -40vw; opacity: .6; }
+}
+@media (max-width: 560px) {
+  .optic--phone { right: -3%; bottom: -2.2rem; width: 38%; }
 }
 
 /* ────────────────────────  sections  ──────────────────────── */
