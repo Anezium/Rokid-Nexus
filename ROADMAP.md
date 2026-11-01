@@ -331,7 +331,7 @@ these settings through the SDK; they never choose visibility or duration.
 ### Thirteen plugins, none of them built in
 
 Relay · Assistant · Navigation · Lens · Feeds · Transit · Lyrics · Media Deck
-· Photos Sync · Patcher · Wireless ADB · Tasker · Sample
+· Photos Sync (deprecated) · Patcher · Wireless ADB · Tasker · Sample
 
 ---
 
@@ -418,7 +418,7 @@ Next below, shipped in 0.1.0.
 | Navigation | Public-transport journeys planned by Navigation itself (Exploring, above) · bus, tram and RER rides checked on real trips, beyond the walks and boardings already seen · Google Maps and Citymapper set to a language other than English, French or Korean, whose wording it does not read yet · Korean checked on a real trip in Korea · OsmAnd walking and cycling checked on real trips · Yandex Maps walking, cycling and transit once usable notifications have been captured |
 | Feeds | Posting and replying by voice · sources beyond Bluesky and X · video in the timeline |
 | Media Deck | "Next" asked of Assistant, which no operation offers yet · pause asked by voice, with real music players. Now playing and pause for Assistant shipped in 1.0.3 and have run with a test player, from typed questions; the launcher player and card controls in 1.0.4 |
-| Photos Sync | A Wi-Fi-only rule · a video's location tag, which Android strips on the way out. Capture-type filters shipped in 1.1.0; optional deletion after sync already shipped in 1.0.0 |
+| Photos Sync | Nothing: deprecated. The Hi Rokid app now syncs glasses captures to the phone itself, so the plugin is no longer developed |
 | Transit | "Take me home" guidance checked on a real trip. Skills and journey guidance shipped in 1.0.5; departures have run on hardware, the guidance not yet on a moving trip |
 | Patcher | Reddit out of Preview: the R08 ring and real posting checked on hardware |
 | Lens · Lyrics | Complete as they stand |

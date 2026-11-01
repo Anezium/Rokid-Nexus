@@ -24,7 +24,7 @@ releases. The Gradle project names keep the historical `:plugin-<id>` form
 | [Transit](transit/) | `transit` | Nearby stops, departures, and favourites |
 | [Lyrics](lyrics/) | `lyrics` | Live synced lyrics for whatever is playing |
 | [Media Deck](media/) | `media` | Universal now-playing activity with cover art, launcher quick controls and an integrated player |
-| [Photos Sync](photosync/) | `photosync` | Copies glasses captures into the phone gallery on their own |
+| [Photos Sync](photosync/) | `photosync` | Deprecated: the Hi Rokid app now syncs glasses captures itself |
 | [Wireless ADB](wireless-adb/) | `wirelessadb` | Enables and pairs the glasses' real ADB-over-Wi-Fi transport under an explicit high-risk grant |
 | [Patcher](patcher/) | `patcher` | Patches stock YouTube on the phone for the hub's YouTube setup; phone-only, not shown in the glasses launcher |
 | [Tasker](tasker/) | `tasker` | Lists named Tasker tasks on the HUD and runs the selected automation on the phone |

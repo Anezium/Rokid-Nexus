@@ -1,5 +1,10 @@
 # Photos Sync
 
+> **Deprecated.** The Hi Rokid app now syncs photos and videos from the glasses
+> to the phone itself, so this plugin is no longer developed. It stays in the
+> Store for existing users and its source stays here as the reference for a
+> binary transfer over the bus.
+
 Copies the photos and videos you shoot with the glasses' camera button into your
 phone gallery, on their own, the way a phone camera backs itself up.
 
