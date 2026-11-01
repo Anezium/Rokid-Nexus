@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.1
+
+- **Phone battery badge recovery.** The glasses retry reading Rokid's status
+  row after screen transitions, including leaving Prompter and waking the
+  glasses, so a temporarily unreadable row can recover without waiting for the
+  phone battery percentage to change. Busy launcher screens no longer keep
+  postponing a pending refresh. Recovery retries are bounded, and the badge
+  continues to use the current row position.
+- Add diagnostics when the badge's status-row reading changes, to help
+  investigate device-specific display failures.
+
+Install the **glasses hub 2.0.1** to receive this fix. The phone APK is also
+versioned 2.0.1; phone hub 2.0.0 remains compatible. Plugins and SDK requirements
+are unchanged. This patch does not change News or the stock music bar's overlap
+with the battery badge.
+
 ## 2.0.0
 
 Update both Nexus hubs together. Relay 1.4.0, Navigation 0.3.0, Media Deck 1.0.4 and Sample 1.0.6 ship alongside and keep working as before with older hubs. Plugin developers get SDK 0.24.0.

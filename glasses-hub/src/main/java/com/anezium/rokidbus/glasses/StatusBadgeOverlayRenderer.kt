@@ -94,9 +94,6 @@ internal object StatusBadgeOverlayRenderer {
      */
     private const val FULLSCREEN_COVERAGE_PERCENT = 50
 
-    /** The ROM replaces status-row nodes while it updates them; let it settle. */
-    private const val SETTLE_MS = 150L
-
     private val main = Handler(Looper.getMainLooper())
 
     private var service: AccessibilityService? = null
@@ -109,9 +106,18 @@ internal object StatusBadgeOverlayRenderer {
     private var reserve: StatusBadgeReserve? = null
     private var reservePx = 0
     private var lastSignature: StatusBadgeReserve.Signature? = null
-    private val settle = Runnable { refresh() }
+    private val refreshScheduler = StatusBadgeRefreshScheduler(
+        postDelayed = { callback, delay -> main.postDelayed(callback, delay); Unit },
+        removeCallbacks = { callback -> main.removeCallbacks(callback) },
+        refresh = { refresh() },
+    )
+    private var lastReadDiagnostic: String? = null
+    private var refreshCount = 0L
 
     fun onServiceConnected(service: AccessibilityService) {
+        refreshScheduler.cancel()
+        lastReadDiagnostic = null
+        refreshCount = 0L
         this.service = service
         windowManager = service.getSystemService(WindowManager::class.java)
         launcherOnTop = false
@@ -127,7 +133,7 @@ internal object StatusBadgeOverlayRenderer {
         if (this.service !== service) return
         unsubscribe?.invoke()
         unsubscribe = null
-        main.removeCallbacks(settle)
+        refreshScheduler.cancel()
         hide()
         this.service = null
         windowManager = null
@@ -138,10 +144,8 @@ internal object StatusBadgeOverlayRenderer {
     /**
      * Re-evaluate after the window stack or the launcher's own content changed.
      *
-     * There is no polling counterpart to this. R08AccessBridge added a 30s loop
-     * because its position could go stale; a fixed slot cannot, so the only
-     * question left is whether the launcher is on top — and that is exactly what
-     * an event tells us.
+     * A window event may precede the ROM restoring its status row. Bounded
+     * follow-up reads cover that transition even if its final event is missing.
      */
     fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val relevant = event == null ||
@@ -152,14 +156,29 @@ internal object StatusBadgeOverlayRenderer {
                     ROKID_LAUNCHER_PACKAGE.contentEquals(event.packageName ?: "")
                 )
         if (!relevant) return
-        main.removeCallbacks(settle)
-        main.postDelayed(settle, SETTLE_MS)
+        refreshScheduler.onEvent(
+            windowChanged = event == null ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED,
+        )
     }
 
     private fun refresh() {
         val activeService = service ?: return
+        refreshCount++
         val metrics = activeService.resources.displayMetrics
         val read = readLauncher(activeService)
+        refreshScheduler.onRead(
+            needsRecovery = PhoneBatteryController.reading() != null &&
+                (read.launcherOnTop || !read.topWindowReadable) && read.rowCenterY == null,
+        )
+        val diagnostic = "top=${read.topPackageName} readable=${read.topWindowReadable} " +
+            "launcher=${read.launcherOnTop} row=${read.rowCenterY} " +
+            "phone=${PhoneBatteryController.reading() != null}"
+        if (diagnostic != lastReadDiagnostic) {
+            log("status badge read $diagnostic reads=$refreshCount")
+            lastReadDiagnostic = diagnostic
+        }
         launcherOnTop = read.launcherOnTop
         // Fresh, not kept: the ROM relocates the whole row between layouts
         // (home: top third; teleprompter: bottom edge), so yesterday's centre is
