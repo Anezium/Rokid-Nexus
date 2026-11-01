@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>SDK 0.24.0 documentation — Rokid Nexus 2.0</title>
+<title>Documentation — Rokid Nexus</title>
 <meta name="description" content="Every document that governs the Rokid Nexus platform: the plugin contract, the SDK reference, the wire specification, the HUD design system, and the plans behind each tier." />
 <meta name="theme-color" content="#05070a" />
 <link rel="canonical" href="https://rokid-nexus.anezium.me/docs.html" />
@@ -11,15 +11,15 @@
 
 <meta property="og:type" content="article" />
 <meta property="og:site_name" content="Rokid Nexus" />
-<meta property="og:title" content="SDK 0.24.0 documentation — Rokid Nexus 2.0" />
-<meta property="og:description" content="Build a phone plugin for the Nexus 2.0 launcher: typed pages, activities, maps and user-owned floating settings. SDK reference, agent instructions and wire specification." />
+<meta property="og:title" content="Documentation — Rokid Nexus" />
+<meta property="og:description" content="The plugin contract, the SDK reference, the wire specification, and the HUD design system." />
 <meta property="og:url" content="https://rokid-nexus.anezium.me/docs.html" />
 <meta property="og:image" content="https://rokid-nexus.anezium.me/assets/logo.png" />
 
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Newsreader:ital,opsz,wght@0,6..72,200..500;1,6..72,200..400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="styles.css?v=20261031-ratios" />
+<link rel="stylesheet" href="styles.css?v=20261101-v2" />
 </head>
 <body>
 
@@ -45,13 +45,14 @@
   <div class="docs__intro">
     <span class="tick" aria-hidden="true"></span>
     <h1>Documentation</h1>
-    <p><strong>Nexus 2.0.0 · SDK 0.24.0.</strong> Update both hubs for the new
-      launcher, and rebuild plugins compiled against SDK 0.23.0.
-      <a href="https://github.com/Anezium/Rokid-Nexus/releases/tag/sdk-v0.24.0">SDK release →</a></p>
     <p>
       Everything that governs the platform lives in the repository, in plain
       Markdown, next to the code it describes. This page is the map: what each
       document is for, and which one to open first.
+    </p>
+    <p>
+      Current: Nexus 2.0.0 and <a href="https://github.com/Anezium/Rokid-Nexus/releases/tag/sdk-v0.24.0">SDK 0.24.0</a>.
+      A plugin built against 0.23.0 must be rebuilt.
     </p>
     <p>
       Where a document states a limit or a rule, the hub or the SDK enforces it
@@ -86,8 +87,9 @@
         <code>NexusPluginService</code>, the lifecycle callbacks, the typed
         card, timed-lines, media and image surfaces, how a grant reaches
         you, and Skills — typed operations other plugins call through the hub.
-        SDK 0.24.0 also covers launcher conversation/media/route pages,
-        activity commands, detailed covers, route geometry and the user's floating display settings.
+        Since 0.24.0: the launcher's conversation, media and route pages,
+        activity commands, covers, route geometry, and the link to the user's
+        floating display settings.
       </p>
     </div>
 
