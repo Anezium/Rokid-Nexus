@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Rokid Nexus 2.0 — install a phone app, get a glasses app</title>
-<meta name="description" content="Rokid Nexus is a free, open-source plugin platform for Rokid AR glasses. Nexus 2.0 adds a native launcher on a triple tap: your activities, notifications and apps, with music, routes, conversations and checklists opening as pages inside Nexus." />
+<title>Rokid Nexus — install a phone app, get a glasses app</title>
+<meta name="description" content="Rokid Nexus is a plugin platform for Rokid AR glasses. One permanent hub lives on the glasses and renders everything; every feature ships as an ordinary phone app. Nexus 2.0 adds a launcher of its own: a triple tap opens your activities, notifications and apps, and a conversation, a player, a route or a checklist opens as a page inside Nexus." />
 <meta name="theme-color" content="#05070a" />
 <link rel="canonical" href="https://rokid-nexus.anezium.me/" />
 <link rel="icon" href="assets/logo.png" type="image/png" />
@@ -12,8 +12,8 @@
 
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Rokid Nexus" />
-<meta property="og:title" content="Rokid Nexus 2.0 — a native launcher for Rokid glasses" />
-<meta property="og:description" content="Triple tap for your activities, notifications and apps. Music, routes, conversations and checklists open as pages inside Nexus; every feature still ships as an ordinary phone APK." />
+<meta property="og:title" content="Rokid Nexus — install a phone app, get a glasses app" />
+<meta property="og:description" content="A plugin platform for Rokid AR glasses. One hub on the glasses renders everything; every feature ships as an ordinary phone APK. 2.0 adds a launcher with pages inside it." />
 <meta property="og:url" content="https://rokid-nexus.anezium.me/" />
 <meta property="og:image" content="https://rokid-nexus.anezium.me/assets/nexus-2/og-nexus-2.jpg" />
 <meta property="og:image:width" content="1200" />
@@ -24,7 +24,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Newsreader:ital,opsz,wght@0,6..72,200..500;1,6..72,200..400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="styles.css?v=20261101-hero" />
+<link rel="stylesheet" href="styles.css?v=20261101-v2" />
 </head>
 <body>
 
@@ -66,7 +66,7 @@
         another glasses app.
       </p>
       <ul class="hero__facts hero__facts--lead reveal" style="--i:3">
-        <li><b>2.0</b> a native launcher</li>
+        <li><b>13</b> plugins, none built in</li>
         <li><b>1</b> gesture claimed</li>
         <li><b>0</b> cables, PCs, or ADB</li>
       </ul>
@@ -96,114 +96,150 @@
   <div class="latest__in">
     <span class="latest__tag">v2.0.0</span>
     <p>
-      A native launcher with pages inside it · Media Deck cover art and quick
-      controls · walking maps · Relay conversations and drafts · floating
-      activities on your terms · update both hubs together ·
+      Nexus has its own launcher on the glasses, with pages inside it · Media
+      Deck puts the cover and the controls on its card · Navigation plans
+      walks, with a map · Relay drafts you read before you send · floating
+      activities set per plugin · update both hubs together ·
       SDK <code>sdk-v0.24.0</code> on JitPack · Apache-2.0
     </p>
     <a href="https://github.com/Anezium/Rokid-Nexus/blob/main/CHANGELOG.md">What changed →</a>
   </div>
 </div>
 
-<section class="section section--release" id="v2" aria-labelledby="release-title">
+<!-- ─────────────────────────  WHAT'S NEW  ───────────────────────── -->
+<section class="section section--release" id="v2">
   <div class="section__head">
     <span class="tick" aria-hidden="true"></span>
-    <p class="eyebrow">Nexus 2.0 · available now</p>
-    <h2 id="release-title">Your music, route and conversations.<br />One launcher.</h2>
-    <p class="section__sub">Triple tap, swipe to what you need, then tap to open it.
-      Activities become native pages inside Nexus, with the full plugin still a tap away.</p>
+    <h2>What's new in 2.0</h2>
+    <p class="section__sub">
+      A triple tap opens Nexus's own launcher on the glasses: your activities
+      first, then the latest notification, Notifications and Applications. An
+      activity opens as a page inside Nexus — a conversation, a player, a route
+      with its map, a checklist — and <em>Open app</em> is still there when you
+      want the plugin's full surface.
+    </p>
   </div>
 
-  <div class="release-tour">
-    <figure class="release-tour__video">
+  <div class="stage">
+    <figure class="stage__optic tour reveal">
       <video controls playsinline preload="none" width="1080" height="1350"
-        poster="assets/nexus-2/montage-poster.webp" aria-label="Nexus 2.0 tour: launcher, music, messages, floating activities and navigation">
+        poster="assets/nexus-2/montage-poster.webp"
+        aria-label="Nexus 2.0 demo: launcher, music, messages, floating activities and navigation">
         <source src="assets/nexus-2/nexus-2.0-montage.mp4" type="video/mp4" />
         <track kind="captions" src="assets/nexus-2/tour-captions.vtt" srclang="en" label="English" />
-        <a href="assets/nexus-2/nexus-2.0-montage.mp4">Download the Nexus 2.0 demo</a>.
+        <a href="assets/nexus-2/nexus-2.0-montage.mp4">Download the demo</a>.
       </video>
-      <figcaption>1:37 · glasses-display and phone captures. Demo conversation,
-        simulated route. <a href="assets/nexus-2/tour-transcript.txt">Read the transcript</a>.</figcaption>
+      <figcaption>
+        1:37 · no audio · demo conversation, simulated route ·
+        <a href="assets/nexus-2/tour-transcript.txt">transcript</a>
+      </figcaption>
     </figure>
-    <ol class="release-tour__features">
-      <li><span class="release-tour__number" aria-hidden="true">01</span><div>
-        <h3>Music, right on the card.</h3>
-        <p>Media Deck puts the cover and Previous, Play/Pause and Next in the
-          launcher. Open its player for progress and track details; one Back returns to the launcher.</p>
-      </div></li>
-      <li><span class="release-tour__number" aria-hidden="true">02</span><div>
-        <h3>A route you can open.</h3>
-        <p>The Navigation card shows distance, destination and time left. Tap it
-          for guidance and an embedded map, follow a floating minimap on home,
-          or open the full-screen map. Nexus plans walks; Google Maps and
-          Citymapper notification guidance stays text-only.</p>
-      </div></li>
-      <li><span class="release-tour__number" aria-hidden="true">03</span><div>
-        <h3>Read. Draft. Send.</h3>
-        <p>Relay opens supported messages as conversations. Dictate from the
-          glasses or type on your phone, read the draft, then choose Send.
-          Removed notifications leave the launcher and remain marked in its
-          bounded history: up to 30 entries for 24 hours.</p>
-      </div></li>
-      <li><span class="release-tour__number" aria-hidden="true">04</span><div>
-        <h3>You choose what floats.</h3>
-        <p>Automatic, Always visible, Home screen only, On changes or Activities
-          only, per plugin. On changes shows a band for 3, 5 or 10 seconds;
-          its retained Activities card stays available after the band disappears.</p>
-      </div></li>
-      <li><span class="release-tour__number" aria-hidden="true">05</span><div>
-        <h3>A checklist is a page, too.</h3>
-        <p>Hello Nexus demonstrates a Todo/Groceries list, the standard
-          persistent-activity opt-in and a Remove pin action, all through the public SDK.</p>
-      </div></li>
+
+    <ol class="tour__steps reveal" style="--i:1">
+      <li>
+        <h3>Music on the card</h3>
+        <p>
+          Media Deck puts the cover and Previous, Play/Pause and Next on its
+          launcher card. Its player adds the progress; one Back leaves it.
+        </p>
+      </li>
+      <li>
+        <h3>A route with a map</h3>
+        <p>
+          The Navigation card shows the distance, the destination and the time
+          left. Open it for guidance and a map, keep a minimap floating on the
+          home screen, or go full screen. Nexus plans walks; Google Maps and
+          Citymapper guidance stays text-only.
+        </p>
+      </li>
+      <li>
+        <h3>A message becomes a conversation</h3>
+        <p>
+          Relay opens a message as a conversation. Dictate on the glasses or
+          type on the phone, read the draft, then tap Send, a separate step.
+          Notifications history keeps the last 30 of the past 24 hours; one
+          removed on the phone stays there, marked removed.
+        </p>
+      </li>
+      <li>
+        <h3>Floating, per plugin</h3>
+        <p>
+          On the phone, each plugin's activity is Automatic, Always visible,
+          Home screen only, On changes or Activities only. On changes shows the
+          band for 3, 5 or 10 seconds; the card in Activities stays after the
+          band goes.
+        </p>
+      </li>
+      <li>
+        <h3>A checklist is a page too</h3>
+        <p>
+          Hello Nexus, the sample plugin, shows a Todo/Groceries list as a
+          page, with the opt-in that keeps its card in Activities and a Remove
+          pin action, all through the public SDK.
+        </p>
+      </li>
     </ol>
   </div>
 
-  <div class="release-gallery" aria-label="Actual Nexus 2.0 screen captures">
-    <figure><a href="assets/nexus-2/media-player.webp" aria-label="Open full-size Media Deck player capture">
-      <img src="assets/nexus-2/media-player.webp" width="720" height="960" loading="lazy" decoding="async" alt="Integrated Media Deck player showing album art, track, artist, progress and transport controls" /></a>
-      <figcaption><b>Media Deck</b> · player inside Nexus</figcaption></figure>
-    <figure><a href="assets/nexus-2/nav-launcher-card.webp" aria-label="Open full-size Navigation launcher card capture">
-      <img src="assets/nexus-2/nav-launcher-card.webp" width="720" height="960" loading="lazy" decoding="async" alt="Navigation activity selected in the launcher, with distance, destination and time remaining" /></a>
-      <figcaption><b>Navigation</b> · select the activity card</figcaption></figure>
-    <figure><a href="assets/nexus-2/nav-route-page.webp" aria-label="Open full-size Navigation route page capture">
-      <img src="assets/nexus-2/nav-route-page.webp" width="720" height="960" loading="lazy" decoding="async" alt="Opened Navigation page with an embedded street map, guidance and Commands" /></a>
-      <figcaption><b>Navigation</b> · open its map and guidance</figcaption></figure>
-    <figure><a href="assets/nexus-2/nav-floating-home.webp" aria-label="Open full-size floating navigation capture">
-      <img src="assets/nexus-2/nav-floating-home.webp" width="720" height="960" loading="lazy" decoding="async" alt="A floating route minimap over the glasses home screen using a simulated position" /></a>
-      <figcaption><b>On home</b> · follow a floating minimap</figcaption></figure>
-    <figure><a href="assets/nexus-2/relay-draft.webp" aria-label="Open full-size Relay draft capture">
-      <img src="assets/nexus-2/relay-draft.webp" width="720" height="960" loading="lazy" decoding="async" alt="Relay demo conversation with an unsent draft and separate Send, Dictate and Type controls" /></a>
-      <figcaption><b>Relay</b> · a draft you review before sending</figcaption></figure>
-    <figure><a href="assets/nexus-2/floating-modes-phone.webp" aria-label="Open full-size floating display settings capture">
-      <img src="assets/nexus-2/floating-modes-phone.webp" loading="lazy" decoding="async" alt="The five user-owned floating activity display modes in the Nexus phone app" /></a>
-      <figcaption><b>Your choice</b> · how each activity appears</figcaption></figure>
+  <div class="gallery reveal">
+    <figure class="slide">
+      <a href="assets/nexus-2/media-player.webp"><img src="assets/nexus-2/media-player.webp" width="720" height="960" loading="lazy" decoding="async" alt="The Media Deck player inside Nexus: album art, track and artist, a progress bar, and Previous, Play/Pause and Next" /></a>
+      <figcaption><b>Media Deck</b><span>The player, inside Nexus.</span></figcaption>
+    </figure>
+    <figure class="slide">
+      <a href="assets/nexus-2/nav-route-page.webp"><img src="assets/nexus-2/nav-route-page.webp" width="720" height="960" loading="lazy" decoding="async" alt="The Navigation route page: an embedded street map, the next instruction, and its Commands row" /></a>
+      <figcaption><b>Navigation</b><span>The route page, with its map.</span></figcaption>
+    </figure>
+    <figure class="slide">
+      <a href="assets/nexus-2/nav-floating-home.webp"><img src="assets/nexus-2/nav-floating-home.webp" width="720" height="960" loading="lazy" decoding="async" alt="A route minimap floating over the glasses home screen, on a simulated position" /></a>
+      <figcaption><b>Home screen</b><span>A minimap floats over it.</span></figcaption>
+    </figure>
+    <figure class="slide">
+      <a href="assets/nexus-2/relay-draft.webp"><img src="assets/nexus-2/relay-draft.webp" width="720" height="960" loading="lazy" decoding="async" alt="A Relay demo conversation with an unsent draft under it, and separate Send, Dictate and Type controls" /></a>
+      <figcaption><b>Relay</b><span>The draft, read before it is sent.</span></figcaption>
+    </figure>
+    <figure class="slide">
+      <a href="assets/nexus-2/notifications-history.webp"><img src="assets/nexus-2/notifications-history.webp" width="720" height="960" loading="lazy" decoding="async" alt="The Notifications history page: three Relay entries, two of them marked removed, and a note that the history is bounded to 30 entries over 24 hours" /></a>
+      <figcaption><b>Notifications</b><span>Removed on the phone, still in the history.</span></figcaption>
+    </figure>
+    <figure class="slide">
+      <a href="assets/nexus-2/sample-groceries.webp"><img src="assets/nexus-2/sample-groceries.webp" width="720" height="960" loading="lazy" decoding="async" alt="The Hello Nexus Groceries page: a checklist with Milk and Apples ticked, Eggs selected, and an Open app row" /></a>
+      <figcaption><b>Hello Nexus</b><span>A checklist, as a page.</span></figcaption>
+    </figure>
   </div>
 
-  <div class="release-downloads" id="downloads">
-    <div>
-      <p class="eyebrow">Get the release</p>
-      <h3>Update both Nexus hubs to 2.0.0.</h3>
-      <p>New here? Start with the phone app: onboarding installs the glasses hub
-        over the Rokid link. Existing users should update both hubs and their plugins.</p>
-      <div class="release-downloads__actions">
-        <a class="btn btn--solid" href="https://github.com/Anezium/Rokid-Nexus/releases/download/v2.0.0/nexus-phone-2.0.0.apk">Phone hub <span class="btn__meta">2.0.0 · APK</span></a>
-        <a class="btn btn--ghost" href="https://github.com/Anezium/Rokid-Nexus/releases/download/v2.0.0/nexus-glasses-2.0.0.apk">Glasses hub <span class="btn__meta">2.0.0 · APK</span></a>
-      </div>
-      <p class="release-downloads__sdk">Developers: <a href="https://github.com/Anezium/Rokid-Nexus/releases/tag/sdk-v0.24.0">SDK 0.24.0</a>
-        · <a href="docs.html">SDK and agent documentation</a>.
-        Rebuild plugins compiled against SDK 0.23.0.</p>
+  <div class="get reveal" id="downloads">
+    <div class="get__meta">
+      <h3>Get the release</h3>
+      <p>
+        New here? Install the phone app; its onboarding puts the glasses hub on
+        over the Rokid link. Already on Nexus? Update both hubs, then the
+        plugins.
+      </p>
     </div>
     <div>
-      <h4>Companion plugin updates</h4>
-      <ul class="release-downloads__plugins">
-        <li><a href="https://github.com/Anezium/Rokid-Nexus/releases/tag/media-v1.0.4"><span>Media Deck</span><b>1.0.4 ↗</b></a></li>
-        <li><a href="https://github.com/Anezium/Rokid-Nexus/releases/tag/nav-v0.3.0"><span>Navigation</span><b>0.3.0 ↗</b></a></li>
-        <li><a href="https://github.com/Anezium/Rokid-Nexus/releases/tag/relay-v1.4.0"><span>Relay</span><b>1.4.0 ↗</b></a></li>
-        <li><a href="https://github.com/Anezium/Rokid-Nexus/releases/tag/sample-v1.0.6"><span>Sample / Hello Nexus</span><b>1.0.6 ↗</b></a></li>
+      <div class="actions">
+        <a class="btn btn--solid" href="https://github.com/Anezium/Rokid-Nexus/releases/download/v2.0.0/nexus-phone-2.0.0.apk">
+          Phone hub
+          <span class="btn__meta">2.0.0 · APK</span>
+        </a>
+        <a class="btn btn--ghost" href="https://github.com/Anezium/Rokid-Nexus/releases/download/v2.0.0/nexus-glasses-2.0.0.apk">
+          Glasses hub
+          <span class="btn__meta">2.0.0 · APK</span>
+        </a>
+      </div>
+      <ul class="community__grid">
+        <li><a href="https://github.com/Anezium/Rokid-Nexus/releases/tag/media-v1.0.4"><b>Media Deck</b><i>1.0.4</i><span>The cover and the controls on its card; the player inside Nexus.</span></a></li>
+        <li><a href="https://github.com/Anezium/Rokid-Nexus/releases/tag/nav-v0.3.0"><b>Navigation</b><i>0.3.0</i><span>Walking routes with a map, on the card, the route page and the home screen.</span></a></li>
+        <li><a href="https://github.com/Anezium/Rokid-Nexus/releases/tag/relay-v1.4.0"><b>Relay</b><i>1.4.0</i><span>A message as a conversation, with a draft and a separate Send.</span></a></li>
+        <li><a href="https://github.com/Anezium/Rokid-Nexus/releases/tag/sample-v1.0.6"><b>Hello Nexus</b><i>1.0.6</i><span>The sample plugin, with a checklist page. A separate download.</span></a></li>
       </ul>
-      <p>Media Deck, Navigation and Relay also update through the Nexus Store.
-        Sample is a separate download.</p>
+      <p class="get__note">
+        Media Deck, Navigation and Relay also update through the Store.
+        Writing a plugin? <a href="https://github.com/Anezium/Rokid-Nexus/releases/tag/sdk-v0.24.0">SDK 0.24.0</a>
+        is out, and anything built against 0.23.0 must be rebuilt.
+        <a href="docs.html">All documentation →</a>
+      </p>
     </div>
   </div>
 </section>
@@ -253,19 +289,36 @@
         <li class="ship__card ship__card--new">
           <span class="ship__v">2.0.0</span>
           <h3>A launcher, with pages inside it</h3>
-          <p>Triple tap for Activities, Notifications history and Applications.
-            Open a conversation, player, route or checklist inside Nexus.
-            Media Deck adds cover art and card controls; Relay adds a draft
-            composer and an explicit Send. <a href="#v2">Watch the tour →</a></p>
+          <p>
+            A triple tap opens Nexus's own launcher: your activities first,
+            then the latest notification, Notifications and Applications. A
+            conversation, a player, a route or a checklist opens as a page
+            inside Nexus; <em>Open app</em> still gives the plugin's full
+            surface. <a href="#v2">See it →</a>
+          </p>
+          <details>
+            <summary>Under the hood</summary>
+            <p>
+              With an older phone hub, or the Classic launcher chosen, the
+              glasses keep the 1.8 launcher. Plugins built on SDK 0.24.0
+              negotiate the launcher bundle and keep a fallback for hubs
+              without it; anything built against 0.23.0 must be rebuilt.
+            </p>
+          </details>
         </li>
         <li class="ship__card ship__card--new">
           <span class="ship__v">2.0.0</span>
-          <h3>Floating activities, on your terms</h3>
-          <p>Choose the floating mode per plugin, with a 3, 5 or 10 second window
-            for On changes. Keep a supported activity available in the launcher
-            independently of its floating band. SDK 0.24.0 exposes the standard settings link.</p>
+          <h3>Floating activities, chosen per plugin</h3>
+          <p>
+            Whether an activity floats over the glasses is set on the phone,
+            per plugin: Automatic, Always visible, Home screen only, On changes
+            or Activities only. On changes shows the band for 3, 5 or 10
+            seconds; the card in Activities has its own lifetime. Plugins link
+            to the setting through SDK 0.24.0 and never pick visibility or
+            duration.
+          </p>
         </li>
-        <li class="ship__card ship__card--new">
+        <li class="ship__card">
           <span class="ship__v">1.7.0</span>
           <h3>Skills: plugins that work for each other</h3>
           <p>
@@ -327,11 +380,11 @@
           <details>
             <summary>Under the hood</summary>
             <p>
-              For guidance from other navigation apps, Nexus reads the
-              guidance those apps already post as notifications, so it follows
-              whatever route you chose in them, as text. Navigation 0.3.0 also
-              plans walking routes with maps, opened from its launcher card or
-              floating on the glasses home screen. The activity became one sprung
+              Nexus routes nothing for those apps and draws no map for them:
+              the plugin reads the guidance they already post as notifications,
+              so it follows whatever route you chose in them, as text. Since
+              0.3.0 Navigation also plans walks itself, with a map on the route
+              page and on the home screen. The activity became one sprung
               outline for it, with a line badge, a second quantity beside the
               value, a row of dots for stops and an urgent beat, all in SDK
               0.21.0 and open to any plugin.
@@ -614,7 +667,7 @@
       </div>
       <ul class="road__items">
         <li>
-          <h3>Further ownership controls</h3>
+          <h3>Ownership epochs</h3>
           <p>
             Foreground ownership, per-surface ordering, sequenced hides and
             image-decode invalidation already protect the normal handoff, and
@@ -622,9 +675,10 @@
             missing queue.
           </p>
           <p class="road__tech">
-            Nexus 2.0's per-plugin floating modes and foreground-app preferences
-            are shipped. Further experiments in ownership epochs and priority
-            arbitration remain deferred until a concrete reproduced scenario needs them.
+            The per-plugin floating modes and the per-app preference shipped
+            in 2.0. Hub-stamped epochs and priority arbitration stay on
+            development branches; they come back against a reproduced
+            scenario, not as a display rework on principle.
           </p>
         </li>
         <li>
@@ -683,16 +737,26 @@
     <div class="road__group reveal" id="exploring" data-state="exploring">
       <div class="road__meta">
         <span class="chip chip--exploring">Exploring</span>
-        <p>Future directions. Scope and timing are still open.</p>
+        <p>Directions, not commitments. Scope and timing are open.</p>
       </div>
       <ul class="road__items">
-        <li><h3>Favourite apps, below your activities</h3>
-          <p>Pin shortcuts to the plugins and apps you use most directly on the
-            launcher, without opening Applications every time.</p></li>
-        <li><h3>Public-transport journeys in Navigation</h3>
-          <p>The bus, metro or train to take, departure times, transfers and stops,
-            shown through native route pages, maps and floating guidance.
-            Today Nexus plans walks; transit guidance from other apps remains text-only.</p></li>
+        <li>
+          <h3>Favourites, under the activities</h3>
+          <p>
+            Shortcuts to the plugins and apps you use most, pinned below the
+            activity cards, so they are reached without going through
+            Applications every time.
+          </p>
+        </li>
+        <li>
+          <h3>Public-transport journeys in Navigation</h3>
+          <p>
+            Which bus, metro or train to take, departures, transfers and stops,
+            planned by Navigation and shown through the same route pages, maps
+            and floating guidance as a walk. Today it plans walks only, and
+            transit guidance read from other apps is text.
+          </p>
+        </li>
       </ul>
     </div>
   </div>
@@ -1133,17 +1197,22 @@
 </section>
 
 
-<section class="section section--support" id="support" aria-labelledby="support-title">
-  <div>
-    <p class="eyebrow">Free and open source</p>
-    <h2 id="support-title">Support Nexus.</h2>
-    <p>If you'd like to help me keep developing and testing Nexus, you can support
-      my work on Ko-fi or GitHub Sponsors. Thank you for helping with the time,
-      hardware and testing behind the next release.</p>
-  </div>
-  <div class="support__actions">
-    <a class="btn btn--solid" href="https://ko-fi.com/anezium">Support on Ko-fi ↗</a>
-    <a class="btn btn--ghost" href="https://github.com/sponsors/Anezium">GitHub Sponsors ↗</a>
+<!-- ─────────────────────────  SUPPORT  ───────────────────────── -->
+<section class="section section--support" id="support">
+  <div class="section__head section__head--rail">
+    <div>
+      <span class="tick" aria-hidden="true"></span>
+      <h2>Support Nexus</h2>
+      <p class="section__sub">
+        Nexus is free and Apache-2.0. If it is useful to you, Ko-fi and GitHub
+        Sponsors help pay for the hardware and the time behind the next
+        release.
+      </p>
+    </div>
+    <div class="actions">
+      <a class="btn btn--solid" href="https://ko-fi.com/anezium">Ko-fi ↗</a>
+      <a class="btn btn--ghost" href="https://github.com/sponsors/Anezium">GitHub Sponsors ↗</a>
+    </div>
   </div>
 </section>
 
