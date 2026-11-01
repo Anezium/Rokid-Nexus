@@ -39,16 +39,16 @@ indicator. Normal stops hide it immediately.
 ## Todo example
 
 The Todo settings pair **Keep in activities** with the SDK's **Floating
-activity** link. Nexus owns that display choice and its duration. The sample
+Activities** link. Nexus owns that display choice and its duration. The sample
 uses its persisted list revision as `NexusActivity.eventKey`, so a real list
-edit may briefly reveal its band when the user chooses On changes. A resend
-or reconnect keeps the same key; expiry hides the band while retaining the card.
+edit may briefly reveal its island when the user chooses On changes. A resend
+or reconnect keeps the same key; expiry hides the island while retaining the card.
 
 A small checklist shows the launcher bundle through the public SDK only: pages,
 typed `setChecked` actions and an ongoing activity, with no glasses app and
 without opening the plugin. Edit the list in the settings screen.
 
-- **Pages.** The service declares `rokidbus.plugin.pages=1`, so the session's
+- **Pages.** The service declares `rokidbus.plugin.pages=1`, so the launcher's
   Applications row opens `hello:main`: the list's progress and a labelled
   **Open the demos** row (an `IMMERSION` action) for everything above.
   `hello:todo` is the list: one row per task, its id the task's stable id, with
@@ -66,7 +66,7 @@ without opening the plugin. Edit the list in the settings screen.
   confirmed.
 - **Without the launcher bundle** the same page uses plain rows that spell out
   the state ("to do · tap to check") and untyped, confirmed actions.
-- **Show in activities.** The switch in the settings screen publishes the list
+- **Keep in activities.** The switch in the settings screen publishes the list
   as an activity: "4 left" over the list's name, a tap opens `hello:todo`
   (`activation = DESTINATION`), and `persistence = ONGOING`. Every change of the
   list updates it; turning the switch off ends it. Nothing is held for it: when

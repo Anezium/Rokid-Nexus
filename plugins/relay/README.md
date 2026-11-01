@@ -18,8 +18,8 @@ Inbox conversations open as native reader documents. When the source
 notification adds a message to the conversation already being read, Relay
 updates that document in place without interrupting an active reply flow.
 
-With the glasses' Nexus session and hubs that both support pages, the Relay card
-in the session opens `relay:main`, the inbox's conversations as a list, and
+With the glasses' Nexus launcher and hubs that both support pages, the Relay card
+in the launcher opens `relay:main`, the inbox's conversations as a list, and
 each conversation as a document of who said what, headed by the time Relay
 captured it; there is no per-message time to show. A long conversation keeps
 its newest messages and says that earlier ones are not shown. Pages follow the

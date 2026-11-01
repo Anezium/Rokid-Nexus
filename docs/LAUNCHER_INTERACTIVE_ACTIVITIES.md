@@ -11,7 +11,7 @@ The phone plugin owns its data and operation; Nexus owns presentation, input foc
 - Zero to three quick commands, with stable identifiers and optional default command.
 - An optional destination referencing one of its own declared pages and bounded parameters.
 - Whether first activation opens the destination or focuses inline commands, with an unambiguous supported default.
-- An explicit full-app route through the existing hub-owned launch gate, when appropriate.
+- An explicit Open app route to its immersion through the existing hub-owned launch gate, when appropriate.
 
 These are semantic typed contracts, not arbitrary Android Activities, executable views or WebViews injected into the launcher. Reuse existing page provider callbacks and owner-scoped routing. Implement the necessary conversation/media/route bodies as supported contracts rather than leaving accepted screens as reserved-template stubs. Keep existing Ink surfaces compatible; an embedded Ink page profile, if needed for accepted workflows, must respect its separate grant and the typed/wire authority and must not execute plugin code.
 
@@ -27,7 +27,7 @@ Nexus supplies an explicit Open app affordance; it is separate from the three pl
 
 ## 3. Todo acceptance case
 
-The plugin offers Show in activities as an explicit user setting. Enabling it publishes a truthful summary such as Courses — 4 remaining and an owner-scoped destination.
+The plugin offers Keep in activities as an explicit user setting. Enabling it publishes a truthful summary such as Courses — 4 remaining and an owner-scoped destination.
 
 From Activities:
 1. Swipe selects the todo card.
@@ -40,13 +40,13 @@ Use stable task ids and explicit desired state rather than replayable blind togg
 
 ## 4. Media Deck acceptance case
 
-A user-enabled Media Deck activity shows actual now-playing metadata even when its full surface is closed. Closing the surface must not cancel monitoring while the separate activity subscription remains enabled. Enabling/revocation/disabling and no-session states must have explicit lifecycles and preserve the plugin's permissions/settings.
+A user-enabled Media Deck activity shows actual now-playing metadata even when its immersion is closed. Closing the immersion must not cancel monitoring while the separate activity subscription remains enabled. Enabling/revocation/disabling and no-session states must have explicit lifecycles and preserve the plugin's permissions/settings.
 
 From the card list:
 1. Tap focuses Play/Pause.
 2. Swipe selects Previous, Play/Pause or Next, using the same physical axis.
 3. Tap acts on the current validated session and updates actual state.
-4. The hub's separate Open app choice can explicitly enter the complete interface.
+4. The hub's separate Open app choice can explicitly enter the immersion.
 5. Back exits command focus; another Back returns through the launcher stack.
 
 No playback on the focus-entry tap, stale session controls, guessed playback state or automatic command retry after reconnect. Treat disappearing/changed media sessions and a lost command result honestly.
@@ -57,7 +57,7 @@ Every launcher command, plugin page action and Open app choice runs immediately 
 
 Keep the hub-owned per-plugin quick-action policy and narrowly typed declarations as wire-mode validation. An action uses quick mode when the existing policy and stamp allow it, confirmed mode otherwise; confirmed names the wire mode, not a dialog. Plugin access no longer offers quick-action switches, and stored approvals are unchanged. Execution still requires the current owner, approved grant, declared action, live registration, visible page/card revision and a fresh invocation id/contact. Revoke permission immediately; never grandfather a newly requested privilege.
 
-A plugin calling an action safe or reversible does not prove its callback's effects. Untyped operations, deletes and external effects run on a fresh tap in confirmed mode; full-app choices launch directly. Relay's deliberate send sequence remains separate: compose.send never becomes a row, and Send needs a fresh tap after the draft is visible. Do not add a redundant review menu or make sends implicitly eligible for checkbox exemptions.
+A plugin calling an action safe or reversible does not prove its callback's effects. Untyped operations, deletes and external effects run on a fresh tap in confirmed mode; Open app choices launch directly. Relay's deliberate send sequence remains separate: compose.send never becomes a row, and Send needs a fresh tap after the draft is visible. Do not add a redundant review menu or make sends implicitly eligible for checkbox exemptions.
 
 ## 6. Collection, persistence and notifications
 
@@ -94,7 +94,7 @@ All accepted root/Application/Notification/Activity views carry their canonical 
 
 ## 9. Compatibility and verification
 
-Retain a usable legacy fallback and old-plugin full-app path. Evolve negotiated capabilities before exposing new payloads/actions to old hubs. Make the new launcher ready as the intended default after complete local acceptance; preserve an explicit existing user backend selection and a rollback route. Do not reset user settings to force migration.
+Retain a usable Classic launcher fallback and old-plugin Open app path. Evolve negotiated capabilities before exposing new payloads/actions to old hubs. Make the new launcher ready as the intended default after complete local acceptance; preserve an explicit existing user backend selection and a rollback route. Do not reset user settings to force migration.
 
 Meaningful checks include:
 - Old/new phone/glasses capability combinations, invalid payloads, unknown fields, cross-owner and stale registration/ref/revision rejection.

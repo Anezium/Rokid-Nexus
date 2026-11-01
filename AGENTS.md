@@ -4,10 +4,10 @@ Android/Kotlin. Phone hub, glasses hub, a shared bus client, and the plugins und
 `plugins/`. Start with `README.md` for what the product is; `plugins/AGENTS.md` covers
 plugin work specifically.
 
-Native floating activity presentation is user-owned. Launcher v4's `eventKey`
+The activity island is user-owned (Floating Activities). Launcher v4's `eventKey`
 identifies a real event independently of priority and wake; only Nexus chooses
 visibility and duration. Keep the retained Activities card separate from the
-floating band's expiry. Use the SDK settings helper and follow
+island's expiry. Use the SDK settings helper and follow
 `docs/PLUGIN_SDK.md` and `BUSSPEC.md`; never expose `/core/ambient/*` to plugins.
 
 Ink Surface crosses `:ink-engine`, `:shared`, `:bus-client`, `:phone-hub`, and

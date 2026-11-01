@@ -29,9 +29,9 @@ HUD surface, and forwards only play/pause/previous/next transport commands.
 
 ## Keep in activities (launcher bundle)
 
-The **Floating activity** settings link opens Nexus's separate display choices:
+The **Floating Activities** settings link opens Nexus's separate display choices:
 automatic, always visible, home only, briefly on track changes, or Activities
-only. Temporary bands use the user's 3/5/10-second duration and retain the
+only. Temporary islands use the user's 3/5/10-second duration and retain the
 player's card after disappearing. Media Deck publishes a stable opaque track
 event key; pause, position, artwork and metadata refinement do not renew it.
 This uses the public launcher v4 SDK, without media-specific policy in Nexus.
@@ -40,13 +40,13 @@ An active activity previews Previous, Play/Pause and Next directly on its
 selected Nexus card. Tap to focus its controls; the final **Open player** slot
 opens the integrated cover player. One Back from that player returns to the
 containing Nexus menu, even while a transport button is focused. The passive
-floating band has no playback buttons.
+island has no playback buttons.
 
 - An explicit setting in Media Deck's phone screen, off by default and available only once
   notification access is on. It is kept through a revoke, a reboot or a process death, and can
   always be turned off.
 - While it is on, Media Deck keeps watching the active media sessions through its notification
-  listener, even with the full surface closed, and publishes a now-playing activity: the title
+  listener, even with the immersion closed, and publishes a now-playing activity: the title
   (12 characters, ellipsized, and whole up to 40 as the launcher headline) and the artist (or
   the app's name, followed by "Paused" or "Stopped" when nothing plays), marked with Media
   Deck's JPEG cover on bundle v3 (its `disc` glyph as fallback), Previous, Play or Pause, and
@@ -59,7 +59,7 @@ floating band has no playback buttons.
   Turning the setting off ends the activity and stops watching. A registration that is not
   approved, the activity turned off in Nexus, or the hub replacing it stop it too while the
   setting stays on; the next registration (opening Media Deck) tries once more.
-- Every command, from the activity, the page or the full surface, is checked against the
+- Every command, from the activity, the page or the immersion, is checked against the
   session it was shown for: its identity (a hash of its package and session token) and its
   state revision. It is sent to that session only, never to "whichever session is active", as
   an explicit play or pause, and never retried. The answer is `done` (handed to that session;
@@ -87,8 +87,8 @@ approved the `media` quick-action family (`rokidbus.plugin.quickActions = media`
 metadata, not a capability) runs them on one tap. Bundle v2 adds locally advancing progress and a horizontal transport strip.
 Bundle v3 uses the same detailed JPEG encoder as the original media surface, up to
 256 pixels per edge and 32 KiB compressed for inline page transport; no dithering.
-The card and compact pin use that same cover. Phone seeks and speed changes
-refresh the anchor without periodic traffic. The floating pin stays compact, including while
+The card and compact island use that same cover. Phone seeks and speed changes
+refresh the anchor without periodic traffic. The island stays compact, including while
 retaining a cover offline, and track changes do not expand it. Older
 launchers get the base summary template with the controls and Open the full app as rows.
 The page watches the sessions only while it is shown.
@@ -111,7 +111,7 @@ leave the HUD monitor's listener lifecycle independent.
 
 A skill call has its own read of the sessions and its own opaque references. Answering
 "Which player?" authorizes only that reference for that one call: it never changes the
-player the surface, the activity or the page follow, never turns on Show in activities,
+player the surface, the activity or the page follow, never turns on Keep in activities,
 never starts the session watcher, and never makes a command the activity offered reach
 another session. While only a skill call keeps Media Deck bound, the phone refuses its
 activity traffic; Media Deck then forgets what it sent, without retrying, and publishes the

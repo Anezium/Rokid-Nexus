@@ -45,7 +45,7 @@ internal object NavRoutePage {
     fun actions(state: NavPageState): List<NexusPageActionSpec> = listOfNotNull(
         NexusPageActionSpec(END_JOURNEY, "End the journey", NexusPageActionKind.PLUGIN, confirm = true)
             .takeIf { state.journeyActive },
-        NexusPageActionSpec(NavPages.OPEN_APP, "Open full app", NexusPageActionKind.IMMERSION, confirm = false),
+        NexusPageActionSpec(NavPages.OPEN_APP, "Open app", NexusPageActionKind.IMMERSION, confirm = false),
     )
 
     fun body(state: NavPageState, text: NavPageText): PageBody.Route {

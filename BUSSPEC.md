@@ -1691,7 +1691,7 @@ Plugin fields, with patch semantics on `/activity/update` like the rest:
 - `defaultActionId` — names one of the actions; the command focused first.
   Default: the first action.
 - `persistence` — `session` (default) or `ongoing`. `ongoing` declares a
-  standing entry the user enabled in the plugin ("Show in activities").
+  standing entry the user enabled in the plugin ("Keep in activities").
 - `headline` — at most 40 characters, none of them a control character: the
   longer form of `primary`, such as a whole track title, for the surfaces with
   room for it. The glasses draw it instead of `primary` on the launcher card and
@@ -1815,7 +1815,7 @@ treat one older than three seconds as absent.
 ## Session and page protocol v1
 
 Only the `SESSION` launcher backend opens the session described here; the
-`LEGACY` backend keeps the classic launcher and notice behaviour. `SESSION` is
+`LEGACY` backend keeps the Classic launcher and notice behaviour. `SESSION` is
 the default when the phone's last capabilities announcement negotiated the
 launcher bundle, and `LEGACY` otherwise; an explicit choice (the phone's, then
 the glasses' `launcher.backend`, switched with the
@@ -1871,7 +1871,7 @@ directly, with its params: no detail page, no `onNexusOpen`/`onNexusClose`, no
 change underneath. A commands-first card's first tap enters command focus on
 `defaultActionId` and never executes. In focus, STEP moves along the plugin
 commands and then hub-owned navigation slots. A card with a destination has
-`Open page`; typed media labels it `Open player` and omits the redundant full-app
+`Open page`; typed media labels it `Open player` and omits the redundant `Open app`
 slot. Other launchable owners retain `Open app` when available in Applications.
 The selected live commands-first card previews the strip without a selected
 control. A fresh SELECT in command focus runs the focused one immediately,
@@ -1963,7 +1963,7 @@ visible band, backdrop notices claim otherwise unhandled classifications, camera
 suppresses notice input, and editable fields reclaim confirm/directions. A notice
 arriving inside a session only updates snapshots and counters; its deadline
 continues, and hidden answers/dismissals cannot fire. Outside a session, notice,
-legacy launcher, surface/editor, then native pass-through keep their ownership
+Classic launcher, surface/editor, then native pass-through keep their ownership
 order. Long press and two-finger gestures belong to firmware. The HUD is 480×640
 portrait at 240 dpi with green monochrome additive optics.
 
@@ -2250,7 +2250,7 @@ blocks another SELECT. `done`, `stale`, and `rejected` clear it; rejection keeps
 the page. A lost acknowledgement becomes Unconfirmed and is never resent. A
 provider's `kind: hub` action gives it no hub control and is rejected; only
 hub-authored local navigation is handled. `kind: immersion` can only open that
-provider's own full app, directly on a fresh tap. Notice answers keep
+provider's own immersion, directly on a fresh tap. Notice answers keep
 their existing reply-token validation and are not offered from pages yet.
 
 On total link loss all provider frames become inert unavailable, keep bounded
@@ -2277,7 +2277,7 @@ frame, rejects any later reply tied to the earlier registration even when its
 ids still match, and sends nothing more to it. The glasses hub treats that
 trusted invalidation as owner-scoped: it cancels that owner's work and keeps its
 snapshots inert in every affected frame, even with no request pending and under
-a pending full-app launch.
+a pending immersion launch.
 
 Provider binding is separate from immersion. To answer a request the phone hub
 must use the provider's live registration, or bind its plugin service cold
@@ -2307,7 +2307,7 @@ Pages need **both** hub announcements on `/system/hub/capabilities` to carry
 newer value means unsupported, and support resets on disconnect, hub restart and
 a replacement connection. When the negotiated version changes while the link
 stays up, the glasses hub tells the session and its launcher catalog: without
-support every provider frame turns inert and Applications offers the full apps,
+support every provider frame turns inert and Applications offers the immersions,
 and support coming back replays nothing. The phone hub then tells each opted-in provider its
 effective version with an owner-scoped `/system/hub/capabilities` message
 carrying `pluginId`, `pageSessionVersion` (1 or 0) and, from a phone that
@@ -2446,7 +2446,7 @@ it never takes a type from the glasses.
   mode. The phone checks again at invocation; the glasses check is never the
   only gate.
 - Untyped actions, deletes and external effects use confirmed mode on a fresh
-  tap. Immersion and full-app rows launch directly. `compose.send` is never a
+  tap. Immersion and `Open app` rows launch directly. `compose.send` is never a
   row or quick: only the conversation composer's deliberate Send reaches it.
   No plugin field can make itself quick.
 
@@ -2639,7 +2639,8 @@ command identity. The SDK and phone strip it for peers below v4. A live initial
 start may present once; canonical reconnect resends with an already-seen key
 do not restart it. Never use a changing clock or transport revision as a key.
 
-The trusted policy additionally carries `activityDisplays: {pluginId:
+The trusted policy additionally carries the user's Floating Activities
+choices, which drive the island, as `activityDisplays: {pluginId:
 {mode, durationMs}}`, at most 64 entries, with modes `automatic`, `persistent`,
 `home`, `events`, `hidden` and duration 3000, 5000 or 10000 ms (default 5000).
 Unknown mode values drop that entry; invalid ids, shapes, durations or bounds
@@ -2648,15 +2649,15 @@ Choices are phone-owned and scoped to the currently approved signed plugin.
 They are purged with its grant and sent on changes and link-up. No plugin can
 write this policy or choose a duration through activity content.
 
-`events` shows a compact native band for a changed event key or a significant
+`events` shows a compact island for a changed event key or a significant
 update, then animates it away. Ordinary updates do not extend that deadline.
 `persistent` keeps the existing form over home and apps; `home` shows it only
-on home; `hidden` leaves the activity in the collection without a band.
+on home; `hidden` leaves the activity in the collection without an island.
 `automatic` preserves foreground app rules. Camera, Nexus session visibility
 and per-app `nothing` override all modes. Offline snapshots start no event.
 Temporary entries consume no resident corner after expiry, do not change
 collection priority, and retain their card and destination. Presentation
-expiry is not activity end and does not use `maxDurationMs`. Classic keeps
+expiry is not activity end and does not use `maxDurationMs`. The Classic launcher keeps
 its prior display behavior. For older glasses, event/home choices downgrade
 to hidden owners; the SDK settings link does not silently change a choice.
 
@@ -2681,7 +2682,7 @@ to hidden owners; the SDK settings link does not silently change a choice.
   [pluginId]` (at most 64; absent from an older phone, ignored by older
   glasses, both meaning every plugin shows). The phone refuses to turn a 65th
   plugin off, so every switch that says off is in the list and none is dropped
-  to fit. The row says it needs the new launcher and names Classic when that is
+  to fit. The row says it needs the new launcher and names the Classic launcher when that is
   the phone's launcher choice. The phone sends the list with the policy
   on link-up, on every change and when such a plugin's grant goes. On the
   glasses such an owner gets no island (no chip, panel, flare or display wake,

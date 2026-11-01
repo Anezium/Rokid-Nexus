@@ -17,7 +17,7 @@ limits, approval flow) is specified in [PLUGIN_SDK.md](PLUGIN_SDK.md); this
 guide covers how to structure and skin a plugin so it feels native.
 For an ongoing card, use `NexusActivityPreference` and
 `NexusUi.activitySettingRow`; put `NexusUi.activityDisplaySettingsRow(context,
-pluginId)` beside it. Keeping the card and choosing when its floating band
+pluginId)` beside it. Keeping the card and choosing when its island
 appears are separate decisions. Nexus owns the presentation choices and timing;
 publish a stable `eventKey` on real events instead of drawing your own popup or
 repeatedly ending and restarting the card. See the launcher v4 section in the SDK.

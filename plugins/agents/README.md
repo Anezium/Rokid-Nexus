@@ -161,7 +161,7 @@ If nobody answers, the daemon's timeout expires and Claude asks on the computer
 as it always would. Being away means being asked later, never being decided for.
 
 A session that starts asking for the wearer raises an **interactive notice** —
-the band from hub 1.0.46 — rather than fighting for the whole surface. Several
+the band from hub 1.0.46 — rather than fighting for the screen with its immersion. Several
 sessions asking at once become one band, and a tap on it opens the board on the
 session that rang. The fingerprint that stops an alert repeating is committed
 only once the hub has taken the notice, so an alert that could not be delivered

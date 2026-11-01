@@ -183,13 +183,13 @@ one object, shipped as an update; there is no setting for it.
 
 ## Pages
 
-With the glasses' Nexus session and hubs that both support pages, the
-Navigation card in the session opens `nav:main`: the same guidance as a page,
+With the glasses' Nexus launcher and hubs that both support pages, the
+Navigation card in the launcher opens `nav:main`: the same guidance as a page,
 with the turn or leg, its distance or stops, the street, the arrival time when
 the app gives one, the source and when it was received. It follows the route
 while it is on screen, at most twice a second, and says so plainly when there
 is no route or no Notification Access. Its Commands row opens `nav:commands`,
-which only offers the full app, behind the hub's labelled launch step. Pages are
+which only offers the immersion (**Open app**), behind the hub's labelled launch step. Pages are
 read-only and leave the card and the activity as they are.
 
 When both hubs negotiated the launcher bundle, the activity opens `nav:main`

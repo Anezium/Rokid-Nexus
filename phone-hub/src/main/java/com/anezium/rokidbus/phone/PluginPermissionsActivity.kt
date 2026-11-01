@@ -307,13 +307,13 @@ class PluginPermissionsActivity : Activity() {
             setPadding(0, NexusUi.dp(context, 4), 0, NexusUi.dp(context, 4))
             isClickable = true
             isFocusable = true
-            contentDescription = "Floating band: ${ActivityDisplaySettingsActivity.label(mode)}. Change"
+            contentDescription = "Floating activities: ${ActivityDisplaySettingsActivity.label(mode)}. Change"
             addView(
                 LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     addView(
                         TextView(context).apply {
-                            text = "Floating band"
+                            text = "Floating activities"
                             textSize = 13f
                             setTextColor(NexusUi.INK)
                         },

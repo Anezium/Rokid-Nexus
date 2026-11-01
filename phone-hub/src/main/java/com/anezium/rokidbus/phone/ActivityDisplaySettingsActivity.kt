@@ -43,7 +43,7 @@ class ActivityDisplaySettingsActivity : Activity() {
         val owners = owners()
         val content = NexusUi.contentColumn(this).apply {
             addView(NexusUi.cardBody(context,
-                "Each activity keeps its card in Activities. Choose when its band also floats over the glasses."), NexusUi.block())
+                "Each activity keeps its card in Activities. Choose when its island also floats over the glasses."), NexusUi.block())
             if (PhoneLauncherBackendStore(context).choice() == PhoneLauncherBackendChoice.LEGACY) {
                 addView(BusTheme.gap(context, 14))
                 addView(noteCard("CLASSIC LAUNCHER",
@@ -118,7 +118,7 @@ class ActivityDisplaySettingsActivity : Activity() {
                 addView(ambientChoiceRow(context, durations.map { it to "${it / 1_000} seconds" }, current.durationMs) { duration ->
                     apply(current.copy(durationMs = duration))
                 })
-                addView(note("After each change, then the band fades away. The card stays in Activities."))
+                addView(note("After each change, then the island fades away. The card stays in Activities."))
             }
         }
     }
@@ -132,10 +132,10 @@ class ActivityDisplaySettingsActivity : Activity() {
         minimumHeight = NexusUi.dp(context, 56)
         isClickable = true
         isFocusable = true
-        contentDescription = "Floating band: ${label(mode)}. ${description(mode)}. Change"
+        contentDescription = "Island: ${label(mode)}. ${description(mode)}. Change"
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            addView(NexusUi.metaLabel(context, "FLOATING BAND", NexusUi.INK3))
+            addView(NexusUi.metaLabel(context, "ISLAND", NexusUi.INK3))
             addView(BusTheme.gap(context, 4))
             addView(NexusUi.rowTitle(context, label(mode)))
             addView(BusTheme.gap(context, 3))
@@ -159,7 +159,7 @@ class ActivityDisplaySettingsActivity : Activity() {
                 setPadding(NexusUi.dp(context, 6), 0, NexusUi.dp(context, 6), 0)
             })
             addView(BusTheme.gap(context, 2))
-            addView(NexusUi.cardBody(context, "When its band floats over the glasses").apply {
+            addView(NexusUi.cardBody(context, "When its island floats over the glasses").apply {
                 setPadding(NexusUi.dp(context, 6), 0, NexusUi.dp(context, 6), 0)
             })
             addView(BusTheme.gap(context, 10))
@@ -266,10 +266,10 @@ class ActivityDisplaySettingsActivity : Activity() {
 
         private fun description(mode: ActivityDisplayMode): String = when (mode) {
             ActivityDisplayMode.AUTOMATIC -> "At home and for important events, following each app's display rules"
-            ActivityDisplayMode.PERSISTENT -> "Keep its band over home and apps, except where all activities are hidden"
-            ActivityDisplayMode.HOME -> "Keep its band on the home screen; hide it inside apps"
+            ActivityDisplayMode.PERSISTENT -> "Keep its island over home and apps, except where all activities are hidden"
+            ActivityDisplayMode.HOME -> "Keep its island on the home screen; hide it inside apps"
             ActivityDisplayMode.EVENTS -> "Briefly appear for a new track or another event from the plugin"
-            ActivityDisplayMode.HIDDEN -> "Keep its card and player; hide its floating band"
+            ActivityDisplayMode.HIDDEN -> "Keep its card and player; hide its island"
         }
     }
 }

@@ -36,7 +36,7 @@ directly on its card; opening the player adds progress, and one Back returns
 to the launcher.
 
 A Navigation card shows route guidance; opening it shows the embedded map.
-Nexus-planned walks also support floating minimap/panel and full-screen maps.
+Nexus-planned walks also support minimap and panel islands and full-screen maps.
 Guidance relayed from other navigation apps remains text-only. For each plugin,
 choose Automatic, Always visible, Home screen only, On changes or Activities
 only. On changes uses a 3, 5 or 10 second event window; its expiry leaves the

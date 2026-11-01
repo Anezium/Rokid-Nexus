@@ -298,10 +298,10 @@ Patcher's settings.
 A triple tap opens Nexus's own launcher on the glasses (2.0.0): live
 activities first — a route, what plays, a to-do list — then the latest
 notification, **Notifications** and **Applications**. Swipe moves, tap opens,
-double tap goes back, and the stack keeps its order while it is open. An
+double tap goes back, and the launcher keeps its order while it is open. An
 activity or a notification opens its page inside Nexus instead of the plugin's
-whole surface: a conversation, a player, a route with its map, a checklist.
-**Open app** is still there when the full surface is wanted.
+immersion: a conversation, a player, a route with its map, a checklist.
+**Open app** is still there when the immersion is wanted.
 
 Media Deck 1.0.4 puts the cover and Previous, Play/Pause and Next on its
 card, and its player shows the progress; one Back leaves it. Relay 1.4.0 opens
@@ -312,19 +312,19 @@ leaves the launcher's cards and stays in Notifications history marked removed,
 which keeps the last 30 notifications of the past 24 hours, in memory only.
 Sample 1.0.6 shows the same pages from the public SDK with a to-do checklist.
 
-With an older phone hub, or the Classic launcher chosen, the glasses keep the
-1.8 launcher. Plugins built on SDK 0.24.0 negotiate the launcher bundle and
+With an older phone hub, or when the wearer chooses it, the glasses keep the
+Classic launcher. Plugins built on SDK 0.24.0 negotiate the launcher bundle and
 keep a fallback for hubs without it.
 
-### Floating activities, on the wearer's terms
+### Floating Activities, on the wearer's terms
 
-Whether an activity floats over the glasses is the wearer's choice, per
+Whether an activity's island floats over the glasses is the wearer's choice, per
 plugin, on the phone (2.0.0): Automatic, Always visible, Home screen only,
-On changes, or Activities only. On changes shows the band for a real event
-for 3, 5 or 10 seconds, then lets it go. A band expiring never ends the
+On changes, or Activities only. On changes shows the island for a real event
+for 3, 5 or 10 seconds, then lets it go. An island expiring never ends the
 activity: its card in Activities has its own lifetime, and a plugin that
 supports it can keep that card after it disconnects, once the wearer turned
-on its *Show in activities* setting. The camera, an open Nexus session and
+on its *Keep in activities* setting. The camera, an open Nexus launcher and
 an app set to hide all activities still take precedence. Plugins link to
 these settings through the SDK; they never choose visibility or duration.
 
@@ -345,7 +345,7 @@ Foreground ownership, per-surface ordering, sequenced hides, and image-decode
 invalidation already protect the normal handoff. Newest accepted notice
 replacement is an intentional single-slot policy, not a missing queue.
 
-Nexus 2.0's per-plugin floating modes and foreground-app preferences are shipped.
+Nexus 2.0's per-plugin Floating Activities modes and foreground-app preferences are shipped.
 Further experiments in ownership epochs and priority arbitration remain on
 development branches rather than the current integration path. A narrow
 phone-side check/stamp race remains a
@@ -394,7 +394,7 @@ open, and nothing here is shipped.
   reached without going through Applications every time.
 - **Public-transport journeys in Navigation.** Which bus, metro or train to
   take, departure times, transfers and stops, planned by Navigation itself and
-  shown through the same native route pages, maps and floating guidance as a
+  shown through the same native route pages, maps and guidance island as a
   walk, so the whole journey reads from the glasses. Today Navigation plans
   walks only, and transit guidance read from other apps is text.
 

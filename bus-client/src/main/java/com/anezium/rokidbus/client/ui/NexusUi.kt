@@ -553,11 +553,11 @@ object NexusUi {
         background = pressed(context, Color.TRANSPARENT, 8)
         isClickable = true
         isFocusable = true
-        contentDescription = "Floating band. Choose in Nexus when it appears over your glasses"
+        contentDescription = "Floating activities. Choose in Nexus when its island appears over your glasses"
         addView(
             LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                addView(rowTitle(context, "Floating band").apply { textSize = 14f })
+                addView(rowTitle(context, "Floating activities").apply { textSize = 14f })
                 addView(BusTheme.gap(context, 5))
                 addView(rowSub(context, "When it appears over your glasses, chosen in Nexus").apply { maxLines = 2 })
             },

@@ -6,8 +6,10 @@ document states a limit or a rule, the hub or SDK enforces it in code — violat
 does not degrade gracefully, it gets your traffic rejected or your process crashed.
 
 Companion documents: [docs/PLUGIN_SDK.md](../docs/PLUGIN_SDK.md) (public typed SDK),
-[BUSSPEC.md](../BUSSPEC.md) (wire authority), and
-[docs/PLUGINS.md](../docs/PLUGINS.md) (visual design & settings-screen kit).
+[BUSSPEC.md](../BUSSPEC.md) (wire authority),
+[docs/PLUGINS.md](../docs/PLUGINS.md) (visual design & settings-screen kit), and
+[docs/GLOSSARY.md](../docs/GLOSSARY.md) (what a pin, notice band, island, card,
+page and immersion look like on the glasses).
 This file gives agent-facing implementation rules; use the SDK guide and wire
 specification for their respective contracts. Nexus 2.0.0 ships SDK 0.24.0;
 plugins built against 0.23.0 must be rebuilt against 0.24.0.
@@ -57,7 +59,7 @@ sanctioned exceptions:
 
 5. **User-pulled pages**: a plugin whose service declares `rokidbus.plugin.pages`
    may be bound without `PLUGIN_OPEN` to answer a page the wearer pulled in the
-   glasses' Nexus session, once both hubs announce page v1. The hub may keep that
+   glasses' Nexus launcher, once both hubs announce page v1. The hub may keep that
    binding only while one of its pages is pending or visible under its
    120-second lease, and must release it after.
    Answer from memory on the main thread. Since SDK 0.24.0,
@@ -76,7 +78,7 @@ sanctioned exceptions:
    `NexusActivityPreference` and `NexusUi.activitySettingRow` provide the standard
    default-off user choice, see docs/PLUGIN_SDK.md): a plugin may publish an
    activity with `persistence = ONGOING` only while the user has turned on its own
-   "Show in activities" setting, and only from events it already receives (its
+   "Keep in activities" setting, and only from events it already receives (its
    own data changing, an alarm the user set) — never by polling. Turning the
    setting off, a revoke, or the plugin being disabled ends it (`endActivity()`).
    When the plugin disconnects, the hub keeps an inert offline snapshot on its own;
@@ -84,17 +86,17 @@ sanctioned exceptions:
    alive, and the entry revives only through a fresh start from a new
    registration.
 
-   Floating presentation is a separate, user-owned Nexus choice. Offer
+   The island is a separate, user-owned Nexus choice (Floating Activities). Offer
    `NexusUi.activityDisplaySettingsRow(context, pluginId)` beside the opt-in
    (or call `NexusActivityPreference.openDisplaySettings`). With launcher v4,
    set `NexusActivity.eventKey` to a stable opaque id (at most 64 printable
    characters) for each real event: a track id/digest or persisted task-list
    revision. Keep it unchanged for pause, progress, covers and reconnect.
-   Nexus decides whether to keep a band, show it only at home, briefly reveal
+   Nexus decides whether to keep an island, show it only at home, briefly reveal
    it for 3/5/10 seconds, or show only its Activities card. Never simulate this
    with repeated start/end, `maxDurationMs`, significant updates just to raise
    media priority, polling, your own overlay or a service. The native timer
-   ending removes only the floating band, not the ongoing card. `eventKey`
+   ending removes only the island, not the ongoing card. `eventKey`
    never authorizes wake, priority, input, a new capability or `/core/ambient/*`.
 
 7. **Media Deck activity monitoring**: while the user has enabled Media Deck's

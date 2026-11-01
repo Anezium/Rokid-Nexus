@@ -200,7 +200,7 @@ This section supersedes the status paragraphs above, which are kept as history.
   `hiddenOwners`; its card, pages and notifications are unchanged. Covered by
   `KeptOffGlassesPresentationTest` (hub ingress to islands and pin), `KeptOffGlassesHubTest`
   (phone send and purge), each observed to fail with its fix reverted; not yet seen on hardware.
-  The switch says it needs the new launcher (and names Classic when chosen on the phone), and a
+  The switch says it needs the new launcher (and names the Classic launcher when chosen on the phone), and a
   65th plugin cannot be kept off, so the 64-owner policy never drops an accepted choice
   (`KeptOffGlassesRowTest` drives the real Plugin access row; `PhoneLauncherStoresTest`).
 - **Still open.** Hardware acceptance beyond the bounded 2026-10-18 smoke and the 2026-10-23 device
@@ -237,8 +237,8 @@ trees.
 
 | Feature | Implementation | Tests | State |
 |---|---|---|---|
-| Sample todo: opt-in Show in activities, stable task ids, explicit desired checked state, current revision, result state, no blind toggle or fake success; public SDK only | `plugins/sample/.../TodoActivity.kt`, `TodoControl.kt`, `TodoPages.kt`, `TodoSection.kt`, `TodoService.kt`, `TodoStore.kt` | `TodoActivityTest`, `TodoPagesTest`, `TodoStoreTest` | Done |
-| Media Deck activity monitoring separate from the full surface; metadata / no session / access revoked / session changed / link loss; no stale command or auto retry | `plugins/media/.../MediaDeckActivityControl.kt`, `MediaDeckActivityModel.kt`, `MediaDeckActivityPublisher.kt`, `MediaDeckPages.kt`, `session/MediaDeckMonitorHub.kt`, `session/MediaDeckState.kt`, `session/MediaDeckCommand.kt` | `MediaDeckActivityPublisherTest`, `MediaDeckMonitorHubTest`, `MediaDeckStateMachineTest`, `MediaDeckPagesTest`, `MediaDeckRuntimeTest` | Done |
+| Sample todo: opt-in Keep in activities, stable task ids, explicit desired checked state, current revision, result state, no blind toggle or fake success; public SDK only | `plugins/sample/.../TodoActivity.kt`, `TodoControl.kt`, `TodoPages.kt`, `TodoSection.kt`, `TodoService.kt`, `TodoStore.kt` | `TodoActivityTest`, `TodoPagesTest`, `TodoStoreTest` | Done |
+| Media Deck activity monitoring separate from the immersion; metadata / no session / access revoked / session changed / link loss; no stale command or auto retry | `plugins/media/.../MediaDeckActivityControl.kt`, `MediaDeckActivityModel.kt`, `MediaDeckActivityPublisher.kt`, `MediaDeckPages.kt`, `session/MediaDeckMonitorHub.kt`, `session/MediaDeckState.kt`, `session/MediaDeckCommand.kt` | `MediaDeckActivityPublisherTest`, `MediaDeckMonitorHubTest`, `MediaDeckStateMachineTest`, `MediaDeckPagesTest`, `MediaDeckRuntimeTest` | Done |
 | Media Deck activity: whole title as `headline`; its own `disc` glyph in every state (no play or pause mark beside Rokid's media pill), "Paused"/"Stopped" before the artist, so a line too narrow cuts the artist, never the state | `plugins/media/.../MediaDeckActivityModel.kt`, `MediaText.kt`, `res/values/nexus_glyphs.xml` | `MediaDeckActivityPublisherTest`, `ActivityIslandRenderingTest` (480 px, font scale 1 and 1.5) | Done (device pending) |
 | Media Skills opaque-player boundary ("Which player?" authorizes only that live reference/operation; never retargets HUD, monitoring, seen or quick approvals; stale fails stale) | `plugins/media/.../plugin/media/MediaSkills.kt`, `session/AndroidMediaSkillAccess.kt`, `session/MediaSkillReferences.kt` | `MediaSkillsTest`, `MediaSkillReferencesTest`, `MediaSkillsHudBoundaryTest` | Done (fake players; device pending) |
 
@@ -373,13 +373,13 @@ list must not be treated as either fully pending or fully accepted.
 4. Relay: withdrawal and repost, glasses microphone failure / timeout / cancel, explicit phone typing.
 5. Navigation: live geometry, GPS degradation, viewport and 480x640 optics of map, panel, full map,
    ribbon and lists.
-6. Media Deck monitoring across closing the full surface; todo opt-in and checked-state results.
+6. Media Deck monitoring across closing the immersion; todo opt-in and checked-state results.
 7. Skills: Media "Which player?" choice, stale choice, lease-only behaviour.
 8. From the Astra review: LEGACY island comparison (old phone, explicit LEGACY, saved SESSION sizes and
    policies, home / native app / surface / launcher); purge of every visible copy (conversation card,
    aggregate, generic preview, root visible and beneath a page); purge across phone process death
    (restart then uninstall; revoke while disconnected then kill); Relay classic inbox after band Reply and
-   Type and full-app sends, clear-after-reply on and off; keyboard launch matrix on API 30/32 and 33+;
+   Type and immersion sends, clear-after-reply on and off; keyboard launch matrix on API 30/32 and 33+;
    Android recreation and phone hub death during typing and dictation.
 
 ## 5. Evidence actually observed

@@ -5,6 +5,9 @@
 > document is the SDK reference: artifact coordinates, the service contract,
 > and the approval flow.
 
+New to the vocabulary (pin, notice band, island, card, page, immersion)? Start
+with the visual [glossary](GLOSSARY.md).
+
 For the complete self-contained plugin contract — endpoints, limits,
 lifecycle, and publishing — see [`plugins/AGENTS.md`](../plugins/AGENTS.md).
 
@@ -29,7 +32,7 @@ For local development against a checkout, publish a snapshot instead:
 
 SDK `sdk-v0.24.0` includes the launcher-bundle APIs documented below: interactive
 activity destinations, typed actions, conversation/media/route templates, artwork
-and user-owned floating activity settings. Update both hubs to Nexus 2.0.0 for
+and user-owned Floating Activities settings. Update both hubs to Nexus 2.0.0 for
 the complete launcher experience; continue negotiating individual capabilities
 for older peers. Plugins built against 0.23.0 must be rebuilt against 0.24.0.
 
@@ -501,6 +504,8 @@ interface NexusPluginCallbacks {
 `NexusPluginService` forwards those callbacks to the overridable
 `onNexusActivityAction(id)`, `onNexusActivityCommand(command)` and
 `onNexusActivityClosed(reason)` hooks used in the examples below.
+`NexusActivityAction` is what you declare on the activity; `NexusActivityCommand`
+is one delivered invocation of it, with its own id and the revision the wearer saw.
 
 Check the live `supportsActivitySurface` value immediately before starting or
 updating. For a registered plugin with the `surfaces` grant, all three methods
@@ -704,7 +709,7 @@ On the new launcher the wearer may also keep your plugin's island and pin off
 the glasses' home and apps (**Plugin access → Float over the glasses**). Your
 calls still succeed and your activity, card and pages are unchanged; no API
 reports the choice, so never rely on an island being seen.
-Your actions are reached only inside the wearer's Nexus session, between hubs
+Your actions are reached only inside the wearer's Nexus launcher, between hubs
 that negotiated the launcher bundle, where they arrive on
 `onNexusActivityCommand` (and, through its default, `onNexusActivityAction`).
 Glasses hubs before 1.7.0 still let the idle-layer primary activity take
@@ -784,7 +789,7 @@ same code runs against old hubs.
 
 - `destination = NexusPageDestination(pageId, params)` — one of your own pages
   (`<yourPluginId>:<suffix>`; another namespace is `INVALID_PAYLOAD`), with params
-  of at most 2,048 bytes. A tap on the card opens it directly inside the session,
+  of at most 2,048 bytes. A tap on the card opens it directly inside the launcher,
   with those params on `NexusPageRequest.params`: it is a page request, never an
   `onNexusOpen`, and nothing underneath changes. You need the pages metadata.
 - `activation` — `DESTINATION` opens the destination on the first tap;
@@ -850,17 +855,18 @@ is disconnected, persist the owed end and deliver it on the next approved
 registration, before publishing again. Hello Nexus's Todo publisher is the full
 example, including this removal path. The helper stores the user's preference;
 it does not bind, start a service, poll, override grants or opt in automatically.
-Nexus's pin ordering and floating visibility remain separate choices.
+Nexus's pin ordering and island visibility remain separate choices.
 
-#### User-controlled floating activities (launcher bundle v4)
+#### User-controlled Floating Activities (launcher bundle v4)
 
 Keeping a card in Activities does not require a permanent overlay. Nexus owns
-the user's per-plugin floating display settings: Automatic (the existing app
-rules), Always visible, Home screen only, On changes, or Activities only. On
+the user's per-plugin Floating Activities setting, which drives the island:
+Automatic (the existing app rules), Always visible, Home screen only, On
+changes, or Activities only. On
 changes uses a user-selected 3, 5 or 10 seconds (default 5), then animates the
-band away. The card and its destination stay; expiry never ends the activity.
-The camera, an open Nexus session and an app configured to hide all activities
-still take precedence. Classic retains its existing behavior.
+island away. The card and its destination stay; expiry never ends the activity.
+The camera, an open Nexus launcher and an app configured to hide all activities
+still take precedence. The Classic launcher retains its existing behavior.
 
 Put the standard settings link beside your ongoing-activity opt-in:
 
@@ -873,7 +879,7 @@ val opened = NexusActivityPreference.openDisplaySettings(context, "myplugin")
 
 For a real event, publish `NexusActivity.eventKey`: an opaque, stable identity
 of at most 64 printable characters. A different non-null key starts a temporary
-band only when the user chose On changes. A new live start may show once;
+island only when the user chose On changes. A new live start may show once;
 reconnect resends of the same key do not replay it. An unchanged key, explicit
 null, cover completion, playback position and ordinary text updates do not
 renew the timer. Existing `significant = true` events also qualify, but that
@@ -898,9 +904,9 @@ For a task list, its persisted data revision is suitable. Do not poll or add
 a service to generate events. Plugins cannot choose display mode, duration,
 foreground policy or a forced animation; the SDK link opens Nexus's user-owned
 settings without changing them. On older peers the SDK strips `eventKey`.
-With older glasses the phone keeps On changes and Home screen only bands
+With older glasses the phone keeps On changes and Home screen only islands
 hidden until both hubs support v4, rather than displaying them permanently.
-These settings concern native activity bands; the legacy short-lived Pin API
+These settings concern activity islands; the legacy short-lived Pin API
 does not become an ongoing activity or gain this event lifecycle.
 
 #### Covers and the integrated player (launcher bundle v2 and v3)
@@ -920,7 +926,7 @@ and the JPEG header must match the declared dimensions. The hub renders the imag
 with its original tones and filtered scaling; it does not threshold or dither it.
 Media Deck uses its existing `ImageArtworkEncoder` with this tighter compressed
 cap, so Base64 and the page's other fields fit the unchanged 64 KiB page budget.
-The same detailed cover works on the activity card and compact floating pin.
+The same detailed cover works on the activity card and compact island.
 On v2 peers the SDK and phone clear unsupported JPEG artwork explicitly, including
 result replacements, so a previous track's cover cannot remain visible. Mono1 is
 still accepted for deliberately monochrome previews and older peers.
@@ -947,8 +953,8 @@ The user can also disable your activity on the phone (the hub then ends it and
 refuses your starts with an `ACTIVITY_DISABLED` error on `/error`) or pin it. In focus the wearer steps
 along your commands. A commands-first activity with a destination also gets a
 hub `Open page` slot; for typed media it is labelled `Open player` and replaces
-the redundant full-app slot. Other launchable owners retain `Open app` for the
-full app. These hub slots are not part of your three actions. The selected live
+the redundant `Open app` slot. Other launchable owners retain `Open app` for
+their immersion. These hub slots are not part of your three actions. The selected live
 commands-first card previews its controls; the first tap focuses them without
 executing. Back on the card leaves command focus; Back in the full media player
 returns to the containing Nexus menu directly.
@@ -2217,20 +2223,20 @@ operation that drives an activity.
 
 ## Pages
 
-A page is consultation content the glasses hub draws inside the Nexus session,
+A page is consultation content the glasses hub draws inside the Nexus launcher,
 over whatever the wearer was doing: a native app, the Rokid home, or another
 plugin's immersion. It is not an `onNexusOpen` call and never replaces the
-screen underneath. The wearer opens the session with a triple tap, picks your
+screen underneath. The wearer opens the launcher with a triple tap, picks your
 plugin's row or card, reads, and goes BACK to exactly where they were. The wire
-contract is BUSSPEC's "Session and page protocol v1", extended by its
-"Launcher bundle v1".
+contract is BUSSPEC's "Session and page protocol v1" (the protocol calls the
+launcher a session), extended by its "Launcher bundle v1".
 
-The session is the glasses' default launcher when the phone's last announcement
-negotiated the launcher bundle; the user can still choose the classic launcher on
+The launcher is the glasses' default when the phone's last announcement
+negotiated the launcher bundle; the user can still choose the Classic launcher on
 the phone or the glasses. Both hubs must negotiate page support. An old phone or
 glasses hub, or a plugin without the metadata below, keeps today's behaviour:
-your plugin appears in Applications as an explicitly labelled full-app
-immersion.
+your plugin appears in Applications as an explicitly labelled immersion
+(**Open app**).
 
 ### Opting in
 
@@ -2454,7 +2460,7 @@ and a replacement is the same page at a higher revision. Each also takes an
 optional `code` (printable ASCII, at most 32); the hub acts on
 `NexusPageResult.CODE_AUTHORITY_LOST` only, for a composer whose reply authority
 is gone: it keeps the text and stops offering Send. A lost result shows as
-unconfirmed and is never resent. `IMMERSION` opens only your own full app,
+unconfirmed and is never resent. `IMMERSION` opens only your own immersion,
 directly on a fresh tap; `HUB` gives you no hub control.
 
 ```kotlin
@@ -2516,7 +2522,7 @@ Navigation answers `nav:main` with a `summary` of the guidance it already shows
 in its activity: the manoeuvre, the distance or remaining stops, the street, the
 ETA when the source app supplies one, and the source and time. Missing values
 are left out rather than invented. A Commands row opens `nav:commands`, a
-`commands` page whose only row opens the full app.
+`commands` page whose only row opens the immersion (**Open app**).
 
 Relay answers `relay:main` with a `selectableList` of the inbox's threads and
 each thread with a `document` of its messages, speaker headers when more than

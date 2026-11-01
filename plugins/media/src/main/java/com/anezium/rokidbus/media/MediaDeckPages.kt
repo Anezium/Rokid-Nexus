@@ -123,8 +123,8 @@ internal object MediaDeckPages {
     }
 
     private fun basePage(revision: Long, state: MediaDeckState): NexusPage.Content {
-        val openApp = PageRow(OPEN_APP, "Open the full app", sub = "exclusive surface", target = PageTarget.Action(OPEN_APP))
-        val openAppAction = NexusPageActionSpec(OPEN_APP, "Open full app", NexusPageActionKind.IMMERSION, confirm = false)
+        val openApp = PageRow(OPEN_APP, "Open app", sub = "exclusive surface", target = PageTarget.Action(OPEN_APP))
+        val openAppAction = NexusPageActionSpec(OPEN_APP, "Open app", NexusPageActionKind.IMMERSION, confirm = false)
         val active = state as? MediaDeckState.Active
         if (active == null) {
             val idle = idleCopy(state)
