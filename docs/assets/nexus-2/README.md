@@ -18,3 +18,8 @@ measurement. `tour-captions.vtt` and `tour-transcript.txt` describe its chapters
 The Pages workflow copies this directory to `site/assets/nexus-2/` alongside
 the existing documentation images. The source recordings and QA contact sheets
 remain local and are not part of the site artifact.
+
+`assistant-answer-home.webp` is the Assistant answer capture from the 1.5.0
+release post (`design/reddit-1.5.0/12-assistant-answer.png`). That export stopped
+below the home status row; the empty black bottom of the display is restored to
+give the full 3:4 frame, like the other glasses captures.
