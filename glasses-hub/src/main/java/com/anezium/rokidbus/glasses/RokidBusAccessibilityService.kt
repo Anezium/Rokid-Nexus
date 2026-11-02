@@ -2230,8 +2230,16 @@ internal object NexusInput {
             NexusSession.dispatch(SessionEvent.Abort)
             return "hidden"
         }
-        NexusSession.dispatch(SessionEvent.TripleTap(SystemClock.uptimeMillis(), arbiter.underneath()))
-        return if (NexusSession.state == SessionState.Closed) "not opened: refused by the session" else "shown"
+        return if (openSession()) "shown" else "not opened: refused by the session"
+    }
+
+    /** Opens the session launcher or keeps an open one; false means no session launcher is up. */
+    fun openSession(): Boolean {
+        if (backend != LauncherBackend.SESSION || service == null) return false
+        if (NexusSession.state == SessionState.Closed) {
+            NexusSession.dispatch(SessionEvent.TripleTap(SystemClock.uptimeMillis(), arbiter.underneath()))
+        }
+        return NexusSession.state != SessionState.Closed
     }
 
     /** The glasses' own explicit choice: stored as `launcher.backend`, applied unless the phone's outranks it. */
