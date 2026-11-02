@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.View
@@ -222,6 +223,21 @@ class LauncherHostLinkLossTest {
             failures.drop(1).forEach(first::addSuppressed)
             throw first
         }
+    }
+
+    @Test
+    fun `the ring bridge launcher action opens the session and closes it again`() {
+        linkUp()
+        assertEquals(SessionState.Closed, NexusSession.state)
+
+        OpenLauncherReceiver().onReceive(app, Intent())
+        assertTrue(NexusSession.state is SessionState.Opening)
+        advance(PageSurfaceContract.GATE_MS + 50)
+        assertTrue(NexusSession.state is SessionState.Root)
+
+        OpenLauncherReceiver().onReceive(app, Intent())
+        idle()
+        assertEquals(SessionState.Closed, NexusSession.state)
     }
 
     @Test

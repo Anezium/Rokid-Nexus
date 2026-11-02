@@ -136,6 +136,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
             this,
             surfaceActive = SurfaceController.activeSurface() != null,
             noticeOwnsRing = NoticeController.ownsRingInput(),
+            launcherPageShown = MainActivity.isLauncherPageInFront(),
         )
         SurfaceOverlayRenderer.onServiceConnected(this)
         PinOverlayRenderer.onServiceConnected(this)
@@ -2221,6 +2222,17 @@ internal object NexusInput {
 
     /** A key delivered to a Nexus window: only a press the filter never routed is decided here. */
     fun onWindowKey(event: KeyEvent): Boolean = decide(event) { arbiter.onWindowKey(it) }
+
+    /** The ring bridge's launcher action: the session the temple's triple tap opens, or its close. */
+    fun toggleSession(): String {
+        if (service == null) return "show failed: accessibility service not connected"
+        if (NexusSession.state != SessionState.Closed) {
+            NexusSession.dispatch(SessionEvent.Abort)
+            return "hidden"
+        }
+        NexusSession.dispatch(SessionEvent.TripleTap(SystemClock.uptimeMillis(), arbiter.underneath()))
+        return if (NexusSession.state == SessionState.Closed) "not opened: refused by the session" else "shown"
+    }
 
     /** The glasses' own explicit choice: stored as `launcher.backend`, applied unless the phone's outranks it. */
     fun setBackend(context: Context, next: LauncherBackend) {

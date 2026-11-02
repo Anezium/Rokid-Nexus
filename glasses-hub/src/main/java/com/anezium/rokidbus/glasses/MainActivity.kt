@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.KeyEvent
 import android.view.Gravity
@@ -20,6 +21,8 @@ import android.widget.LinearLayout
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.glasses.input.DeviceClass
+import com.anezium.rokidbus.glasses.input.KeyEventAdapter
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.SetupStage
 
@@ -47,6 +50,12 @@ class MainActivity : Activity() {
     private var onboardingReceiverRegistered = false
     private var confirmationShownForSession = ""
     private val swipeDedupe = DpadPairDedupe()
+    private val ringInput = LauncherPageRingInput(
+        onMove = ::moveSelection,
+        onOpen = ::openSelected,
+        onBack = ::onBackPressed,
+    )
+    private val ringTapExpiry = Runnable { ringInput.resolveTaps(SystemClock.uptimeMillis()) }
     private val onboardingReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == SelfArmOnboardingStore.ACTION_CHANGED) renderScreen()
@@ -104,6 +113,9 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         if (resumedInstance === this) resumedInstance = null
+        RingFocusBroadcastCoordinator.setLauncherPageShown(isLauncherPageInFront())
+        if (::launcherView.isInitialized) launcherView.removeCallbacks(ringTapExpiry)
+        ringInput.reset()
         super.onPause()
     }
 
@@ -127,6 +139,7 @@ class MainActivity : Activity() {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (NoticeKeyDispatcher.handleKeyEvent(event)) return true
+        if (handleRingKey(event)) return true
         if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) {
             return super.dispatchKeyEvent(event)
         }
@@ -173,6 +186,19 @@ class MainActivity : Activity() {
             }
             else -> super.dispatchKeyEvent(event)
         }
+    }
+
+    /** R08 defers to Nexus while this page is in front, so nothing else would answer its keys. */
+    private fun handleRingKey(event: KeyEvent): Boolean {
+        if (!isLauncherPageInFront() || !LauncherPageRingInput.isRingGesture(event.keyCode)) return false
+        if (KeyEventAdapter.classify(event.device?.name) != DeviceClass.R08) return false
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
+            ringInput.onPress(event.keyCode, event.eventTime)
+        ) {
+            launcherView.removeCallbacks(ringTapExpiry)
+            launcherView.postDelayed(ringTapExpiry, RingTapPolicy.DEFAULT_WINDOW_MS + 1L)
+        }
+        return true
     }
 
     private fun buildUi() {
@@ -299,6 +325,7 @@ class MainActivity : Activity() {
         onboardingState = SelfArmOnboardingStateMachine.evaluate(snapshot)
         val complete = onboardingState.stage == SelfArmOnboardingState.Stage.COMPLETE
         interactiveFlowActive = !complete
+        RingFocusBroadcastCoordinator.setLauncherPageShown(isLauncherPageInFront())
         if (complete) {
             // Land on a moment of confirmation rather than blinking straight to a plugin list:
             // the wearer just did the one thing we asked of them and deserves to see it took.
@@ -640,6 +667,8 @@ class MainActivity : Activity() {
         @Volatile private var interactiveFlowActive = true
 
         internal fun isResumed(): Boolean = resumedInstance != null
+
+        internal fun isLauncherPageInFront(): Boolean = resumedInstance != null && !interactiveFlowActive
 
         internal fun isInteractiveFlowActive(): Boolean =
             resumedInstance != null && interactiveFlowActive
