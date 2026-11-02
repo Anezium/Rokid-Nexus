@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.2
+
+- **R08 ring launcher action.** R08 Access Bridge's **Nexus launcher** action
+  opens and closes the launcher again. It had stopped doing anything on the new
+  launcher in 2.0 ([#76](https://github.com/Anezium/Rokid-Nexus/issues/76)).
+- **The ring on the Launcher page.** Ring swipes move the selection, one tap
+  opens the plugin and two taps go back. Before, only going back worked. A triple
+  tap on this page now does nothing.
+- **Launching the Nexus app opens the new launcher** once setup is complete. The
+  old Launcher page now appears with the Classic launcher, or when the new
+  launcher cannot open or a permission prompt is waiting.
+
+Install the **glasses hub 2.0.2** to receive these changes. R08 Access Bridge
+needs no update. The phone APK is also versioned 2.0.2; phone hubs 2.0.0 and
+2.0.1 remain compatible. Plugins and SDK requirements are unchanged.
+
 ## 2.0.1
 
 - **Phone battery badge recovery.** The glasses retry reading Rokid's status

@@ -226,6 +226,30 @@ class LauncherHostLinkLossTest {
     }
 
     @Test
+    fun `launching the app opens the session once and keeps an open one`() {
+        linkUp()
+
+        assertTrue(NexusInput.openSession())
+        assertTrue(NexusSession.state is SessionState.Opening)
+        advance(PageSurfaceContract.GATE_MS + 50)
+        assertTrue(NexusSession.state is SessionState.Root)
+
+        assertTrue(NexusInput.openSession())
+        assertTrue(NexusSession.state is SessionState.Root)
+    }
+
+    @Test
+    fun `launching the app leaves its page in charge without a session launcher`() {
+        assertEquals(LauncherBackend.LEGACY, NexusInput.backend)
+        assertFalse(NexusInput.openSession())
+
+        linkUp()
+        NexusInput.onServiceDestroyed()
+        assertFalse(NexusInput.openSession())
+        assertEquals(SessionState.Closed, NexusSession.state)
+    }
+
+    @Test
     fun `the ring bridge launcher action opens the session and closes it again`() {
         linkUp()
         assertEquals(SessionState.Closed, NexusSession.state)

@@ -330,6 +330,12 @@ class MainActivity : Activity() {
             // Land on a moment of confirmation rather than blinking straight to a plugin list:
             // the wearer just did the one thing we asked of them and deserves to see it took.
             if (showSetupConfirmation()) return
+            // A prompt in flight is tied to this activity, and a paused page must not open anything.
+            if (resumedInstance === this && !isFinishing && missingPermissions().isEmpty() && NexusInput.openSession()) {
+                finish()
+                overridePendingTransition(0, 0)
+                return
+            }
             launcherView.visibility = View.VISIBLE
             onboardingView.visibility = View.GONE
             return
@@ -611,22 +617,24 @@ class MainActivity : Activity() {
     }
 
     private fun requestBluetoothConnectIfNeeded() {
-        val missing = buildList {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) !=
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                add(Manifest.permission.BLUETOOTH_CONNECT)
-            }
-            // Photo sync reads /sdcard/DCIM/Camera; without this grant the sync engine reports
-            // "storage permission needed" to the phone instead of silently syncing nothing.
-            if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) !=
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            }
-        }
+        val missing = missingPermissions()
         if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 10)
+    }
+
+    private fun missingPermissions(): List<String> = buildList {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        // Photo sync reads /sdcard/DCIM/Camera; without this grant the sync engine reports
+        // "storage permission needed" to the phone instead of silently syncing nothing.
+        if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
     }
 
     private fun text(sizeSp: Float, color: Int, bold: Boolean = false): TextView =
