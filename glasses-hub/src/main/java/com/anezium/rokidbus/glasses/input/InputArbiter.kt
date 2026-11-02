@@ -347,7 +347,7 @@ internal class InputArbiter(private val context: InputContext) {
      * What the session opens over. Telling the Rokid home from another native scene needs a
      * foreground resolver, so a native base is recorded as [Underneath.NativeApp] for now.
      */
-    private fun underneath(): Underneath =
+    fun underneath(): Underneath =
         context.activeSurfaceId?.let { Underneath.NexusSurface(it) }
             ?: if (context.nativeInFront) Underneath.NativeApp else Underneath.Unknown
 

@@ -6,7 +6,7 @@ import android.os.Handler
 import android.os.Looper
 
 /**
- * Edge-triggered union of the launcher, plugin-surface, and notice ring owners.
+ * Edge-triggered union of the launcher, launcher page, plugin-surface, and notice ring owners.
  *
  * A launcher-to-surface handoff temporarily retains focus after the launcher
  * source drops. The matching surface show completes it atomically; a bounded
@@ -19,6 +19,7 @@ internal class RingFocusCoordinator(
     private var surfaceActive = false
     private var surfaceHandoffPending = false
     private var noticeOwnsRing = false
+    private var launcherPageShown = false
     private var publishedFocused = false
 
     @Synchronized
@@ -42,6 +43,12 @@ internal class RingFocusCoordinator(
     }
 
     @Synchronized
+    fun setLauncherPageShown(shown: Boolean) {
+        launcherPageShown = shown
+        publishIfChanged()
+    }
+
+    @Synchronized
     fun beginSurfaceHandoff() {
         if (launcherShown) surfaceHandoffPending = true
         publishIfChanged()
@@ -59,11 +66,12 @@ internal class RingFocusCoordinator(
         surfaceActive = false
         surfaceHandoffPending = false
         noticeOwnsRing = false
+        launcherPageShown = false
         publishIfChanged()
     }
 
     private fun publishIfChanged() {
-        val focused = launcherShown || surfaceActive || surfaceHandoffPending || noticeOwnsRing
+        val focused = launcherShown || surfaceActive || surfaceHandoffPending || noticeOwnsRing || launcherPageShown
         if (focused == publishedFocused) return
         publishedFocused = focused
         publish(focused)
@@ -86,11 +94,13 @@ internal object RingFocusBroadcastCoordinator {
         context: Context,
         surfaceActive: Boolean,
         noticeOwnsRing: Boolean,
+        launcherPageShown: Boolean,
     ) {
         appContext = context.applicationContext
         inputServiceConnected = true
         coordinator.setSurfaceActive(surfaceActive)
         coordinator.setNoticeOwnsRing(noticeOwnsRing)
+        coordinator.setLauncherPageShown(launcherPageShown)
     }
 
     fun onServiceDestroyed(context: Context) {
@@ -135,6 +145,11 @@ internal object RingFocusBroadcastCoordinator {
     fun setNoticeOwnsRing(owns: Boolean) {
         if (!inputServiceConnected) return
         coordinator.setNoticeOwnsRing(owns)
+    }
+
+    fun setLauncherPageShown(shown: Boolean) {
+        if (!inputServiceConnected) return
+        coordinator.setLauncherPageShown(shown)
     }
 
     private fun sendFocusBroadcast(focused: Boolean) {

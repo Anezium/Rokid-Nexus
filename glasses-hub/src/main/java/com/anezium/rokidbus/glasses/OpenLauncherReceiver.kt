@@ -7,8 +7,8 @@ import com.anezium.rokidbus.glasses.input.LauncherBackend
 
 class OpenLauncherReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val result = if (NexusInput.backend != LauncherBackend.LEGACY) {
-            "ignored: launcher backend is ${NexusInput.backend.name}"
+        val result = if (NexusInput.backend == LauncherBackend.SESSION) {
+            NexusInput.toggleSession()
         } else if (LauncherOverlayRenderer.isShown()) {
             LauncherOverlayRenderer.hide()
             "hidden"

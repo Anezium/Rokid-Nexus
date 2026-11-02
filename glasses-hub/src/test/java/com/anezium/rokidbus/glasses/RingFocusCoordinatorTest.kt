@@ -34,6 +34,21 @@ class RingFocusCoordinatorTest {
     }
 
     @Test
+    fun `the launcher page holds the ring until it leaves the front or a reset`() {
+        val published = mutableListOf<Boolean>()
+        val coordinator = RingFocusCoordinator { published += it }
+
+        coordinator.setLauncherPageShown(true)
+        coordinator.setSurfaceActive(true)
+        coordinator.setSurfaceActive(false)
+        coordinator.setLauncherPageShown(false)
+        coordinator.setLauncherPageShown(true)
+        coordinator.reset()
+
+        assertEquals(listOf(true, false, true, false), published)
+    }
+
+    @Test
     fun `launcher to matching surface handoff has no false blip`() {
         val published = mutableListOf<Boolean>()
         val coordinator = RingFocusCoordinator { published += it }
