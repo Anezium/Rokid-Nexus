@@ -58,16 +58,16 @@ expiring never ends the activity; its card stays in the launcher.
 
 ## Nexus 2.0
 
-Update **both hubs to 2.0.2**, plus Relay 1.4.0, Navigation 0.3.0, Media Deck
+Update **both hubs to 2.0.3**, plus Relay 1.4.0, Navigation 0.3.0, Media Deck
 1.0.4 and Sample 1.0.6. Plugin developers use SDK 0.24.0. See the
-[2.0.2 release](https://github.com/Anezium/Rokid-Nexus/releases/tag/v2.0.2)
+[2.0.3 release](https://github.com/Anezium/Rokid-Nexus/releases/tag/v2.0.3)
 and [changelog](CHANGELOG.md) for downloads and compatibility details. The
 **Classic launcher** stays available on the phone and the glasses, and older
 hubs keep it automatically.
 
-The 2.0.2 glasses hub restores R08 ring control of the launcher and opens the
-new launcher when the Nexus app is launched. Phone hubs 2.0.0 and 2.0.1 remain
-compatible with this patch.
+The 2.0.3 glasses hub gives the R08 ring back as soon as you leave a plugin
+opened from the new launcher. Phone hubs 2.0.0 to 2.0.2 remain compatible with
+this patch.
 
 Plugins stay isolated in their own processes, appear only after explicit user
 approval, and draw on the HUD through declarative contracts: cards, synced
