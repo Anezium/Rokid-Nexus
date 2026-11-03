@@ -40,6 +40,7 @@ refreshed on 2026-09-22. The individual plan headers remain the detail of record
 | [024](024-nexus-skills.md) | Nexus Skills: shared invocation contract, Media Deck, Transit, native transit guidance, and multi-step Assistant conversations | IN PROGRESS — foundation, Transit, and guidance planner implemented, unreleased and not device-validated; Media Deck not started |
 | [025](025-youtube-patcher-plugin.md) | Patcher: target-aware background patching and four-step YouTube setup | Implemented on `dev/youtube-patcher-fixes`; device acceptance pending |
 | [026](026-assistant-workspace.md) | Assistant Workspace: local document indexing and first-request excerpt injection | IN PROGRESS — implemented with round-1 and round-2 fixes; 419 JVM tests/build pass; owner device validation pending |
+| [029](029-assistant-messaging.md) | Assistant messaging: Relay replies and SMS, confirmed by the wearer | TODO — approved 2026-11-03 |
 
 Status values are `TODO`, `IN PROGRESS`, `BLOCKED`, and `DONE`. Update both this
 table and the individual plan when execution status changes. Current priorities
