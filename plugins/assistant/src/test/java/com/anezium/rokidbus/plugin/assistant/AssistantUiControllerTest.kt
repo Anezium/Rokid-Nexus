@@ -2203,6 +2203,213 @@ class AssistantUiControllerTest {
         }
 
     /** An assist-button session (no anchor) listening in its band. */
+    private val confirmationLines = listOf("To Coralie · WhatsApp", "We meet at 3 pm")
+    private val confirmationActions = AssistantConfirmationGate.actions("tok0")
+
+    @Test
+    fun `a confirmation is a fresh band with its row and the longest life a band may have`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        controller.showTransient("Thinking…")
+        renderer.clear()
+
+        assertTrue(controller.showConfirmation(confirmationLines, confirmationActions))
+        runCurrent()
+
+        assertEquals(
+            listOf(RenderCall.ShowNotice(AssistantUiController.CONFIRMATION_TITLE, null, confirmationLines)),
+            renderer.calls,
+        )
+        assertEquals(listOf(NoticeSurfaceContract.MAX_TTL_MS), renderer.showTtls)
+        assertEquals(listOf(confirmationActions), renderer.noticeActions)
+        assertEquals(listOf(false), renderer.noticeBackdrops)
+        controller.onClose()
+    }
+
+    @Test
+    fun `a confirmation goes up over an ink answer and hides the page behind it`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        controller.onInkAnswerShown()
+        controller.showAnswer("An answer the page owns", listOf("An answer the page owns"))
+        renderer.clear()
+
+        assertTrue(controller.showConfirmation(confirmationLines, confirmationActions))
+        runCurrent()
+
+        assertEquals(1, renderer.calls.size)
+        assertEquals(listOf(true), renderer.noticeBackdrops)
+        controller.onClose()
+    }
+
+    @Test
+    fun `a confirmation is refused when the band is not the render target`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = false)
+        val controller = controller(renderer)
+
+        assertFalse(controller.showConfirmation(confirmationLines, confirmationActions))
+        runCurrent()
+
+        assertTrue(renderer.calls.isEmpty())
+    }
+
+    @Test
+    fun `a band that fails to go up loses the confirmation`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        renderer.failNextShow = true
+        val controller = controller(renderer)
+
+        assertFalse(controller.showConfirmation(confirmationLines, confirmationActions))
+        controller.onClose()
+    }
+
+    @Test
+    fun `every way the band closes loses the confirmation exactly once`() = runTest {
+        NexusNoticeCloseReason.entries.forEach { reason ->
+            val renderer = FakeRenderer(supportsNotice = true)
+            var lost = 0
+            val controller = controller(renderer, onConfirmationLost = { lost += 1 })
+            controller.showConfirmation(confirmationLines, confirmationActions)
+            runCurrent()
+
+            controller.onNoticeClosed(reason)
+
+            assertEquals(reason.name, 1, lost)
+            controller.onClose()
+            assertEquals(reason.name, 1, lost)
+        }
+    }
+
+    @Test
+    fun `a timed out confirmation says it was not sent and any other close stays silent`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        controller.showConfirmation(confirmationLines, confirmationActions)
+        runCurrent()
+        renderer.clear()
+
+        controller.onNoticeClosed(NexusNoticeCloseReason.TIMEOUT)
+        runCurrent()
+
+        assertEquals(
+            listOf(RenderCall.ShowNotice(AssistantUiController.NOTICE_TITLE, AssistantUiController.CONFIRMATION_EXPIRED, emptyList())),
+            renderer.calls,
+        )
+        controller.onClose()
+
+        val quiet = FakeRenderer(supportsNotice = true)
+        val other = controller(quiet)
+        other.showConfirmation(confirmationLines, confirmationActions)
+        runCurrent()
+        quiet.clear()
+        other.onNoticeClosed(NexusNoticeCloseReason.USER)
+        runCurrent()
+        assertTrue(quiet.calls.isEmpty())
+        other.onClose()
+    }
+
+    @Test
+    fun `anything else taking the band loses the confirmation`() = runTest {
+        val takeovers = listOf<(AssistantUiController) -> Unit>(
+            { it.showTransient("Thinking…") },
+            { it.showError("No") },
+            { it.showAnswer("Answer", listOf("Answer")) },
+            { it.beginTyping() },
+            { it.onClose() },
+            { it.onInkAnswerShown() },
+            { it.retireConfirmation() },
+        )
+        takeovers.forEachIndexed { index, takeover ->
+            val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+            var lost = 0
+            val controller = controller(renderer, onConfirmationLost = { lost += 1 })
+            controller.showConfirmation(confirmationLines, confirmationActions)
+            runCurrent()
+
+            takeover(controller)
+
+            assertEquals("takeover $index", 1, lost)
+            controller.onClose()
+        }
+    }
+
+    @Test
+    fun `retiring a question that is not a confirmation leaves the band alone`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        controller.showAnswer("Answer", listOf("Answer"))
+        runCurrent()
+        renderer.clear()
+
+        controller.retireConfirmation()
+        runCurrent()
+
+        assertTrue(renderer.calls.isEmpty())
+        controller.onClose()
+    }
+
+    @Test
+    fun `a rejected band says nothing was sent`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        var lost = 0
+        val controller = controller(renderer, onConfirmationLost = { lost += 1 })
+        controller.showConfirmation(confirmationLines, confirmationActions)
+        runCurrent()
+        renderer.clear()
+
+        controller.onNoticeRejected()
+        runCurrent()
+
+        assertEquals(1, lost)
+        assertEquals(AssistantConfirmationFlow.COULD_NOT_ASK, (renderer.calls.single() as RenderCall.ShowNotice).body)
+        controller.onClose()
+    }
+
+    @Test
+    fun `the voice ending restarts the window to answer and leaves the row alone`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        controller.showConfirmation(confirmationLines, confirmationActions)
+        runCurrent()
+        renderer.clear()
+
+        controller.onAnswerSpeechStarted()
+        controller.onAnswerSpeechFinished()
+        runCurrent()
+
+        assertEquals(listOf(NoticeSurfaceContract.MAX_TTL_MS), renderer.updateTtls)
+        assertEquals(listOf(emptyList<NexusNoticeAction>()), renderer.noticeActions)
+        controller.onClose()
+    }
+
+    @Test
+    fun `sending and its result still reach the wearer over an ink answer`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        controller.onInkAnswerShown()
+        controller.showConfirmation(confirmationLines, confirmationActions)
+        runCurrent()
+        renderer.clear()
+
+        controller.showConfirmationProgress(AssistantConfirmationFlow.SENDING)
+        runCurrent()
+        controller.showConfirmationResult("Handed to WhatsApp for Coralie. Arrival not confirmed.")
+        runCurrent()
+
+        val bodies = renderer.calls.map {
+            when (it) {
+                is RenderCall.ShowNotice -> it.body
+                is RenderCall.UpdateNotice -> it.body
+                else -> null
+            }
+        }
+        assertEquals(
+            listOf(AssistantConfirmationFlow.SENDING, "Handed to WhatsApp for Coralie. Arrival not confirmed."),
+            bodies,
+        )
+        controller.onClose()
+    }
+
     private fun TestScope.assistButtonListening(controller: AssistantUiController) {
         controller.onOpen()
         controller.cancelLauncherHint()
@@ -2242,6 +2449,7 @@ class AssistantUiControllerTest {
         busy: () -> Boolean = { false },
         speaking: () -> Boolean = { false },
         stopSpeech: () -> Unit = {},
+        onConfirmationLost: () -> Unit = {},
     ): AssistantUiController =
         AssistantUiController(
             scope = this,
@@ -2252,6 +2460,7 @@ class AssistantUiControllerTest {
             sessionBusy = busy,
             answerSpeaking = speaking,
             stopSpeech = stopSpeech,
+            onConfirmationLost = onConfirmationLost,
         )
 
     private fun assertValidTruncatedBody(body: String?) {
@@ -2321,6 +2530,7 @@ class AssistantUiControllerTest {
         /** Per show or update; an update's empty row means the key was left out. */
         val noticeActions = mutableListOf<List<NexusNoticeAction>>()
         val noticeFooters = mutableListOf<String?>()
+        val noticeBackdrops = mutableListOf<Boolean>()
         private var questionFieldRejected: ((String) -> Unit)? = null
 
         override val supportsNoticeSurface: Boolean
@@ -2332,6 +2542,7 @@ class AssistantUiControllerTest {
             noticeEngagement += notice.interactive
             noticeActions += notice.actions
             noticeFooters += notice.footer
+            noticeBackdrops += notice.backdrop
             if (failNextShow) {
                 failNextShow = false
                 return NexusSdkResult.NOT_REGISTERED
@@ -2373,6 +2584,7 @@ class AssistantUiControllerTest {
             calls.clear()
             updateTtls.clear()
             showTtls.clear()
+            noticeBackdrops.clear()
             noticeEngagement.clear()
             noticeActions.clear()
             noticeFooters.clear()

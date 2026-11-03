@@ -104,7 +104,9 @@ internal class AssistantUiController(
     private val stopSpeech: () -> Unit = {},
     private val holderRecheckMs: Long = HOLDER_RECHECK_MS,
     private val holderSpeechBudgetMs: Long = HOLDER_SPEECH_BUDGET_MS,
-) {
+    /** The band asking the wearer to confirm a send is gone, or about to be replaced. */
+    private val onConfirmationLost: () -> Unit = {},
+) : AssistantConfirmationUi {
     private var launcherHintJob: Job? = null
     private var holderReleaseJob: Job? = null
     private var holderBudgetJob: Job? = null
@@ -128,6 +130,9 @@ internal class AssistantUiController(
     /** Choice chips an answer carries while a plugin result waits on the wearer's pick. */
     private var answerChoices: List<NexusNoticeAction> = emptyList()
     private var bandFooter: String? = null
+
+    /** The band is asking the wearer to confirm a send; see [showConfirmation]. */
+    private var confirmationShown = false
 
     /** A Type tap is being served: from the quiet band's show until the field is retired. */
     private var typingOpen = false
@@ -457,6 +462,10 @@ internal class AssistantUiController(
      */
     fun onNoticeRejected() {
         bandUncertain = true
+        if (confirmationShown) {
+            showError(AssistantConfirmationFlow.COULD_NOT_ASK)
+            return
+        }
         if (typingOpen) {
             val attempt = typingAttempt
             showTypingBand { result -> onTypingBandSent(attempt, result) }
@@ -521,6 +530,7 @@ internal class AssistantUiController(
 
     /** A message that had waited for its turn failed when it left: the band is not up. */
     private fun onNoticeSendFailed() {
+        leaveConfirmation()
         noticeShown = false
         noticeMode = AssistantNoticeMode.NONE
         clearBandDecorations()
@@ -694,6 +704,75 @@ internal class AssistantUiController(
         }
     }
 
+    /**
+     * Asks the wearer about a send. Over an Ink page too, hiding it behind the band: this is the
+     * one thing a page must not own, and the page may say something the draft does not. The row
+     * goes up as a fresh show, because only a fresh question can be answered, and it stays for the
+     * band's whole life; speech restarts that life rather than shortening it.
+     */
+    override fun showConfirmation(lines: List<String>, actions: List<NexusNoticeAction>): Boolean {
+        if (!useNoticeBand()) return false
+        cancelLauncherHint()
+        stopKeepalive()
+        startNewState()
+        val result = notices.show(
+            NexusNotice(
+                title = CONFIRMATION_TITLE,
+                lines = lines,
+                actions = actions,
+                ttlMs = CONFIRMATION_TTL_MS,
+                backdrop = inkOwnsAnswer,
+            ),
+        )
+        if (result != NexusSdkResult.SENT) {
+            onNoticeSendFailed()
+            return false
+        }
+        noticeShown = true
+        noticeMode = AssistantNoticeMode.ENGAGED
+        bandFooter = null
+        bandUncertain = false
+        bandActions = actions
+        confirmationShown = true
+        return true
+    }
+
+    /** The wearer tapped Send; the band says so until the result is in, over a page as well. */
+    override fun showConfirmationProgress(body: String) {
+        cancelLauncherHint()
+        stopKeepalive()
+        startNewState()
+        if (!renderer.supportsNoticeSurface) return
+        lastInFlightBody = body
+        lastInFlightUsesLines = false
+        showOrUpdateNotice(body)
+        startKeepalive()
+    }
+
+    override fun showConfirmationResult(body: String) {
+        cancelLauncherHint()
+        stopKeepalive()
+        startNewState()
+        if (!renderer.supportsNoticeSurface) return
+        spokenAnswerBody = body
+        showOrUpdateAnswerNotice(body, ttlMs = answerTtlMs(body))
+    }
+
+    override fun showConfirmationNotice(body: String) = showError(body)
+
+    /** A new question or a lost link: whatever is still asking stops asking. */
+    fun retireConfirmation() {
+        if (!confirmationShown) return
+        startNewState(flushTranscript = false)
+        hideNoticeIfShown()
+    }
+
+    private fun leaveConfirmation() {
+        if (!confirmationShown) return
+        confirmationShown = false
+        onConfirmationLost()
+    }
+
     fun showAnswer(
         body: String,
         legacyCardLines: List<String>,
@@ -737,6 +816,8 @@ internal class AssistantUiController(
     }
 
     fun onAnswerSpeechFinished() {
+        // The wearer has only now heard the whole draft, so the full window to answer starts here.
+        if (confirmationShown && noticeShown) notices.update(NexusNoticeUpdate(ttlMs = CONFIRMATION_TTL_MS))
         val body = spokenAnswerBody
         spokenAnswerBody = null
         if (body != null) {
@@ -797,6 +878,7 @@ internal class AssistantUiController(
      * the next capture.
      */
     fun onNoticeClosed(reason: NexusNoticeCloseReason) {
+        val confirmationExpired = confirmationShown && reason == NexusNoticeCloseReason.TIMEOUT
         // Read before the reset below clears them: see the holder case at the end.
         val inFlight = lastInFlightBody
         val inFlightUsesLines = lastInFlightUsesLines
@@ -833,6 +915,10 @@ internal class AssistantUiController(
         if (reason == NexusNoticeCloseReason.USER) {
             cancelPipeline()
             resetCapture()
+        }
+        if (confirmationExpired) {
+            showError(CONFIRMATION_EXPIRED)
+            return
         }
         // A band's life is capped at 90 s from its show, and updates never move that cap, so a
         // long tool turn or a long readout outlives it. Under the holder that would leave the
@@ -1122,6 +1208,7 @@ internal class AssistantUiController(
     }
 
     private fun startNewState(flushTranscript: Boolean = true): Long {
+        leaveConfirmation()
         if (flushTranscript) {
             flushPendingTranscript()
         } else {
@@ -1214,6 +1301,11 @@ internal class AssistantUiController(
         const val HOLDER_SPEECH_BUDGET_MS = 120_000L
         const val OPTIONS_CONTENT_KEY = "options"
         const val NOTICE_TITLE = "Assistant"
+        const val CONFIRMATION_TITLE = "Send this?"
+        const val CONFIRMATION_EXPIRED = "Not sent: the confirmation timed out."
+
+        /** The contract's longest TTL; timing out only ever drops the draft. */
+        const val CONFIRMATION_TTL_MS = NoticeSurfaceContract.MAX_TTL_MS
         const val ELLIPSIS = "…"
         const val LISTENING_BODY = "Listening…"
         const val TRANSCRIBING_BODY = "Transcribing…"
