@@ -2243,6 +2243,20 @@ class AssistantUiControllerTest {
     }
 
     @Test
+    fun `the controller says when it is asking so swipes can leave the band alone`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        assertFalse(controller.isConfirming)
+
+        controller.showConfirmation(confirmationLines, confirmationActions)
+        assertTrue(controller.isConfirming)
+
+        controller.onNoticeClosed(NexusNoticeCloseReason.USER)
+        assertFalse(controller.isConfirming)
+        controller.onClose()
+    }
+
+    @Test
     fun `a confirmation is refused when the band is not the render target`() = runTest {
         val renderer = FakeRenderer(supportsNotice = false)
         val controller = controller(renderer)

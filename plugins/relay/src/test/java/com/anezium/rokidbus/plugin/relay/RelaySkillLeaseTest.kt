@@ -181,6 +181,8 @@ class RelaySkillLeaseTest {
         assertFalse(noticeTraffic(mark).contains(BusPaths.NOTICE_SHOW))
 
         invoke(RelaySkills.SEND_REPLY, JSONObject().put("draft", draft))
+        RelayHubFixture.idleFor(3_000)
+        assertFalse(noticeTraffic(mark).contains(BusPaths.NOTICE_SHOW))
         RelayHubFixture.idleFor(1_100)
         assertTrue(noticeTraffic(mark).contains(BusPaths.NOTICE_SHOW))
     }

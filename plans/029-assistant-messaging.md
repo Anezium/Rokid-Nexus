@@ -273,3 +273,5 @@ only those who install it. If G4 fails, stop and redesign before releasing SMS.
 | D3 | Open the store page from Assistant in the first release? | Text first; slice 5 after, since it forces a hub release |
 | D4 | Release both, or Relay first? | Assistant and Relay first, since SMS has open device gates |
 | D5 | A new message from the same sender arrives before Send? | The reply still goes. Only another sender or a lost reply action refuses it |
+| D6 | Long drafts? | A band with Send and Cancel cannot page and clips at eight lines (measured). Past 200 columns the draft gets Send alone, which pages, with Back as the cancel; the limit is 1,000 characters |
+| D7 | A message arrives while the wearer reads a draft? | Relay holds its own band until the send, plus 4 s for the result, or 60 s. Another plugin's band still replaces the confirmation and drops the draft |

@@ -93,12 +93,20 @@ internal data class ConfirmationPreview(
      * what wrapping loses. A longer one gets Send alone, which leaves swipes free to turn pages.
      */
     val fitsTwoChipBand: Boolean
+        get() = columns <= MAX_TWO_CHIP_COLUMNS
+
+    /** Past the fourteen lines a page holds, so saying it can be swiped is not a promise it breaks. */
+    val spansPages: Boolean
+        get() = columns > MIN_PAGED_COLUMNS
+
+    private val columns: Int
         get() = text.codePoints().toArray().sumOf { if (it >= WIDE_FROM) 2 else 1 as Int } +
-            (if (detail != null) COLUMNS_PER_LINE else 0) <= MAX_TWO_CHIP_COLUMNS
+            (if (detail != null) COLUMNS_PER_LINE else 0)
 
     companion object {
         const val MAX_TEXT_CHARS = 1_000
         private const val MAX_TWO_CHIP_COLUMNS = 200
+        private const val MIN_PAGED_COLUMNS = 400
         private const val COLUMNS_PER_LINE = 37
 
         /** From Hangul up: CJK and emoji draw about two columns of the band's monospace face. */
@@ -210,7 +218,8 @@ internal class AssistantConfirmationGate(
         const val SEND_PREFIX = "confirm-send:"
         const val CANCEL_PREFIX = "confirm-cancel:"
 
-        const val LONG_DRAFT_FOOTER = "Swipe to read · Back to cancel"
+        const val LONG_DRAFT_FOOTER = "Back to cancel"
+        const val PAGED_DRAFT_FOOTER = "Swipe to read · Back to cancel"
 
         fun actions(token: String, withCancel: Boolean = true): List<NexusNoticeAction> = buildList {
             add(NexusNoticeAction("$SEND_PREFIX$token", "send", "Send"))
@@ -314,7 +323,11 @@ internal class AssistantConfirmationFlow(
         val shown = ui.showConfirmation(
             preview.lines,
             AssistantConfirmationGate.actions(pending.token, withCancel = preview.fitsTwoChipBand),
-            AssistantConfirmationGate.LONG_DRAFT_FOOTER.takeUnless { preview.fitsTwoChipBand },
+            when {
+                preview.fitsTwoChipBand -> null
+                preview.spansPages -> AssistantConfirmationGate.PAGED_DRAFT_FOOTER
+                else -> AssistantConfirmationGate.LONG_DRAFT_FOOTER
+            },
         )
         if (!shown) {
             gate.drop()

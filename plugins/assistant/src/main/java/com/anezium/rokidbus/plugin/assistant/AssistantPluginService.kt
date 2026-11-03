@@ -367,7 +367,8 @@ class AssistantPluginService : NexusPluginService() {
             KeyEvent.KEYCODE_DPAD_DOWN,
             KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_DPAD_RIGHT,
-            -> if (!optionsMenu.isOpen && uiController.isAnchored) openOptionsMenu()
+            // A one-page band claims no swipe, and the options menu would throw its draft away.
+            -> if (!optionsMenu.isOpen && uiController.isAnchored && !uiController.isConfirming) openOptionsMenu()
             KeyEvent.KEYCODE_ENTER,
             KeyEvent.KEYCODE_DPAD_CENTER,
             -> when {

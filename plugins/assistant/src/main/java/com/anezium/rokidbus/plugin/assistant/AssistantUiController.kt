@@ -209,6 +209,10 @@ internal class AssistantUiController(
     internal val isEngagedNoticeEpisode: Boolean
         get() = noticeShown && noticeMode == AssistantNoticeMode.ENGAGED
 
+    /** The band is asking the wearer to confirm a send. */
+    val isConfirming: Boolean
+        get() = confirmationShown
+
     /** The typed-question field is open on the card tier. */
     val isTyping: Boolean
         get() = typingOpen

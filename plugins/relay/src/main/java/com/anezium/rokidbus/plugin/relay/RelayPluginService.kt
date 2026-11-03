@@ -158,7 +158,7 @@ class RelayPluginService : NexusPluginService() {
                 if (isSend) invocation.unknown() else invocation.fail(SkillErrorCodes.UNAVAILABLE)
             }
             if (isSend) {
-                NotificationControl.releaseDraftHold()
+                NotificationControl.holdNoticesForSendResult()
             } else if (invocation.operationId == RelaySkills.PREPARE_REPLY && outcome is RelaySkillOutcome.Completed) {
                 NotificationControl.holdNoticesForDraft()
             }

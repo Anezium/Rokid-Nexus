@@ -39,7 +39,7 @@
       "id": "prepare_reply",
       "version": 1,
       "label": "Draft a reply",
-      "description": "Drafts a reply in a conversation listed by list_reply_threads and sends nothing. The wearer then reads the draft on the glasses and decides. Text is at most 300 characters.",
+      "description": "Drafts a reply in a conversation listed by list_reply_threads and sends nothing. The wearer then reads the draft on the glasses and decides. Text is at most 1000 characters.",
       "examples": ["Tell Coralie we meet at 3 pm"],
       "effect": "read", "cancellable": false, "deduplicates": true,
       "requires": [], "prerequisites": ["notification_access"],
@@ -48,7 +48,7 @@
         "type": "object",
         "properties": {
           "thread": {"type": "string", "nexusRef": "relay_thread"},
-          "text": {"type": "string", "minLength": 1, "maxLength": 300}
+          "text": {"type": "string", "minLength": 1, "maxLength": 1000}
         },
         "required": ["thread", "text"]
       },
@@ -58,7 +58,7 @@
           "draft": {"type": "string", "nexusRef": "relay_draft"},
           "recipient": {"type": "string", "maxLength": 64},
           "via": {"type": "string", "maxLength": 40},
-          "text": {"type": "string", "maxLength": 300}
+          "text": {"type": "string", "maxLength": 1000}
         },
         "required": ["draft", "recipient", "via", "text"]
       }

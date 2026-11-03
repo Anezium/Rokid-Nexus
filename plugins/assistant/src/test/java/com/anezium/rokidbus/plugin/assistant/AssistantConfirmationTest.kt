@@ -244,6 +244,12 @@ class AssistantConfirmationTest {
         flow().present(gate.stagedFor("turn-1")!!)
         assertEquals(listOf("Send"), ui.confirmationActions.map { it.label })
         assertEquals(AssistantConfirmationGate.LONG_DRAFT_FOOTER, ui.confirmationFooter)
+
+        gate.drop()
+        stage(draftData(text = "x".repeat(401)))
+        flow().present(gate.stagedFor("turn-1")!!)
+        assertEquals(listOf("Send"), ui.confirmationActions.map { it.label })
+        assertEquals(AssistantConfirmationGate.PAGED_DRAFT_FOOTER, ui.confirmationFooter)
     }
 
     @Test
