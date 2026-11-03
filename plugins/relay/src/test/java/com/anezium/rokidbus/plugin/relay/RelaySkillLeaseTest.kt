@@ -166,6 +166,43 @@ class RelaySkillLeaseTest {
     }
 
     @Test
+    fun `a message arriving while a draft waits holds its band until the send, and it does not replace the confirmation`() {
+        start()
+        post()
+        RelayHubFixture.idleFor(2_000)
+        val thread = ReplyRepository.stableId(RelayHubFixture.chat(app).key)
+        val draft = invoke(RelaySkills.PREPARE_REPLY, JSONObject().put("thread", thread).put("text", "On my way"))
+            .getJSONObject("data").getString("draft")
+        RelayHubFixture.idleFor(2_000)
+        val mark = hub.sent.size
+
+        post(RelayHubFixture.chat(app, text = "a newer message"))
+        RelayHubFixture.idleFor(2_000)
+        assertFalse(noticeTraffic(mark).contains(BusPaths.NOTICE_SHOW))
+
+        invoke(RelaySkills.SEND_REPLY, JSONObject().put("draft", draft))
+        RelayHubFixture.idleFor(1_100)
+        assertTrue(noticeTraffic(mark).contains(BusPaths.NOTICE_SHOW))
+    }
+
+    @Test
+    fun `a draft nobody sends stops holding bands by itself`() {
+        start()
+        post()
+        RelayHubFixture.idleFor(2_000)
+        val thread = ReplyRepository.stableId(RelayHubFixture.chat(app).key)
+        invoke(RelaySkills.PREPARE_REPLY, JSONObject().put("thread", thread).put("text", "On my way"))
+        RelayHubFixture.idleFor(2_000)
+        val mark = hub.sent.size
+
+        post(RelayHubFixture.chat(app, text = "a newer message"))
+        assertFalse(noticeTraffic(mark).contains(BusPaths.NOTICE_SHOW))
+
+        RelayHubFixture.idleFor(60_000)
+        assertTrue(noticeTraffic(mark).contains(BusPaths.NOTICE_SHOW))
+    }
+
+    @Test
     fun `an operation Relay does not know is refused, with nothing dispatched`() {
         start()
         val result = invoke("delete_everything")

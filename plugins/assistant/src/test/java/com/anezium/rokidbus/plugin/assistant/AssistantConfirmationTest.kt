@@ -233,6 +233,33 @@ class AssistantConfirmationTest {
     }
 
     @Test
+    fun `a short draft gets Send and Cancel and a long one gets Send alone so it can page`() = runTest {
+        stage(draftData(text = "x".repeat(200)))
+        flow().present(gate.stagedFor("turn-1")!!)
+        assertEquals(listOf("Send", "Cancel"), ui.confirmationActions.map { it.label })
+        assertNull(ui.confirmationFooter)
+
+        gate.drop()
+        stage(draftData(text = "x".repeat(201)))
+        flow().present(gate.stagedFor("turn-1")!!)
+        assertEquals(listOf("Send"), ui.confirmationActions.map { it.label })
+        assertEquals(AssistantConfirmationGate.LONG_DRAFT_FOOTER, ui.confirmationFooter)
+    }
+
+    @Test
+    fun `wide characters count double when deciding what fits the band`() {
+        val parse = { text: String -> ConfirmationPreview.parse(draftData(text = text))!! }
+        assertTrue(parse("한".repeat(100)).fitsTwoChipBand)
+        assertFalse(parse("한".repeat(101)).fitsTwoChipBand)
+    }
+
+    @Test
+    fun `the voice never gets more than speech accepts`() {
+        val preview = ConfirmationPreview.parse(draftData(text = "x".repeat(ConfirmationPreview.MAX_TEXT_CHARS)))!!
+        assertTrue(preview.spoken.length <= 1_024)
+    }
+
+    @Test
     fun `control characters that could reverse a name are stripped from the preview`() = runTest {
         stage(draftData(recipient = "Cora‮lie"))
         flow().present(gate.stagedFor("turn-1")!!)
@@ -492,13 +519,15 @@ class AssistantConfirmationTest {
         var showConfirmationResult = true
         var confirmationLines: List<String> = emptyList()
         var confirmationActions: List<NexusNoticeAction> = emptyList()
+        var confirmationFooter: String? = null
         val notices = mutableListOf<String>()
         val progress = mutableListOf<String>()
         val results = mutableListOf<String>()
 
-        override fun showConfirmation(lines: List<String>, actions: List<NexusNoticeAction>): Boolean {
+        override fun showConfirmation(lines: List<String>, actions: List<NexusNoticeAction>, footer: String?): Boolean {
             confirmationLines = lines
             confirmationActions = actions
+            confirmationFooter = footer
             return showConfirmationResult
         }
 

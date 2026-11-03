@@ -133,6 +133,7 @@ internal class AssistantUiController(
 
     /** The band is asking the wearer to confirm a send; see [showConfirmation]. */
     private var confirmationShown = false
+    private var confirmationHoldJob: Job? = null
 
     /** A Type tap is being served: from the quiet band's show until the field is retired. */
     private var typingOpen = false
@@ -710,8 +711,9 @@ internal class AssistantUiController(
      * goes up as a fresh show, because only a fresh question can be answered, and it stays for the
      * band's whole life; speech restarts that life rather than shortening it.
      */
-    override fun showConfirmation(lines: List<String>, actions: List<NexusNoticeAction>): Boolean {
-        if (!useNoticeBand()) return false
+    override fun showConfirmation(lines: List<String>, actions: List<NexusNoticeAction>, footer: String?): Boolean {
+        // An open field draws in place of the band's action row, so Send could not be reached.
+        if (!useNoticeBand() || typingOpen) return false
         cancelLauncherHint()
         stopKeepalive()
         startNewState()
@@ -719,6 +721,7 @@ internal class AssistantUiController(
             NexusNotice(
                 title = CONFIRMATION_TITLE,
                 lines = lines,
+                footer = footer,
                 actions = actions,
                 ttlMs = CONFIRMATION_TTL_MS,
                 backdrop = inkOwnsAnswer,
@@ -730,7 +733,7 @@ internal class AssistantUiController(
         }
         noticeShown = true
         noticeMode = AssistantNoticeMode.ENGAGED
-        bandFooter = null
+        bandFooter = footer
         bandUncertain = false
         bandActions = actions
         confirmationShown = true
@@ -770,6 +773,8 @@ internal class AssistantUiController(
     private fun leaveConfirmation() {
         if (!confirmationShown) return
         confirmationShown = false
+        confirmationHoldJob?.cancel()
+        confirmationHoldJob = null
         onConfirmationLost()
     }
 
@@ -808,6 +813,17 @@ internal class AssistantUiController(
      * remainder once the voice stops.
      */
     fun onAnswerSpeechStarted() {
+        if (confirmationShown && noticeShown) {
+            // A long draft takes longer to read aloud than a band's TTL; its hard lifetime still ends it.
+            confirmationHoldJob?.cancel()
+            confirmationHoldJob = scope.launch {
+                while (true) {
+                    delay(CONFIRMATION_SPEECH_RENEW_MS)
+                    notices.update(NexusNoticeUpdate(ttlMs = CONFIRMATION_TTL_MS))
+                }
+            }
+            return
+        }
         val body = spokenAnswerBody ?: return
         if (!useNoticeBand() || !noticeShown) return
         lastInFlightBody = body
@@ -816,6 +832,8 @@ internal class AssistantUiController(
     }
 
     fun onAnswerSpeechFinished() {
+        confirmationHoldJob?.cancel()
+        confirmationHoldJob = null
         // The wearer has only now heard the whole draft, so the full window to answer starts here.
         if (confirmationShown && noticeShown) notices.update(NexusNoticeUpdate(ttlMs = CONFIRMATION_TTL_MS))
         val body = spokenAnswerBody
@@ -1306,6 +1324,7 @@ internal class AssistantUiController(
 
         /** The contract's longest TTL; timing out only ever drops the draft. */
         const val CONFIRMATION_TTL_MS = NoticeSurfaceContract.MAX_TTL_MS
+        const val CONFIRMATION_SPEECH_RENEW_MS = 20_000L
         const val ELLIPSIS = "…"
         const val LISTENING_BODY = "Listening…"
         const val TRANSCRIBING_BODY = "Transcribing…"

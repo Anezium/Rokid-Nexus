@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.plugin.assistant
 
 import com.anezium.rokidbus.client.plugin.NexusNoticeAction
+import com.anezium.rokidbus.shared.TtsContract
 import com.anezium.rokidbus.shared.skills.SkillAvailability
 import com.anezium.rokidbus.shared.skills.SkillCatalogEntry
 import com.anezium.rokidbus.shared.skills.SkillDispatch
@@ -70,8 +71,8 @@ internal data class GatedCommit(val operation: GatedSkillOperation, val entry: S
 
 /**
  * What the provider says the send will do, in its own words. Plain untrusted text: it is displayed
- * and read aloud, never given to the model as an instruction. Anything too long to fit the band is
- * refused rather than clipped, since the wearer must be able to read all of what would go.
+ * and read aloud, never given to the model as an instruction. Past [MAX_TEXT_CHARS] it is refused
+ * rather than clipped, since the wearer must be able to read all of what would go.
  */
 internal data class ConfirmationPreview(
     val draft: String,
@@ -84,11 +85,24 @@ internal data class ConfirmationPreview(
         get() = listOfNotNull("To $recipient · $via", text, detail)
 
     val spoken: String
-        get() = listOfNotNull("To $recipient, $via.", text, detail).joinToString(" ")
+        get() = listOfNotNull("To $recipient, $via.", text, detail).joinToString(" ").take(TtsContract.MAX_TEXT_CHARS)
+
+    /**
+     * Whether the message fits a band with a row of two, which cannot page and clips at eight lines:
+     * measured on the glasses, seven lines of about 37 columns are left under the recipient, less
+     * what wrapping loses. A longer one gets Send alone, which leaves swipes free to turn pages.
+     */
+    val fitsTwoChipBand: Boolean
+        get() = text.codePoints().toArray().sumOf { if (it >= WIDE_FROM) 2 else 1 as Int } +
+            (if (detail != null) COLUMNS_PER_LINE else 0) <= MAX_TWO_CHIP_COLUMNS
 
     companion object {
-        /** Past this, a band with a row of two, which cannot page, may clip the message. */
-        const val MAX_TEXT_CHARS = 300
+        const val MAX_TEXT_CHARS = 1_000
+        private const val MAX_TWO_CHIP_COLUMNS = 200
+        private const val COLUMNS_PER_LINE = 37
+
+        /** From Hangul up: CJK and emoji draw about two columns of the band's monospace face. */
+        private const val WIDE_FROM = 0x1100
         private const val MAX_RECIPIENT_CHARS = 64
         private const val MAX_VIA_CHARS = 40
         private const val MAX_DETAIL_CHARS = 80
@@ -196,10 +210,12 @@ internal class AssistantConfirmationGate(
         const val SEND_PREFIX = "confirm-send:"
         const val CANCEL_PREFIX = "confirm-cancel:"
 
-        fun actions(token: String): List<NexusNoticeAction> = listOf(
-            NexusNoticeAction("$SEND_PREFIX$token", "send", "Send"),
-            NexusNoticeAction("$CANCEL_PREFIX$token", "close", "Cancel"),
-        )
+        const val LONG_DRAFT_FOOTER = "Swipe to read · Back to cancel"
+
+        fun actions(token: String, withCancel: Boolean = true): List<NexusNoticeAction> = buildList {
+            add(NexusNoticeAction("$SEND_PREFIX$token", "send", "Send"))
+            if (withCancel) add(NexusNoticeAction("$CANCEL_PREFIX$token", "close", "Cancel"))
+        }
     }
 }
 
@@ -262,7 +278,7 @@ internal class ConfirmationStaging(
 /** The band's side of a confirmation; the UI controller draws all four. */
 internal interface AssistantConfirmationUi {
     /** False when the band could not be raised, in which case the wearer was asked nothing. */
-    fun showConfirmation(lines: List<String>, actions: List<NexusNoticeAction>): Boolean
+    fun showConfirmation(lines: List<String>, actions: List<NexusNoticeAction>, footer: String? = null): Boolean
     fun showConfirmationProgress(body: String)
     fun showConfirmationResult(body: String)
     fun showConfirmationNotice(body: String)
@@ -295,7 +311,12 @@ internal class AssistantConfirmationFlow(
     fun present(pending: PendingConfirmation): Boolean {
         val preview = pending.preview
         gate.markPresented(pending.token)
-        if (!ui.showConfirmation(preview.lines, AssistantConfirmationGate.actions(pending.token))) {
+        val shown = ui.showConfirmation(
+            preview.lines,
+            AssistantConfirmationGate.actions(pending.token, withCancel = preview.fitsTwoChipBand),
+            AssistantConfirmationGate.LONG_DRAFT_FOOTER.takeUnless { preview.fitsTwoChipBand },
+        )
+        if (!shown) {
             gate.drop()
             ui.showConfirmationNotice(COULD_NOT_ASK)
             return false

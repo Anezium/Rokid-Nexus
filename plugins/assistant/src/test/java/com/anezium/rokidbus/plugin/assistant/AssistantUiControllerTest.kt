@@ -2254,6 +2254,17 @@ class AssistantUiControllerTest {
     }
 
     @Test
+    fun `a confirmation is refused while the typed field would hide its row`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true, supportsQuestionField = true)
+        val controller = controller(renderer)
+        controller.beginTyping()
+        runCurrent()
+
+        assertFalse(controller.showConfirmation(confirmationLines, confirmationActions))
+        controller.onClose()
+    }
+
+    @Test
     fun `a band that fails to go up loses the confirmation`() = runTest {
         val renderer = FakeRenderer(supportsNotice = true)
         renderer.failNextShow = true
@@ -2379,6 +2390,35 @@ class AssistantUiControllerTest {
 
         assertEquals(listOf(NoticeSurfaceContract.MAX_TTL_MS), renderer.updateTtls)
         assertEquals(listOf(emptyList<NexusNoticeAction>()), renderer.noticeActions)
+        controller.onClose()
+    }
+
+    @Test
+    fun `a long reading keeps renewing the band until the voice ends`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        controller.showConfirmation(confirmationLines, confirmationActions)
+        runCurrent()
+        renderer.clear()
+
+        controller.onAnswerSpeechStarted()
+        advanceTimeBy(AssistantUiController.CONFIRMATION_SPEECH_RENEW_MS * 2 + 1)
+        assertEquals(2, renderer.updateTtls.size)
+
+        controller.onAnswerSpeechFinished()
+        advanceTimeBy(AssistantUiController.CONFIRMATION_SPEECH_RENEW_MS * 3)
+        assertEquals(3, renderer.updateTtls.size)
+        controller.onClose()
+    }
+
+    @Test
+    fun `a footer on the confirmation goes up with it and a later state drops it`() = runTest {
+        val renderer = FakeRenderer(supportsNotice = true)
+        val controller = controller(renderer)
+        controller.showConfirmation(confirmationLines, confirmationActions.take(1), AssistantConfirmationGate.LONG_DRAFT_FOOTER)
+        runCurrent()
+
+        assertEquals(listOf<String?>(AssistantConfirmationGate.LONG_DRAFT_FOOTER), renderer.noticeFooters)
         controller.onClose()
     }
 

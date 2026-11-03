@@ -1625,6 +1625,7 @@ class AssistantPluginService : NexusPluginService() {
                 }
                 service.stopAnswerSpeech()
                 service.clearInkSurface(hide = true)
+                if (service.uiController.isTyping) service.uiController.endTyping(AssistantTypingEnd.SUBMITTED)
                 service.launchAssistantPipeline(question)
             }
             return true

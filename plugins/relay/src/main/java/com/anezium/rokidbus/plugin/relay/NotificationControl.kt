@@ -6,6 +6,7 @@ import android.os.Looper
 
 internal object NotificationControl {
     private const val SKILL_LEASE_SETTLE_MS = 1_000L
+    private const val DRAFT_NOTICE_HOLD_MS = 60_000L
     private val main = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -111,7 +112,7 @@ internal object NotificationControl {
      * gone waits here instead. Main thread only.
      */
     val skillCallHoldsNotices: Boolean
-        get() = skillCalls > 0
+        get() = skillCalls > 0 || android.os.SystemClock.elapsedRealtime() < draftHoldUntilMs
 
     fun skillCallStarted() {
         skillCalls += 1
@@ -121,8 +122,29 @@ internal object NotificationControl {
     fun skillCallAnswered() {
         main.postDelayed({
             skillCalls = (skillCalls - 1).coerceAtLeast(0)
-            if (skillCalls == 0) noticeCallbacks()?.onSkillCallsSettled()
+            if (!skillCallHoldsNotices) noticeCallbacks()?.onSkillCallsSettled()
         }, SKILL_LEASE_SETTLE_MS)
+    }
+
+    private var draftHoldUntilMs = 0L
+    private var draftHoldRelease: Runnable? = null
+
+    /**
+     * A draft was handed out, so the wearer is probably reading it on Assistant's band, and a band
+     * of Relay's would take that band's place and throw the draft away. A message arriving now waits
+     * instead, until the send or this bound: Relay never hears of a Cancel, so it must end by itself.
+     */
+    fun holdNoticesForDraft() {
+        draftHoldUntilMs = android.os.SystemClock.elapsedRealtime() + DRAFT_NOTICE_HOLD_MS
+        draftHoldRelease?.let(main::removeCallbacks)
+        draftHoldRelease = Runnable { releaseDraftHold() }.also { main.postDelayed(it, DRAFT_NOTICE_HOLD_MS) }
+    }
+
+    fun releaseDraftHold() {
+        draftHoldUntilMs = 0L
+        draftHoldRelease?.let(main::removeCallbacks)
+        draftHoldRelease = null
+        if (skillCalls == 0) noticeCallbacks()?.onSkillCallsSettled()
     }
 
     /** The notice band's callbacks, when the listener is connected; the plugin service forwards to them. */
