@@ -308,10 +308,22 @@ class RelaySkillsTest {
     }
 
     @Test
-    fun `the same key reposted by the same sender also fails, since the draft pins the exact reply`() {
+    fun `a new message from the same sender before Send still lets the reply go`() {
         val draft = prepare(post(chat(body = "first")))
 
         post(chat(body = "second", whenMs = 200))
+
+        assertEquals(RelaySkillOutcome.Accepted, send(draft))
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertEquals(listOf("We meet at 3 pm"), sentTexts)
+    }
+
+    @Test
+    fun `a repost that drops the reply action before Send fails with nothing sent`() {
+        settings.setAppPolicy(source, RelayAppPolicy.ALL)
+        val draft = prepare(post(chat(body = "first")))
+
+        post(chat(body = "second", whenMs = 200, reply = false))
 
         assertEquals(failure(RelaySkills.AUTHORITY_LOST), send(draft))
         shadowOf(android.os.Looper.getMainLooper()).idle()

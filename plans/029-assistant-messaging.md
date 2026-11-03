@@ -146,14 +146,15 @@ Declares a `SKILLS` catalog with `notification_access` as prerequisite.
 | Operation | Effect | Behavior |
 |---|---|---|
 | `list_reply_threads` | `read` | Optional name filter, at most 5 live repliable threads: sender, app, age, and a `relay_thread` reference. No message text |
-| `prepare_reply` | `read` | Takes a thread reference and text. The draft binds the thread id, package, sender title, and the exact `PendingReply` |
+| `prepare_reply` | `read` | Takes a thread reference and text. The draft binds the thread id, package, and sender title |
 | `send_reply` | `action` | Takes the draft reference. Not cancellable, deduplicated |
 
 - Threads from apps set to Off, redacted threads, and threads whose previews are hidden
   are not listed.
-- At commit, the live `PendingReply` must still be the drafted one, with the same
-  package and sender title. Anything else fails with `authority_lost`, dispatch `none`.
-  This also covers an app reusing a notification key for another chat.
+- At commit, the thread must still have a live reply action, with the same package and
+  sender title. Anything else fails with `authority_lost`, dispatch `none`. This also
+  covers an app reusing a notification key for another chat. A new message from the same
+  sender does not stop the reply (D5); it goes through the newest action.
 - Mapping from `ReplySendResult`: success gives `accepted`; `Missing`, `Blank`,
   `NoFreeFormInput` and `Failed` with `authorityLost` give dispatch `none`; any other
   `Failed` gives `unknown`. Never retried, as in the composer.
@@ -271,3 +272,4 @@ only those who install it. If G4 fails, stop and redesign before releasing SMS.
 | D2 | Accept Relay returning to Pending on update? | Accepted, with a release note. It is the existing rule for any plugin adding a catalog |
 | D3 | Open the store page from Assistant in the first release? | Text first; slice 5 after, since it forces a hub release |
 | D4 | Release both, or Relay first? | Assistant and Relay first, since SMS has open device gates |
+| D5 | A new message from the same sender arrives before Send? | The reply still goes. Only another sender or a lost reply action refuses it |

@@ -210,13 +210,20 @@ internal object ReplyRepository {
     }
 
     /**
-     * Sends only if [drafted] is still the thread's live reply object. A repost under the same key
-     * is a new object and fails here: the app may reuse a key for another chat, and the wearer
-     * confirmed this recipient. It goes through [drafted]'s own action, never a newer one.
+     * Sends only to the app and sender the wearer confirmed. A new message from them reposts the
+     * notification, and the reply still goes, through the newest action, the only one the app still
+     * vouches for. The same key under another sender fails: an app may reuse a key for another chat.
      */
-    fun sendDrafted(context: Context, notificationId: String, drafted: PendingReply, text: String): ReplySendResult {
-        if (synchronized(this) { pending[notificationId] } !== drafted) return ReplySendResult.Missing
-        return send(context, notificationId, drafted, text)
+    fun sendDrafted(
+        context: Context,
+        notificationId: String,
+        packageName: String,
+        senderTitle: String,
+        text: String,
+    ): ReplySendResult {
+        val live = synchronized(this) { pending[notificationId] } ?: return ReplySendResult.Missing
+        if (live.content.packageName != packageName || live.content.title != senderTitle) return ReplySendResult.Missing
+        return send(context, notificationId, live, text)
     }
 
     private fun send(context: Context, notificationId: String, reply: PendingReply, text: String): ReplySendResult {

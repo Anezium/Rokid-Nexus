@@ -16,15 +16,20 @@ internal sealed interface RelaySkillOutcome {
 }
 
 /**
- * A reply waiting for the wearer's Send. It pins the exact reply object it was written against, so
- * a later post under the same notification key, which may be another chat, can never receive it.
- * Numbers of drafts and their life are bounded: this is memory only, and it holds a live token.
+ * Replies waiting for the wearer's Send, in memory only. Each names the thread, app and sender the
+ * wearer will confirm and holds no reply token: the send asks for the live one.
  */
 internal class RelayReplyDrafts(
     private val clock: () -> Long = android.os.SystemClock::elapsedRealtime,
     private val ids: () -> String = { UUID.randomUUID().toString() },
 ) {
-    class Draft(val threadId: String, val reply: ReplyRepository.PendingReply, val text: String, val expiresAtMs: Long)
+    class Draft(
+        val threadId: String,
+        val packageName: String,
+        val senderTitle: String,
+        val text: String,
+        val expiresAtMs: Long,
+    )
 
     private val drafts = linkedMapOf<String, Draft>()
 
@@ -32,7 +37,7 @@ internal class RelayReplyDrafts(
     fun put(threadId: String, reply: ReplyRepository.PendingReply, text: String): String {
         prune()
         val id = ids()
-        drafts[id] = Draft(threadId, reply, text, clock() + DRAFT_LIFETIME_MS)
+        drafts[id] = Draft(threadId, reply.content.packageName, reply.content.title, text, clock() + DRAFT_LIFETIME_MS)
         while (drafts.size > MAX_DRAFTS) drafts.remove(drafts.keys.first())
         return id
     }
@@ -120,7 +125,8 @@ internal class RelaySkills(
 
     private fun send(draftId: String): RelaySkillOutcome {
         val draft = drafts.take(draftId) ?: return RelaySkillOutcome.Failed(SkillErrorCodes.STALE_REFERENCE)
-        return when (val result = ReplyRepository.sendDrafted(context, draft.threadId, draft.reply, draft.text)) {
+        val result = ReplyRepository.sendDrafted(context, draft.threadId, draft.packageName, draft.senderTitle, draft.text)
+        return when (result) {
             ReplySendResult.Sent -> RelaySkillOutcome.Accepted
             ReplySendResult.Missing,
             ReplySendResult.Blank,
