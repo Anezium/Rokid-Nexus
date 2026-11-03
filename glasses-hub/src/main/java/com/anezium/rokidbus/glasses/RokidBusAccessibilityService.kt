@@ -2038,16 +2038,15 @@ internal object NexusSession {
             renderedState = null
         }
 
-        /** Reuses the launcher's own open, and its ring handoff to the plugin's surface. */
+        /**
+         * Reuses the launcher's own open, without its ring handoff: the session keeps the ring until
+         * the surface it waits for is presented, and a handoff here would outlive that surface.
+         */
         private fun openPlugin(effect: SessionEffect.SendLauncherOpen) {
             val result = GlassesHub.openLauncherEntry(effect.pluginId)
             log("Session plugin open result: $result")
             if (!result.startsWith("launcherOpen=true")) {
                 dispatch(SessionEvent.OpenFailed(effect.token, OpenFailure.SEND_FAILED))
-                return
-            }
-            if (GlassesHub.launcherEntryOpensSurface(effect.pluginId)) {
-                appContext?.let(RingFocusBroadcastCoordinator::beginSurfaceHandoff)
             }
         }
 

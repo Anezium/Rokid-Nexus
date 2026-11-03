@@ -226,6 +226,34 @@ class LauncherHostLinkLossTest {
     }
 
     @Test
+    fun `a plugin surface opened from the session gives the ring back as soon as it closes`() {
+        withRingFocus {
+            launchSurfacePlugin()
+            assertTrue("${NexusSession.state}", NexusSession.state is SessionState.Launching)
+            assertEquals(true, ringFocus())
+
+            showSurface()
+            assertEquals(SessionState.Closed, NexusSession.state)
+            assertEquals(true, ringFocus())
+
+            hideSurface()
+            assertEquals(false, ringFocus())
+        }
+    }
+
+    @Test
+    fun `an open cancelled from the session leaves no ring hold behind once the session closes`() {
+        withRingFocus {
+            launchSurfacePlugin()
+            send(SessionEvent.Back(now()))
+            assertEquals(true, ringFocus())
+
+            closeSession()
+            assertEquals(false, ringFocus())
+        }
+    }
+
+    @Test
     fun `launching the app opens the session once and keeps an open one`() {
         linkUp()
 
@@ -1225,6 +1253,54 @@ class LauncherHostLinkLossTest {
     /** The paths the glasses sent or tried to send the phone, one per attempt. */
     private fun outbound(lines: List<String>): List<String> = OutboundRecord.paths(lines)
 
+    // The ring.
+
+    private fun withRingFocus(block: () -> Unit) {
+        linkUp()
+        val plugins = JSONArray().put(JSONObject().put("id", RING_PLUGIN).put("displayName", "Surface Only"))
+        GlassesHub.onRemoteEnvelope(BusEnvelope(path = BusPaths.LAUNCHER_LIST, payload = JSONObject().put("plugins", plugins)))
+        idle()
+        RingFocusBroadcastCoordinator.onServiceConnected(app, surfaceActive = false, noticeOwnsRing = false, launcherPageShown = false)
+        try {
+            block()
+        } finally {
+            SurfaceController.activeSurface()?.let { SurfaceController.closeUnseen(it.surfaceId) }
+            idle()
+            RingFocusBroadcastCoordinator.onServiceDestroyed(app)
+        }
+    }
+
+    /** The last focus R08 Access Bridge heard, without letting any later timer run. */
+    private fun ringFocus(): Boolean? = shadowOf(app).broadcastIntents
+        .lastOrNull { it.action == "com.anezium.r08accessbridge.action.NEXUS_RING_FOCUS" }
+        ?.getBooleanExtra("focused", false)
+
+    private fun launchSurfacePlugin() {
+        openRoot()
+        selectRootStop { it.kind == RootStopKind.APPLICATIONS }
+        freshPress()
+        assertEquals(RootStops.APPLICATIONS_PAGE_ID, top().pageId)
+        selectRow { it.label == "Surface Only" }
+        freshPress()
+    }
+
+    private fun showSurface() {
+        val payload = JSONObject()
+            .put("surfaceId", RING_SURFACE)
+            .put("ownerPluginId", RING_PLUGIN)
+            .put("seq", SEQ.incrementAndGet())
+            .put("kind", "card")
+            .put("title", "Surface Only")
+        SurfaceController.handleSurfaceEnvelope(app, BusEnvelope(path = BusPaths.SURFACE_SHOW, payload = payload))
+        idle()
+    }
+
+    private fun hideSurface() {
+        val payload = JSONObject().put("surfaceId", RING_SURFACE).put("seq", SEQ.incrementAndGet())
+        SurfaceController.handleSurfaceEnvelope(app, BusEnvelope(path = BusPaths.SURFACE_HIDE, payload = payload))
+        idle()
+    }
+
     private fun now() = SystemClock.uptimeMillis()
 
     private fun idle() = shadowOf(Looper.getMainLooper()).idle()
@@ -1275,6 +1351,8 @@ class LauncherHostLinkLossTest {
 
     private companion object {
         val SEQ = AtomicLong(System.nanoTime())
+        const val RING_PLUGIN = "surfaceonly"
+        const val RING_SURFACE = "surfaceonly:main"
         val REPLAYABLE = setOf(BusPaths.PAGE_REQUEST, BusPaths.PAGE_ACTION, BusPaths.ACTIVITY_ACTION)
         const val COMPOSE_PREFIX = "/core/compose/"
         const val AUTH_BOUND_MS = 5_000L
