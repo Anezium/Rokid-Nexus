@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "operations": [
+    {
+      "id": "list_reply_threads",
+      "version": 1,
+      "label": "Conversations you can reply to",
+      "description": "Lists at most five live conversations whose notification still offers a reply, newest first: sender, app, how long ago, and a reference. Message text is never returned, and a conversation with no notification left cannot be listed or started from here. Pass name to narrow by sender.",
+      "examples": ["Reply to Coralie", "Who can I answer right now?"],
+      "effect": "read", "cancellable": false, "deduplicates": true,
+      "requires": [], "prerequisites": ["notification_access"],
+      "data": ["text"],
+      "input": {
+        "type": "object",
+        "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 64}}
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "threads": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "properties": {
+                "thread": {"type": "string", "nexusRef": "relay_thread"},
+                "sender": {"type": "string", "maxLength": 64},
+                "app": {"type": "string", "maxLength": 40},
+                "age_minutes": {"type": "integer", "minimum": 0, "maximum": 1000000}
+              },
+              "required": ["thread", "sender", "app", "age_minutes"]
+            }
+          }
+        },
+        "required": ["threads"]
+      }
+    },
+    {
+      "id": "prepare_reply",
+      "version": 1,
+      "label": "Draft a reply",
+      "description": "Drafts a reply in a conversation listed by list_reply_threads and sends nothing. The wearer then reads the draft on the glasses and decides. Text is at most 300 characters.",
+      "examples": ["Tell Coralie we meet at 3 pm"],
+      "effect": "read", "cancellable": false, "deduplicates": true,
+      "requires": [], "prerequisites": ["notification_access"],
+      "data": ["text"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "thread": {"type": "string", "nexusRef": "relay_thread"},
+          "text": {"type": "string", "minLength": 1, "maxLength": 300}
+        },
+        "required": ["thread", "text"]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "draft": {"type": "string", "nexusRef": "relay_draft"},
+          "recipient": {"type": "string", "maxLength": 64},
+          "via": {"type": "string", "maxLength": 40},
+          "text": {"type": "string", "maxLength": 300}
+        },
+        "required": ["draft", "recipient", "via", "text"]
+      }
+    },
+    {
+      "id": "send_reply",
+      "version": 1,
+      "label": "Send a drafted reply",
+      "description": "Hands one drafted reply to the messaging app, once the wearer tapped Send on the glasses. The app gives no proof that it arrived. Fails without sending when the conversation changed since the draft.",
+      "examples": [],
+      "effect": "action", "cancellable": false, "deduplicates": true,
+      "requires": [], "prerequisites": ["notification_access"],
+      "data": ["status"],
+      "input": {
+        "type": "object",
+        "properties": {"draft": {"type": "string", "nexusRef": "relay_draft"}},
+        "required": ["draft"]
+      },
+      "output": {"type": "object", "properties": {}}
+    }
+  ]
+}

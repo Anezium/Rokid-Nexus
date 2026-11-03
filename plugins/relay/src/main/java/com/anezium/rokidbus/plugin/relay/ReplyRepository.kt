@@ -206,6 +206,20 @@ internal object ReplyRepository {
 
     fun sendReply(context: Context, notificationId: String, text: String): ReplySendResult {
         val reply = synchronized(this) { pending[notificationId] } ?: return ReplySendResult.Missing
+        return send(context, notificationId, reply, text)
+    }
+
+    /**
+     * Sends only if [drafted] is still the thread's live reply object. A repost under the same key
+     * is a new object and fails here: the app may reuse a key for another chat, and the wearer
+     * confirmed this recipient. It goes through [drafted]'s own action, never a newer one.
+     */
+    fun sendDrafted(context: Context, notificationId: String, drafted: PendingReply, text: String): ReplySendResult {
+        if (synchronized(this) { pending[notificationId] } !== drafted) return ReplySendResult.Missing
+        return send(context, notificationId, drafted, text)
+    }
+
+    private fun send(context: Context, notificationId: String, reply: PendingReply, text: String): ReplySendResult {
         val actionIntent = reply.actionIntent ?: return ReplySendResult.Missing
         if (text.isBlank()) return ReplySendResult.Blank
         val intent = Intent()
@@ -306,6 +320,14 @@ internal object ReplyRepository {
     fun hasReplyAuthority(notificationId: String): Boolean {
         val reply = pending[notificationId] ?: return false
         return stableId(reply.notificationKey) == notificationId && reply.canReply
+    }
+
+    /** Threads that can still be answered and may be named: live, admitted, and not hidden by Android. */
+    @Synchronized
+    fun replyableThreads(settings: RelaySettings): List<PendingReply> = pending.values.filter { reply ->
+        reply.canReply && stableId(reply.notificationKey) == reply.id &&
+            settings.admits(reply.content.packageName, repliable = true) &&
+            reply.content.renderedText != SensitiveNotificationDetector.HIDDEN_BODY
     }
 
     /** The thread a `relay:thread:` page id names, readable or still replyable, or null. */

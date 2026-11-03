@@ -19,6 +19,7 @@ import com.anezium.rokidbus.client.plugin.NexusReaderSegment
 import com.anezium.rokidbus.client.plugin.NexusReaderSegmentKind
 import com.anezium.rokidbus.client.plugin.NexusRowTone
 import com.anezium.rokidbus.client.plugin.NexusSdkResult
+import com.anezium.rokidbus.client.plugin.NexusSkillInvocation
 import com.anezium.rokidbus.client.plugin.NexusSpeechCallbacks
 import com.anezium.rokidbus.client.plugin.NexusSpeechError
 import com.anezium.rokidbus.client.plugin.NexusSpeechSession
@@ -29,6 +30,7 @@ import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
+import com.anezium.rokidbus.shared.skills.SkillErrorCodes
 
 /**
  * Menu-launched inbox, read-only session pages, and the owner of Relay's one client. The
@@ -129,6 +131,35 @@ class RelayPluginService : NexusPluginService() {
         send = { threadId, text -> ReplyRepository.sendReply(applicationContext, threadId, text) },
         changed = NotificationControl::notifyInboxChanged,
     )
+
+    private val skills by lazy { RelaySkills(applicationContext) }
+
+    /**
+     * Answers an invocation with the plugin closed. It opens nothing: the inbox stays shut, so a
+     * notification arriving meanwhile still gets its band once the call has settled.
+     */
+    override fun onNexusSkillInvoked(invocation: NexusSkillInvocation) {
+        main.post {
+            NotificationControl.skillCallStarted()
+            val isSend = invocation.operationId == RelaySkills.SEND_REPLY
+            val outcome = try {
+                skills.run(invocation.operationId, invocation.arguments)
+            } catch (_: Exception) {
+                // A send that threw may already be with the app; only a read can say it did nothing.
+                if (isSend) RelaySkillOutcome.Unknown else RelaySkillOutcome.Failed(SkillErrorCodes.UNAVAILABLE)
+            }
+            val answered = when (outcome) {
+                is RelaySkillOutcome.Completed -> invocation.complete(outcome.data)
+                RelaySkillOutcome.Accepted -> invocation.accepted()
+                is RelaySkillOutcome.Failed -> invocation.fail(outcome.code)
+                RelaySkillOutcome.Unknown -> invocation.unknown()
+            }
+            if (answered == NexusSdkResult.INVALID_PAYLOAD) {
+                if (isSend) invocation.unknown() else invocation.fail(SkillErrorCodes.UNAVAILABLE)
+            }
+            NotificationControl.skillCallAnswered()
+        }
+    }
 
     override fun onNexusPageRequest(request: NexusPageRequest): NexusPage = pages.onRequest(request)
 

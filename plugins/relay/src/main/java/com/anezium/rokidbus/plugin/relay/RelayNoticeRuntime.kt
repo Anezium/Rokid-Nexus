@@ -181,6 +181,12 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
      * told the event is no longer there; a band for it stops counting and never sends, and what
      * the wearer already said or typed stays on it, plainly not sent. A band only being read goes.
      */
+    /** What a skill call's lease held back may go now. */
+    fun onSkillCallsSettled() = onMain {
+        tryShowPending()
+        flushWithdrawals(holdIfUnbound = true)
+    }
+
     fun onRemoved(id: String) = onMain {
         if (announcedEventKeys.remove(id)) {
             pendingWithdrawals.remove(id)
@@ -387,6 +393,10 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         val nowMs = SystemClock.elapsedRealtime()
         if (isReplayWindowExpired(pendingShowStartedAtMs, nowMs)) {
             abandonPendingShow(nowMs)
+            return
+        }
+        if (NotificationControl.skillCallHoldsNotices) {
+            markShowBlocked("skill_call", nowMs)
             return
         }
         val currentClient = client
@@ -930,6 +940,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
     private fun flushWithdrawals(holdIfUnbound: Boolean = false) {
         pendingWithdrawals.removeAll { ReplyRepository.contains(it) }
         if (pendingWithdrawals.isEmpty()) return releaseWithdrawalHold()
+        if (NotificationControl.skillCallHoldsNotices) return
         val currentClient = client ?: if (holdIfUnbound) holdForWithdrawals() else null
         if (currentClient == null || !currentClient.isApproved) return
         val iterator = pendingWithdrawals.iterator()

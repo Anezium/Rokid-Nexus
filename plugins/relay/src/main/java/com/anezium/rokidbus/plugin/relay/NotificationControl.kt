@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 
 internal object NotificationControl {
+    private const val SKILL_LEASE_SETTLE_MS = 1_000L
     private val main = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -100,6 +101,28 @@ internal object NotificationControl {
      */
     fun notifyInboxChanged() {
         main.post { pageListener?.invoke() }
+    }
+
+    private var skillCalls = 0
+
+    /**
+     * A skill call is running or has only just been answered. The hub may hold Relay by that call
+     * alone, in which case it refuses notice traffic and Relay would never hear why: what would have
+     * gone waits here instead. Main thread only.
+     */
+    val skillCallHoldsNotices: Boolean
+        get() = skillCalls > 0
+
+    fun skillCallStarted() {
+        skillCalls += 1
+    }
+
+    /** The hub ends a call's lease on reading its result, which takes a moment after the answer. */
+    fun skillCallAnswered() {
+        main.postDelayed({
+            skillCalls = (skillCalls - 1).coerceAtLeast(0)
+            if (skillCalls == 0) noticeCallbacks()?.onSkillCallsSettled()
+        }, SKILL_LEASE_SETTLE_MS)
     }
 
     /** The notice band's callbacks, when the listener is connected; the plugin service forwards to them. */
