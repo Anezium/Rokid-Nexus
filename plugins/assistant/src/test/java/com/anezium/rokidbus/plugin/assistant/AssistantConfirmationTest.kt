@@ -521,6 +521,16 @@ class AssistantConfirmationTest {
         )
     }
 
+    @Test
+    fun `the policy has the model pick the recipient from the unfiltered list`() {
+        val prompt = NexusAgentPolicy.buildSystemPrompt(
+            availableToolNames = listOf("sk_relay__prepare_reply"),
+            confirmedSendAvailable = true,
+        )
+        assertTrue(prompt.contains("with no name filter"))
+        assertTrue(prompt.contains("closest in sound or spelling"))
+    }
+
     private class FakeConfirmationUi : AssistantConfirmationUi {
         var showConfirmationResult = true
         var confirmationLines: List<String> = emptyList()
