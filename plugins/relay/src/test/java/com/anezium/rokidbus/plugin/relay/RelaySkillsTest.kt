@@ -157,15 +157,15 @@ class RelaySkillsTest {
     }
 
     @Test
-    fun `listing filters by name ignoring case and accents and keeps the newest five`() {
+    fun `listing filters by name ignoring case and accents and keeps the newest ten`() {
         post(chat(id = 1, sender = "Coralié"))
         post(chat(id = 2, sender = "Mika"))
         assertEquals(listOf("Coralié"), listed("cOrAlie").map { it.getString("sender") })
 
-        (3..9).forEach { post(chat(id = it, sender = "Person $it")) }
+        (3..14).forEach { post(chat(id = it, sender = "Person $it")) }
         val newest = listed()
         assertEquals(RelaySkills.MAX_LISTED_THREADS, newest.size)
-        assertEquals("Person 9", newest.first().getString("sender"))
+        assertEquals("Person 14", newest.first().getString("sender"))
     }
 
     @Test

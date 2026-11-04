@@ -145,7 +145,7 @@ Declares a `SKILLS` catalog with `notification_access` as prerequisite.
 
 | Operation | Effect | Behavior |
 |---|---|---|
-| `list_reply_threads` | `read` | Optional name filter, at most 5 live repliable threads: sender, app, age, and a `relay_thread` reference. No message text |
+| `list_reply_threads` | `read` | Optional name filter, at most 10 live repliable threads: sender, app, age, and a `relay_thread` reference. No message text |
 | `prepare_reply` | `read` | Takes a thread reference and text. The draft binds the thread id, package, and sender title |
 | `send_reply` | `action` | Takes the draft reference. Not cancellable, deduplicated |
 
@@ -275,4 +275,4 @@ only those who install it. If G4 fails, stop and redesign before releasing SMS.
 | D5 | A new message from the same sender arrives before Send? | The reply still goes. Only another sender or a lost reply action refuses it |
 | D6 | Long drafts? | A band with Send and Cancel cannot page and clips at eight lines (measured). Past 200 columns the draft gets Send alone, which pages, with Back as the cancel; the limit is 1,000 characters |
 | D7 | A message arrives while the wearer reads a draft? | Relay holds its own band until the send, plus 4 s for the result, or 60 s. Another plugin's band still replaces the confirmation and drops the draft |
-| D8 | Speech mishears a contact's name? | The model lists conversations unfiltered and picks the closest sender, asking when two could fit. The Relay filter stayed in the contract, so nothing needs approving again. A misheard name no longer stops the request, so the recipient line on the band is what catches a wrong pick. Only the five newest conversations are listed |
+| D8 | Speech mishears a contact's name? | The model lists conversations unfiltered and picks the closest sender, asking when two could fit. The Relay filter stayed in the contract, so nothing needs approving again. A misheard name no longer stops the request, so the recipient line on the band is what catches a wrong pick. Only the ten newest conversations are listed |

@@ -148,7 +148,7 @@ internal class RelaySkills(
 
         const val AUTHORITY_LOST = "authority_lost"
         const val MAX_TEXT_CHARS = 1_000
-        const val MAX_LISTED_THREADS = 5
+        const val MAX_LISTED_THREADS = 10
         private const val MAX_SENDER_CHARS = NoticeSurfaceContract.MAX_TITLE_CHARS
         private const val MAX_APP_CHARS = 40
         private const val MINUTE_MS = 60_000L

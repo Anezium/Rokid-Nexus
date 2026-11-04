@@ -5,7 +5,7 @@
       "id": "list_reply_threads",
       "version": 1,
       "label": "Conversations you can reply to",
-      "description": "Lists at most five live conversations whose notification still offers a reply, newest first: sender, app, how long ago, and a reference. Message text is never returned, and a conversation with no notification left cannot be listed or started from here. Pass name to narrow by sender.",
+      "description": "Lists at most ten live conversations whose notification still offers a reply, newest first: sender, app, how long ago, and a reference. Message text is never returned, and a conversation with no notification left cannot be listed or started from here. Pass name to narrow by sender.",
       "examples": ["Reply to Coralie", "Who can I answer right now?"],
       "effect": "read", "cancellable": false, "deduplicates": true,
       "requires": [], "prerequisites": ["notification_access"],
@@ -19,7 +19,7 @@
         "properties": {
           "threads": {
             "type": "array",
-            "maxItems": 5,
+            "maxItems": 10,
             "items": {
               "type": "object",
               "properties": {
