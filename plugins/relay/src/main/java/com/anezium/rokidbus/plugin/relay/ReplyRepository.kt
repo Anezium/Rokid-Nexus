@@ -350,6 +350,17 @@ internal object ReplyRepository {
     @Synchronized
     fun threadEntries(): List<RelayInboxEntry> = entries { true }
 
+    /** Reading through Skills follows the current inbox privacy and source-app policy. */
+    @Synchronized
+    fun readableThreads(settings: RelaySettings): List<RelayInboxEntry> {
+        if (settings.hideInboxPreviews()) return emptyList()
+        return entries { id ->
+            val readable = recent.getValue(id)
+            settings.admits(readable.content.packageName, readable.originallyRepliable) &&
+                readable.content.renderedText != SensitiveNotificationDetector.HIDDEN_BODY
+        }
+    }
+
     private fun entries(include: (String) -> Boolean): List<RelayInboxEntry> = RelayInboxCatalog.entries(
         snapshots = recent.values.filter { include(it.snapshot.id) }.map { readable ->
             handoffs[readable.snapshot.id]?.let { readable.snapshot.copy(handoffs = it) } ?: readable.snapshot

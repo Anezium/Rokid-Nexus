@@ -61,9 +61,9 @@ internal class RelayReplyDrafts(
 }
 
 /**
- * Relay's operations for an approved caller. Nothing here reads a message body back, and a thread
- * must be live, repliable and shown by name under Relay's own settings to exist at all. Only
- * [SEND_REPLY] has an effect, and the caller reaches it with a draft this class handed out.
+ * Relay's operations for an approved caller. Reading text has its own approved operation; reply
+ * operations still need a live reply action. Only [SEND_REPLY] has an effect, and the caller
+ * reaches it with a draft this class handed out.
  */
 internal class RelaySkills(
     private val context: Context,
@@ -72,12 +72,15 @@ internal class RelaySkills(
     private val wallClock: () -> Long = System::currentTimeMillis,
 ) {
     private val settings by lazy { RelaySettings(context) }
+    private val reading by lazy { RelayReadingSkills(settings, wallClock) }
 
     fun run(operation: String, arguments: JSONObject): RelaySkillOutcome {
         if (operation !in OPERATIONS) return RelaySkillOutcome.Failed(SkillErrorCodes.UNSUPPORTED_OPERATION)
         if (!hasAccess()) return RelaySkillOutcome.Failed(SkillErrorCodes.SETUP_REQUIRED)
         return when (operation) {
             LIST_REPLY_THREADS -> list(arguments.optString("name"))
+            RelayReadingSkills.LIST_READABLE_THREADS -> reading.list(arguments.optString("name"))
+            RelayReadingSkills.READ_THREAD -> reading.read(arguments)
             PREPARE_REPLY -> prepare(arguments.optString("thread"), arguments.optString("text"))
             else -> send(arguments.optString("draft"))
         }
@@ -144,7 +147,10 @@ internal class RelaySkills(
         const val LIST_REPLY_THREADS = "list_reply_threads"
         const val PREPARE_REPLY = "prepare_reply"
         const val SEND_REPLY = "send_reply"
-        private val OPERATIONS = setOf(LIST_REPLY_THREADS, PREPARE_REPLY, SEND_REPLY)
+        private val OPERATIONS = setOf(
+            LIST_REPLY_THREADS, PREPARE_REPLY, SEND_REPLY,
+            RelayReadingSkills.LIST_READABLE_THREADS, RelayReadingSkills.READ_THREAD,
+        )
 
         const val AUTHORITY_LOST = "authority_lost"
         const val MAX_TEXT_CHARS = 1_000

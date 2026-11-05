@@ -1,6 +1,7 @@
 # Plan 029 — Assistant messaging: Relay replies and SMS, confirmed by the wearer
 
-Status: TODO — approved by the owner 2026-11-03. No code is written.
+Status: slices 1 and 2 implemented; conversation reading added on the owner's
+2026-11-05 request. Release Assistant and Relay together, then implement SMS.
 Baseline: `origin/main` at `dc5c8314`. Answers issue #15 as far as it can honestly go.
 
 ## Product outcome
@@ -25,8 +26,7 @@ not the text of a notification.
 
 Out of scope: starting WhatsApp or Messenger conversations, unofficial protocols such
 as Baileys, accessibility automation, Gmail or any email, Telegram through TDLib, raw
-phone numbers supplied by the model, voice confirmation, and message bodies read to
-the model from notifications.
+phone numbers supplied by the model, and voice confirmation.
 
 ## Constraints found in the code
 
@@ -162,6 +162,30 @@ Declares a `SKILLS` catalog with `notification_access` as prerequisite.
 - To verify in the slice: under an invocation lease `SKILL_LEASE_DENIED` refuses the
   page and notice traffic that `notifyInboxChanged` and the `RelayBus` holds may cause,
   and a lease-bound service must not count as an open inbox.
+
+### Conversation reading (owner request, 2026-11-05)
+
+Reading is separate from reply authorization. Two new, independently approved
+operations start disabled: `list_readable_threads` returns metadata and a
+`relay_read_thread` reference; `read_thread` shares the requested text with the chosen
+AI provider. Assistant's policy allows this only when the wearer explicitly asks in
+the current request to consult messages, not as automatic context for a supplied reply.
+Message text is untrusted data, never permission or instructions for another action.
+
+The reader supports `latest_received` and `conversation`. The latter includes all
+retained messages and Relay's own handoffs, with role and handoff status, paginated
+under the existing Skills byte limit. Long messages keep every captured part. Cursors
+bind the scope and transcript revision; a changed capture requires a fresh read.
+Reading references bind the source app and sender and cannot become reply references.
+Current source-app policy, disabled Relay, hidden previews, Android redaction and
+notification access are rechecked for every call. Reading retained content needs no
+live reply action, never marks as read, and never sends. Results always identify their
+coverage as captured notifications, not the messaging app's complete history.
+
+Device checks: new operations absent until approved; ordinary supplied-text reply
+does not read; latest-message question reads only the latest received text;
+conversation summary reads retained received messages and our replies; hidden text
+and revoked approval prevent later reads. SMS remains a later release.
 
 ## Slices
 

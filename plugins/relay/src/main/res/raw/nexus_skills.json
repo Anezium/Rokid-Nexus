@@ -78,6 +78,89 @@
         "required": ["draft"]
       },
       "output": {"type": "object", "properties": {}}
+    },
+    {
+      "id": "list_readable_threads",
+      "version": 1,
+      "label": "Find conversations Assistant can read",
+      "description": "Lists up to ten retained conversations, newest first, with sender, app, age, reply availability and a reading reference. No message text is returned. Use only when the wearer explicitly asks to consult their messages. Includes retained read-only conversations. Omit name when speech may have misheard a name; ask if several senders could fit.",
+      "examples": ["What did Coralie say?", "Summarize my conversation with Coralie"],
+      "effect": "read", "cancellable": false, "deduplicates": true,
+      "requires": [], "prerequisites": ["notification_access"],
+      "data": ["text"],
+      "input": {
+        "type": "object",
+        "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 64}}
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "threads": {
+            "type": "array", "maxItems": 10,
+            "items": {
+              "type": "object",
+              "properties": {
+                "thread": {"type": "string", "nexusRef": "relay_read_thread"},
+                "sender": {"type": "string", "maxLength": 64},
+                "app": {"type": "string", "maxLength": 40},
+                "age_minutes": {"type": "integer", "minimum": 0, "maximum": 1000000},
+                "can_reply": {"type": "boolean"}
+              },
+              "required": ["thread", "sender", "app", "age_minutes", "can_reply"]
+            }
+          }
+        },
+        "required": ["threads"]
+      }
+    },
+    {
+      "id": "read_thread",
+      "version": 1,
+      "label": "Share conversation text with Assistant's AI",
+      "description": "Shares captured conversation text with Assistant and its chosen AI provider, only when the wearer explicitly asks to read, summarize or consult it. Requires a reading reference from list_readable_threads. scope latest_received reads the latest message not identified as ours; conversation reads the retained thread including our replies. This is captured notification text, not the app's complete history. Pages contain chronological message parts; follow cursor for older parts, combining equal ids by part number. An unknown role has no known author. A stale cursor requires a fresh read. Reading never sends, marks read, or retrieves app history. Replying requires list_reply_threads and the wearer's Send.",
+      "examples": ["Read Coralie's last message", "Summarize our conversation", "What did they say about tomorrow?"],
+      "effect": "read", "cancellable": false, "deduplicates": true,
+      "requires": [], "prerequisites": ["notification_access"],
+      "data": ["text"],
+      "input": {
+        "type": "object",
+        "properties": {
+          "thread": {"type": "string", "nexusRef": "relay_read_thread"},
+          "scope": {"type": "string", "enum": ["latest_received", "conversation"]},
+          "cursor": {"type": "string", "nexusRef": "relay_read_cursor"}
+        },
+        "required": ["thread", "scope"]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "sender": {"type": "string", "maxLength": 64},
+          "app": {"type": "string", "maxLength": 40},
+          "age_minutes": {"type": "integer", "minimum": 0, "maximum": 1000000},
+          "can_reply": {"type": "boolean"},
+          "scope": {"type": "string", "enum": ["latest_received", "conversation"]},
+          "coverage": {"type": "string", "enum": ["captured_notifications_only"]},
+          "has_more": {"type": "boolean"},
+          "cursor": {"type": "string", "nexusRef": "relay_read_cursor"},
+          "messages": {
+            "type": "array", "maxItems": 64,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {"type": "string", "maxLength": 64},
+                "role": {"type": "string", "enum": ["received", "ours", "unknown"]},
+                "sender": {"type": "string", "maxLength": 64},
+                "text": {"type": "string", "maxLength": 1024},
+                "part": {"type": "integer", "minimum": 1, "maximum": 64},
+                "parts": {"type": "integer", "minimum": 1, "maximum": 64},
+                "status": {"type": "string", "enum": ["captured", "handed_to_app", "unconfirmed"]}
+              },
+              "required": ["id", "role", "sender", "text", "part", "parts", "status"]
+            }
+          }
+        },
+        "required": ["sender", "app", "age_minutes", "can_reply", "scope", "coverage", "has_more", "messages"]
+      }
     }
   ]
 }

@@ -130,9 +130,15 @@ class RelaySkillsTest {
 
     @Test
     fun `the catalog is valid and only the send has an effect`() {
-        val operations = listOf(RelaySkills.LIST_REPLY_THREADS, RelaySkills.PREPARE_REPLY, RelaySkills.SEND_REPLY)
+        val operations = listOf(
+            RelaySkills.LIST_REPLY_THREADS, RelaySkills.PREPARE_REPLY, RelaySkills.SEND_REPLY,
+            RelayReadingSkills.LIST_READABLE_THREADS, RelayReadingSkills.READ_THREAD,
+        )
         assertEquals(operations, catalog.operations.map { it.id })
-        assertEquals(listOf(SkillEffect.READ, SkillEffect.READ, SkillEffect.ACTION), catalog.operations.map { it.effect })
+        assertEquals(
+            listOf(SkillEffect.READ, SkillEffect.READ, SkillEffect.ACTION, SkillEffect.READ, SkillEffect.READ),
+            catalog.operations.map { it.effect },
+        )
         assertFalse(catalog.operation(RelaySkills.SEND_REPLY)!!.cancellable)
         assertTrue(catalog.operation(RelaySkills.SEND_REPLY)!!.deduplicates)
     }

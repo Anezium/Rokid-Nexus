@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.1
+
+- Offer separately approved Skills for Assistant to find replyable conversations,
+  draft a reply, and hand off that draft after the wearer's Send.
+- Add separate, default-off approvals to find readable conversations and share the
+  requested captured text with Assistant's AI provider. Reading supports the latest
+  received message or the retained thread, including our replies, with pagination.
+  Hidden text and disallowed apps remain unavailable; reading never marks as read
+  or sends. Captured notifications may omit older history from the messaging app.
+- Keep Assistant's confirmation visible when another message arrives from Relay.
+- This update returns Relay to Pending approval. Approve Relay again, then enable
+  only the Assistant operations you want to allow in Plugin access.
+
 ## 1.4.0
 
 Needs Nexus hubs 2.0.0 for the launcher pages; with older hubs Relay 1.4.0
