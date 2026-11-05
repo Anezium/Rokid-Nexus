@@ -14,6 +14,9 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.robolectric.Shadows.shadowOf
+import android.os.Looper
+import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [33])
@@ -38,11 +41,26 @@ class FakeConversationScenariosTest {
 
     private fun postAndCapture() {
         assertTrue(FakeNotificationHarness.postReadingConversations(context))
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(2 * FakeNotificationHarness.READING_POST_INTERVAL_MS))
         val notifications = manager.activeNotifications
         assertEquals(3, notifications.size)
         notifications.forEach { notification ->
             requireNotNull(ReplyRepository.capture(context, notification, notification.notification.actions.first()))
         }
+    }
+
+    @Test
+    fun `demo arrivals are spaced so a cold connection can announce every conversation`() {
+        assertTrue(FakeNotificationHarness.postReadingConversations(context))
+        val looper = shadowOf(Looper.getMainLooper())
+        looper.idle()
+        assertEquals(1, manager.activeNotifications.size)
+        looper.idleFor(Duration.ofMillis(FakeNotificationHarness.READING_POST_INTERVAL_MS - 1))
+        assertEquals(1, manager.activeNotifications.size)
+        looper.idleFor(Duration.ofMillis(1))
+        assertEquals(2, manager.activeNotifications.size)
+        looper.idleFor(Duration.ofMillis(FakeNotificationHarness.READING_POST_INTERVAL_MS))
+        assertEquals(3, manager.activeNotifications.size)
     }
 
     @Test

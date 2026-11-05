@@ -12,6 +12,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.os.Handler
+import android.os.Looper
 import java.util.concurrent.CopyOnWriteArrayList
 
 internal data class FakeHarnessSnapshot(
@@ -28,6 +30,7 @@ internal object FakeNotificationHarness {
     private val secondMessages = mutableListOf<Message>()
     private var imageAttached = false
     private var deliveredReply: String? = null
+    private val readingPosts by lazy { Handler(Looper.getMainLooper()) }
 
     @Synchronized
     fun resetAndPost(context: Context): Boolean {
@@ -184,19 +187,24 @@ internal object FakeNotificationHarness {
             NotificationChannel(FAKE_CHANNEL_ID, "Relay test thread", NotificationManager.IMPORTANCE_HIGH),
         )
         val now = System.currentTimeMillis()
-        val posted = FakeConversationScenarios.threads.mapIndexed { index, scenario ->
+        readingPosts.removeCallbacksAndMessages(null)
+        FakeConversationScenarios.threads.forEachIndexed { index, scenario ->
             val thread = scenario.messages.mapIndexed { ordinal, message ->
                 Message(message.sender, message.text, now - (scenario.messages.size - ordinal) * 60_000L)
             }
-            runCatching {
+            val publish = Runnable {
                 val notification = buildNotification(appContext, thread, scenario.title,
                     READING_NOTIFICATION_ID_BASE + index, group = scenario.group)
                 notification.extras.putCharSequence(Notification.EXTRA_TITLE, scenario.title)
-                manager.notify("relay_fake_reading_$index", READING_NOTIFICATION_ID_BASE + index, notification)
-            }.isSuccess
-        }.all { it }
+                runCatching { manager.notify("relay_fake_reading_$index", READING_NOTIFICATION_ID_BASE + index, notification) }
+                notifyChanged()
+            }
+            // A cold hub connection retains the newest pending band. Space the demo arrivals so
+            // each thread also reaches the glasses' history and its aggregate launcher card.
+            readingPosts.postDelayed(publish, index * READING_POST_INTERVAL_MS)
+        }
         notifyChanged()
-        return posted
+        return true
     }
 
     @Synchronized
@@ -339,6 +347,7 @@ internal object FakeNotificationHarness {
     private const val SECOND_NOTIFICATION_TAG = "relay_fake_thread_2"
     private const val CROWD_NOTIFICATION_ID_BASE = 17_100
     private const val READING_NOTIFICATION_ID_BASE = 17_200
+    internal const val READING_POST_INTERVAL_MS = 3_000L
     private const val CROWD_NOTIFICATION_TAG = "relay_fake_crowd_"
     private val CROWD_SENDERS =
         listOf("Ada", "Bruno", "Chloe", "Denis", "Emma", "Farid", "Gwen", "Hugo")
