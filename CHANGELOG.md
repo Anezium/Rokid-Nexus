@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.3
+
+- **The R08 ring after leaving a plugin.** The ring works again as soon as you
+  leave a plugin opened from the new launcher. It could stay dead for up to
+  10 seconds after going back, for example from Relay's inbox
+  ([#76](https://github.com/Anezium/Rokid-Nexus/issues/76)).
+
+Install the **glasses hub 2.0.3** to receive this change. R08 Access Bridge
+needs no update. The phone APK is also versioned 2.0.3; phone hubs 2.0.0 to
+2.0.2 remain compatible. Plugins and SDK requirements are unchanged.
+
 ## 2.0.2
 
 - **R08 ring launcher action.** R08 Access Bridge's **Nexus launcher** action
