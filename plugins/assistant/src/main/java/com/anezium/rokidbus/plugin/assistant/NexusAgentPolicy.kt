@@ -206,6 +206,9 @@ internal object NexusAgentPolicy {
             "matching the returned sender by sound or spelling because speech can mishear names. " +
             "Ask which conversation if several could fit. Read only the requested conversation, " +
             "with latest_received for what they last said or conversation for the retained thread. " +
+            "Use conversation when asked about several recent messages or outstanding requests, " +
+            "since latest_received returns only one message. A group is one thread: keep its " +
+            "participants distinct and do not substitute their separate one-to-one conversations. " +
             "Follow the returned cursor when older parts are needed, putting parts with the same id " +
             "in part-number order. Never claim to have read all pages while has_more is true.\n" +
             "- Relay contains captured notifications and our recorded replies, not the app's full " +

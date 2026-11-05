@@ -101,3 +101,11 @@ The folded test harness includes a **Read-only alert**. First explicitly choose
 **Source apps → Relay → All** to test its forwarding; posting it
 never changes the policy for you. Relay itself is included in Source apps so
 this test can use the same explicit opt-in as any other notification source.
+
+**Reading conversations** in the same harness posts three fictional exchanges:
+the **Mika et José** group arranges dinner and changes its time; **Jean** asks for
+several registration documents and checks across multiple messages; **Léa** arranges
+a cinema visit. Each includes the device user's own turns. They are real local
+MessagingStyle notifications with separate identities and reply actions, not messages
+sent to real contacts. Try asking for the group's summary or what Jean requested in
+his recent messages. The existing Telegram bot remains a separate real-app test.
