@@ -389,11 +389,11 @@ class AssistantConfirmationTest {
 
         val expected = listOf(
             confirmationOutcome(pending, skillResult(request, SkillStatus.ACCEPTED, data = null)) to
-                "Handed to WhatsApp for Coralie. Arrival not confirmed.",
+                "Handed to WhatsApp for Coralie.",
             confirmationOutcome(pending, skillResult(request, SkillStatus.COMPLETED)) to
-                "Handed to WhatsApp for Coralie. Arrival not confirmed.",
+                "Handed to WhatsApp for Coralie.",
             confirmationOutcome(sms, skillResult(request, SkillStatus.ACCEPTED, data = null)) to
-                "Handed to the mobile network for Coralie. Arrival not confirmed.",
+                "Handed to the mobile network for Coralie.",
             confirmationOutcome(pending, failed("authority_lost", SkillDispatch.NONE)) to
                 "Not sent: that conversation can no longer be answered.",
             confirmationOutcome(pending, failed("recipient_changed", SkillDispatch.NONE)) to

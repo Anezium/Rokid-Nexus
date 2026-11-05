@@ -413,7 +413,7 @@ internal fun confirmationOutcome(pending: PendingConfirmation, result: SkillResu
     val target = pending.commit.operation.handoffTarget ?: preview.via
     return when (result.status) {
         SkillStatus.COMPLETED, SkillStatus.ACCEPTED ->
-            "Handed to $target for ${preview.recipient}. Arrival not confirmed."
+            "Handed to $target for ${preview.recipient}."
         SkillStatus.NEEDS_INPUT -> "Not sent."
         SkillStatus.FAILED -> result.error?.takeIf { it.dispatch == SkillDispatch.NONE }
             ?.let { "Not sent: ${notSentReason(it.code)}." }

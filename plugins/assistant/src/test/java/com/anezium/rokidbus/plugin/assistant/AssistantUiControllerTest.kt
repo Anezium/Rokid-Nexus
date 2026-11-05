@@ -2447,7 +2447,7 @@ class AssistantUiControllerTest {
 
         controller.showConfirmationProgress(AssistantConfirmationFlow.SENDING)
         runCurrent()
-        controller.showConfirmationResult("Handed to WhatsApp for Coralie. Arrival not confirmed.")
+        controller.showConfirmationResult("Handed to WhatsApp for Coralie.")
         runCurrent()
 
         val bodies = renderer.calls.map {
@@ -2458,7 +2458,7 @@ class AssistantUiControllerTest {
             }
         }
         assertEquals(
-            listOf(AssistantConfirmationFlow.SENDING, "Handed to WhatsApp for Coralie. Arrival not confirmed."),
+            listOf(AssistantConfirmationFlow.SENDING, "Handed to WhatsApp for Coralie."),
             bodies,
         )
         controller.onClose()
