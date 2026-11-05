@@ -87,6 +87,22 @@ class AssistantPluginService : NexusPluginService() {
         }
     }
     private val skillMemory = AssistantSkillMemory()
+    private val confirmationGate = AssistantConfirmationGate()
+    private val confirmationFlow: AssistantConfirmationFlow by lazy {
+        AssistantConfirmationFlow(
+            scope = serviceScope,
+            gate = confirmationGate,
+            gateway = skillGateway,
+            ui = uiController,
+            speak = { text -> answerSpeaker.speakCompletedAnswer(text) },
+            stopSpeech = ::stopAnswerSpeech,
+            bandBusy = {
+                captureActive || pipelineJob?.isActive == true || confirmationGate.isPresented ||
+                    uiController.isTyping || optionsMenu.isOpen
+            },
+            record = ::recordConfirmationOutcome,
+        )
+    }
     private val skillGateway by lazy {
         AssistantSkillGateway(
             object : AssistantSkillTransport {
@@ -283,9 +299,13 @@ class AssistantPluginService : NexusPluginService() {
         },
         cancelPipeline = ::cancelPipeline,
         resetCapture = ::resetCapture,
-        sessionBusy = { captureActive || pipelineJob?.isActive == true || snapshotSession != null },
+        sessionBusy = {
+            captureActive || pipelineJob?.isActive == true || snapshotSession != null ||
+                confirmationFlow.commitInFlight
+        },
         answerSpeaking = { activeTtsUtteranceId != null },
         stopSpeech = { stopAnswerSpeech() },
+        onConfirmationLost = { confirmationFlow.onBandLost() },
     )
 
     override fun onCreate() {
@@ -324,6 +344,7 @@ class AssistantPluginService : NexusPluginService() {
         workspaceController?.detach(workspaceOwner)
         optionsMenu.close()
         uiController.onClose()
+        confirmationGate.drop()
         captureTriggerGate.resetSession()
         resetCapture()
         cancelPipeline()
@@ -346,7 +367,8 @@ class AssistantPluginService : NexusPluginService() {
             KeyEvent.KEYCODE_DPAD_DOWN,
             KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_DPAD_RIGHT,
-            -> if (!optionsMenu.isOpen && uiController.isAnchored) openOptionsMenu()
+            // A one-page band claims no swipe, and the options menu would throw its draft away.
+            -> if (!optionsMenu.isOpen && uiController.isAnchored && !uiController.isConfirming) openOptionsMenu()
             KeyEvent.KEYCODE_ENTER,
             KeyEvent.KEYCODE_DPAD_CENTER,
             -> when {
@@ -420,6 +442,9 @@ class AssistantPluginService : NexusPluginService() {
 
     override fun onNexusLinkState(state: Int) {
         currentLinkState = state
+        if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) {
+            uiController.retireConfirmation()
+        }
     }
 
     /**
@@ -464,6 +489,7 @@ class AssistantPluginService : NexusPluginService() {
      * before the tap landed has already gone to the model and wins.
      */
     override fun onNexusNoticeAction(id: String) {
+        if (confirmationFlow.onAction(id)) return
         if (id.startsWith(AssistantSkillMemory.CHOICE_ACTION_PREFIX)) {
             onChoiceSelected(id)
             return
@@ -596,6 +622,7 @@ class AssistantPluginService : NexusPluginService() {
 
     private fun startCaptureOnce() {
         stopAnswerSpeech()
+        uiController.retireConfirmation()
         when (askAction(captureActive, uiController.inputMode)) {
             AssistantAskAction.KEEP_LISTENING -> return
             // Type first was chosen while this capture listened: this ask means type, now.
@@ -816,6 +843,7 @@ class AssistantPluginService : NexusPluginService() {
 
     private fun launchPipeline(block: suspend () -> Unit) {
         pipelineJob?.cancel()
+        uiController.retireConfirmation()
         val launched = serviceScope.launch {
             try {
                 block()
@@ -904,10 +932,15 @@ class AssistantPluginService : NexusPluginService() {
         turnSkillTools = if (hermesTextToolBackend) {
             emptyList()
         } else {
-            skillGateway.catalog().map { entry ->
-                PluginSkillTool(entry, skillGateway, { session }, { requestId }, skillMemory)
+            val turn = ConfirmationTurn(requestId, session, conversationContext) {
+                workspaceTurn?.finalEffectsAllowed() != false
+            }
+            GatedSkillOperations.modelOffer(skillGateway.catalog(), confirmable = noticeBandMode).map { (entry, commit) ->
+                val staging = commit?.let { ConfirmationStaging(confirmationGate, it, turn) }
+                PluginSkillTool(entry, skillGateway, { session }, { requestId }, skillMemory, staging)
             }
         }
+        val confirmedSendAvailable = turnSkillTools.any { (it as? PluginSkillTool)?.staging != null }
         val availableToolDefinitions = assistantToolRegistry
             .availableDefinitions(assistantProviderFeatures(providerId), workspaceVersion, workspaceTurn)
         val promptToolDefinitions = if (hermesTextToolBackend) {
@@ -932,6 +965,7 @@ class AssistantPluginService : NexusPluginService() {
                 textToolDefinitions = definitions,
                 allowTextToolFallback = hermesTextToolBackend,
                 pluginContext = skillMemory.promptContext(),
+                confirmedSendAvailable = confirmedSendAvailable,
             )
         }
         val request = ChatRequest(
@@ -980,7 +1014,9 @@ class AssistantPluginService : NexusPluginService() {
                     is AiProviderEvent.TextDelta -> {
                         answer.append(event.delta)
                         val now = SystemClock.elapsedRealtime()
+                        // Once a draft is staged the wearer reads the provider's words, not these.
                         if (now - lastHudUpdateMs >= HUD_UPDATE_INTERVAL_MS &&
+                            confirmationFlow.stagedFor(requestId) == null &&
                             workspaceEffectsAllowed()
                         ) {
                             showAnswer(answer.toString())
@@ -990,7 +1026,9 @@ class AssistantPluginService : NexusPluginService() {
                     is AiProviderEvent.MessageDone -> {
                         completed = true
                         val finalText = event.message.content.ifBlank { answer.toString() }
-                        if (finalText.isBlank()) {
+                        if (confirmationFlow.stagedFor(requestId) != null) {
+                            // The confirmation below is this turn's answer, whatever the model wrote.
+                        } else if (finalText.isBlank()) {
                             uiController.showError("No answer received. Try again.")
                         } else if (!workspaceEffectsAllowed()) {
                             failed = true
@@ -1009,7 +1047,7 @@ class AssistantPluginService : NexusPluginService() {
                     }
                 }
             }
-            if (!completed) {
+            if (!completed && confirmationFlow.stagedFor(requestId) == null) {
                 if (answer.isBlank()) {
                     uiController.showError("No answer received. Try again.")
                 } else if (!workspaceEffectsAllowed()) {
@@ -1026,7 +1064,11 @@ class AssistantPluginService : NexusPluginService() {
             }
             if (!failed) {
                 currentCoroutineContext().ensureActive()
-                val choices = skillMemory.hudChoices()
+                val staged = confirmationFlow.stagedFor(request.requestId)
+                if (staged != null) {
+                    finalAnswer = staged.conversationNote.takeIf { confirmationFlow.present(staged) }
+                }
+                val choices = skillMemory.hudChoices().takeIf { staged == null }
                 if (choices != null && !finalAnswer.isNullOrBlank()) {
                     showAnswer(
                         finalAnswer.orEmpty(),
@@ -1039,7 +1081,9 @@ class AssistantPluginService : NexusPluginService() {
                         },
                     )
                 }
-                if (workspaceEffectsAllowed()) answerSpeaker.speakCompletedAnswer(stripHudMarkdown(finalAnswer.orEmpty()))
+                if (staged == null && workspaceEffectsAllowed()) {
+                    answerSpeaker.speakCompletedAnswer(stripHudMarkdown(finalAnswer.orEmpty()))
+                }
                 if (workspaceEffectsAllowed()) try {
                     val keepPhotosAtCompletion = authStore.keepPhotosInConversations()
                     withContext(Dispatchers.IO) {
@@ -1062,6 +1106,7 @@ class AssistantPluginService : NexusPluginService() {
                 }
             }
         } finally {
+            confirmationGate.dropUnpresented(request.requestId)
             skillMemory.endTurn()
             turnSkillTools = emptyList()
             if (currentRequestId == request.requestId) {
@@ -1069,6 +1114,23 @@ class AssistantPluginService : NexusPluginService() {
                 currentAssistantGeneration = null
                 photoJpegForCompletedTurn = null
             }
+        }
+    }
+
+    /** What became of a send, kept beside the draft so a later turn never has to guess. */
+    private suspend fun recordConfirmationOutcome(
+        conversation: AssistantConversationContext,
+        userText: String,
+        assistantText: String,
+    ) {
+        try {
+            withContext(Dispatchers.IO) {
+                conversationThreading.recordCompletedTurn(conversation, userText, assistantText, hadPhoto = false)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Log.w(TAG, "Conversation persistence failed: ${error.javaClass.simpleName}")
         }
     }
 
@@ -1213,7 +1275,8 @@ class AssistantPluginService : NexusPluginService() {
     }
 
     private fun isRenderInkSessionActive(session: InkPageToolSession): Boolean =
-        currentRequestId == session.requestId &&
+        !confirmationGate.hasStaged(session.requestId) &&
+            currentRequestId == session.requestId &&
             currentAssistantGeneration == session.generation &&
             captureGeneration == session.generation &&
             pipelineJob?.isActive == true &&
@@ -1563,6 +1626,7 @@ class AssistantPluginService : NexusPluginService() {
                 }
                 service.stopAnswerSpeech()
                 service.clearInkSurface(hide = true)
+                if (service.uiController.isTyping) service.uiController.endTyping(AssistantTypingEnd.SUBMITTED)
                 service.launchAssistantPipeline(question)
             }
             return true

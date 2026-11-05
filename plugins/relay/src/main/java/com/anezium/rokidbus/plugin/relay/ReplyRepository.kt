@@ -206,6 +206,27 @@ internal object ReplyRepository {
 
     fun sendReply(context: Context, notificationId: String, text: String): ReplySendResult {
         val reply = synchronized(this) { pending[notificationId] } ?: return ReplySendResult.Missing
+        return send(context, notificationId, reply, text)
+    }
+
+    /**
+     * Sends only to the app and sender the wearer confirmed. A new message from them reposts the
+     * notification, and the reply still goes, through the newest action, the only one the app still
+     * vouches for. The same key under another sender fails: an app may reuse a key for another chat.
+     */
+    fun sendDrafted(
+        context: Context,
+        notificationId: String,
+        packageName: String,
+        senderTitle: String,
+        text: String,
+    ): ReplySendResult {
+        val live = synchronized(this) { pending[notificationId] } ?: return ReplySendResult.Missing
+        if (live.content.packageName != packageName || live.content.title != senderTitle) return ReplySendResult.Missing
+        return send(context, notificationId, live, text)
+    }
+
+    private fun send(context: Context, notificationId: String, reply: PendingReply, text: String): ReplySendResult {
         val actionIntent = reply.actionIntent ?: return ReplySendResult.Missing
         if (text.isBlank()) return ReplySendResult.Blank
         val intent = Intent()
@@ -308,6 +329,14 @@ internal object ReplyRepository {
         return stableId(reply.notificationKey) == notificationId && reply.canReply
     }
 
+    /** Threads that can still be answered and may be named: live, admitted, and not hidden by Android. */
+    @Synchronized
+    fun replyableThreads(settings: RelaySettings): List<PendingReply> = pending.values.filter { reply ->
+        reply.canReply && stableId(reply.notificationKey) == reply.id &&
+            settings.admits(reply.content.packageName, repliable = true) &&
+            reply.content.renderedText != SensitiveNotificationDetector.HIDDEN_BODY
+    }
+
     /** The thread a `relay:thread:` page id names, readable or still replyable, or null. */
     @Synchronized
     fun threadIdForPage(pageId: String): String? =
@@ -320,6 +349,17 @@ internal object ReplyRepository {
     /** Every thread Relay can read, answered ones included, for the launcher's thread pages. */
     @Synchronized
     fun threadEntries(): List<RelayInboxEntry> = entries { true }
+
+    /** Reading through Skills follows the current inbox privacy and source-app policy. */
+    @Synchronized
+    fun readableThreads(settings: RelaySettings): List<RelayInboxEntry> {
+        if (settings.hideInboxPreviews()) return emptyList()
+        return entries { id ->
+            val readable = recent.getValue(id)
+            settings.admits(readable.content.packageName, readable.originallyRepliable) &&
+                readable.content.renderedText != SensitiveNotificationDetector.HIDDEN_BODY
+        }
+    }
 
     private fun entries(include: (String) -> Boolean): List<RelayInboxEntry> = RelayInboxCatalog.entries(
         snapshots = recent.values.filter { include(it.snapshot.id) }.map { readable ->

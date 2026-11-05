@@ -12,6 +12,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.os.Handler
+import android.os.Looper
 import java.util.concurrent.CopyOnWriteArrayList
 
 internal data class FakeHarnessSnapshot(
@@ -21,13 +23,14 @@ internal data class FakeHarnessSnapshot(
 )
 
 internal object FakeNotificationHarness {
-    private data class Message(val sender: String, val text: String, val timestamp: Long)
+    private data class Message(val sender: String?, val text: String, val timestamp: Long)
 
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
     private val messages = mutableListOf<Message>()
     private val secondMessages = mutableListOf<Message>()
     private var imageAttached = false
     private var deliveredReply: String? = null
+    private val readingPosts by lazy { Handler(Looper.getMainLooper()) }
 
     @Synchronized
     fun resetAndPost(context: Context): Boolean {
@@ -177,6 +180,33 @@ internal object FakeNotificationHarness {
         return posted
     }
 
+    fun postReadingConversations(context: Context): Boolean {
+        val appContext = context.applicationContext
+        val manager = appContext.getSystemService(NotificationManager::class.java) ?: return false
+        manager.createNotificationChannel(
+            NotificationChannel(FAKE_CHANNEL_ID, "Relay test thread", NotificationManager.IMPORTANCE_HIGH),
+        )
+        val now = System.currentTimeMillis()
+        readingPosts.removeCallbacksAndMessages(null)
+        FakeConversationScenarios.threads.forEachIndexed { index, scenario ->
+            val thread = scenario.messages.mapIndexed { ordinal, message ->
+                Message(message.sender, message.text, now - (scenario.messages.size - ordinal) * 60_000L)
+            }
+            val publish = Runnable {
+                val notification = buildNotification(appContext, thread, scenario.title,
+                    READING_NOTIFICATION_ID_BASE + index, group = scenario.group)
+                notification.extras.putCharSequence(Notification.EXTRA_TITLE, scenario.title)
+                runCatching { manager.notify("relay_fake_reading_$index", READING_NOTIFICATION_ID_BASE + index, notification) }
+                notifyChanged()
+            }
+            // A cold hub connection retains the newest pending band. Space the demo arrivals so
+            // each thread also reaches the glasses' history and its aggregate launcher card.
+            readingPosts.postDelayed(publish, index * READING_POST_INTERVAL_MS)
+        }
+        notifyChanged()
+        return true
+    }
+
     @Synchronized
     fun receiveReply(text: String) {
         deliveredReply = text.takeIf(String::isNotBlank)
@@ -235,17 +265,18 @@ internal object FakeNotificationHarness {
         thread: List<Message>,
         title: String,
         requestCode: Int,
+        group: Boolean = true,
     ): Notification {
         val user = Person.Builder().setName("You").build()
         val style = Notification.MessagingStyle(user)
             .setConversationTitle(title)
-            .setGroupConversation(true)
+            .setGroupConversation(group)
         thread.forEach { message ->
             style.addMessage(
                 Notification.MessagingStyle.Message(
                     message.text,
                     message.timestamp,
-                    Person.Builder().setName(message.sender).build(),
+                    message.sender?.let { Person.Builder().setName(it).build() },
                 ),
             )
         }
@@ -315,6 +346,8 @@ internal object FakeNotificationHarness {
     private const val SECOND_NOTIFICATION_ID = 17_002
     private const val SECOND_NOTIFICATION_TAG = "relay_fake_thread_2"
     private const val CROWD_NOTIFICATION_ID_BASE = 17_100
+    private const val READING_NOTIFICATION_ID_BASE = 17_200
+    internal const val READING_POST_INTERVAL_MS = 3_000L
     private const val CROWD_NOTIFICATION_TAG = "relay_fake_crowd_"
     private val CROWD_SENDERS =
         listOf("Ada", "Bruno", "Chloe", "Denis", "Emma", "Farid", "Gwen", "Hugo")

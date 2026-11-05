@@ -613,6 +613,12 @@ class RelaySettingsActivity : Activity() {
             ),
         )
         addView(BusTheme.gap(this@RelaySettingsActivity, 10))
+        addView(harnessButton("Reading conversations" to {
+            ensureCanPost() && FakeNotificationHarness.postReadingConversations(this@RelaySettingsActivity)
+        }), NexusUi.block())
+        addView(NexusUi.rowSub(this@RelaySettingsActivity,
+            "Fictional exchanges: Mika and José's group, Jean's requests, and Léa's cinema plans."))
+        addView(BusTheme.gap(this@RelaySettingsActivity, 10))
         addView(harnessButton("Read-only alert" to {
             ensureCanPost() && FakeNotificationHarness.postReadOnly(this@RelaySettingsActivity)
         }), NexusUi.block())

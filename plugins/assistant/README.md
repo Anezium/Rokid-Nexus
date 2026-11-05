@@ -59,6 +59,22 @@ it. When a result needs the wearer to choose, up to three choices appear as
 chips on the answer band; a chip starts a new turn and cannot be imitated by
 text. Plugin operations are not offered through the Hermes text bridge.
 
+**Messages through Relay.** With both plugins' Skills access approved, ask Assistant
+to draft a reply. The glasses show Relay's exact recipient and text; only tapping
+**Send** dispatches it. Cancel, Back, timeout, a lost connection, or a new question
+never send. The result reports a handoff to the messaging app, not delivery.
+
+Reading has separate approvals in **Nexus → Plugins → Relay → Plugin access**:
+**Find conversations Assistant can read** and **Share conversation text with Assistant's AI**.
+They start disabled. The latter shares the requested conversation's text with the
+chosen AI provider. Assistant is instructed to use them only when the wearer explicitly
+asks to read, summarize, or consult their messages; asking to send supplied text does
+not ask it to read the conversation. A last-message question reads the latest message
+not identified as ours; a conversation question can read all the retained messages,
+including our replies, in pages. Relay captures notification text in memory, not the
+app's full history, so older messages can be missing. Hidden text and disallowed source
+apps remain unavailable. Reading neither marks messages as read nor sends a reply.
+
 **Workspace.** A local folder picked in Settings becomes something to ask
 about. Assistant indexes Text, Markdown, Word, PDF, and image files there, up
 to 100 files, reading scanned pages and photos with on-device text recognition

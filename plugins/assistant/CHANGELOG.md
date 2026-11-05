@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.2
+
+- Draft replies through Relay and send only after the wearer taps Send on the
+  recipient-and-text preview. Cancellation, timeout and a lost link never send;
+  failed or uncertain sends are never retried automatically.
+- Read or summarize Relay's captured conversations on an explicit request, with
+  separate operation approvals. The requested text reaches the chosen AI provider.
+  Ask for the latest received message or the retained thread, including our replies;
+  older app history may be missing. Message content is data, never an instruction.
+- Match spoken reply recipients against the available names before drafting.
+- Keep successful reply results short while reporting only a handoff to the app.
+
 ## 1.5.1
 
 - **Conversations can stay open indefinitely.** Settings → Start fresh after now

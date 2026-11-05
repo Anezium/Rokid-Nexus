@@ -5,6 +5,9 @@ import android.os.Handler
 import android.os.Looper
 
 internal object NotificationControl {
+    private const val SKILL_LEASE_SETTLE_MS = 1_000L
+    private const val DRAFT_NOTICE_HOLD_MS = 60_000L
+    private const val SEND_RESULT_HOLD_MS = 4_000L
     private val main = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -100,6 +103,51 @@ internal object NotificationControl {
      */
     fun notifyInboxChanged() {
         main.post { pageListener?.invoke() }
+    }
+
+    private var skillCalls = 0
+
+    /**
+     * A skill call is running or has only just been answered. The hub may hold Relay by that call
+     * alone, in which case it refuses notice traffic and Relay would never hear why: what would have
+     * gone waits here instead. Main thread only.
+     */
+    val skillCallHoldsNotices: Boolean
+        get() = skillCalls > 0 || android.os.SystemClock.elapsedRealtime() < draftHoldUntilMs
+
+    fun skillCallStarted() {
+        skillCalls += 1
+    }
+
+    /** The hub ends a call's lease on reading its result, which takes a moment after the answer. */
+    fun skillCallAnswered() {
+        main.postDelayed({
+            skillCalls = (skillCalls - 1).coerceAtLeast(0)
+            if (!skillCallHoldsNotices) noticeCallbacks()?.onSkillCallsSettled()
+        }, SKILL_LEASE_SETTLE_MS)
+    }
+
+    private var draftHoldUntilMs = 0L
+    private var draftHoldRelease: Runnable? = null
+
+    /**
+     * A draft was handed out, so the wearer is probably reading it on Assistant's band, and a band
+     * of Relay's would take that band's place and throw the draft away. A message arriving now waits
+     * instead, until the send or this bound: Relay never hears of a Cancel, so it must end by itself.
+     */
+    fun holdNoticesForDraft() = holdNoticesFor(DRAFT_NOTICE_HOLD_MS)
+
+    /** The send was answered: long enough more for the wearer to read how it went. */
+    fun holdNoticesForSendResult() = holdNoticesFor(SEND_RESULT_HOLD_MS)
+
+    private fun holdNoticesFor(durationMs: Long) {
+        draftHoldUntilMs = android.os.SystemClock.elapsedRealtime() + durationMs
+        draftHoldRelease?.let(main::removeCallbacks)
+        draftHoldRelease = Runnable {
+            draftHoldUntilMs = 0L
+            draftHoldRelease = null
+            if (skillCalls == 0) noticeCallbacks()?.onSkillCallsSettled()
+        }.also { main.postDelayed(it, durationMs) }
     }
 
     /** The notice band's callbacks, when the listener is connected; the plugin service forwards to them. */

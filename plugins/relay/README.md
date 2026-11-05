@@ -74,7 +74,38 @@ only. The settings screen stores feature flags, the thread message limit, and
 explicit per-package policies. No additional Nexus capability or hub update is
 required.
 
+## Assistant access
+
+On hubs supporting Skills, approve each Assistant operation separately in
+**Nexus → Plugins → Relay → Plugin access**. Drafting and sending a reply do not
+grant access to captured message text. Assistant shows the draft's recipient and
+text and waits for the wearer's **Send**; it never sends because a model asks it to.
+
+**Find conversations Assistant can read** lists sender, app, age, and availability
+without message text. **Share conversation text with Assistant's AI** shares the requested
+thread's captured text with Assistant's chosen AI provider. Both start disabled.
+Assistant uses reading only on an explicit request to consult messages, never to
+prefetch context for an ordinary reply. It can read the latest received message or
+the retained conversation, including our replies. Long threads page without dropping
+captured text; a changed thread invalidates its page cursor. Reading references bind
+the conversation's identity and are separate from reply references.
+
+Retained conversations remain readable after their notification leaves, subject to
+notification access, Relay being enabled, the current source-app policy, and inbox
+privacy settings. This is captured notification history, not the app's full archive.
+Reading does not fetch additional app history, mark messages as read, or send anything.
+After an update adding these operations, Relay needs reapproval; the new reading
+operations also need their own explicit approvals.
+
 The folded test harness includes a **Read-only alert**. First explicitly choose
 **Source apps → Relay → All** to test its forwarding; posting it
 never changes the policy for you. Relay itself is included in Source apps so
 this test can use the same explicit opt-in as any other notification source.
+
+**Reading conversations** in the same harness posts three fictional exchanges:
+the **Mika et José** group arranges dinner and changes its time; **Jean** asks for
+several registration documents and checks across multiple messages; **Léa** arranges
+a cinema visit. Each includes the device user's own turns. They are real local
+MessagingStyle notifications with separate identities and reply actions, not messages
+sent to real contacts. Try asking for the group's summary or what Jean requested in
+his recent messages. The existing Telegram bot remains a separate real-app test.

@@ -120,6 +120,8 @@ internal class PluginSkillTool(
     private val session: () -> String?,
     private val turnKey: () -> String,
     private val memory: AssistantSkillMemory,
+    /** Set on a prepare: its result stages a confirmation instead of reaching the model. */
+    val staging: ConfirmationStaging? = null,
 ) : AssistantToolDefinition {
     override val name: String = entry.alias
     override val description: String = describe(entry)
@@ -145,10 +147,11 @@ internal class PluginSkillTool(
 
     override suspend fun execute(call: AssistantToolCall, arguments: JSONObject): AssistantToolResult {
         val sessionId = session() ?: return AssistantToolResult.Error("plugin_operation_unavailable")
+        if (staging?.alreadyStaged == true) return AssistantToolResult.Error(TOOL_ERROR_ALREADY_USED)
         val requestKey = requestKey(turnKey(), call.callId)
         val result = gateway.invoke(SkillInvokeRequest(sessionId, requestKey, entry.alias, arguments))
         memory.record(entry, result)
-        return AssistantToolResult.Json(modelResult(entry, result).toString())
+        return AssistantToolResult.Json((staging?.modelResult(entry, result) ?: modelResult(entry, result)).toString())
     }
 
     companion object {
