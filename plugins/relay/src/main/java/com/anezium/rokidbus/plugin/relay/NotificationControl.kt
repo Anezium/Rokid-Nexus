@@ -107,7 +107,8 @@ internal object NotificationControl {
 
     fun dismissReplied(notificationId: String) {
         main.post {
-            listener?.noticeCallbacks?.onRemoved(notificationId)
+            if (ReplyRepository.isActive(notificationId)) return@post
+            listener?.noticeCallbacks?.onReplied(notificationId)
             pageListener?.invoke()
         }
     }

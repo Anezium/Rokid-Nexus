@@ -72,12 +72,13 @@ is a conversation page without Send, and changing an app to Off also empties
 its pages.
 
 Some messaging apps repost a changed notification containing your own reply
-after you send it. Relay suppresses self-authored MessagingStyle updates, unchanged
-incoming content and recent outbound text echoes before they reach the notice or
-read-aloud pipeline, with or without a Reply action and in both source modes.
-Per-thread echo markers survive source removal. Exact outbound-text matching for
-read-only notifications across keys is package-scoped and bounded to two minutes; a newly authored
-incoming message is admitted even when it repeats the reply's words.
+after you send it. Relay suppresses self-authored MessagingStyle updates and,
+for two minutes after a reply, unchanged incoming content on that same thread.
+An unstructured outbound-text echo also needs the same sender and the app's
+matching remote-input history. Echoes are filtered before display and read-aloud,
+with or without a Reply action and in both source modes. Per-thread markers survive
+source removal within that window. Text matching alone never suppresses another
+notification: a contact may say the same words, and ambiguous arrivals stay visible.
 
 Notification content, sender names, images, and speech text are process-memory
 only. The settings screen stores feature flags, the thread message limit, and

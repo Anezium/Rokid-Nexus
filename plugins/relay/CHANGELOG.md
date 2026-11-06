@@ -2,13 +2,16 @@
 
 ## Unreleased
 
-- Suppress outbound reply echoes before display and read-aloud, including
-  MessagingStyle self messages and recent read-only sender-account reposts.
+- Suppress outbound reply echoes before display and read-aloud using
+  MessagingStyle authorship or the same thread's matching remote-input history.
+  Admit ambiguous text matches and bound per-thread echo markers to two minutes.
 - Remove answered threads from the Nexus launcher's Relay list and Notifications
   history. Consecutive replies remain available only while the reply page stays
   open; leaving it drops the action until a new incoming notification arrives.
 - Defer clearing the phone notification until that reply screen closes. Actual
   intent cancellation, access loss and session expiry still end reply authority.
+- Keep Assistant's send confirmation intact while dismissing an answered thread;
+  delayed dismissal and cancellation never act on a newer arrival.
 
 ## 1.4.1
 

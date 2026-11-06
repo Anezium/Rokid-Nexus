@@ -187,13 +187,24 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
         flushWithdrawals(holdIfUnbound = true)
     }
 
-    fun onRemoved(id: String) = onMain {
+    fun onReplied(id: String) = onMain {
+        withdrawEvent(id)
+        if (deferredShow?.id == id) deferredShow = null
+        // Assistant owns the confirmation. Ending our local exchange must not hide its band.
+        if (currentReply?.id == id && NotificationControl.skillCallHoldsNotices) closeClient()
+    }
+
+    private fun withdrawEvent(id: String) {
         if (announcedEventKeys.remove(id)) {
             pendingWithdrawals.remove(id)
             pendingWithdrawals.add(id)
             while (pendingWithdrawals.size > MAX_EVENT_KEYS) pendingWithdrawals.remove(pendingWithdrawals.first())
             flushWithdrawals(holdIfUnbound = true)
         }
+    }
+
+    fun onRemoved(id: String) = onMain {
+        withdrawEvent(id)
         if (deferredShow?.id == id) deferredShow = null
         if (currentReply?.id != id) return@onMain
         if (!activeNotice) {

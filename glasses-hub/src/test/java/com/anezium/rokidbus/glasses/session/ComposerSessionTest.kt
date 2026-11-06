@@ -578,7 +578,7 @@ class ComposerSessionTest {
     @Test
     fun `a thread opened again never shows an earlier page's kept reply, whatever its revision`() {
         registration = "reg-1"
-        openThread("t1", at = 1_000)
+        openThread("t1", at = 1_000, owner = "other")
         respond(requestOf(), conversation("t1"), revision = 50, now = 2_000)
         dictate("see you", at = 3_000)
         result(sendDraft(at = 5_000), "done", now = 5_500)
@@ -586,7 +586,7 @@ class ComposerSessionTest {
         // Back and in again in the same session: the same frame index and page, a new answer.
         send(SessionEvent.Back(5_600))
         assertTrue(model.handoffs.isEmpty())
-        openThreadCard(at = 6_000)
+        openThreadCard(at = 6_000, owner = "other")
         assertTrue(sentBubbles("see you").isEmpty())
 
         // A new notice, a new session, a new registration counting from 1 with the same messages, then past 50.

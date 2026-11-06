@@ -122,7 +122,8 @@ internal data class NotificationHistory(
     fun entry(id: String): HistoryEntry? = entries.firstOrNull { it.id == id }
 
     /** [entry], but only while it is still within the display bound. */
-    fun visibleEntry(id: String, nowWallMs: Long): HistoryEntry? = entry(id)?.takeIf { isVisible(it, nowWallMs) }
+    fun visibleEntry(id: String, nowWallMs: Long): HistoryEntry? =
+        entry(id)?.takeIf { isVisible(it, nowWallMs) && !it.dismissedRelay }
 
     /** When the next entry shown now leaves the display bound, in wall time; null when none shows. */
     fun nextExpiryWallMs(nowWallMs: Long): Long? =

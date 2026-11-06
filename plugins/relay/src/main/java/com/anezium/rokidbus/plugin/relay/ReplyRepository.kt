@@ -45,6 +45,7 @@ internal sealed interface ReplySendResult {
 internal object ReplyRepository {
     private data class AnsweredNotification(
         val packageName: String,
+        val senderTitle: String,
         val contentDigest: String,
         val incomingDigest: String?,
         val replyDigests: Set<String>,
@@ -301,6 +302,7 @@ internal object ReplyRepository {
             val previous = answeredEchoes[notificationId]
             answeredEchoes[notificationId] = AnsweredNotification(
                 reply.content.packageName,
+                reply.content.title,
                 contentDigest(reply.content),
                 incomingDigests[notificationId],
                 (previous?.replyDigests.orEmpty() + textDigest(text)).toList().takeLast(MAX_ECHO_REPLIES).toSet(),
@@ -509,7 +511,12 @@ internal object ReplyRepository {
         val now = android.os.SystemClock.elapsedRealtime()
         val input = NotificationTextExtractor.fromExtras(sbn.notification.extras)
         val id = stableId(sbn.key)
-        val marker = answeredEchoes[id]
+        val title = sbn.notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
+            .ifBlank { recent[id]?.content?.appLabel ?: sbn.packageName }
+            .take(NoticeSurfaceContract.MAX_TITLE_CHARS)
+        val marker = answeredEchoes[id]?.takeIf {
+            it.expiresAtMs > now && it.packageName == sbn.packageName && it.senderTitle == title
+        }
         val incoming = incomingDigest(input)
         // A new received message wins even when the app also includes our reply/history.
         if (marker != null && incoming != null && incoming != marker.incomingDigest) return false
@@ -518,31 +525,33 @@ internal object ReplyRepository {
             return input.messages.last().fromSelf
         }
         val rendered = NotificationTextExtractor.extractThread(input, RelaySettings.MAX_MESSAGES_PER_THREAD).rendered
-        val title = sbn.notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
         if (marker != null) {
             val previous = recent[id]?.content
             if (previous != null && contentDigest(previous.copy(title = title, renderedText = rendered)) == marker.contentDigest) return true
         }
-        // Some apps post the outbound account under another key and omit MessagingStyle.
-        // A new replyable chat without authorship is ambiguous; never discard it by text alone.
-        if (marker == null && sbn.notification.findRepliableAction() != null) return false
+        // Text alone cannot distinguish our reply from a contact saying the same words.
+        // Only this thread's app-recorded outbound history can vouch for an unstructured echo.
+        if (marker == null) return false
+        val outbound = input.remoteInputHistory.filterNotNull().map(::textDigest).filter { it in marker.replyDigests }
+        if (outbound.isEmpty()) return false
         val candidates = listOf(rendered, input.text.orEmpty(), rendered.substringAfter(": ", rendered))
             .filter(String::isNotBlank).map(::textDigest)
-        return answeredEchoes.values.any { echo ->
-            echo.packageName == sbn.packageName && (echo === marker || echo.expiresAtMs > now) &&
-                candidates.any { it in echo.replyDigests }
-        }
+        return candidates.any { it in outbound }
     }
 
     private fun incomingDigest(input: NotificationTextInput): String? = input.messages
-        .lastOrNull { !it.fromSelf && !it.text.isNullOrBlank() }
-        ?.let { stableId("${it.timestamp}:${it.sender}:${it.text}") }
+        .filter { !it.fromSelf && !it.text.isNullOrBlank() }
+        .takeIf { it.isNotEmpty() }
+        ?.let { messages -> stableId(messages.joinToString("") { "${it.timestamp}:${it.sender}:${it.text}" }) }
 
     private fun textDigest(text: String): String = stableId(RelayTranscript.normalized(text))
 
     private fun cancelAnsweredNotification(reply: PendingReply) {
+        val marker = answeredEchoes[reply.id] ?: return
         NotificationControl.cancelAfterReply(reply.notificationKey) {
-            synchronized(this) { reply.id in answered && reply.id !in replySessions }
+            synchronized(this) {
+                answeredEchoes[reply.id] === marker && reply.id in answered && reply.id !in replySessions
+            }
         }
     }
 

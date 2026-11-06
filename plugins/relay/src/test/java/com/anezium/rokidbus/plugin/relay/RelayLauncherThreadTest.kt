@@ -3,6 +3,7 @@ package com.anezium.rokidbus.plugin.relay
 import android.app.Application
 import android.app.Notification
 import android.app.Person
+import android.os.Bundle
 import android.service.notification.StatusBarNotification
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.shared.BusCapabilityBits
@@ -259,6 +260,9 @@ class RelayLauncherThreadTest {
         for (withAction in listOf(false, true)) {
             val builder = Notification.Builder(app, "chat").setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle("Mika").setContentText("You: On my way")
+                .addExtras(Bundle().apply {
+                    putCharSequenceArray(Notification.EXTRA_REMOTE_INPUT_HISTORY, arrayOf("On my way"))
+                })
             if (withAction) builder.addAction(chat.notification.actions.single())
             listener.get().onNotificationPosted(repost(builder.build()))
             RelayHubFixture.idleFor(1_000)
@@ -271,7 +275,7 @@ class RelayLauncherThreadTest {
     }
 
     @Test
-    fun `own account notification under a different key stays silent after the screen closes`() {
+    fun `a self authored notification under a different key stays silent after the screen closes`() {
         start(launcher = true)
         RelaySettings(app).setReadAloud(true)
         RelaySettings(app).setAppPolicy(chat.packageName, RelayAppPolicy.ALL)
@@ -281,7 +285,10 @@ class RelayLauncherThreadTest {
         val notices = hub.sentTo(BusPaths.NOTICE_SHOW).size
         val speech = hub.sentTo(BusPaths.TTS_SPEAK).size
         val outbound = Notification.Builder(app, "chat").setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("My account").setContentText("On my way").build()
+            .setContentTitle("My account")
+            .setStyle(Notification.MessagingStyle(Person.Builder().setName("Me").build())
+                .addMessage("On my way", 100, null as Person?))
+            .build()
         listener.get().onNotificationPosted(repost(outbound, id = 91))
         RelayHubFixture.idleFor(1_000)
         assertTrue(ReplyRepository.inboxEntries().isEmpty())
@@ -329,6 +336,74 @@ class RelayLauncherThreadTest {
         listener.get().onNotificationPosted(other)
         RelayHubFixture.idle()
         assertEquals(listOf(ReplyRepository.stableId(other.key)), ReplyRepository.inboxEntries().map { it.id })
+    }
+
+    @Test
+    fun `a read only message matching our reply is admitted without outbound authorship`() {
+        start(launcher = true)
+        RelaySettings(app).setAppPolicy(chat.packageName, RelayAppPolicy.ALL)
+        val thread = openThread()
+        composerSend(thread, "i1", "OK")
+        leaveThread(thread)
+        val plain = Notification.Builder(app, "chat").setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Alan").setContentText("OK").build()
+        val other = repost(plain, id = 92)
+        listener.get().onNotificationPosted(other)
+        RelayHubFixture.idle()
+        assertEquals(listOf(ReplyRepository.stableId(other.key)), ReplyRepository.inboxEntries().map { it.id })
+
+        val sameThread = Notification.Builder(app, "chat").setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Mika").setContentText("OK").build()
+        listener.get().onNotificationPosted(repost(sameThread))
+        RelayHubFixture.idle()
+        assertTrue(ReplyRepository.inboxEntries().any { it.id == threadId })
+    }
+
+    @Test
+    fun `a reused notification key for another sender does not inherit echo suppression`() {
+        start(launcher = true)
+        RelaySettings(app).setAppPolicy(chat.packageName, RelayAppPolicy.ALL)
+        val thread = openThread()
+        composerSend(thread, "i1", "OK")
+        leaveThread(thread)
+        val other = Notification.Builder(app, "chat").setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Alan").setContentText("OK")
+            .addExtras(Bundle().apply { putCharSequenceArray(Notification.EXTRA_REMOTE_INPUT_HISTORY, arrayOf("OK")) })
+            .build()
+        listener.get().onNotificationPosted(repost(other))
+        RelayHubFixture.idle()
+        assertEquals("Alan", ReplyRepository.inboxEntries().single().snapshot.sender)
+    }
+
+    @Test
+    fun `an incoming message inserted before the previous latest message is not a self echo`() {
+        start(launcher = true)
+        val me = Person.Builder().setName("Me").setKey("self").build()
+        val contact = Person.Builder().setName("Mika").setKey("contact").build()
+        fun notification(added: Boolean) = Notification.Builder(app, "chat")
+            .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("Mika")
+            .setStyle(Notification.MessagingStyle(me).apply {
+                if (added) addMessage("a delayed arrival", 100, contact)
+                addMessage("the latest arrival", 200, contact)
+                if (added) addMessage("OK", 300, null as Person?)
+            })
+            .addAction(chat.notification.actions.single()).build()
+        listener.get().onNotificationPosted(repost(notification(false)))
+        RelayHubFixture.idle()
+        composerSend(openThread(), "i1", "OK")
+        listener.get().onNotificationPosted(repost(notification(true)))
+        RelayHubFixture.idle()
+        assertTrue(ReplyRepository.inboxEntries().single().snapshot.renderedText.contains("a delayed arrival"))
+    }
+
+    @Test
+    fun `unchanged plain content can arrive again after the bounded echo window`() {
+        start(launcher = true)
+        composerSend(openThread(), "i1", "OK")
+        RelayHubFixture.idleFor(120_001)
+        listener.get().onNotificationPosted(chat)
+        RelayHubFixture.idle()
+        assertEquals(listOf(threadId), ReplyRepository.inboxEntries().map { it.id })
     }
 
     @Test

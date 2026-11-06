@@ -166,7 +166,7 @@ class RelaySkillLeaseTest {
     }
 
     @Test
-    fun `a message arriving while a draft waits holds its band until the send, and it does not replace the confirmation`() {
+    fun `another thread arriving while a draft waits gets its band only after the send confirmation`() {
         start()
         post()
         RelayHubFixture.idleFor(2_000)
@@ -176,7 +176,7 @@ class RelaySkillLeaseTest {
         RelayHubFixture.idleFor(2_000)
         val mark = hub.sent.size
 
-        post(RelayHubFixture.chat(app, text = "a newer message"))
+        post(RelayHubFixture.chat(app, id = 8, sender = "Alan", text = "another thread"))
         RelayHubFixture.idleFor(2_000)
         assertFalse(noticeTraffic(mark).contains(BusPaths.NOTICE_SHOW))
 
@@ -185,6 +185,25 @@ class RelaySkillLeaseTest {
         assertFalse(noticeTraffic(mark).contains(BusPaths.NOTICE_SHOW))
         RelayHubFixture.idleFor(1_100)
         assertTrue(noticeTraffic(mark).contains(BusPaths.NOTICE_SHOW))
+    }
+
+    @Test
+    fun `a newer message answered by the draft is dismissed without replacing the confirmation`() {
+        start()
+        post()
+        RelayHubFixture.idleFor(2_000)
+        val thread = ReplyRepository.stableId(RelayHubFixture.chat(app).key)
+        val draft = invoke(RelaySkills.PREPARE_REPLY, JSONObject().put("thread", thread).put("text", "On my way"))
+            .getJSONObject("data").getString("draft")
+        post(RelayHubFixture.chat(app, text = "a newer message"))
+        val mark = hub.sent.size
+
+        assertEquals("accepted", invoke(RelaySkills.SEND_REPLY, JSONObject().put("draft", draft)).getString("status"))
+        assertTrue(noticeTraffic(mark).isEmpty())
+        RelayHubFixture.idleFor(4_100)
+        assertFalse(noticeTraffic(mark).contains(BusPaths.NOTICE_SHOW))
+        assertTrue(noticeTraffic(mark).contains(BusPaths.NOTICE_WITHDRAW))
+        assertTrue(ReplyRepository.inboxEntries().isEmpty())
     }
 
     @Test
