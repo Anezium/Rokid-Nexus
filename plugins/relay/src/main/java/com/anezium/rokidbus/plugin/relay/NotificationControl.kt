@@ -105,6 +105,13 @@ internal object NotificationControl {
         main.post { pageListener?.invoke() }
     }
 
+    fun dismissReplied(notificationId: String) {
+        main.post {
+            listener?.noticeCallbacks?.onRemoved(notificationId)
+            pageListener?.invoke()
+        }
+    }
+
     private var skillCalls = 0
 
     /**
@@ -172,10 +179,10 @@ internal object NotificationControl {
         }
     }
 
-    fun cancelAfterReply(notificationKey: String) {
+    fun cancelAfterReply(notificationKey: String, shouldCancel: () -> Boolean) {
         if (notificationKey.isBlank()) return
         CANCEL_DELAYS_MS.forEach { delayMs ->
-            main.postDelayed({ listener?.cancelNotification(notificationKey) }, delayMs)
+            main.postDelayed({ if (shouldCancel()) listener?.cancelNotification(notificationKey) }, delayMs)
         }
     }
 

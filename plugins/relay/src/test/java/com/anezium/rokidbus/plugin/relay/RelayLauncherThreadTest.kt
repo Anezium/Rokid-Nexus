@@ -1,6 +1,8 @@
 package com.anezium.rokidbus.plugin.relay
 
 import android.app.Application
+import android.app.Notification
+import android.app.Person
 import android.service.notification.StatusBarNotification
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.shared.BusCapabilityBits
@@ -20,6 +22,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
 
@@ -63,6 +66,8 @@ class RelayLauncherThreadTest {
         if (::listener.isInitialized) listener.destroy()
         ReplyRepository.clear()
         RelaySettings(app).setClearAfterReply(RelaySettings.DEFAULT_CLEAR_AFTER_REPLY)
+        RelaySettings(app).setReadAloud(RelaySettings.DEFAULT_READ_ALOUD)
+        if (::chat.isInitialized) RelaySettings(app).setAppPolicy(chat.packageName, RelayAppPolicy.MESSAGES)
         RelayHubFixture.idle()
     }
 
@@ -106,6 +111,21 @@ class RelayLauncherThreadTest {
     }
 
     private fun composer(answer: JSONObject) = answer.getJSONObject("body").getJSONObject("composer")
+
+    private fun leaveThread(thread: String) {
+        hub.deliver(
+            BusPaths.PAGE_VISIBILITY,
+            JSONObject().put("pageId", thread).put("visible", false).put("sessionGeneration", 1L).put("frameIndex", 1)
+                .put(PageSurfaceContract.FIELD_PROVIDER_REGISTRATION_ID, "reg-a"),
+        )
+        RelayHubFixture.idleFor(1_000)
+    }
+
+    private fun sentReplies() = shadowOf(app).broadcastIntents.count { it.action == "dev.example.REPLY" }
+
+    private fun repost(notification: Notification, id: Int = chat.id) = StatusBarNotification(
+        chat.packageName, chat.opPkg, id, chat.tag, chat.uid, 0, 0, notification, chat.user, System.currentTimeMillis(),
+    )
 
     private fun messages(answer: JSONObject): List<JSONObject> {
         val array = answer.getJSONObject("body").getJSONArray("messages")
@@ -183,6 +203,157 @@ class RelayLauncherThreadTest {
         // Still the same thread, still replyable: a reply does not end the conversation.
         assertTrue(composer(revised).getBoolean("replyable"))
         assertEquals(listOf("On my way"), handoffs().map { it.text })
+    }
+
+    @Test
+    fun `multiple sends survive source removal only until the reply screen is left`() {
+        start(launcher = true)
+        RelaySettings(app).setClearAfterReply(true)
+        val thread = openThread()
+        val before = sentReplies()
+        assertEquals("done", composerSend(thread, "i1", "On my way").getString("status"))
+        listener.get().onNotificationRemoved(chat)
+        RelayHubFixture.idleFor(3_000)
+        assertTrue(ReplyRepository.hasReplyAuthority(threadId))
+        assertTrue(hub.sentTo(BusPaths.NOTICE_WITHDRAW).isEmpty())
+        assertEquals("done", composerSend(thread, "i2", "And bringing coffee").getString("status"))
+        assertEquals(before + 2, sentReplies())
+        assertTrue(ReplyRepository.inboxEntries().isEmpty())
+
+        leaveThread(thread)
+        assertFalse(ReplyRepository.hasReplyAuthority(threadId))
+        assertTrue(ReplyRepository.inboxEntries().isEmpty())
+        assertEquals(listOf(threadId), hub.sentTo(BusPaths.NOTICE_WITHDRAW).map { it.getString(NoticeSurfaceContract.FIELD_EVENT_KEY) })
+        hub.deliver(BusPaths.PAGE_REQUEST, request("reopen", thread))
+        RelayHubFixture.idle()
+        assertFalse(composer(answersFor(thread).last()).getBoolean("replyable"))
+        assertEquals(ReplySendResult.Missing, ReplyRepository.sendReply(app, threadId, "Too late"))
+        assertEquals(before + 2, sentReplies())
+
+        listener.get().onNotificationPosted(RelayHubFixture.chat(app, text = "Where are you?"))
+        RelayHubFixture.idle()
+        assertTrue(ReplyRepository.hasReplyAuthority(threadId))
+        assertEquals(listOf(threadId), ReplyRepository.inboxEntries().map { it.id })
+    }
+
+    @Test
+    fun `launcher main list excludes an answered thread while its open page remains replyable`() {
+        start(launcher = true)
+        val thread = openThread()
+        composerSend(thread, "i1", "On my way")
+        assertTrue(composer(answersFor(thread).last()).getBoolean("replyable"))
+        hub.deliver(BusPaths.PAGE_REQUEST, request("list", RelayPages.MAIN))
+        RelayHubFixture.idle()
+        assertEquals(0, answersFor(RelayPages.MAIN).single().getJSONObject("body").getJSONArray("items").length())
+    }
+
+    @Test
+    fun `an outbound repost with or without Reply never reappears or speaks and does not lock the open screen`() {
+        start(launcher = true)
+        RelaySettings(app).setReadAloud(true)
+        RelaySettings(app).setAppPolicy(chat.packageName, RelayAppPolicy.ALL)
+        val thread = openThread()
+        composerSend(thread, "i1", "On my way")
+        val notices = hub.sentTo(BusPaths.NOTICE_SHOW).size
+        val speech = hub.sentTo(BusPaths.TTS_SPEAK).size
+        for (withAction in listOf(false, true)) {
+            val builder = Notification.Builder(app, "chat").setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("Mika").setContentText("You: On my way")
+            if (withAction) builder.addAction(chat.notification.actions.single())
+            listener.get().onNotificationPosted(repost(builder.build()))
+            RelayHubFixture.idleFor(1_000)
+        }
+        assertTrue(ReplyRepository.inboxEntries().isEmpty())
+        assertTrue(ReplyRepository.hasReplyAuthority(threadId))
+        assertEquals(notices, hub.sentTo(BusPaths.NOTICE_SHOW).size)
+        assertEquals(speech, hub.sentTo(BusPaths.TTS_SPEAK).size)
+        assertEquals("done", composerSend(thread, "i2", "See you soon").getString("status"))
+    }
+
+    @Test
+    fun `own account notification under a different key stays silent after the screen closes`() {
+        start(launcher = true)
+        RelaySettings(app).setReadAloud(true)
+        RelaySettings(app).setAppPolicy(chat.packageName, RelayAppPolicy.ALL)
+        val thread = openThread()
+        composerSend(thread, "i1", "On my way")
+        leaveThread(thread)
+        val notices = hub.sentTo(BusPaths.NOTICE_SHOW).size
+        val speech = hub.sentTo(BusPaths.TTS_SPEAK).size
+        val outbound = Notification.Builder(app, "chat").setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("My account").setContentText("On my way").build()
+        listener.get().onNotificationPosted(repost(outbound, id = 91))
+        RelayHubFixture.idleFor(1_000)
+        assertTrue(ReplyRepository.inboxEntries().isEmpty())
+        assertEquals(notices, hub.sentTo(BusPaths.NOTICE_SHOW).size)
+        assertEquals(speech, hub.sentTo(BusPaths.TTS_SPEAK).size)
+    }
+
+    @Test
+    fun `MessagingStyle self echo is silent but the same words received from the contact are admitted`() {
+        start(launcher = true)
+        val me = Person.Builder().setName("Me").setKey("self").build()
+        val mika = Person.Builder().setName("Mika").setKey("contact").build()
+        fun message(sender: Person?, timestamp: Long) = Notification.Builder(app, "chat")
+            .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("Mika")
+            .setStyle(Notification.MessagingStyle(me).addMessage("On my way", timestamp, sender))
+            .addAction(chat.notification.actions.single()).build()
+        val thread = openThread()
+        composerSend(thread, "i1", "On my way")
+        leaveThread(thread)
+        listener.get().onNotificationPosted(repost(message(null, 100)))
+        RelayHubFixture.idle()
+        assertTrue(ReplyRepository.inboxEntries().isEmpty())
+        listener.get().onNotificationPosted(repost(message(mika, 200)))
+        RelayHubFixture.idle()
+        assertEquals(listOf(threadId), ReplyRepository.inboxEntries().map { it.id })
+        assertTrue(ReplyRepository.hasReplyAuthority(threadId))
+    }
+
+    @Test
+    fun `a reply session expires if its visibility lease is not renewed`() {
+        start(launcher = true)
+        val thread = openThread()
+        composerSend(thread, "i1", "On my way")
+        RelayHubFixture.idleFor(120_001)
+        assertFalse(ReplyRepository.hasReplyAuthority(threadId))
+        assertTrue(ReplyRepository.inboxEntries().isEmpty())
+    }
+
+    @Test
+    fun `an unrelated replyable chat with the same unstructured text is not a self echo`() {
+        start(launcher = true)
+        val thread = openThread()
+        composerSend(thread, "i1", "On my way")
+        val other = RelayHubFixture.chat(app, id = 92, sender = "Alan", text = "On my way")
+        listener.get().onNotificationPosted(other)
+        RelayHubFixture.idle()
+        assertEquals(listOf(ReplyRepository.stableId(other.key)), ReplyRepository.inboxEntries().map { it.id })
+    }
+
+    @Test
+    fun `an app cancelling its intent still ends authority inside an answered open session`() {
+        start(launcher = true)
+        val thread = openThread()
+        composerSend(thread, "i1", "On my way")
+        val sent = sentReplies()
+        chat.notification.actions.single().actionIntent.cancel()
+        val rejected = composerSend(thread, "i2", "Another reply")
+        assertEquals(PageSurfaceContract.CODE_AUTHORITY_LOST, rejected.getString("code"))
+        assertFalse(ReplyRepository.hasReplyAuthority(threadId))
+        assertEquals(sent, sentReplies())
+    }
+
+    @Test
+    fun `a data link loss ends the answered reply session`() {
+        start(launcher = true)
+        val thread = openThread()
+        composerSend(thread, "i1", "On my way")
+        hub.link = LinkStateBits.CXR_CONTROL_UP
+        hub.callback!!.onLinkState(hub.link)
+        RelayHubFixture.idle()
+        assertFalse(ReplyRepository.hasReplyAuthority(threadId))
+        assertTrue(ReplyRepository.inboxEntries().isEmpty())
     }
 
     @Test

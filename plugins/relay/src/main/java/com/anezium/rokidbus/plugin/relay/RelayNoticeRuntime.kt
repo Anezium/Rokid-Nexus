@@ -507,7 +507,7 @@ internal class RelayNoticeRuntime(context: Context) : NexusPluginCallbacks {
             enabled = settings.readAloud(),
             senderOnly = settings.hideNoticeText(),
             sender = reply.content.title,
-            renderedThread = reply.content.renderedText,
+            renderedThread = reply.announcementText ?: return,
         ) ?: return
         val currentClient = client ?: return
         val utteranceId = "notice-$showGeneration"

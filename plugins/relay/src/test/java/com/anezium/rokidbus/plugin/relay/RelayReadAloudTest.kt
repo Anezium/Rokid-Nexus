@@ -8,6 +8,17 @@ import org.junit.Test
 
 class RelayReadAloudTest {
     @Test
+    fun `a mixed arrival reads the newest received message rather than our later reply`() {
+        val input = NotificationTextInput(messages = listOf(
+            ExtractedMessage("Old", "Mika", 100),
+            ExtractedMessage("Where are you?", "Mika", 200),
+            ExtractedMessage("On my way", null, 300, fromSelf = true),
+        ))
+        assertEquals("Mika: Where are you?", RelayReadAloud.receivedText(input, "On my way"))
+        assertNull(RelayReadAloud.receivedText(input.copy(messages = input.messages.takeLast(1)), "On my way"))
+    }
+
+    @Test
     fun `disabled reading produces no speech`() {
         assertNull(
             RelayReadAloud.textFor(

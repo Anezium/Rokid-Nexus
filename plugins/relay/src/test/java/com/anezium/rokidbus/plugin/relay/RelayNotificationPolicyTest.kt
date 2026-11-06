@@ -169,14 +169,15 @@ class RelayNotificationPolicyTest {
     }
 
     @Test
-    fun `removing a just answered source retires its suppression marker`() {
+    fun `removing a just answered source keeps suppression until a new incoming message`() {
         settings.setAppPolicy(source, RelayAppPolicy.ALL)
         val posted = notification()
         val capture = requireNotNull(ReplyRepository.capture(context, posted, replyAction()))
         assertEquals(ReplySendResult.Sent, ReplyRepository.sendReply(context, capture.reply.id, "Thanks"))
         assertNull(ReplyRepository.capture(context, posted, null))
         ReplyRepository.forget(posted)
-        assertNotNull(ReplyRepository.capture(context, posted, null))
+        assertNull(ReplyRepository.capture(context, posted, null))
+        assertNotNull(ReplyRepository.capture(context, notification(body = "A new message"), replyAction()))
     }
 
     @Test

@@ -172,13 +172,16 @@ internal object RootStops {
             when (it.kind) {
                 RootStopKind.NOTICE_PREVIEW -> {
                     val card = it.notice
-                    val withdrawn = card?.entryId?.let(history::entry)?.state == HistoryState.WITHDRAWN
+                    val entry = card?.entryId?.let(history::entry)
+                    val withdrawn = entry?.state == HistoryState.WITHDRAWN || entry?.dismissedRelay == true
                     val ownerEntries = history.visible(nowWallMs).filter { entry ->
                         entry.notice.ownerPluginId == card?.ownerPluginId && entry.notice.threadKey != null
                     }
                     val withdrawnAggregate = card?.kind == NoticeCardKind.AGGREGATE && ownerEntries.isNotEmpty() &&
                         ownerEntries.all { entry -> entry.state == HistoryState.WITHDRAWN }
-                    if (withdrawn || withdrawnAggregate) null else refreshNotice(it, history, nowWallMs)
+                    val dismissedRelayAggregate = card?.kind == NoticeCardKind.AGGREGATE &&
+                        card.ownerPluginId == "relay" && ownerEntries.isEmpty()
+                    if (withdrawn || withdrawnAggregate || dismissedRelayAggregate) null else refreshNotice(it, history, nowWallMs)
                 }
                 RootStopKind.NOTIFICATIONS -> it.copy(count = count)
                 else -> it

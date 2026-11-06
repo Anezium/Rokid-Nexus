@@ -3,8 +3,12 @@
 Relay forwards selected Android notifications to a Nexus notice band,
 keeps a menu-launched in-memory inbox, and sends an explicitly confirmed reply
 through the source notification's `RemoteInput` action — dictated, or typed.
-A thread answered from Relay leaves that inbox until the app posts it again; the
-launcher's thread page keeps reading it with the reply it handed off.
+A thread answered from Relay leaves that inbox and the launcher's Relay list until
+a new incoming notification arrives. While its launcher reply screen stays open,
+the wearer can dictate or type and send multiple consecutive replies. Leaving that
+screen ends its reply authority; reopening retained text cannot send again until a
+new notification arrives. An answered thread also leaves the launcher's Notifications
+list, including its removed entries.
 A *Type* chip appears about a second into dictation (or *Reply by typing* skips
 dictation altogether), and the reply is typed inside the notice band itself on
 a glasses hub from 1.4.13, from a bonded keyboard or the phone's Keyboard &
@@ -35,9 +39,12 @@ before Relay hands the text to the app, answered once, never retried, and
 refused as `authority_lost` once the action is gone. A reply Relay handed off
 stays in its thread as ours ("handed to the app", or unconfirmed when the send
 failed without saying), within the thread message limit, until the app's own
-copy shows up. When a notification leaves the phone, Relay tells the glasses
+copy shows up. When an unanswered notification leaves the phone, Relay tells the glasses
 the event is gone, the page keeps its text without Send, and a band waiting to
-send it stops and keeps the wearer's words unsent. A band's send countdown only
+send it stops and keeps the wearer's words unsent. After a successful send, an open
+reply screen retains its action for further replies until that screen closes or
+its visible lease ends. Clearing the phone notification after a reply is deferred
+until then; a cancelled reply intent still fails closed. A band's send countdown only
 runs while its updates reach the glasses.
 
 The notice band, the inbox and a page share the plugin service's one hub
@@ -65,14 +72,17 @@ is a conversation page without Send, and changing an app to Off also empties
 its pages.
 
 Some messaging apps repost a changed notification containing your own reply
-after you send it. In All mode this can appear as a new read-only alert. Identical
-content reposts are suppressed; choose Messages only for that app to exclude
-these read-only updates.
+after you send it. Relay suppresses self-authored MessagingStyle updates, unchanged
+incoming content and recent outbound text echoes before they reach the notice or
+read-aloud pipeline, with or without a Reply action and in both source modes.
+Per-thread echo markers survive source removal. Exact outbound-text matching for
+read-only notifications across keys is package-scoped and bounded to two minutes; a newly authored
+incoming message is admitted even when it repeats the reply's words.
 
 Notification content, sender names, images, and speech text are process-memory
 only. The settings screen stores feature flags, the thread message limit, and
-explicit per-package policies. No additional Nexus capability or hub update is
-required.
+explicit per-package policies. No additional Nexus capability is required. The
+launcher history dismissal behavior requires the matching glasses hub update.
 
 ## Assistant access
 
