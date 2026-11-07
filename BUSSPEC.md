@@ -3381,6 +3381,8 @@ phone-to-glasses camera announcements), bit `32` is `PIN_SURFACE`, bit `64` is
 `NOTICE_SURFACE`, bit `128` is `ACTIVITY_SURFACE`, bit `256` is
 `PHONE_ASSISTED_SETUP`, bit `512` is `TTS`, bit `1024` is `INK_SURFACE`,
 bit `2048` is `EDITABLE_SURFACE`, and bit `4096` is `ACTIVITY_EXTRAS`.
+Bit `262144` (`1 << 18`) is `GLASSES_AUDIO_RELAY`, announced only by glasses.
+It enables the dedicated authenticated audio socket described below, never a plugin route.
 The phone does not
 include renderer bits in camera announcements. The glasses hub announces its
 renderer after either remote link connects by sending
@@ -4208,6 +4210,65 @@ The glasses capability bit is `512`, and the capabilities payload still
 carries `ttsVersion`, which current phones ignore: the contract always
 promised speech could be produced somewhere else without a plugin noticing,
 and since 1.2.3 it is — on the phone, unconditionally.
+
+## Glasses audio relay v1
+
+This trusted hub-to-hub protocol uses a **separate insecure RFCOMM socket**:
+glasses server, service `RokidBusAudio`, UUID `3fd6b1e2-9a47-4c0b-8e5d-71c2a9f0b4d8`.
+It reuses the Mutual handshake and Authenticated frames of Authenticated SPP
+transport v1 verbatim, with the same pairing key, fresh nonces and independent
+per-socket frame keys. One authenticated audio session is admitted at a time;
+additional sockets are closed. This socket carries no bus traffic, and never
+changes `SPP_DATA_UP`. The bus UUID, API version and transport protocol are unchanged.
+
+The phone connects only while its off-by-default **Glasses sound in earbuds**
+setting is enabled, its winning media output is an external non-glasses headset,
+the current glasses announcement includes `GLASSES_AUDIO_RELAY` (`1 << 18`), and
+the authenticated bus data plane is up. Phone speaker and glasses A2DP routes
+disable capture. There is no plugin capability, grant, SDK API or receive prefix.
+Both hubs drop `/core/audio-relay` and every `/core/audio-relay/*` envelope arriving
+on the bus socket before dispatch. Audio and keepalives never use CXR, Wi-Fi,
+the files lane or the bus socket.
+
+Payload version is `v:1` for start, ready, status and error. Keepalive and stop
+carry `{}`. Binary frame metadata uses the envelope's existing `v:1`.
+
+| Direction | Path suffix under `/core/audio-relay` | Payload |
+|---|---|---|
+| phone → glasses | `/start` | `{"v":1,"codecs":["opus"],"keepaliveMs":2000}`; first envelope within 3 seconds of authenticated Ready |
+| glasses → phone | `/ready` | `{"v":1,"codec":"opus","sampleRate":48000,"channels":1,"frameMs":20,"packetsPerFrame":2,"csd0":"<base64>","csd1":"<base64>","csd2":"<base64>"}` |
+| glasses → phone | `/frame` | Binary data: 1..4 packets, each `[u16 BE length][packet]`, total ≤ 4096 bytes; nonempty packets only. Metadata `{"seq":0,"ms":12345}`, id `ar-0`; seq starts at 0 and increases by one per frame, ms is elapsedRealtime of its first packet |
+| glasses → phone | `/status` | `{"v":1,"seq":-1,"silent":true}` every 2 seconds and each silence transition; seq is last frame sequence, -1 before any frame |
+| glasses → phone | `/error` | `{"v":1,"code":"BRIDGE_UNAVAILABLE"}` then close; codes: `BRIDGE_UNAVAILABLE`, `CAPTURE_FAILED`, `ENCODER_UNAVAILABLE`, `BUSY`, `UNSUPPORTED` |
+| phone → glasses | `/keepalive` | `{}` every 2 seconds |
+| phone → glasses | `/stop` | `{}` then close; socket EOF is also a stop |
+
+Contract validation additionally accepts a distinct `pcm16` ready shape (16000 Hz,
+mono, 20 ms, two packets per frame, no CSD fields) and start codec lists containing
+`opus` and/or `pcm16`, without duplicates. v1 implements Opus capture/playback only.
+Opus CSDs are three nonempty base64 buffers, each at most 4096 decoded bytes.
+Unknown versions/codecs, invalid types or configuration bounds are rejected.
+Sequence values are integers up to 2147483647; frame timestamps are nonnegative.
+
+| Contract constant | Value |
+|---|---|
+| `START_TIMEOUT_MS` | 3000 |
+| `CAPTURE_ATTACH_TIMEOUT_MS` | 5000 |
+| `KEEPALIVE_INTERVAL_MS` | 2000 |
+| `PEER_TIMEOUT_MS` | 6000 (both directions) |
+| `LOCAL_KEEPALIVE_INTERVAL_MS` | 1000 |
+| `LOCAL_KEEPALIVE_TIMEOUT_MS` | 5000 |
+| `JITTER_PRIME_FRAMES` | 2 |
+| `JITTER_MAX_FRAMES` | 8 |
+| `SILENCE_PEAK` | 16 |
+| `SILENCE_HOLD_BLOCKS` | 25 |
+
+Capture is shell-owned REMOTE_SUBMIX; the app owns Bluetooth. Closing the audio
+socket tears down capture and restores the glasses speaker. Scheduled peer
+watchdogs close sockets even when reads block. No glasses volume is written.
+The phone uses its media volume. Its player checks that playback never routes
+back to the glasses. Local shell-to-app capture IPC is private implementation
+detail documented in `GlassesAudioRelayContract`, not a bus transport.
 
 ## Appendix: historical protocol versions
 

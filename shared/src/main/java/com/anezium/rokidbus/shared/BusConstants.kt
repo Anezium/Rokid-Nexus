@@ -4,6 +4,9 @@ import java.util.UUID
 
 object BusConstants {
     const val SERVICE_NAME = "RokidBus"
+    const val AUDIO_SERVICE_NAME = "RokidBusAudio"
+    const val AUDIO_SPP_UUID_STRING = "3fd6b1e2-9a47-4c0b-8e5d-71c2a9f0b4d8"
+    val AUDIO_SPP_UUID: UUID = UUID.fromString(AUDIO_SPP_UUID_STRING)
     const val SPP_UUID_STRING = "0b005957-ec6d-4af5-bcba-6c786c46634e"
     const val CXR_KEY = "rokidbus"
     const val ACTION_HUB = "com.anezium.rokidbus.action.HUB"
@@ -43,6 +46,19 @@ object BusConstants {
 }
 
 object BusPaths {
+    // Dedicated authenticated audio socket only; never dispatched through the bus.
+    const val CORE_AUDIO_RELAY_PREFIX = "/core/audio-relay"
+    const val CORE_AUDIO_RELAY_START = "$CORE_AUDIO_RELAY_PREFIX/start"
+    const val CORE_AUDIO_RELAY_READY = "$CORE_AUDIO_RELAY_PREFIX/ready"
+    const val CORE_AUDIO_RELAY_FRAME = "$CORE_AUDIO_RELAY_PREFIX/frame"
+    const val CORE_AUDIO_RELAY_STATUS = "$CORE_AUDIO_RELAY_PREFIX/status"
+    const val CORE_AUDIO_RELAY_KEEPALIVE = "$CORE_AUDIO_RELAY_PREFIX/keepalive"
+    const val CORE_AUDIO_RELAY_STOP = "$CORE_AUDIO_RELAY_PREFIX/stop"
+    const val CORE_AUDIO_RELAY_ERROR = "$CORE_AUDIO_RELAY_PREFIX/error"
+
+    fun isAudioRelayPath(path: String): Boolean =
+        path == CORE_AUDIO_RELAY_PREFIX || path.startsWith("$CORE_AUDIO_RELAY_PREFIX/")
+
     const val PROBE_ECHO = "/probe/echo"
     const val PROBE_HTTP = "/probe/http"
     const val PROBE_BIGDATA = "/probe/bigdata"
@@ -287,6 +303,8 @@ object BusPaths {
 }
 
 object BusCapabilityBits {
+    /** Glasses-only support for the dedicated audio socket; not a plugin capability. */
+    const val GLASSES_AUDIO_RELAY = 1 shl 18
     const val IMAGE_SURFACE = 1 shl 1
     const val CAMERA_CONSUMER_READY = 1 shl 2
     const val CAMERA_FROZEN_SPP = 1 shl 3

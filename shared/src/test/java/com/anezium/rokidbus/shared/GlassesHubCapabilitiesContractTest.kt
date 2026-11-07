@@ -10,6 +10,17 @@ import org.junit.Test
 
 class GlassesHubCapabilitiesContractTest {
     @Test
+    fun `glasses audio relay bit round trips independently of renderer features`() {
+        val capabilities = GlassesHubCapabilitiesContract.create(
+            features = BusCapabilityBits.GLASSES_AUDIO_RELAY, imageSurfaceVersion = 0,
+            maxImageBytes = 0, versionName = null,
+        )
+        assertEquals(1 shl 18, BusCapabilityBits.GLASSES_AUDIO_RELAY)
+        assertEquals(BusCapabilityBits.GLASSES_AUDIO_RELAY,
+            GlassesHubCapabilitiesContract.parse(GlassesHubCapabilitiesContract.toJson(capabilities)).features)
+    }
+
+    @Test
     fun `activity extras need the v1 tier, their bit, and their version`() {
         val base = BusCapabilityBits.ACTIVITY_SURFACE or BusCapabilityBits.ACTIVITY_EXTRAS
         fun capabilities(features: Int, activity: Int, extras: Int) =
