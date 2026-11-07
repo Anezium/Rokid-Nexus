@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.client.plugin
 
+import com.anezium.rokidbus.shared.ComposerToolContext
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import com.anezium.rokidbus.shared.skills.SkillCatalogEntry
@@ -15,6 +16,13 @@ interface NexusPluginCallbacks {
      * to [onOpen], so a plugin that does not care which way it was opened keeps working.
      */
     fun onOpen(openType: String) = onOpen()
+
+    /**
+     * [onOpen] with the [context] a [PluginOpenTypes.COMPOSER_TOOL] open carries: the
+     * conversation page, thread and tool the wearer tapped. Null for every other open type. The
+     * default forwards to [onOpen] with the type alone.
+     */
+    fun onOpen(openType: String, context: ComposerToolContext?) = onOpen(openType)
 
     /**
      * The hub accepted a lease-bounded surface detach. Input is closed and only the active audio

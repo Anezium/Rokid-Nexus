@@ -513,6 +513,8 @@ internal class NexusPageChannel(
                 .put("title", content.title)
                 .put("body", PageTemplateContract.encode(content.body).apply {
                     com.anezium.rokidbus.shared.LauncherArtwork.stripUnsupported(this, launcherInteractiveVersion)
+                    // A pair below bundle v5 draws the default composer bar and text-only bubbles.
+                    PageTemplateContract.stripConversationExtras(this, launcherInteractiveVersion)
                     if (launcherInteractiveVersion < LauncherInteractiveContract.ARTWORK_VERSION) {
                         remove("artwork")
                         remove("positionMs")
@@ -544,7 +546,7 @@ internal class NexusPageChannel(
         val pending = PageSurfaceRequest(correlation, NexusPageRequestReason.OPEN.wireValue)
         val page = (PageSurfaceContract.validateResponse(payload, pending) as? PageSurfaceValidationResult.Valid)
             ?.value as? PageSurfaceResponse.Page ?: return null
-        if (PageTemplateContract.decode(page, pluginId, extended) !is PageSurfaceValidationResult.Valid) return null
+        if (PageTemplateContract.decode(page, pluginId, launcherInteractiveVersion) !is PageSurfaceValidationResult.Valid) return null
         return payload
     }
 
@@ -555,8 +557,7 @@ internal class NexusPageChannel(
     private fun recordShown(context: FrameContext, payload: JSONObject) {
         val page = (PageSurfaceContract.validateResponse(payload) as? PageSurfaceValidationResult.Valid)?.value as? PageSurfaceResponse.Page
         context.shownActions = page?.actions?.associate { it.id to it.typed }.orEmpty()
-        val extended = LauncherInteractiveContract.isActive(launcherInteractiveVersion)
-        val body = page?.let { (PageTemplateContract.decode(it, pluginId, extended) as? PageSurfaceValidationResult.Valid)?.value }
+        val body = page?.let { (PageTemplateContract.decode(it, pluginId, launcherInteractiveVersion) as? PageSurfaceValidationResult.Valid)?.value }
         context.shownComposer = (body as? PageBody.Conversation)?.composer
     }
 

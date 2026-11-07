@@ -12,6 +12,7 @@ import com.anezium.rokidbus.shared.ActivitySurfaceValidationResult
 import com.anezium.rokidbus.shared.AssistantTakeoverContract
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.ComposerToolContract
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.LinkStateBits
@@ -319,6 +320,14 @@ class NexusPluginClient internal constructor(
     /** Both hubs accept full-tone JPEG covers in launcher pages and activities (bundle v3). */
     fun supportsLauncherImageArtwork(): Boolean = supportsLauncherInteractive() &&
         pages.launcherInteractiveVersion >= LauncherInteractiveContract.IMAGE_ARTWORK_VERSION
+
+    /**
+     * Both hubs draw composer tools, configurable built-in buttons and message thumbnails on
+     * conversation pages (bundle v5). Without it the SDK strips those fields before sending and
+     * the hubs draw the default Dictate / Type / Send bar; the page itself stays valid.
+     */
+    fun supportsComposerTools(): Boolean = supportsLauncherInteractive() &&
+        pages.launcherInteractiveVersion >= LauncherInteractiveContract.COMPOSER_TOOLS_VERSION
 
     /**
      * Whether these glasses support the platform-owned activity tier.
@@ -1180,7 +1189,14 @@ class NexusPluginClient internal constructor(
             BusPaths.PLUGIN_OPEN -> if (isApproved) {
                 opened = true
                 backgrounded = false
-                callbacks.onOpen(payload.optString("type").ifBlank { PluginOpenTypes.OPEN })
+                val openType = payload.optString("type").ifBlank { PluginOpenTypes.OPEN }
+                // The context comes only with a composer tool open; a malformed one is none.
+                val context = if (openType == PluginOpenTypes.COMPOSER_TOOL) {
+                    ComposerToolContract.parse(payload.opt(ComposerToolContract.FIELD_CONTEXT))?.takeIf { it.isOwnedBy(pluginId) }
+                } else {
+                    null
+                }
+                callbacks.onOpen(openType, context)
             }
             BusPaths.PLUGIN_CLOSE -> {
                 val closeType = payload.optString("type")
