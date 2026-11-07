@@ -16,7 +16,8 @@ import android.os.Parcel
 import java.lang.ref.WeakReference
 
 /** API 31/32 shell capture only. Source: Genymobile/scrcpy, server/src/main/java/com/genymobile/scrcpy/. */
-@SuppressLint("PrivateApi", "DiscouragedPrivateApi", "MissingPermission", "WrongConstant")
+// Runs only under app_process as the shell uid, where the app hidden-API policy lint models does not apply.
+@SuppressLint("PrivateApi", "DiscouragedPrivateApi", "BlockedPrivateApi", "MissingPermission", "WrongConstant")
 internal object AudioCaptureWorkarounds {
     // Derived from scrcpy (Apache-2.0), Workarounds.java (ActivityThread initialization and app info).
     fun shellContext(): Context {
