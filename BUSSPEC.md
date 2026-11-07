@@ -4258,7 +4258,7 @@ Sequence values are integers up to 2147483647; frame timestamps are nonnegative.
 | `PEER_TIMEOUT_MS` | 6000 (both directions) |
 | `LOCAL_KEEPALIVE_INTERVAL_MS` | 1000 |
 | `LOCAL_KEEPALIVE_TIMEOUT_MS` | 5000 |
-| `JITTER_PRIME_FRAMES` | 2 |
+| `JITTER_PRIME_FRAMES` | 4 |
 | `JITTER_MAX_FRAMES` | 8 |
 | `SILENCE_PEAK` | 16 |
 | `SILENCE_HOLD_BLOCKS` | 25 |

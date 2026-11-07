@@ -23,7 +23,7 @@ object GlassesAudioRelayContract {
     const val PEER_TIMEOUT_MS = 6000L
     const val LOCAL_KEEPALIVE_INTERVAL_MS = 1000L
     const val LOCAL_KEEPALIVE_TIMEOUT_MS = 5000L
-    const val JITTER_PRIME_FRAMES = 2
+    const val JITTER_PRIME_FRAMES = 4
     const val JITTER_MAX_FRAMES = 8
     const val SILENCE_PEAK = 16
     const val SILENCE_HOLD_BLOCKS = 25

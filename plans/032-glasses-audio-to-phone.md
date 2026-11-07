@@ -82,7 +82,7 @@ Envelopes (JSON unless stated; all `v:1`):
 | phone→glasses | `/core/audio-relay/keepalive` | `{}` every 2 s |
 | phone→glasses | `/core/audio-relay/stop` | `{}` then close (closing alone is also a stop) |
 
-Timeouts (contract constants): `START_TIMEOUT_MS 3000`, `CAPTURE_ATTACH_TIMEOUT_MS 5000`, `KEEPALIVE_INTERVAL_MS 2000`, `PEER_TIMEOUT_MS 6000` (both directions), `LOCAL_KEEPALIVE_INTERVAL_MS 1000`, `LOCAL_KEEPALIVE_TIMEOUT_MS 5000`, `JITTER_PRIME_FRAMES 2`, `JITTER_MAX_FRAMES 8`, `SILENCE_PEAK 16`, `SILENCE_HOLD_BLOCKS 25`.
+Timeouts (contract constants): `START_TIMEOUT_MS 3000`, `CAPTURE_ATTACH_TIMEOUT_MS 5000`, `KEEPALIVE_INTERVAL_MS 2000`, `PEER_TIMEOUT_MS 6000` (both directions), `LOCAL_KEEPALIVE_INTERVAL_MS 1000`, `LOCAL_KEEPALIVE_TIMEOUT_MS 5000`, `JITTER_PRIME_FRAMES 4` (raised from 2 after device measurement: 8–60 ms underruns mid-speech with an 80 ms cushion), `JITTER_MAX_FRAMES 8`, `SILENCE_PEAK 16`, `SILENCE_HOLD_BLOCKS 25`.
 
 Local capture protocol (loopback TCP, internal to the glasses, documented in the contract's KDoc, not in BUSSPEC): client first writes the 32-byte token (hex-decoded `sha256("<secretHex>:audio-session:<nonce>")`); then records `[type:u8][len:u16 BE][body ≤ 4096]`: `0x01 HEADER` (the `ready` JSON minus `v`), `0x02 PACKET` (one Opus packet, or one 20 ms PCM16 block), `0x03 STATUS` (`{"silent":bool}`); app→capture `0x10 KEEPALIVE` (len 0), `0x11 STOP`.
 

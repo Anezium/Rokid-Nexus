@@ -45,8 +45,10 @@ internal class PhoneAudioRelayPlayer(
             val output = AudioTrack.Builder()
                 .setAudioAttributes(audioAttributes())
                 .setAudioFormat(AudioFormat.Builder().setSampleRate(48000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
-                .setTransferMode(AudioTrack.MODE_STREAM).setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-                .setBufferSizeInBytes(4 * 960 * 2).build()
+                // Measured on a Galaxy S23 streaming A2DP to earbuds: RFCOMM arrivals jitter past 80 ms, so the
+                // track must hold the whole primed cushion; a low-latency fast track would cap it.
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setBufferSizeInBytes(12 * 960 * 2).build()
             audio = output
             track = output
             routing = AudioRouting.OnRoutingChangedListener {

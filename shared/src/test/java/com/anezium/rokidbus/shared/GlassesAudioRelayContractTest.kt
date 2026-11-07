@@ -86,7 +86,7 @@ class GlassesAudioRelayContractTest {
         assertEquals(listOf(3000L, 5000L, 2000L, 6000L, 1000L, 5000L), listOf(C.START_TIMEOUT_MS,
             C.CAPTURE_ATTACH_TIMEOUT_MS, C.KEEPALIVE_INTERVAL_MS, C.PEER_TIMEOUT_MS,
             C.LOCAL_KEEPALIVE_INTERVAL_MS, C.LOCAL_KEEPALIVE_TIMEOUT_MS))
-        assertEquals(listOf(2, 8, 16, 25), listOf(C.JITTER_PRIME_FRAMES, C.JITTER_MAX_FRAMES, C.SILENCE_PEAK, C.SILENCE_HOLD_BLOCKS))
+        assertEquals(listOf(4, 8, 16, 25), listOf(C.JITTER_PRIME_FRAMES, C.JITTER_MAX_FRAMES, C.SILENCE_PEAK, C.SILENCE_HOLD_BLOCKS))
         assertEquals("3fd6b1e2-9a47-4c0b-8e5d-71c2a9f0b4d8", BusConstants.AUDIO_SPP_UUID.toString())
         assertEquals("RokidBusAudio", BusConstants.AUDIO_SERVICE_NAME)
         assertNotEquals(BusConstants.SPP_UUID, BusConstants.AUDIO_SPP_UUID)
