@@ -49,21 +49,26 @@ internal class FavouritesState(initial: List<String> = emptyList()) {
     var keys: List<String> = initial
         private set
     private var lastRevision: Long? = null
+    private var restored = false
 
-    /** True when [favourites] changed what the root will show. */
+    /** Whether the stored keys were read in this process; a list is compared only against them. */
+    val needsRestore: Boolean get() = !restored
+
+    /** True when [favourites] was taken: the caller stores it, even when it equals what was shown. */
     fun apply(favourites: LauncherFavourites): Boolean {
         val last = lastRevision
         if (last != null && favourites.revision <= last) return false
         lastRevision = favourites.revision
-        val next = favourites.entries.map { it.key }
-        if (next == keys) return false
-        keys = next
+        restored = true
+        keys = favourites.entries.map { it.key }
         return true
     }
 
-    /** The keys kept from an earlier run, before any list arrives on this link. */
+    /** The keys kept from an earlier run, read once per process and never over a list already taken. */
     fun restore(stored: List<String>) {
-        if (lastRevision == null) keys = stored
+        if (restored) return
+        restored = true
+        keys = stored
     }
 
     /** The link ended: the next phone may count from zero. The keys stay. */

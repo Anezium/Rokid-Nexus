@@ -93,4 +93,15 @@ class FavouritesTest {
         assertTrue(state.apply(LauncherFavourites(0, listOf(LauncherFavourite.NativeApp("com.android.camera")))))
         assertEquals(listOf("app:com.android.camera"), state.keys)
     }
+
+    @Test
+    fun `an empty list after a cold start is taken and replaces the stored one`() {
+        val state = FavouritesState()
+        state.restore(listOf("plugin:agents"))
+        assertTrue(state.apply(LauncherFavourites(1, emptyList())))
+        assertEquals(emptyList<String>(), state.keys)
+        // A later restore in the same process never brings the old list back.
+        state.restore(listOf("plugin:agents"))
+        assertEquals(emptyList<String>(), state.keys)
+    }
 }

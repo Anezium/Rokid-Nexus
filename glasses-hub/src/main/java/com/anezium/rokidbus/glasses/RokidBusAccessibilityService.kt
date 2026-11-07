@@ -1653,8 +1653,11 @@ internal object NexusSession {
                 log("launcher favourites dropped reason=MALFORMED")
                 return@runOnMain
             }
+            val context = appContext ?: hubContext
+            // A cold process compares against what it stored, not against an empty memory.
+            if (favourites.needsRestore) context?.let { favourites.restore(storedFavourites(it)) }
             if (!favourites.apply(list)) return@runOnMain
-            (appContext ?: hubContext)?.let { storeFavourites(it, favourites.keys) }
+            context?.let { storeFavourites(it, favourites.keys) }
             log("launcher favourites applied revision=${list.revision} count=${list.entries.size}")
         }
     }
