@@ -681,29 +681,26 @@ class SettingsActivity : Activity() {
         }
 
     private fun glassesAudioRelayRow(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
         background = NexusUi.bordered(this@SettingsActivity, NexusUi.PANEL, NexusUi.LINE, 15)
         setPadding(NexusUi.dp(this@SettingsActivity, 15), NexusUi.dp(this@SettingsActivity, 10),
             NexusUi.dp(this@SettingsActivity, 15), NexusUi.dp(this@SettingsActivity, 10))
         val store = PhoneAudioRelayStore(this@SettingsActivity)
         addView(LinearLayout(this@SettingsActivity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            addView(LinearLayout(this@SettingsActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(NexusUi.rowTitle(this@SettingsActivity, "Glasses sound in earbuds"))
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(NexusUi.switch(this@SettingsActivity).apply {
-                isChecked = store.isEnabled()
-                setOnCheckedChangeListener { _, enabled ->
-                    store.setEnabled(enabled)
-                    BusHubService.onGlassesAudioRelaySettingChanged()
-                    renderAudioRelayStatus()
-                }
-            })
+            orientation = LinearLayout.VERTICAL
+            addView(NexusUi.rowTitle(this@SettingsActivity, "Glasses sound in earbuds"))
+            addView(BusTheme.gap(this@SettingsActivity, 3))
+            addView(NexusUi.rowSub(this@SettingsActivity, store.status().label).also { audioRelayStatus = it })
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(NexusUi.switch(this@SettingsActivity).apply {
+            isChecked = store.isEnabled()
+            setOnCheckedChangeListener { _, enabled ->
+                store.setEnabled(enabled)
+                BusHubService.onGlassesAudioRelaySettingChanged()
+                renderAudioRelayStatus()
+            }
         })
-        addView(BusTheme.gap(this@SettingsActivity, 6))
-        addView(NexusUi.rowSub(this@SettingsActivity, store.status().label).also { audioRelayStatus = it })
     }
 
     private fun renderAudioRelayStatus() {
