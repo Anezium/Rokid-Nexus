@@ -10,7 +10,7 @@ SEENFILE="$BASE/$NAME.seen"
 PENDING_DISABLE="$BASE/$NAME.pending-disable"
 CHANNEL="/sdcard/Android/data/com.anezium.rokidbus.glasses/files/cmd_bridge"
 DOORBELL="$CHANNEL/doorbell"
-VERSION="2026-11-07.1"
+VERSION="2026-11-07.2"
 AUDIO_PIDFILE="$BASE/rokid-nexus-audio.pid"
 FILES_NETWORKS="$BASE/$NAME.files-networks"
 FILES_NETWORK_LIMIT=8
@@ -389,13 +389,40 @@ connect_files_network() (
   return "$files_connect_status"
 )
 
-stop_audio_capture() {
-  audio_pid="$(cat "$AUDIO_PIDFILE" 2>/dev/null)"
-  case "$audio_pid" in ""|0|*[!0-9]*) return 0 ;; esac
-  audio_cmdline="$(pid_cmdline "$audio_pid")"
-  case "$audio_cmdline" in
-    *com.anezium.rokidbus.glasses.audio.GlassesAudioCaptureMain*) kill "$audio_pid" 2>/dev/null ;;
+audio_capture_pid_exists() {
+  [ -d "/proc/$1" ]
+}
+
+is_audio_capture_pid() {
+  # pid_cmdline renders app_process's trailing NUL padding as spaces, not class/argument text.
+  case "$(pid_cmdline "$1" | sed 's/ *$//')" in
+    "rokid-nexus-audio") return 0 ;;
+    *) return 1 ;;
   esac
+}
+
+wait_audio_capture_gone() {
+  audio_wait=0
+  while audio_capture_pid_exists "$audio_pid" && [ "$audio_wait" -lt 20 ]; do
+    sleep 0.1
+    audio_wait=$((audio_wait + 1))
+  done
+  ! audio_capture_pid_exists "$audio_pid"
+}
+
+stop_audio_capture() {
+  [ -f "$AUDIO_PIDFILE" ] || return 0
+  audio_pid="$(cat "$AUDIO_PIDFILE" 2>/dev/null)"
+  case "$audio_pid" in ""|0|1|*[!0-9]*) return 1 ;; esac
+  if audio_capture_pid_exists "$audio_pid"; then
+    is_audio_capture_pid "$audio_pid" || return 1
+    kill "$audio_pid" 2>/dev/null || :
+    if ! wait_audio_capture_gone; then
+      is_audio_capture_pid "$audio_pid" || return 1
+      kill -9 "$audio_pid" 2>/dev/null || :
+      wait_audio_capture_gone || return 1
+    fi
+  fi
   rm -f "$AUDIO_PIDFILE"
 }
 
@@ -556,7 +583,10 @@ EOF
 
   case "$command" in
     audio_capture_start)
-      stop_audio_capture
+      if ! stop_audio_capture; then
+        write_response "$nonce" error
+        return
+      fi
       audio_apk="$(pm path "$PACKAGE" 2>/dev/null | sed -n 's/^package://p' | head -n 1)"
       if [ -n "$audio_apk" ]; then
         audio_token="$(printf '%s' "${SECRET}:audio-session:${nonce}" | sha256sum | cut -d' ' -f1)"
@@ -568,8 +598,7 @@ EOF
       fi
       ;;
     audio_capture_stop)
-      stop_audio_capture
-      write_response "$nonce" ok
+      if stop_audio_capture; then write_response "$nonce" ok; else write_response "$nonce" error; fi
       ;;
     wifi_connect_files)
       connect_result=error
