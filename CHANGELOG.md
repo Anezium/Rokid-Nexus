@@ -1,20 +1,22 @@
 # Changelog
 
-## Unreleased
+## 2.1.0
 
-### Glasses hub
+- **Glasses sound in earbuds.** With earbuds or headphones as your phone's
+  audio output, everything the glasses play — Hi Rokid's voice included — can
+  now play in them while the glasses stay quiet. Turn on **Glasses sound in
+  earbuds** in Settings, under Voice; it is off by default. The glasses capture
+  their own sound through the command bridge and stream it to the phone over a
+  dedicated Bluetooth channel, separate from Nexus's other traffic.
+- The glasses get their speaker back within seconds whenever the earbuds
+  disconnect, the switch is turned off, the phone or the Bluetooth link goes
+  away, or either hub stops. Expect about a quarter of a second of delay, plus
+  your earbuds' own Bluetooth latency.
 
-- **Glasses sound in earbuds.** Capture the glasses' output with shell-owned
-  REMOTE_SUBMIX and relay Opus over a dedicated authenticated Bluetooth socket
-  while the phone enables it. Local and remote keepalives end capture when the
-  relay loses its peer. End-to-end owner device acceptance remains pending.
-
-### Phone hub
-
-- **Glasses sound in earbuds.** An off-by-default switch under Settings → Voice
-  relays the glasses' sound to the phone's active external headset. Phone-speaker
-  and glasses-output routes disable the relay. Earbuds add their own A2DP
-  latency, typically 100–200 ms, on top of the relay delay.
+Install **both hubs 2.1.0** to use it: the phone shows "Glasses hub too old"
+until the glasses are updated, and the glasses refresh their command bridge on
+their own after the update. Hubs 2.0.x remain compatible with each other and
+with 2.1.0. Plugins and SDK requirements are unchanged.
 
 ## 2.0.4
 

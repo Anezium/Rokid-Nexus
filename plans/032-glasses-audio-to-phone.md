@@ -198,6 +198,27 @@ output format; the delivered implementation uses that buffer to send HEADER.
 | Local watchdog | Keepalives stopped at T; socket EOF at T + 4.25 s; capture process gone |
 | Real audio packets | Not measured with this capture entry point; deferred to owner D1. The owner's earlier scrcpy REMOTE_SUBMIX capture proved Hi Rokid voice and speaker muting |
 
+### Device results — end to end, 2026-11-07/08
+
+Glasses fw 1.28.016 (API 32), Galaxy S23 (One UI, API 35), Galaxy Buds3 Pro, both
+hubs as signed release builds installed over 2.0.4 with `adb install -r`.
+
+| # | Result |
+|---|---|
+| Bridge rollout | Bridge moved `2026-10-31.1` → `2026-11-07.2` about 7 s after the glasses APK install, re-armed by the restarting hub; no Repair |
+| D1 | Owner: Hi Rokid's reply plays in the Buds, glasses speaker silent |
+| D3 | Owner heard crackling. `dumpsys media.audio_flinger` showed 8–60 ms underruns mid-speech with the 80 ms track; `4dd1b0ca` primes 4 frames and holds them in a 240 ms normal track. Owner: no more dropouts |
+| D4 | Owner: Buds back in the case → glasses speaker returns |
+| D6 | Phone app force-stopped → capture gone in 2 s; relay back 10 s after the service restarted |
+| D7 | Glasses Bluetooth off (`svc bluetooth`) → capture gone in 2 s. Recovery with Buds not measured (the Buds had disconnected) |
+| D8 | Glasses hub force-stopped → capture gone in 1 s; relay back on its own after 66 s |
+| D11 | Owner: glasses as the phone's media output → relay stops, no echo |
+| D10, D13 | Not run (photo sync not consented on the test phone; battery run skipped) |
+
+Separate finding, not caused by the relay: the phone's Nexus voice speaks with
+`USAGE_ASSISTANT`, and the S23 had `STREAM_ASSISTANT` at 0 on `bt_a2dp`, so it was
+muted in the Buds (`event:muted updated source:streamVolume`).
+
 The phone-side decoder configuration test passes the exact CSD values above
 through `GlassesAudioRelayContract.validateReady` and verifies that `csd-0/1/2`
 reach the decoder format byte for byte. These JVM checks do not establish
