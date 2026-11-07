@@ -792,9 +792,9 @@ class PhonePageBroker(
      * decoded typed, so a composer or a control can only ever name an action of the right type.
      */
     private fun acceptedBody(page: PageSurfaceResponse.Page, owner: String): AcceptedBody? {
-        val extended = launcherVersion() >= 1
-        if (!PageTemplateContract.isSupported(page.template, extended)) return AcceptedBody(null)
-        val decoded = PageTemplateContract.decode(page, owner, extended) as? PageSurfaceValidationResult.Valid
+        val launcher = launcherVersion()
+        if (!PageTemplateContract.isSupported(page.template, launcher >= 1)) return AcceptedBody(null)
+        val decoded = PageTemplateContract.decode(page, owner, launcher) as? PageSurfaceValidationResult.Valid
             ?: return null
         return AcceptedBody((decoded.value as? PageBody.Conversation)?.composer, decoded.value is PageBody.Route)
     }
@@ -808,6 +808,8 @@ class PhonePageBroker(
         if (launcherVersion() < 1) return PageSurfaceContract.stripLauncherFields(stamped)
         for (body in listOfNotNull(stamped.optJSONObject("body"), stamped.optJSONObject("replacement")?.optJSONObject("body"))) {
             com.anezium.rokidbus.shared.LauncherArtwork.stripUnsupported(body, launcherVersion())
+            // Glasses below bundle v5 draw the default composer bar and text-only bubbles.
+            PageTemplateContract.stripConversationExtras(body, launcherVersion())
         }
         if (launcherVersion() < LauncherInteractiveContract.ARTWORK_VERSION) {
             for (body in listOfNotNull(stamped.optJSONObject("body"), stamped.optJSONObject("replacement")?.optJSONObject("body"))) {

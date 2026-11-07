@@ -5,6 +5,8 @@ import android.view.KeyEvent
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.ComposerToolContext
+import com.anezium.rokidbus.shared.ComposerToolContract
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.GlyphContract
 import com.anezium.rokidbus.shared.PageSurfaceContract
@@ -14,6 +16,7 @@ import com.anezium.rokidbus.shared.plugin.NexusPlugin
 import com.anezium.rokidbus.shared.plugin.NexusPluginHost
 import com.anezium.rokidbus.shared.plugin.NexusSubscription
 import com.anezium.rokidbus.shared.plugin.PathRules
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
@@ -114,13 +117,24 @@ class PhonePluginRegistry(
             BusPaths.LAUNCHER_OPEN -> {
                 val pluginId = envelope.payload.optString("pluginId")
                     .ifBlank { envelope.payload.optString("id") }
-                val opened = open(pluginId)
+                // A composer tool's open names the page it came from; a context that is malformed or
+                // names another provider's page refuses the whole open rather than opening blind.
+                val hasContext = envelope.payload.has(ComposerToolContract.FIELD_CONTEXT)
+                val context = ComposerToolContract.parse(envelope.payload.opt(ComposerToolContract.FIELD_CONTEXT))
+                    ?.takeIf { pluginId.isNotBlank() && it.isOwnedBy(pluginId) }
+                val badContext = hasContext && context == null
+                val opened = !badContext && open(pluginId, context)
                 recordRemote(
                     pluginId = pluginId.ifBlank { null },
                     category = PluginBusJournal.Category.LAUNCHER,
                     path = envelope.path,
                     verdict = if (opened) PluginBusJournal.Verdict.OK else PluginBusJournal.Verdict.REJECTED,
-                    reason = if (opened) null else if (pluginId.isBlank()) "MISSING_PLUGIN_ID" else "OPEN_FAILED",
+                    reason = when {
+                        opened -> null
+                        pluginId.isBlank() -> "MISSING_PLUGIN_ID"
+                        badContext -> "BAD_CONTEXT"
+                        else -> "OPEN_FAILED"
+                    },
                 )
                 return opened
             }
@@ -236,7 +250,8 @@ class PhonePluginRegistry(
         logger("plugin registered id=${plugin.id} display=${plugin.displayName}")
     }
 
-    private fun open(pluginId: String): Boolean {
+    /** [context] is a composer tool's, for an external plugin; a built-in plugin has no composer pages and ignores it. */
+    private fun open(pluginId: String, context: ComposerToolContext? = null): Boolean {
         val entry = catalog().entry(pluginId)?.takeIf { it.launchable } ?: return false
         val external = entry.principal
         if (external != null) {
@@ -246,7 +261,12 @@ class PhonePluginRegistry(
                 }
             }
             activePluginId = null
-            return externalController?.open(external) == true
+            val request = if (context != null) {
+                ExternalPluginOpenRequest(type = PluginOpenTypes.COMPOSER_TOOL, context = ComposerToolContract.encode(context))
+            } else {
+                ExternalPluginOpenRequest()
+            }
+            return externalController?.open(external, request) == true
         }
         externalController?.closeActive("built_in_opened")
         val plugin = entry.builtIn ?: pluginsById[pluginId]?.takeIf { it.launchable } ?: return false
