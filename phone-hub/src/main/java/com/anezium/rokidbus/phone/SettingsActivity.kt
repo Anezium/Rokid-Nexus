@@ -692,9 +692,6 @@ class SettingsActivity : Activity() {
             addView(LinearLayout(this@SettingsActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(NexusUi.rowTitle(this@SettingsActivity, "Glasses sound in earbuds"))
-                addView(BusTheme.gap(this@SettingsActivity, 3))
-                addView(NexusUi.rowSub(this@SettingsActivity,
-                    "When earbuds or headphones are your phone's output, what the glasses play — Hi Rokid's voice included — plays there and the glasses stay quiet."))
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(NexusUi.switch(this@SettingsActivity).apply {
                 isChecked = store.isEnabled()
