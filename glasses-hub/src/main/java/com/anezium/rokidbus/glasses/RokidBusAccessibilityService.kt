@@ -1643,9 +1643,10 @@ internal object NexusSession {
 
     /**
      * `/core/launcher/favourites`: the owner's pinned applications, whole and in order. A malformed
-     * list changes nothing. The root shows a change from the next session on, as it is frozen.
+     * list changes nothing. The root shows a change from the next session on, as it is frozen. It
+     * is stored with the hub's own [hubContext] when the accessibility service is not connected.
      */
-    fun onLauncherFavourites(payload: JSONObject) {
+    fun onLauncherFavourites(payload: JSONObject, hubContext: Context?) {
         runOnMain {
             val list = LauncherFavouritesContract.parse(payload)
             if (list == null) {
@@ -1653,7 +1654,7 @@ internal object NexusSession {
                 return@runOnMain
             }
             if (!favourites.apply(list)) return@runOnMain
-            appContext?.let { storeFavourites(it, favourites.keys) }
+            (appContext ?: hubContext)?.let { storeFavourites(it, favourites.keys) }
             log("launcher favourites applied revision=${list.revision} count=${list.entries.size}")
         }
     }

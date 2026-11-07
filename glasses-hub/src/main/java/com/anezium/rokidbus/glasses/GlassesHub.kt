@@ -375,7 +375,7 @@ object GlassesHub {
             when {
                 envelope.binary != null -> log("launcher bundle message dropped path=${envelope.path}")
                 envelope.path == BusPaths.ACTIVITY_RESULT -> NexusSession.onActivityResult(envelope.payload)
-                envelope.path == BusPaths.CORE_LAUNCHER_FAVOURITES -> NexusSession.onLauncherFavourites(envelope.payload)
+                envelope.path == BusPaths.CORE_LAUNCHER_FAVOURITES -> NexusSession.onLauncherFavourites(envelope.payload, appContext)
                 else -> NexusSession.onQuickActionPolicy(envelope.payload)
             }
             return
