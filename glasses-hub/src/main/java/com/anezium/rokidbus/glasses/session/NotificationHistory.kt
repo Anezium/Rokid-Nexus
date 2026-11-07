@@ -78,6 +78,9 @@ internal data class NoticeEntry(
 internal data class HistoryEntry(val id: String, val notice: NoticeEntry, val state: HistoryState = HistoryState.NEW) {
     /** Not withdrawn and not answered from here: what the root still offers to reply to. */
     val live: Boolean get() = state == HistoryState.NEW || state == HistoryState.SEEN
+
+    // Relay's inbox dismisses resolved notifications; history must not offer them again.
+    val dismissedRelay: Boolean get() = notice.ownerPluginId == "relay" && !live
 }
 
 /** How the root's one notification stop presents its entry or entries. */
@@ -111,7 +114,7 @@ internal data class NotificationHistory(
     )
 
     /** What may be shown now: younger than the display bound (an entry from a later clock stays). */
-    fun visible(nowWallMs: Long): List<HistoryEntry> = entries.filter { isVisible(it, nowWallMs) }
+    fun visible(nowWallMs: Long): List<HistoryEntry> = entries.filter { isVisible(it, nowWallMs) && !it.dismissedRelay }
 
     private fun isVisible(entry: HistoryEntry, nowWallMs: Long): Boolean =
         nowWallMs - entry.notice.atWallMs < NoticeSurfaceContract.MAX_HISTORY_AGE_MS
@@ -119,7 +122,8 @@ internal data class NotificationHistory(
     fun entry(id: String): HistoryEntry? = entries.firstOrNull { it.id == id }
 
     /** [entry], but only while it is still within the display bound. */
-    fun visibleEntry(id: String, nowWallMs: Long): HistoryEntry? = entry(id)?.takeIf { isVisible(it, nowWallMs) }
+    fun visibleEntry(id: String, nowWallMs: Long): HistoryEntry? =
+        entry(id)?.takeIf { isVisible(it, nowWallMs) && !it.dismissedRelay }
 
     /** When the next entry shown now leaves the display bound, in wall time; null when none shows. */
     fun nextExpiryWallMs(nowWallMs: Long): Long? =

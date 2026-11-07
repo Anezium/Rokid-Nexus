@@ -79,9 +79,10 @@ class RelayPluginService : NexusPluginService() {
     private var speechGeneration = 0
     private var speech: NexusSpeechSession? = null
     private var pageScheduled: Runnable? = null
+    private val replySessionExpiry = mutableMapOf<String, Runnable>()
     private val pageTime = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
 
-    // Pages never speak, mark read or touch a notification; only the composer's Send acts, below.
+    // The main list follows Classic; an open thread retains its text until its screen closes.
     private val pages = RelayPageProvider<NexusPageRequest>(
         pageIdOf = NexusPageRequest::pageId,
         floorOf = NexusPageRequest::minimumRevision,
@@ -90,7 +91,7 @@ class RelayPluginService : NexusPluginService() {
             RelayPages.page(
                 pageId,
                 revision,
-                ReplyRepository.threadEntries(),
+                if (pageId == RelayPages.MAIN) ReplyRepository.inboxEntries() else ReplyRepository.threadEntries(),
                 settings.hideInboxPreviews(),
                 conversation = nexusClient?.supportsLauncherInteractive() == true,
             ) {
@@ -119,6 +120,7 @@ class RelayPluginService : NexusPluginService() {
     }
 
     override fun onDestroy() {
+        closeReplySessions()
         NotificationControl.pageListener = null
         pages.forget()
         nexusClient?.let(RelayBus::serviceDestroyed)
@@ -177,14 +179,33 @@ class RelayPluginService : NexusPluginService() {
         text = action.text,
     )
 
-    override fun onNexusPageVisibility(visibility: NexusPageVisibility) =
+    override fun onNexusPageVisibility(visibility: NexusPageVisibility) {
+        replySessionExpiry.remove(visibility.pageId)?.let(main::removeCallbacks)
+        val lease = visibility.leaseDurationMs
+        if (visibility.visible && lease != null && visibility.pageId.startsWith(RelayPages.THREAD_PREFIX)) {
+            ReplyRepository.openReplySession(visibility.pageId)
+            val expiry = Runnable {
+                replySessionExpiry.remove(visibility.pageId)
+                ReplyRepository.closeReplySession(applicationContext, visibility.pageId)
+            }
+            replySessionExpiry[visibility.pageId] = expiry
+            main.postDelayed(expiry, lease)
+        } else ReplyRepository.closeReplySession(applicationContext, visibility.pageId)
         pages.onVisibility(visibility.pageId, visibility.visible)
+    }
 
-    override fun onNexusPageClosed(closed: NexusPageClosed) = pages.onClosed(closed.pageId)
+    override fun onNexusPageClosed(closed: NexusPageClosed) {
+        replySessionExpiry.remove(closed.pageId)?.let(main::removeCallbacks)
+        ReplyRepository.closeReplySession(applicationContext, closed.pageId)
+        pages.onClosed(closed.pageId)
+    }
 
     // The band's callbacks arrive on this, Relay's only client, and belong to the band.
     override fun onNexusRegistrationState(result: Int) {
-        if (result != PluginRegistrationResult.APPROVED) pages.forget()
+        if (result != PluginRegistrationResult.APPROVED) {
+            closeReplySessions()
+            pages.forget()
+        }
         if (result == PluginRegistrationResult.APPROVED) {
             nexusClient?.let { RelayHistoryForget.registered(this, it, it.registrationGeneration) }
         }
@@ -192,9 +213,18 @@ class RelayPluginService : NexusPluginService() {
     }
 
     override fun onNexusLinkState(state: Int) {
-        if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) pages.forget()
+        if (state and LinkStateBits.SPP_DATA_UP == 0) closeReplySessions()
+        if (state and (LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP) == 0) {
+            pages.forget()
+        }
         RelayHistoryForget.flush(this)
         NotificationControl.noticeCallbacks()?.onLinkState(state)
+    }
+
+    private fun closeReplySessions() {
+        replySessionExpiry.values.forEach(main::removeCallbacks)
+        replySessionExpiry.clear()
+        ReplyRepository.closeReplySessions(applicationContext)
     }
 
     override fun onNexusNoticeAction(id: String) {

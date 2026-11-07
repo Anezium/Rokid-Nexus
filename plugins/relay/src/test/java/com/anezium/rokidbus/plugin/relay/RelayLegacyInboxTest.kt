@@ -15,6 +15,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
 
@@ -118,6 +119,34 @@ class RelayLegacyInboxTest {
         listener.get().onNotificationPosted(RelayHubFixture.chat(app, text = "super, à tout de suite"))
         RelayHubFixture.idle()
         assertTrue(inboxIds().contains(threadId))
+    }
+
+    @Test
+    fun `a queued dismissal cannot withdraw a newer arrival on the same thread`() {
+        start(clearAfterReply = false)
+        assertEquals(ReplySendResult.Sent, ReplyRepository.sendReply(app, threadId, "OK"))
+        listener.get().onNotificationPosted(RelayHubFixture.chat(app, text = "a new arrival"))
+        RelayHubFixture.idle()
+
+        assertTrue(ReplyRepository.hasReplyAuthority(threadId))
+        assertTrue(inboxIds().contains(threadId))
+        assertTrue(hub.sentTo(BusPaths.NOTICE_WITHDRAW).isEmpty())
+    }
+
+    @Test
+    fun `an earlier send cannot clear the next answered notification before its own delay`() {
+        start(clearAfterReply = true)
+        assertEquals(ReplySendResult.Sent, ReplyRepository.sendReply(app, threadId, "first"))
+        RelayHubFixture.idleFor(100)
+        val newer = RelayHubFixture.chat(app, text = "a new arrival")
+        shadowOf(listener.get()).addActiveNotification(newer)
+        listener.get().onNotificationPosted(newer)
+        assertEquals(ReplySendResult.Sent, ReplyRepository.sendReply(app, threadId, "second"))
+
+        RelayHubFixture.idleFor(150)
+        assertTrue(listener.get().activeNotifications.any { it.key == newer.key })
+        RelayHubFixture.idleFor(100)
+        assertFalse(listener.get().activeNotifications.any { it.key == newer.key })
     }
 
     @Test

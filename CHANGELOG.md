@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.4
+
+- **A clean Relay notification list.** Answered or removed Relay notifications
+  leave Notifications instead of piling up as “REMOVED”. An open conversation
+  stays available for consecutive replies until you leave its screen.
+- Keep expired and purged notification cards harmless without disturbing the
+  launcher's navigation or the notification history of other plugins.
+
+Install **Relay 1.4.2 and the glasses hub 2.0.4** for the complete reply fix,
+including filtering your own reply echoes before display and read-aloud. The
+phone APK is also versioned 2.0.4; phone hubs 2.0.0 to 2.0.3 remain compatible.
+Plugins and SDK requirements are unchanged.
+
 ## 2.0.3
 
 - **The R08 ring after leaving a plugin.** The ring works again as soon as you

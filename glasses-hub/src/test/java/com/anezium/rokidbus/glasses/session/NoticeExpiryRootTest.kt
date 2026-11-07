@@ -91,12 +91,30 @@ class NoticeExpiryRootTest {
     }
 
     @Test
-    fun `a resolved aggregate drops a name once that thread passes the bound`() {
+    fun `withdrawing Relay threads shrinks the aggregate and removes it after the last thread`() {
         arrive(conversation("t1", "Mika", "on est devant"))
-        val firstAt = wallNow
         arrive(conversation("t2", "Alan", "moi aussi"))
         openRoot()
-        model = model.copy(history = model.history.markHandedOff("relay", "t1").markHandedOff("relay", "t2"))
+        val firstId = model.history.entries.single { it.notice.eventKey == "t1" }.id
+
+        send(SessionEvent.NoticeWithdrawn("relay", "t1"))
+        assertEquals(1, noticeStop().notice?.threads)
+        assertFalse(drawn().any { "Mika" in it })
+        assertTrue(drawn().any { "Alan" in it })
+        assertNull(model.history.visibleEntry(firstId, wallNow))
+
+        send(SessionEvent.NoticeWithdrawn("relay", "t2"))
+        assertTrue(root().stops.none { it.kind == RootStopKind.NOTICE_PREVIEW })
+        assertEquals(0, root().stops.single { it.kind == RootStopKind.NOTIFICATIONS }.count)
+    }
+
+    @Test
+    fun `a resolved aggregate drops a name once that thread passes the bound`() {
+        arrive(conversation("t1", "Mika", "on est devant", owner = "other"))
+        val firstAt = wallNow
+        arrive(conversation("t2", "Alan", "moi aussi", owner = "other"))
+        openRoot()
+        model = model.copy(history = model.history.markHandedOff("other", "t1").markHandedOff("other", "t2"))
         assertTrue(drawn().any { "Mika" in it })
 
         wallNow = firstAt + NoticeSurfaceContract.MAX_HISTORY_AGE_MS
@@ -145,12 +163,12 @@ class NoticeExpiryRootTest {
 
     @Test
     fun `a staggered aggregate drawn after a wake without its tick drops only the expired thread`() {
-        arrive(conversation("t1", "Mika", "on est devant"))
+        arrive(conversation("t1", "Mika", "on est devant", owner = "other"))
         val firstAt = wallNow
         wallNow += NoticeSurfaceContract.MAX_HISTORY_AGE_MS / 2
-        arrive(conversation("t2", "Alan", "moi aussi"))
+        arrive(conversation("t2", "Alan", "moi aussi", owner = "other"))
         openRoot()
-        model = model.copy(history = model.history.markHandedOff("relay", "t1").markHandedOff("relay", "t2"))
+        model = model.copy(history = model.history.markHandedOff("other", "t1").markHandedOff("other", "t2"))
         assertTrue(drawn().any { "Mika" in it })
 
         // A deep sleep across Mika's bound: the newest member keeps the stop's own time fresh.
@@ -251,8 +269,8 @@ class NoticeExpiryRootTest {
         }
     }
 
-    private fun conversation(thread: String, sender: String, text: String) = NoticeEntry(
-        ownerPluginId = "relay",
+    private fun conversation(thread: String, sender: String, text: String, owner: String = "relay") = NoticeEntry(
+        ownerPluginId = owner,
         sourceLabel = "Relay",
         title = sender,
         body = text,

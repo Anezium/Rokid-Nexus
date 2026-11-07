@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.4.2
+
+Update Relay and the **glasses hub to Nexus 2.0.4** for the complete fix. Phone
+hubs 2.0.0 to 2.0.3 remain compatible; no new permission or approval is needed.
+
+- Suppress outbound reply echoes before display and read-aloud using
+  MessagingStyle authorship or the same thread's matching remote-input history.
+  Admit ambiguous text matches and bound per-thread echo markers to two minutes.
+- Remove answered threads from the Nexus launcher's Relay list and Notifications
+  history. Consecutive replies remain available only while the reply page stays
+  open; leaving it drops the action until a new incoming notification arrives.
+- Defer clearing the phone notification until that reply screen closes. Actual
+  intent cancellation, access loss and session expiry still end reply authority.
+- Keep Assistant's send confirmation intact while dismissing an answered thread;
+  delayed dismissal and cancellation never act on a newer arrival.
+
 ## 1.4.1
 
 - Offer separately approved Skills for Assistant to find replyable conversations,

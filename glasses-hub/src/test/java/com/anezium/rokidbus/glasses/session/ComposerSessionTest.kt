@@ -157,11 +157,38 @@ class ComposerSessionTest {
         assertEquals(SessionScreens.HANDED_TO_APP, bubble.meta)
 
         send(SessionEvent.Back(5_600))
-        val card = root().stops.first { it.kind == RootStopKind.NOTICE_PREVIEW }
-        assertEquals(HistoryState.HANDED_OFF, card.notice?.state)
-        val drawn = screen().blocks.first() as ScreenBlock.Card
-        assertEquals("RELAY · ${SessionScreens.REPLY_HANDED_OFF}", drawn.label)
-        assertEquals(SessionScreens.HANDED_OFF_UNCONFIRMED, drawn.tertiary)
+        assertTrue(root().stops.none { it.kind == RootStopKind.NOTICE_PREVIEW })
+        assertEquals(0, root().stops.single { it.kind == RootStopKind.NOTIFICATIONS }.count)
+        assertTrue(model.history.visible(wallNow).isEmpty())
+    }
+
+    @Test
+    fun `dismissing Relay history does not lock repeated dictation on its open reply screen`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        result(sendDraft(at = 5_000), "done", now = 5_500)
+        dictate("bringing coffee", at = 6_000)
+        val second = sendDraft(at = 8_000)
+        assertEquals("bringing coffee", second.text)
+        result(second, "done", now = 8_500)
+        assertNull(model.draft)
+        assertNull(model.pendingSend)
+        assertEquals(listOf("see you", "bringing coffee"), model.handoffs.map { it.text })
+        assertTrue(model.history.visible(wallNow).isEmpty())
+        assertTrue(model.state is SessionState.InPage)
+    }
+
+    @Test
+    fun `Relay resolved entries leave Notifications while other plugins retain their removed history`() {
+        val relay = conversationNotice("t1", "Ana", "hello")
+        val other = conversationNotice("t2", "Bo", "hi", owner = "other")
+        val history = NotificationHistory().add(relay).add(other)
+        val resolved = history.markHandedOff("relay", "t1").withdraw("other", "t2")
+        assertEquals(listOf("other"), resolved.visible(wallNow).map { it.notice.ownerPluginId })
+        assertEquals(HistoryState.WITHDRAWN, resolved.visible(wallNow).single().state)
+        assertEquals(listOf("other"), resolved.withdraw("relay", "t1").visible(wallNow).map { it.notice.ownerPluginId })
+        val fresh = resolved.add(relay.copy(body = "new message"))
+        assertEquals(listOf("relay", "other"), fresh.visible(wallNow).map { it.notice.ownerPluginId })
     }
 
     @Test
@@ -551,7 +578,7 @@ class ComposerSessionTest {
     @Test
     fun `a thread opened again never shows an earlier page's kept reply, whatever its revision`() {
         registration = "reg-1"
-        openThread("t1", at = 1_000)
+        openThread("t1", at = 1_000, owner = "other")
         respond(requestOf(), conversation("t1"), revision = 50, now = 2_000)
         dictate("see you", at = 3_000)
         result(sendDraft(at = 5_000), "done", now = 5_500)
@@ -559,7 +586,7 @@ class ComposerSessionTest {
         // Back and in again in the same session: the same frame index and page, a new answer.
         send(SessionEvent.Back(5_600))
         assertTrue(model.handoffs.isEmpty())
-        openThreadCard(at = 6_000)
+        openThreadCard(at = 6_000, owner = "other")
         assertTrue(sentBubbles("see you").isEmpty())
 
         // A new notice, a new session, a new registration counting from 1 with the same messages, then past 50.

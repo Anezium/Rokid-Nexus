@@ -138,6 +138,7 @@ class RelayNotificationListener : NotificationListenerService() {
 
         val action = sbn.notification.findRepliableAction()
         val notificationId = ReplyRepository.stableId(sbn.key)
+        if (ReplyRepository.suppressesEcho(sbn)) return finish("self_echo", accepted = false)
         // A repost without Reply ends the reply authority even while paused or filtered. The event
         // is still on the phone, so nothing is withdrawn; its page stops offering Send.
         if (action == null && ReplyRepository.dropAuthority(sbn)) {
