@@ -102,17 +102,14 @@ jobs:
             echo "NEXUS_RELEASE_KEY_ALIAS=$RELEASE_KEY_ALIAS"
           } >> "$GITHUB_ENV"
 
-      - name: Run hub unit tests
+      - name: Test and build signed release APKs
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew :phone-hub:testDebugUnitTest :glasses-hub:testDebugUnitTest
-
-      - name: Build signed release APKs
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./gradlew :phone-hub:assembleRelease :glasses-hub:assembleRelease
+          ./gradlew \
+            :phone-hub:testReleaseUnitTest :glasses-hub:testReleaseUnitTest \
+            :phone-hub:assembleRelease :glasses-hub:assembleRelease \
+            -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false
 
       - name: Prepare artifacts and release notes
         shell: bash

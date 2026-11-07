@@ -1,11 +1,13 @@
 name: Tests
 
-# Every push and pull request runs the unit tests of every module. sdk.yml covers
+# Pull requests and main run the unit tests of every module. sdk.yml covers
 # the public SDK modules; this workflow covers what actually ships to users: the
-# two hubs (which need the vendor CXR library) and every plugin.
+# two hubs (which need the vendor CXR library) and every plugin. Tags have their
+# own release checks and must not start another copy of the entire CI suite.
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -44,11 +46,14 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Run phone-hub and glasses-hub unit tests
+      - name: Test and build the hub release variants
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew :phone-hub:testDebugUnitTest :glasses-hub:testDebugUnitTest
+          ./gradlew \
+            :phone-hub:testReleaseUnitTest :glasses-hub:testReleaseUnitTest \
+            :phone-hub:assembleRelease :glasses-hub:assembleRelease \
+            -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false
 
   plugins:
     name: Plugin unit tests
@@ -71,18 +76,18 @@ jobs:
         run: |
           set -euo pipefail
           ./gradlew \
-            :plugin-assistant:testDebugUnitTest \
-            :plugin-relay:testDebugUnitTest \
-            :plugin-lens:testDebugUnitTest \
-            :plugin-lyrics:testDebugUnitTest \
-            :plugin-transit:testDebugUnitTest \
-            :plugin-feeds:testDebugUnitTest \
-            :plugin-media:testDebugUnitTest \
-            :plugin-tasker:testDebugUnitTest \
-            :plugin-photosync:testDebugUnitTest \
-            :plugin-wireless-adb:testDebugUnitTest \
-            :plugin-sample:testDebugUnitTest \
-            -PskipCxrGlobal=true
+            :plugin-assistant:testReleaseUnitTest \
+            :plugin-relay:testReleaseUnitTest \
+            :plugin-lens:testReleaseUnitTest \
+            :plugin-lyrics:testReleaseUnitTest \
+            :plugin-transit:testReleaseUnitTest \
+            :plugin-feeds:testReleaseUnitTest \
+            :plugin-media:testReleaseUnitTest \
+            :plugin-tasker:testReleaseUnitTest \
+            :plugin-photosync:testReleaseUnitTest \
+            :plugin-wireless-adb:testReleaseUnitTest \
+            :plugin-sample:testReleaseUnitTest \
+            -PskipCxrGlobal=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false
 
       - name: Check Patcher bundle preparation
         run: python3 -m unittest discover -s plugins/patcher/scripts
@@ -91,4 +96,4 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.MORPHE_PACKAGES_TOKEN || github.token }}
-        run: ./gradlew :plugin-patcher:testDebugUnitTest -PskipCxrGlobal=true
+        run: ./gradlew :plugin-patcher:testReleaseUnitTest -PskipCxrGlobal=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false
