@@ -156,7 +156,9 @@ An immersion is the plugin's own full-screen interaction on the glasses: its
 cards, reader, media, image or Ink surfaces, driven by the plugin while it is
 open. The wearer reaches it through **Open app**, on a page or in
 Applications. In the protocol it is the `IMMERSION` action kind; a
-"surface card" is a `NexusCard` shown in it. `NexusSurfaceSession`,
+"surface card" is a `NexusCard` shown in it. Immersions are for the engaged
+step a page cannot host; menus and pickers built from surface cards are the
+retired pre-2.0 pattern and belong on pages instead. `NexusSurfaceSession`,
 `NexusCard`, `NexusInkSurfaceSession`. Every plugin with a surface has one;
 Hello Nexus's Ink page is below. See
 [Choosing a HUD kind](PLUGIN_SDK.md#choosing-a-hud-kind) and

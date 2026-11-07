@@ -164,8 +164,21 @@ look:
 
 - **Ongoing process** the wearer follows → **activity**.
 - **Discrete event** needing attention or a response → **notice**.
-- **Engaged interaction** the wearer is driving → **surface**.
+- **Content the wearer browses or picks from** — a list of items, chats,
+  contacts or options, a summary, a document, a conversation → **page**.
+- **Engaged interaction** the wearer is driving that a page cannot host → **surface**.
 - **Trivial static fact** that just needs to stay put → **pin**.
+
+**Do not build navigation out of surface cards.** Before Nexus 2.0, plugins
+made menus, pickers and multi-step lists from `NexusCard` rows in an immersion
+(a service picker, then a contact list, then a confirmation, each a card). That
+pattern still renders for compatibility but is retired for new work: it bypasses
+the launcher, replaces whatever the wearer was looking at, and does not look or
+behave like the rest of the launcher. Browse with [Pages](#pages) (`rokidbus.plugin.pages`,
+`PageBody` templates, page actions), answer events with notices, and open an
+immersion only for the engaged step itself, from a page action. Media Deck,
+Navigation and Relay are the reference implementations; copy their structure,
+not an older card flow.
 
 An activity is not a frequently updated pin. If there is a state machine behind
 the value — a route, delivery, ride, workout, or timer — use an activity. Your

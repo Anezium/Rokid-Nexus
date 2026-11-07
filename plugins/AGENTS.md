@@ -11,7 +11,17 @@ Companion documents: [docs/PLUGIN_SDK.md](../docs/PLUGIN_SDK.md) (public typed S
 [docs/GLOSSARY.md](../docs/GLOSSARY.md) (what a pin, notice band, island, card,
 page and immersion look like on the glasses).
 This file gives agent-facing implementation rules; use the SDK guide and wire
-specification for their respective contracts. Nexus 2.0.0 ships SDK 0.24.0;
+specification for their respective contracts.
+
+**Glasses UI in Nexus 2.0: pages first.** Anything the wearer browses or picks
+from (lists, menus, contacts, conversations, summaries) is a **page** in the
+launcher (`rokidbus.plugin.pages`, see [Pages](../docs/PLUGIN_SDK.md#pages)), not
+a chain of `NexusCard` surfaces in an immersion. Card-built menus and pickers are
+the retired pre-2.0 pattern: they still render, but do not write new ones and do
+not copy them from older plugins. Use notices for events and an immersion only
+for the engaged step a page cannot host, opened from a page action. Model new
+plugins on Media Deck, Navigation and Relay
+([Choosing a HUD kind](../docs/PLUGIN_SDK.md#choosing-a-hud-kind)). Nexus 2.0.0 ships SDK 0.24.0;
 plugins built against 0.23.0 must be rebuilt against 0.24.0.
 
 ## 1. What a plugin is
