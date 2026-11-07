@@ -84,6 +84,22 @@ class ImagePageScreenTest {
     }
 
     @Test
+    fun `a replacement in another template starts a fresh selection instead of a tombstone`() {
+        openImagePage()
+        send(SessionEvent.Step(1, 2_300))
+        send(SessionEvent.Step(1, 2_400))
+        assertEquals("row:action cancel", screen().focusKey)
+        // Retake: the photo page becomes "Taking photo…", then shows the new picture.
+        respond(request, PageBody.Summary(primary = "Taking photo…", secondary = "Photo to Alice · WhatsApp"), JSONArray(), 2_500, revision = 2)
+        assertTrue(screen().blocks.filterIsInstance<ScreenBlock.Row>().none { it.tombstone })
+        respond(request, photo, JSONArray().put(action("send-photo", "Send")).put(action("retake", "Retake")).put(action("cancel", "Cancel")), 2_600, revision = 3)
+        val rows = screen().blocks.filterIsInstance<ScreenBlock.Row>()
+        assertEquals(listOf("row:action send-photo", "row:action retake", "row:action cancel"), rows.map { it.key })
+        assertTrue(rows.none { it.tombstone })
+        assertEquals("row:action send-photo", screen().focusKey)
+    }
+
+    @Test
     fun `an unavailable image page keeps its picture dimmed and acts on nothing`() {
         openImagePage()
         val shownStatus = top().status as FrameStatus.Shown

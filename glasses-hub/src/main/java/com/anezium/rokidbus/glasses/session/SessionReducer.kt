@@ -1230,6 +1230,11 @@ internal class SessionReducer(
         if (!itemResolver.hasStableKeys()) {
             return withLayout.copy(selected = next.selected.coerceIn(0, entries.lastIndex.coerceAtLeast(0)))
         }
+        // Another template is another screen: a selection or tombstone carried over would resurface
+        // on rows the wearer never chose, such as a photo's Cancel over the next "Taking photo…".
+        if (before.retained()?.page?.template != page.template) {
+            return withLayout.copy(selected = 0, selectedKey = entries.firstOrNull()?.key, tombstone = null)
+        }
         val key = before.selectedKey
         if (before.tombstone != null) {
             return withLayout.copy(selected = before.selected.coerceIn(0, entries.size))
