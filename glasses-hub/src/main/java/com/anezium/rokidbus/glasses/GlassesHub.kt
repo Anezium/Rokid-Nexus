@@ -94,6 +94,8 @@ object GlassesHub {
         val iconKey: String? = null,
         /** The page version the phone vouches this approved plugin provides; 0 for none. */
         val pageSessionVersion: Int = 0,
+        /** False for a page provider without a full app (bundle v7): its row opens its pages, never an immersion. */
+        val launchable: Boolean = true,
     )
 
     private data class Registration(
@@ -1328,6 +1330,7 @@ object GlassesHub {
                                 pageSessionVersion = PageSurfaceContract.parseSessionVersion(
                                     item.opt(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION),
                                 ),
+                                launchable = item.optBoolean("launchable", true),
                             ),
                         )
                     }

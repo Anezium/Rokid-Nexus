@@ -34,6 +34,9 @@ internal sealed interface IconRef {
 
     /** A glyph from the shared glyph set (or a plugin glyph by its qualified name). */
     data class Glyph(val name: String) : IconRef
+
+    /** A row's own `mono1` mark (launcher bundle v7), drawn in the row's tone like a glyph. */
+    data class Artwork(val artwork: com.anezium.rokidbus.shared.LauncherArtwork) : IconRef
 }
 
 internal enum class IconPlace { BELL, GRID }
@@ -761,7 +764,7 @@ internal class SessionScreens(
                     "row:${row.key}", row.label, row.sub,
                     enabled = row.enabled && row.item != PageItem.Inert,
                     selected = selected,
-                    icon = localIcon(frame.pageId, row.key),
+                    icon = localIcon(frame.pageId, row.key) ?: row.icon?.let { IconRef.Artwork(it) },
                     checked = row.checked,
                     pending = pendingAction != null && row.actionId == pendingAction,
                 )
@@ -886,6 +889,7 @@ internal class SessionScreens(
             "row:${row.key}", row.label, sub,
             enabled = row.enabled && row.item != PageItem.Inert,
             selected = frame.tombstone == null && index == frame.selected,
+            icon = row.icon?.let { IconRef.Artwork(it) },
             checked = (row.item as? PageItem.RouteView)?.let { it.view == view } ?: row.checked,
             pending = pendingAction != null && row.actionId == pendingAction,
         )

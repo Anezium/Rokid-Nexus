@@ -1163,7 +1163,9 @@ internal class SessionReducer(
             itemResolver.accepts(replacement)
         ) {
             val currentState = current.state as? SessionState.InPage ?: state
-            return replaceTopSnapshot(current, currentState, settled, status, replacement, nowMs)
+            // The replacement is the feedback: a bare "Done" would outlive the page it was about.
+            val replaced = settled.copy(outcome = outcome?.takeIf { it.message != null })
+            return replaceTopSnapshot(current, currentState, replaced, status, replacement, nowMs)
         }
         // A rejected or stale action keeps the page exactly as the wearer saw it.
         val currentState = current.state as? SessionState.InPage ?: state

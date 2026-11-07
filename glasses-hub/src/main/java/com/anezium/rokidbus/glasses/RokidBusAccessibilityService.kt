@@ -1739,13 +1739,15 @@ internal object NexusSession {
     private fun applications(): List<AppEntry> {
         val context = appContext ?: return emptyList()
         val nativeApps = runCatching { NativeAppsController.discover(context) }.getOrDefault(emptyList())
-        return LauncherMenuCatalog.merge(launcherEntries, nativeApps).map { entry ->
+        return LauncherMenuCatalog.merge(launcherEntries, nativeApps).mapNotNull { entry ->
             when (entry) {
                 is LauncherMenuEntry.Plugin -> {
                     val id = entry.entry.id
                     val kind = when {
                         !GlassesHub.launcherEntryOpensSurface(id) -> AppKind.CAMERA
                         providerPagesReady(id) -> AppKind.PAGES
+                        // A pages-only entry has nothing to open until its pages are negotiated.
+                        !entry.entry.launchable -> return@mapNotNull null
                         else -> AppKind.IMMERSION
                     }
                     // The camera is the hub's own catalog entry: its catalog mark, as the launcher draws it.
@@ -1759,7 +1761,7 @@ internal object NexusSession {
 
     /** The owner's full app is a Nexus plugin entry of the Applications catalog that opens a surface. */
     private fun ownerLaunchable(pluginId: String): Boolean =
-        launcherEntries.any { it.id == pluginId } && GlassesHub.launcherEntryOpensSurface(pluginId)
+        launcherEntries.any { it.id == pluginId && it.launchable } && GlassesHub.launcherEntryOpensSurface(pluginId)
 
     private fun onLauncherEntries(entries: List<GlassesHub.LauncherEntry>) {
         launcherEntries = entries

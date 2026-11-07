@@ -734,6 +734,22 @@ class LauncherRenderingTest {
     }
 
     @Test
+    fun `a row's own mark is drawn in its icon slot and takes the row's tone`() {
+        val mark = com.anezium.rokidbus.shared.LauncherArtwork(16, 16, java.util.Base64.getEncoder().encodeToString(ByteArray(32) { 0x3C }))
+        val blocks = listOf(
+            ScreenBlock.Row("wa", "WhatsApp", "3 conversations", icon = IconRef.Artwork(mark), selected = true),
+            ScreenBlock.Row("ig", "Instagram", icon = IconRef.Artwork(mark)),
+            ScreenBlock.Row("fb", "Messenger"),
+        )
+        render(SessionScreen(ScreenHeader("MESSAGES"), blocks, null, focusKey = "wa"))
+        fun tags(key: String) = find<ImageView>(view.blockViews.getValue(key)).mapNotNull { it.tag as? IconTag }
+        assertEquals(listOf(IconTag(IconRef.Artwork(mark), IconTone.BRIGHT)), tags("wa"))
+        assertEquals(listOf(IconTag(IconRef.Artwork(mark), IconTone.REST)), tags("ig"))
+        assertTrue(tags("fb").isEmpty())
+        assertEquals(PageStyle.ROW_ICON_PX, find<ImageView>(view.blockViews.getValue("wa")).single().width)
+    }
+
+    @Test
     fun `icons are grey at rest, phosphor when selected or in the header, grey when ended`() {
         val blocks = listOf(
             card("a", selected = true),

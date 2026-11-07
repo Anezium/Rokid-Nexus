@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.shared.AmbientSize
+import com.anezium.rokidbus.shared.LauncherArtwork
 import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.PageActionType
 import com.anezium.rokidbus.shared.PageBody
@@ -16,7 +17,8 @@ import com.anezium.rokidbus.shared.RouteGeometry
 /**
  * One selectable row as drawn and as acted on: the same list feeds both. [actionId] is the
  * envelope action the row invokes, so a pending invocation marks its row; [checked] is the
- * provider's checkbox mark, shown only over a pair that negotiated the launcher bundle.
+ * provider's checkbox mark, shown only over a pair that negotiated the launcher bundle, and
+ * [icon] its own mark, which the decoder only reads from bundle v7.
  */
 internal data class TypedRow(
     val key: String,
@@ -26,6 +28,7 @@ internal data class TypedRow(
     val item: PageItem,
     val actionId: String? = null,
     val checked: Boolean? = null,
+    val icon: LauncherArtwork? = null,
 )
 
 /**
@@ -98,6 +101,7 @@ internal class TypedPageItems(
                 row.id, row.label, row.sub, row.enabled, itemFor(row, local, owner, actions),
                 actionId = (row.target as? PageTarget.Action)?.actionId,
                 checked = row.checked.takeIf { marks },
+                icon = row.icon,
             )
         }
         val extra = appendedActions(body, page.actions.filter { it.id !in targeted }).map { action ->
