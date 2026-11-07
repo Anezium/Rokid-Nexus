@@ -152,6 +152,22 @@ class ActivityCollectionTest {
         assertEquals(listOf("nav", "media"), nextSession())
     }
 
+    @Test
+    fun `a kept entry of a pages-only owner joins an older offline card on the root after its owner lets go`() {
+        state.setCapacity(8)
+        state.start("media:activity", "media", 1, content("song", offline = true, knownAtWallMs = 1), now)
+        val kept = content("Messages").copy(
+            destination = PageDestination("meta-messages:main"),
+            persistence = com.anezium.rokidbus.shared.ActivityPersistence.ONGOING,
+            eventKey = "3f2a9c",
+        )
+        assertTrue(state.start("meta-messages:activity", "meta-messages", 2, kept, now) is ActivityMutation.Applied)
+        state.update("meta-messages:activity", 3, ActivitySurfacePatch(secondary = ActivityField("3 conversations")), now)
+        val offline = ActivitySurfaceContract.offlineSnapshot(kept, knownAtWallMs = 7)
+        assertTrue(state.start("meta-messages:activity", "meta-messages", 4, offline, now) is ActivityMutation.Applied)
+        assertEquals(listOf("meta-messages", "media"), nextSession())
+    }
+
     private val feed = ActivityFeed(ownerLabel = { it }, pageIdFor = LocalPages::activityPageId, wallClock = { now })
     private val reducer = SessionReducer(
         TypedPageItems(isLocalPage = PageTemplateContract::isLocalPageId, providerPageAllowed = { true }, extended = { true }),

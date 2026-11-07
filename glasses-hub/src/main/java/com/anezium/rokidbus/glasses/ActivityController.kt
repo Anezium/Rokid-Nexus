@@ -880,7 +880,8 @@ internal object ActivityController {
             }
             ActivityMutation.DroppedStale ->
                 log("activity dropped stale id=${identity.first}")
-            else -> Unit
+            // Only a destination outside the owner's own pages gets here; the device log must say so.
+            else -> log("activity start ignored id=${identity.first} reason=destination")
         }
     }
 
@@ -917,7 +918,8 @@ internal object ActivityController {
             }
             ActivityMutation.DroppedStale ->
                 log("activity update dropped stale id=${identity.first}")
-            else -> Unit
+            // No such resident, an offline entry asked to revive, or a destination outside the owner.
+            else -> log("activity update ignored id=${identity.first}")
         }
     }
 
@@ -937,7 +939,7 @@ internal object ActivityController {
             is ActivityMutation.Removed -> publish()
             ActivityMutation.DroppedStale ->
                 log("activity end dropped stale id=${identity.first}")
-            else -> Unit
+            else -> log("activity end ignored id=${identity.first} reason=unknown")
         }
     }
 
