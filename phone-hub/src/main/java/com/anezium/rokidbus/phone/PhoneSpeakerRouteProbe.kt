@@ -3,6 +3,7 @@ package com.anezium.rokidbus.phone
 import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioDeviceInfo
+import android.media.AudioAttributes
 import android.media.AudioManager
 import android.os.Build
 
@@ -82,10 +83,12 @@ internal class PhoneSpeakerRouteProbe(
     private val audioManager =
         context.applicationContext.getSystemService(AudioManager::class.java)
 
+    fun classifyRoute(): PhoneTtsRoute = classifyRoute(phoneTtsAudioAttributes())
+
     @SuppressLint("MissingPermission")
-    fun classifyRoute(): PhoneTtsRoute = runCatching {
+    fun classifyRoute(attributes: AudioAttributes): PhoneTtsRoute = runCatching {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val devices = audioManager.getAudioDevicesForAttributes(phoneTtsAudioAttributes())
+            val devices = audioManager.getAudioDevicesForAttributes(attributes)
             PhoneTtsRouteClassifier.classifyWinningDevice(
                 devices.map { device -> routeDevice(device.type, device.address) },
                 glassesAddress(),

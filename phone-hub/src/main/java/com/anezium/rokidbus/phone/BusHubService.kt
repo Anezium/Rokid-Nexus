@@ -1107,7 +1107,7 @@ class BusHubService : Service() {
             connection = ::createAudioRelayConnection,
             player = { ready, failure ->
                 PhoneAudioRelayPlayer(ready, prefs().getString(PREF_LAST_GLASSES_ADDRESS, null),
-                    phoneSpeakerRouteProbe::classifyRoute, { _ ->
+                    { phoneSpeakerRouteProbe.classifyRoute(PhoneAudioRelayPlayer.audioAttributes()) }, { _ ->
                         audioRelayRouteRejected = true
                         updateAudioRelayGate()
                     }, failure)
@@ -6165,7 +6165,7 @@ class BusHubService : Service() {
         if (audioRelayDestroyed) return
         val store = audioRelayStore ?: return
         val route = if (audioRelayRouteRejected) PhoneTtsRoute.GLASSES_LINK else
-            audioRelayRouteProbe?.classifyRoute() ?: PhoneTtsRoute.PHONE_SPEAKER
+            audioRelayRouteProbe?.classifyRoute(PhoneAudioRelayPlayer.audioAttributes()) ?: PhoneTtsRoute.PHONE_SPEAKER
         val enabled = store.isEnabled() && hubEnabled
         val dataUp = sppSession != null && socket?.isConnected == true
         val desired = PhoneAudioRelayGate.desired(enabled, route, remoteAudioRelayCapable, dataUp)

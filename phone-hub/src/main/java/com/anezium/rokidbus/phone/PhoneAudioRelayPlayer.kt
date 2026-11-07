@@ -9,9 +9,12 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.anezium.rokidbus.shared.GlassesAudioRelayContract as C
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
+
+internal enum class AudioRelayRouteAdmission { WAIT, PLAY, REJECT }
 
 internal class PhoneAudioRelayPlayer(
     private val ready: C.Ready,
@@ -40,7 +43,7 @@ internal class PhoneAudioRelayPlayer(
             decoder.configure(decoderFormat(ready), null, null, 0)
             decoder.start()
             val output = AudioTrack.Builder()
-                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                .setAudioAttributes(audioAttributes())
                 .setAudioFormat(AudioFormat.Builder().setSampleRate(48000).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
                 .setTransferMode(AudioTrack.MODE_STREAM).setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
                 .setBufferSizeInBytes(4 * 960 * 2).build()
@@ -48,12 +51,13 @@ internal class PhoneAudioRelayPlayer(
             track = output
             routing = AudioRouting.OnRoutingChangedListener {
                 val device = output.routedDevice
-                if (running.get() && device != null && (isForbiddenRoute(device) || route() != PhoneTtsRoute.EXTERNAL_SINK)) rejectRoute(device)
+                if (running.get() && (routeAdmission(device, glassesAddress) == AudioRelayRouteAdmission.REJECT || route() != PhoneTtsRoute.EXTERNAL_SINK)) rejectRoute(device)
             }
             output.addOnRoutingChangedListener(routing, Handler(Looper.getMainLooper()))
             val info = MediaCodec.BufferInfo()
             var ptsUs = 0L
             var playing = false
+            var routeWaitStarted: Long? = null
             fun drain() {
                 while (running.get()) {
                     val index = decoder.dequeueOutputBuffer(info, 0)
@@ -67,8 +71,20 @@ internal class PhoneAudioRelayPlayer(
                         val pcm = decoder.getOutputBuffer(index)!!.duplicate()
                         pcm.position(info.offset).limit(info.offset + info.size)
                         while (pcm.hasRemaining() && running.get()) {
-                            if (route() != PhoneTtsRoute.EXTERNAL_SINK || output.routedDevice?.let(::isForbiddenRoute) == true) { rejectRoute(output.routedDevice); return }
+                            if (route() != PhoneTtsRoute.EXTERNAL_SINK) { rejectRoute(output.routedDevice); return }
+                            // play() selects an output, but no PCM may enter the track before it is known.
                             if (!playing) { output.play(); playing = true }
+                            when (routeAdmission(output.routedDevice, glassesAddress)) {
+                                AudioRelayRouteAdmission.WAIT -> {
+                                    val now = SystemClock.elapsedRealtime()
+                                    val started = routeWaitStarted ?: now.also { routeWaitStarted = it }
+                                    check(now - started < C.START_TIMEOUT_MS) { "Audio route unavailable" }
+                                    Thread.sleep(2)
+                                    continue
+                                }
+                                AudioRelayRouteAdmission.REJECT -> { rejectRoute(output.routedDevice); return }
+                                AudioRelayRouteAdmission.PLAY -> routeWaitStarted = null
+                            }
                             val written = output.write(pcm, pcm.remaining(), AudioTrack.WRITE_NON_BLOCKING)
                             check(written >= 0) { "AudioTrack write failed" }
                             if (written == 0) Thread.sleep(2)
@@ -99,9 +115,6 @@ internal class PhoneAudioRelayPlayer(
         }
     }
 
-    private fun isForbiddenRoute(device: AudioDeviceInfo): Boolean =
-        (!glassesAddress.isNullOrBlank() && device.address.equals(glassesAddress, ignoreCase = true)) ||
-            device.type in setOf(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, AudioDeviceInfo.TYPE_BUILTIN_EARPIECE, AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE)
     private fun rejectRoute(device: AudioDeviceInfo? = null) {
         val error = if (!glassesAddress.isNullOrBlank() && device?.address.equals(glassesAddress, ignoreCase = true))
             PhoneAudioRelayRouteError.ROUTE_IS_GLASSES else PhoneAudioRelayRouteError.NO_EXTERNAL_SINK
@@ -115,6 +128,16 @@ internal class PhoneAudioRelayPlayer(
     }
 
     companion object {
+        fun audioAttributes(): AudioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+
+        fun routeAdmission(device: AudioDeviceInfo?, glassesAddress: String?): AudioRelayRouteAdmission = when {
+            device == null -> AudioRelayRouteAdmission.WAIT
+            !glassesAddress.isNullOrBlank() && device.address.equals(glassesAddress, ignoreCase = true) -> AudioRelayRouteAdmission.REJECT
+            device.type in setOf(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, AudioDeviceInfo.TYPE_BUILTIN_EARPIECE, AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE) -> AudioRelayRouteAdmission.REJECT
+            else -> AudioRelayRouteAdmission.PLAY
+        }
+
         fun decoderFormat(ready: C.Ready): MediaFormat {
             require(ready.codec == C.OPUS && ready.csd.size == 3 && ready.csd[1].size == 8 && ready.csd[2].size == 8)
             return MediaFormat.createAudioFormat("audio/opus", 48000, 1).apply {

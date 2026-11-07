@@ -31,6 +31,8 @@ class PhoneAudioRelayGateDispatchTest {
         shadowOf(audio).setOutputDevices(listOf(AudioDeviceInfoBuilder.newBuilder().setType(AudioDeviceInfo.TYPE_WIRED_HEADPHONES).build()))
         val socket = Shadow.newInstanceOf(BluetoothSocket::class.java)
         socket.connect()
+        assertTrue(socket.isConnected)
+        assertEquals(PhoneTtsRoute.EXTERNAL_SINK, PhoneSpeakerRouteProbe(app) { null }.classifyRoute(PhoneAudioRelayPlayer.audioAttributes()))
         val session = SppAuthProtocol.Session::class.java.getDeclaredConstructor(ByteArray::class.java, ByteArray::class.java)
             .apply { isAccessible = true }.newInstance(ByteArray(32), ByteArray(32))
         val launched = CopyOnWriteArrayList<() -> Unit>()
