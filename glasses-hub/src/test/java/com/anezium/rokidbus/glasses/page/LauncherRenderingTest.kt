@@ -561,7 +561,7 @@ class LauncherRenderingTest {
     }
 
     @Test
-    fun `a long conversation pages by bubble keys and opens on its newest page`() {
+    fun `a long conversation scrolls through stops named by bubble keys and opens at its end`() {
         val bubbles = (1..12).map {
             Bubble("m:$it", if (it % 2 == 0) BubbleSide.RIGHT else BubbleSide.LEFT, "Message $it " + "lorem ipsum dolor sit amet ".repeat(4), latest = it == 12)
         } + Bubble("draft", BubbleSide.RIGHT, "on my way", style = BubbleStyle.DASHED, meta = "draft · not sent yet")
@@ -578,7 +578,12 @@ class LauncherRenderingTest {
         assertEquals(conversation.pageStarts, report.pageStarts)
         assertTrue(report.pageStarts.all { it.segmentId.startsWith("m:") || it.segmentId == "draft" })
 
-        // The reducer's anchor for the first page brings the oldest messages and the caption.
+        // The composer stays where it is under the viewport, however long the thread.
+        assertEquals(View.VISIBLE, view.footer.visibility)
+        assertEquals(view.viewport.bottom + PageStyle.FOOTER_TOP_GAP_PX, view.footer.top)
+        assertTrue(conversation.bottom <= view.viewport.bottom)
+
+        // The reducer's anchor for the first stop brings the oldest messages and the caption.
         render(conversationScreen(bubbles, anchor = report.pageStarts.first()))
         assertEquals(0, conversation.page)
         assertTrue("m:1" in conversation.visibleKeys())
@@ -586,9 +591,72 @@ class LauncherRenderingTest {
         assertTrue(conversation.captionShown)
         assertEquals(0, paged.last().anchorPage)
 
-        // An anchor whose bubble is gone falls back to the newest page.
+        // Each stop moves the window by about half of it, never a whole window: the stops overlap.
+        val height = conversation.height.toFloat()
+        report.pageStarts.zipWithNext().forEachIndexed { index, (from, to) ->
+            render(conversationScreen(bubbles, anchor = from))
+            draw(conversation)
+            val before = conversation.drawn.associate { it.key to it.rect.top }
+            render(conversationScreen(bubbles, anchor = to))
+            assertEquals(index + 1, conversation.page)
+            draw(conversation)
+            val shared = conversation.drawn.filter { it.key in before }
+            assertTrue("stop $index shares nothing with the next", shared.isNotEmpty())
+            val moved = before.getValue(shared.first().key) - shared.first().rect.top
+            assertTrue("stop $index moved $moved", moved >= height / 6 && moved <= height * 2 / 3 + 1)
+        }
+
+        // An anchor whose bubble is gone falls back to the end.
         render(conversationScreen(bubbles, anchor = DocumentAnchor("live", 0)))
         assertEquals(conversation.pageStarts.lastIndex, conversation.page)
+    }
+
+    @Test
+    fun `tall thumbnails scroll in the column with the text and leave no blank window`() {
+        val tall = com.anezium.rokidbus.shared.LauncherArtwork(96, 128, java.util.Base64.getEncoder().encodeToString(ByteArray(96 * 128 / 8) { 0x33 }))
+        val bubbles = (1..10).flatMap {
+            listOf(
+                Bubble("m:$it", BubbleSide.LEFT, "Regarde ça $it", image = tall),
+                Bubble("r:$it", BubbleSide.RIGHT, "ok, je vois $it " + "et toi ".repeat(it % 4)),
+            )
+        } + Bubble("m:last", BubbleSide.LEFT, "", image = tall, latest = true)
+        render(conversationScreen(bubbles))
+        val conversation = view.blockViews.getValue("conversation") as ConversationView
+        val starts = conversation.pageStarts
+        assertTrue(starts.size > 2)
+        // Opens at the end: the newest thumbnail alone, against the footer.
+        assertEquals(starts.lastIndex, conversation.page)
+        draw(conversation)
+        val newest = conversation.drawn.last()
+        assertEquals("m:last", newest.key)
+        assertNotNull(newest.imageRect)
+        assertTrue(conversation.height - newest.rect.bottom < 4f)
+
+        val height = conversation.height.toFloat()
+        val seen = mutableSetOf<String>()
+        starts.forEachIndexed { index, anchor ->
+            render(conversationScreen(bubbles, anchor = anchor))
+            assertEquals(index, conversation.page)
+            draw(conversation)
+            seen += conversation.visibleKeys()
+            val tops = conversation.drawn.map { it.rect.top }
+            val bottoms = conversation.drawn.map { it.rect.bottom }
+            // Something is drawn at the top of the window and something reaches its bottom: a
+            // thumbnail that does not fit is clipped by the window, never pushed out whole.
+            assertTrue("stop $index starts at ${tops.minOrNull()}", tops.min() <= PageStyle.CAPTION_PX * 3)
+            assertTrue("stop $index ends at ${bottoms.maxOrNull()}", bottoms.max() >= height - PageStyle.BODY_PX * 3)
+            assertEquals(tops.sorted(), tops)
+        }
+        // Every message is readable at some stop, thumbnails and text alike.
+        assertEquals(bubbles.map { it.key }.toSet(), seen)
+
+        // A window that cuts a thumbnail still draws it, clipped: its rect crosses the window's edge.
+        val clipped = starts.indices.any { index ->
+            render(conversationScreen(bubbles, anchor = starts[index]))
+            draw(conversation)
+            conversation.drawn.any { bubble -> bubble.imageRect?.let { it.top < 0f && it.bottom > 0f || it.top < height && it.bottom > height } == true }
+        }
+        assertTrue(clipped)
     }
 
     @Test

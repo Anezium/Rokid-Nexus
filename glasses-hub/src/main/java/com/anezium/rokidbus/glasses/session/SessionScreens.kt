@@ -139,9 +139,10 @@ internal sealed interface ScreenBlock {
 
     /**
      * A conversation page's bubbles, oldest first; [caption] is its one capture time. A live one
-     * is read page by page like a document: the renderer reports where its pages start (anchors
-     * naming bubble keys) through [SessionEvent.DocumentPaged] for [frame], [pageId] and
-     * [revision], and keeps [anchor] on screen. A retained (dimmed) one names no frame.
+     * is scrolled as one column through stops the renderer measures and reports (anchors naming
+     * bubble keys) through [SessionEvent.DocumentPaged] for [frame], [pageId] and [revision];
+     * it keeps [anchor]'s stop on screen, or the column's end for a null anchor. A retained
+     * (dimmed) one names no frame.
      */
     data class Conversation(
         override val key: String,
@@ -579,7 +580,7 @@ internal class SessionScreens(
                 ScreenHeader(title.uppercase(), if (pages > 0) "${frame.page + 1}/$pages" else "back: $parent", pageIcon(frame.pageId)),
                 failure + reading,
                 // The tap only reaches Retry and Back; a second one runs the selected row.
-                ScreenHint(listOfNotNull("swipe page".takeIf { pages > 1 }, TAP_RETRY_BACK).joinToString(" · "), back),
+                ScreenHint(listOfNotNull((if (body is PageBody.Conversation) "swipe scroll" else "swipe page").takeIf { pages > 1 }, TAP_RETRY_BACK).joinToString(" · "), back),
                 statusText,
                 reading.key,
             )
@@ -1050,8 +1051,8 @@ internal class SessionScreens(
             focus != null && focus.key != ComposerRules.SEND && replacing != null ->
                 ScreenHint("tap start · $REPLACES_DRAFT ${replacing.recipient}", BACK_READING)
             focus != null -> ScreenHint(FOCUS_START, BACK_READING)
-            view?.available == true && !sending -> ScreenHint(if (pages > 1) "swipe page · tap reply" else "tap reply", backText)
-            else -> ScreenHint(if (pages > 1) "swipe page" else null, backText)
+            view?.available == true && !sending -> ScreenHint(if (pages > 1) "swipe scroll · tap reply" else "tap reply", backText)
+            else -> ScreenHint(if (pages > 1) "swipe scroll" else null, backText)
         }
         val block = ScreenBlock.Conversation(
             CONVERSATION_BLOCK, body.caption, drawn, dimmed = false,

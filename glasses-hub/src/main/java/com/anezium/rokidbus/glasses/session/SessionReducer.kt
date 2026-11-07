@@ -1257,11 +1257,12 @@ internal class SessionReducer(
         event: SessionEvent.DocumentPaged,
     ): SessionTransition {
         val top = state.frames.last()
-        // A conversation is read from its newest page, then where the wearer paged it to.
+        // A conversation opens at its end and follows it (a null anchor) until the wearer scrolls
+        // up, so a new message or a growing capture stays in view; scrolled up, it keeps its place.
         if (top.shownConversation() != null) {
             if (!describesTop(model, state, event.frame, event.pageId, event.revision) || event.pageStarts.isEmpty()) return keep(model)
             val page = if (top.anchor == null) event.pageStarts.lastIndex else event.anchorPage.coerceIn(0, event.pageStarts.lastIndex)
-            val frame = top.copy(pageStarts = event.pageStarts, page = page, anchor = top.anchor ?: event.pageStarts.last())
+            val frame = top.copy(pageStarts = event.pageStarts, page = page)
             return if (frame == top) keep(model) else SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
         }
         // A report posted before the wearer went to the rows still describes what BACK returns to.
@@ -1601,7 +1602,9 @@ internal class SessionReducer(
         if (top.pageStarts.isEmpty()) return keep(model)
         val target = (top.page + delta).coerceIn(0, top.pageStarts.lastIndex)
         if (target == top.page) return keep(model)
-        return SessionTransition(model.copy(state = state.withTop(top.copy(page = target, anchor = top.pageStarts[target]))), listOf(ShowFrame))
+        // Scrolled back to the end, the conversation follows it again.
+        val anchor = if (target == top.pageStarts.lastIndex) null else top.pageStarts[target]
+        return SessionTransition(model.copy(state = state.withTop(top.copy(page = target, anchor = anchor))), listOf(ShowFrame))
     }
 
     /**
