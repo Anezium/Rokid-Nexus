@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Composer tools (launcher bundle v5).** A conversation page can put its own
+  buttons in the hub composer's bar (a **Photo** button, for instance), hide or
+  rename Dictate and Type, and order the bar. A tool runs one of the page's
+  actions or opens the plugin's immersion with the page, thread and tool it came
+  from, delivered on `/system/plugin/open` as `type: composer_tool` with a
+  `context`. Send stays the hub's and keeps every safety rule. Messages may carry
+  a thumbnail drawn in the bubble (at most 4 per page, 160 px and 12 KiB each,
+  32 KiB together). Both hubs announce `launcherInteractiveVersion: 5`; older
+  peers see the default bar and text-only bubbles. SDK: `supportsComposerTools()`,
+  `ComposerTool`, `ComposerSlot`, `ConversationMessage.image`,
+  `onNexusOpen(openType, context)`, and the `camera` glyph.
+
 ## 2.1.0
 
 - **Glasses sound in earbuds.** With earbuds or headphones as your phone's

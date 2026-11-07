@@ -232,7 +232,9 @@ pages (opted-in plugins, session backend, once both hubs announce page v1):
   wearer selects a page → hub uses your live registration or binds you cold
   (registration within the 8 s page budget) → /page/request → your answer on
   /page/response → /page/visibility (lease) → optional live revisions and
-  confirmed (or user-approved quick, or composer) /page/action → /page/closed
+  confirmed (or user-approved quick, or composer, or composer tool) /page/action
+  → /page/closed; an immersion composer tool instead opens you with
+  /system/plugin/open `type: composer_tool` and its `context`
   → page-only binding released
 ```
 
@@ -296,7 +298,9 @@ or configures a network, and `disable` must remain scoped to ADB rather than
 turning normal Wi-Fi off.
 
 Paths a plugin **receives** (reserved, hub-generated — you never send these):
-`/system/plugin/registration`, `/system/plugin/open`, `/system/plugin/close`,
+`/system/plugin/registration`, `/system/plugin/open` (with `type: composer_tool`
+and a `context` when one of your conversation pages' tools opened you; the SDK
+drops a context for a page that is not yours), `/system/plugin/close`,
 `/system/plugin/input`, `/glasses/device-info`, `/surface/text-committed`, plus
 deliveries into your `/plugin/<id>/…` namespace. An opted-in page provider also
 receives `/page/request`, `/page/action`, `/page/visibility` and `/page/closed`,

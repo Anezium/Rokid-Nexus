@@ -282,8 +282,11 @@ Lifecycle payloads include `version`, `type`, `id`, and `pluginId`. On
 follow-up on `/system/plugin/ai-assist` carries the gesture id and whether the
 button is still held), `adopted` when a restarted hub found the plugin already
 on the glasses, `resume` when an audio-backgrounded plugin returns to the active
-slot, and `camera_session_open` for a camera session. A receiver treats any
-value it does not know as `open`. Input also
+slot, `camera_session_open` for a camera session, and `composer_tool` when a
+composer tool on one of the plugin's conversation pages opened its immersion
+(launcher bundle v5): the payload then carries `context`, see "Composer tools
+and message thumbnails (bundle v5)". A receiver treats any value it does not
+know as `open`. Input also
 includes the plugin-local `localSurfaceId`, `keyCode`, and `action`. Version 1
 receivers ignore unknown fields and ignore duplicate event IDs. SDK lifecycle
 callbacks are serialized on the Android application main thread.
@@ -341,7 +344,8 @@ Glasses to phone:
 - `/surface/input` reports key input while a surface is visible.
 - `/surface/text-committed` reports what the wearer typed or that they
   cancelled, for a card's `editable` field. See "Editable field" below.
-- `/launcher/open` asks the phone hub to open a plugin.
+- `/launcher/open` asks the phone hub to open a plugin: `{pluginId}`, plus the
+  optional `context` of a composer tool (launcher bundle v5).
 
 Every surface payload carries:
 
@@ -2059,7 +2063,7 @@ as another one. `ink` stays reserved, and no Ink page profile is announced.
 | `selectableList` | required `items` array; optional `emptyText` |
 | `document` | required `segments` array of `{id, kind, text}`, kind `header`, `prose` or `aside`; optional `items`, `footer` |
 | `commands` | required `items` array; optional `text` |
-| `conversation` (bundle) | required `threadKey` (page-style id); optional `caption` (64); required `messages` (at most 64, oldest first) of `{id, role, sender?, text, status?}`; optional `composer` `{recipient, sendActionId, maxChars, replyable, unavailableText?, unavailableSub?}` |
+| `conversation` (bundle) | required `threadKey` (page-style id); optional `caption` (64); required `messages` (at most 64, oldest first) of `{id, role, sender?, text, status?, image?}`; optional `composer` `{recipient, sendActionId, maxChars, replyable, unavailableText?, unavailableSub?, tools?, layout?, dictateLabel?, typeLabel?, sendLabel?}` (`image` and the five composer fields from bundle v5) |
 | `media` (bundle) | required `title` (120, nonblank) and `state`; optional `artist`, `album` (120), `source` (48), `status` (120); `controls` (at most 3 action ids, swipe order); optional `defaultControl` |
 | `route` (bundle) | required `position` (`live`, `stale` or `none`); optional `maneuver` `{glyph, distance, street?, eta?}`, `facts` (at most 6), `follow` and `overview` geometry, `ribbon`, `fixAgeS` |
 
@@ -2072,7 +2076,10 @@ The bundle bodies have rules of their own:
   `caption`, one per page. `composer.sendActionId` must name a page action typed
   `compose.send`; `recipient` is at most 48 characters, `maxChars` 1 through
   1,000, and `unavailableText`/`unavailableSub` at most 64. A provider uses the
-  same value for `threadKey` and for its notices' `eventKey`.
+  same value for `threadKey` and for its notices' `eventKey`. From bundle v5 a
+  message may carry an `image` thumbnail and the composer its `tools`,
+  `layout` and labels; see "Composer tools and message thumbnails (bundle v5)"
+  for their rules. Below v5 those fields are ignored, as any unknown field is.
 - `media`: `state` is `playing`, `paused`, `stopped`, `none` or `unavailable`.
   Every control names a page action typed `media.*`, ids are unique, and
   `defaultControl` is one of them. Controls are the hub's command strip, not
@@ -2357,7 +2364,7 @@ version is raised. HUD copy is English, like the rest of the session chrome.
 
 ### Cover and player anchors (bundle v2)
 
-Current hubs announce `launcherInteractiveVersion: 4`; v1 above remains the
+Current hubs announce `launcherInteractiveVersion: 5`; v1 above remains the
 baseline. Version 2 adds optional `artwork` on an activity and a `media` page body:
 `{"encoding":"mono1","width":96,"height":96,"data":"..."}`. Dimensions are
 integers from 1 through 128. Standard Base64 `data` is at most 2,732 characters
@@ -2404,6 +2411,69 @@ show their glyph fallback and never retain a previous track's cover. Bundle v1
 still strips the artwork key completely. `supportsLauncherImageArtwork()` reports
 whether the pair negotiated v3; `supportsLauncherArtwork()` still reports v2 or
 later.
+
+### Composer tools and message thumbnails (bundle v5)
+
+Version 5 lets a `conversation` page shape the hub composer's bar and put a
+thumbnail in a bubble. Nothing here adds a capability, a path a plugin may
+send, or a way for a plugin to send text: Send stays the hub's, exactly as in
+"Composer capture" below.
+
+The `composer` object gains:
+
+| Field | Rule |
+|---|---|
+| `tools` | at most 3 of `{id, label, actionId, glyph?}`. `id` is a page-style id, unique among the tools and never `dictate`, `type` or `send`. `label` is nonblank, at most 12 characters. `actionId` names one of the envelope's `actions` of kind `plugin` not typed `compose.send`, or of kind `immersion`; a `hub` action, a send or an unknown id make the page `INVALID_PAGE`. `glyph` is a shared glyph name (lowercase letters, digits, hyphens, at most 32); a hub that does not draw that name shows the label alone. |
+| `layout` | the bar left to right: strings `dictate`, `type`, `send` and the tool ids, each at most once, every declared tool present, nothing else. A `dictate` or `type` left out is hidden. `send` is always drawn, first when left out. Without `layout` the bar is `send`, `dictate`, `type`, then the tools in their order. |
+| `dictateLabel`, `typeLabel`, `sendLabel` | nonblank, at most 12 characters; the hub's own words otherwise. |
+
+A `replyable` composer must keep `dictate` or `type` in its bar, so a draft
+can be made for Send; a composer with `replyable: false` may hide both and
+show tools alone, but while it is unavailable the hub draws its own line and no
+button at all. Send keeps every existing rule: it exists only for a ready
+draft of this exact thread, is focused first then, and sends only on a fresh
+tap after the text was drawn. A hidden `type` sends a failed dictation to
+`dictate` instead (or to the first tool when neither is shown).
+
+A tool is a composer button like the hub's own: a tap focuses the bar, STEP
+walks it in `layout` order, and a fresh tap on a focused tool acts. A `plugin`
+tool invokes its action on `/page/action` in `confirmed` mode with the shown
+revision, like a plugin row; the phone and the SDK check it as they check any
+action. An `immersion` tool opens the provider's own immersion as the launcher
+would, and the glasses add to `/launcher/open` a `context`:
+
+```json
+{"pluginId": "meta", "context": {"pageId": "meta:thread", "params": {"thread": "t1"},
+ "threadKey": "t1", "toolId": "photo", "actionId": "camera"}}
+```
+
+`pageId`, `threadKey`, `toolId` and `actionId` follow the page id rules and
+`params` the page params bound (2,048 bytes). The phone parses it fail-closed:
+a context that is malformed or whose `pageId` is not in the named plugin's own
+namespace refuses the open (`BAD_CONTEXT` in the journal) rather than opening
+blind. An accepted context reaches the plugin on `/system/plugin/open` as
+`type: composer_tool` with the same `context` object; the SDK hands it to
+`onOpen(openType, context)` and drops a context for another provider's page. An
+older phone ignores `context` and opens the plugin plainly; a receiver that
+does not know `composer_tool` opens as `open`.
+
+Each message may carry `image`, the "Detailed covers" artwork object (`mono1`
+or `jpeg`) with tighter bounds for a bubble: at most 160 px on each side and
+12,288 decoded bytes, at most 4 thumbnails on a page and 32,768 decoded bytes
+together, so half the 65,536-byte page stays for its text. A malformed or
+oversized thumbnail is an invalid page, never a missing image. The glasses draw
+it inside the bubble above the text at its own size, scaled down only when the
+bubble's width cannot hold it; a message whose `text` is empty is its
+thumbnail alone. A page carrying thumbnails is sized like any page: above
+3 KiB it needs the SPP data plane.
+
+Negotiation is the bundle's: both hubs announce `launcherInteractiveVersion: 5`
+and the pair runs the lower version. The phone strips `tools`, `layout`, the
+three labels and every `image` from pages and result replacements before
+forwarding to glasses below v5; the SDK does the same before sending to a pair
+below v5 (`supportsComposerTools()`), so such a page still shows with the
+default bar and text-only bubbles. The glasses ignore the same fields unless the
+negotiated version is at least 5. No exact-match tier version changes.
 
 ### Typed actions
 
@@ -2453,7 +2523,8 @@ it never takes a type from the glasses.
 ### Fresh contact
 
 An Enter that would cause an effect (a quick or confirmed plugin action, an
-activity command, the composer's Send, an app launch including native apps and
+activity command, the composer's Send or one of its tools, an app launch
+including native apps and
 Camera in Applications) is accepted only if its press began strictly after the
 focused target was displayed: after the host's
 draw acknowledgement of the frame that showed that focus. A new revision, a new
@@ -2608,7 +2679,10 @@ link loss during a capture cancels it and keeps the previous draft.
 
 Send is offered only while the current page is a live conversation whose
 `threadKey` and owner equal the draft's and whose composer is `replyable`, and
-only for a fresh focus that keeps the fresh-contact rule. `done` hands the draft
+only for a fresh focus that keeps the fresh-contact rule. The page may rename
+the three buttons, hide Dictate or Type and add its own tools beside them
+(bundle v5, "Composer tools and message thumbnails"); none of that changes
+what Send does or when it exists. `done` hands the draft
 off (`handed to the app`) and clears it. The glasses keep the sent text on the
 frame it was sent from until that page carries the reply. Copies are counted,
 never matched by id or place: the page carries it once it shows more `ours`

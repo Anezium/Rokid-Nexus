@@ -138,6 +138,18 @@ Relay and Hello Nexus. See [Pages](PLUGIN_SDK.md#pages) and
 *Reused: the Navigation card opening its route page, cropped from the Nexus
 2.0 demo (simulated position).*
 
+**Composer and composer tools**
+
+On a conversation page the hub draws the **composer**: a bar under the bubbles
+with **Dictate**, **Type** and, once a draft exists, **Send**. Send is the
+hub's and only ever sends text the wearer has seen. A page may add its own
+buttons to the bar, the **composer tools** (a **Photo** button, say), hide or
+rename Dictate and Type, and order the bar; a tool either runs one of the
+page's actions or opens the plugin's immersion with the thread it came from.
+A message may carry a **thumbnail**, drawn in its bubble. `ConversationComposer`,
+`ComposerTool`, `ComposerSlot`, `ConversationMessage.image`; launcher bundle v5.
+See [Composer tools](PLUGIN_SDK.md#composer-tools-launcher-bundle-v5).
+
 ## Immersion (Open app)
 
 An immersion is the plugin's own full-screen interaction on the glasses: its

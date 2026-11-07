@@ -124,7 +124,9 @@ matters *why* the plugin was opened: `PluginOpenTypes.OPEN` is a deliberate
 pick (the glasses launcher, or *Open* on the phone), `PluginOpenTypes.AI_ASSIST`
 is the assist button handing over, and `PluginOpenTypes.RESUME` returns a plugin
 from lease-bounded background audio; treat anything else like `OPEN`. The
-default forwards to the plain `onNexusOpen()`. A granted background detach calls
+default forwards to the plain `onNexusOpen()`. `PluginOpenTypes.COMPOSER_TOOL`
+comes with a `ComposerToolContext` through `onNexusOpen(openType, context)`:
+see [Composer tools](#composer-tools-launcher-bundle-v5). A granted background detach calls
 `onNexusBackground()` rather than `onNexusClose()`; the latter remains the final
 close callback. Duplicate lifecycle IDs are ignored. The glasses path already deduplicates
 paired directional aliases; plugins should act once on each delivered input.
@@ -2382,7 +2384,7 @@ template as the fallback. `ink` stays reserved, and there is no Ink page body.
 
 | Body | Content |
 |---|---|
-| `PageBody.Conversation` | `threadKey` (your notices' `eventKey` for the thread); `messages` (`ConversationMessage(id, role, text, sender, status)`, at most 64, oldest first); optional `caption` (the one capture time, 64); optional `composer` |
+| `PageBody.Conversation` | `threadKey` (your notices' `eventKey` for the thread); `messages` (`ConversationMessage(id, role, text, sender, status, image)`, at most 64, oldest first); optional `caption` (the one capture time, 64); optional `composer` |
 | `PageBody.Media` | `title` and `state` (`PLAYING`, `PAUSED`, `STOPPED`, `NONE`, `UNAVAILABLE`); optional `artist`, `album`, `source`, `status`; `controls` (up to 3 action ids in swipe order) and `defaultControl` |
 | `PageBody.Route` | `position` (`RoutePositionQuality`); optional `maneuver` (`RouteManeuver(glyph, distance, street, eta)`), `facts` (6), `follow` and `overview` `RouteGeometry`, `ribbon` (`RouteRibbon(stops, line, between, note)`), `fixAgeS` |
 
@@ -2408,7 +2410,8 @@ template as the fallback. `ink` stays reserved, and there is no Ink page body.
   the page's actions typed `NexusActionType.ComposeSend`, and no row may target
   that action. `maxChars` is 1..1,000. With `replyable = false` the hub keeps the
   text but withholds Send, showing your optional `unavailableText` and
-  `unavailableSub`.
+  `unavailableSub`. Its `tools`, `layout` and labels, and a message's `image`,
+  need `supportsComposerTools()`: see [Composer tools](#composer-tools-launcher-bundle-v5).
 - Media `controls` must name page actions typed `MediaPrevious`, `MediaPlay`,
   `MediaPause` or `MediaNext`; they are the hub's command strip, not rows.
 - Route geometry follows the activity geometry rules above; the whole page
@@ -2461,7 +2464,8 @@ optional `code` (printable ASCII, at most 32); the hub acts on
 `NexusPageResult.CODE_AUTHORITY_LOST` only, for a composer whose reply authority
 is gone: it keeps the text and stops offering Send. A lost result shows as
 unconfirmed and is never resent. `IMMERSION` opens only your own immersion,
-directly on a fresh tap; `HUB` gives you no hub control.
+directly on a fresh tap (from a composer tool, with the tool's context); `HUB`
+gives you no hub control.
 
 ```kotlin
 override fun onNexusPageAction(action: NexusPageAction): NexusPageResult {
@@ -2473,6 +2477,91 @@ override fun onNexusPageAction(action: NexusPageAction): NexusPageResult {
     return NexusPageResult.done(replacement = listPage(++revision))
 }
 ```
+
+### Composer tools (launcher bundle v5)
+
+A conversation page may put its own buttons in the hub composer's bar, hide or
+rename the built-in ones, and show a thumbnail in a bubble. Both hubs must
+negotiate bundle v5: check `supportsComposerTools()`. Below it the SDK sends
+the same page without these fields, so the glasses draw the default Dictate /
+Type / Send bar and text-only bubbles; you need no fallback page.
+
+`ConversationComposer` gains:
+
+- `tools`: up to 3 `ComposerTool(id, label, actionId, glyph)`. The label is at
+  most 12 characters; `actionId` names one of the page's actions, either a
+  `PLUGIN` one (not the `ComposeSend`), which a fresh tap invokes through
+  `onNexusPageAction` in `CONFIRMED` mode like a row, or an `IMMERSION` one,
+  which opens your immersion with a `ComposerToolContext`. `glyph` is an
+  optional shared glyph name (`camera` is new in this SDK); a hub that does not
+  know it draws the label alone.
+- `layout`: the bar left to right as `ComposerSlot`s: `Dictate`, `Type`, `Send`
+  and `Tool(id)`. A built-in you leave out is hidden; `Send` is always drawn,
+  first if you leave it out; every tool you declared must appear. Without a
+  layout the bar is Send, Dictate, Type, then your tools.
+- `dictateLabel`, `typeLabel`, `sendLabel`: at most 12 characters each.
+
+Send stays the hub's: it appears only once the wearer has a draft for this
+exact thread, sends only on a fresh tap after the text was drawn, and a
+`replyable` composer must keep Dictate or Type so a draft can be made (an
+`INVALID_PAGE` otherwise). A composer with `replyable = false` shows the hub's
+unavailable line and no buttons at all, tools included.
+
+`ConversationMessage.image` is a `LauncherArtwork` (`mono1` or `jpeg`) drawn in
+the bubble above the text, at its own size; a message with an image and an
+empty `text` is the image alone. Thumbnails are at most 160 px on each side and
+12 KiB decoded, 4 per page and 32 KiB together; anything above is
+`INVALID_PAGE`. The whole page still fits 65,536 bytes.
+
+A **Photo** button that opens your camera flow for the thread the wearer is
+reading:
+
+```kotlin
+override fun onNexusPageRequest(request: NexusPageRequest): NexusPage {
+    val thread = threads[request.params?.optString("thread")] ?: return NexusPage.Unavailable
+    val tools = if (nexusClient?.supportsComposerTools() == true) {
+        listOf(ComposerTool("photo", "Photo", actionId = "camera", glyph = "camera"))
+    } else {
+        emptyList()
+    }
+    return NexusPage.Content(
+        revision = thread.revision,
+        title = thread.name,
+        body = PageBody.Conversation(
+            threadKey = thread.key,
+            messages = thread.messages.map { message ->
+                ConversationMessage(message.id, message.role, message.text, image = message.thumbnail)
+            },
+            composer = ConversationComposer(
+                recipient = thread.name, sendActionId = "send", maxChars = 500, replyable = true,
+                tools = tools,
+                layout = listOf(ComposerSlot.Tool("photo"), ComposerSlot.Dictate, ComposerSlot.Type, ComposerSlot.Send),
+            ),
+        ),
+        actions = listOf(
+            NexusPageActionSpec("send", "Send", typed = NexusActionType.ComposeSend),
+            NexusPageActionSpec("camera", "Photo", kind = NexusPageActionKind.IMMERSION),
+        ),
+        live = true,
+    )
+}
+
+override fun onNexusOpen(openType: String, context: ComposerToolContext?) {
+    if (openType == PluginOpenTypes.COMPOSER_TOOL && context?.toolId == "photo") {
+        openCameraFor(threadKey = context.threadKey)   // then send the picture to that thread
+    } else {
+        showHome()
+    }
+}
+```
+
+`ComposerToolContext(pageId, paramsJson, threadKey, toolId, actionId)` names
+the page the tool was on, with the params it was opened with, its thread and
+the tool and action you declared. The hub checks that the page is yours before
+delivering it; the context is null for every other open type, and an older
+hub opens you with `PluginOpenTypes.OPEN` and no context. A plugin that only
+overrides `onNexusOpen()` or `onNexusOpen(openType)` keeps working: the
+composer-tool open reaches it like any other open.
 
 ### Visibility and live updates
 
@@ -2498,7 +2587,9 @@ whether pages can be served at all: approved with `surfaces`, both hubs on page
 v1 for your plugin, and a usable link (CXR control or the SPP data plane). After
 the link drops it stays false until the hub sends its next page version.
 `supportsLauncherInteractive()` adds the launcher bundle on top: the three new
-bodies, typed actions, quick actions and the composer. Without it, typed actions
+bodies, typed actions, quick actions and the composer; `supportsComposerTools()`
+adds the composer's tools, layout, labels and message thumbnails (bundle v5).
+Without it, typed actions
 and checked rows are dropped from what you send, and a page with a
 `ComposeSend` action is answered as `INVALID_PAGE`, since a hub without the
 composer would otherwise offer your send as an ordinary confirmed action.
