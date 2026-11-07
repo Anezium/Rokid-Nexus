@@ -13,7 +13,9 @@ sealed interface PageTarget {
 
 /**
  * A row. Without a [target] it is readable but inert; a disabled row is inert too. [checked] draws
- * a checkbox mark and is meant for a row whose target is an action typed `setChecked`.
+ * a checkbox mark and is meant for a row whose target is an action typed `setChecked`. [icon]
+ * (launcher bundle v7) is a small `mono1` mark drawn left of the label in the row's tone, at most
+ * [PageTemplateContract.MAX_ROW_ICON_EDGE] pixels on each side; older pairs draw the row without it.
  */
 data class PageRow(
     val id: String,
@@ -22,6 +24,7 @@ data class PageRow(
     val enabled: Boolean = true,
     val target: PageTarget? = null,
     val checked: Boolean? = null,
+    val icon: LauncherArtwork? = null,
 )
 
 data class PageFact(val id: String, val label: String, val value: String)
@@ -288,6 +291,11 @@ object PageTemplateContract {
 
     const val FIELD_CHECKED = "checked"
 
+    // Rows, launcher bundle v7: a row's own mark.
+    const val FIELD_ICON = "icon"
+    /** A row icon is `mono1` only, so it takes the row's tone like a glyph; at most 32 px a side. */
+    const val MAX_ROW_ICON_EDGE = 32
+
     // Conversation.
     const val MAX_CAPTION_CHARS = 64
     const val MAX_MESSAGES = 64
@@ -479,7 +487,11 @@ object PageTemplateContract {
     ): PageSurfaceValidationResult<PageBody> = try {
         if (!isSupported(template, launcherVersion)) fail("template $template is not available on this hub")
         val body = JSONObject(bodyJson)
-        val reader = Reader(actions, namespace, launcherVersion >= LauncherInteractiveContract.COMPOSER_TOOLS_VERSION)
+        val reader = Reader(
+            actions, namespace,
+            composerTools = launcherVersion >= LauncherInteractiveContract.COMPOSER_TOOLS_VERSION,
+            rowIcons = launcherVersion >= LauncherInteractiveContract.ROW_ICONS_VERSION,
+        )
         PageSurfaceValidationResult.Valid(
             when (template) {
                 PageSurfaceContract.TEMPLATE_IMAGE -> PageBody.Image(
@@ -664,6 +676,19 @@ object PageTemplateContract {
      * older glasses and the SDK before sending to an older pair; a body of any other template is
      * left alone.
      */
+    /**
+     * Removes each row's `icon` from [body] for a pair below
+     * [LauncherInteractiveContract.ROW_ICONS_VERSION], which draws rows without a mark. The
+     * phone runs it before forwarding to older glasses and the SDK before sending to an older
+     * pair; a body without rows is left alone.
+     */
+    fun stripRowIcons(body: JSONObject, negotiatedVersion: Int) {
+        if (negotiatedVersion >= LauncherInteractiveContract.ROW_ICONS_VERSION) return
+        body.optJSONArray("items")?.let { items ->
+            for (index in 0 until items.length()) items.optJSONObject(index)?.remove(FIELD_ICON)
+        }
+    }
+
     fun stripConversationExtras(body: JSONObject, negotiatedVersion: Int) {
         if (negotiatedVersion >= LauncherInteractiveContract.COMPOSER_TOOLS_VERSION) return
         body.optJSONObject("composer")?.let { composer ->
@@ -699,6 +724,7 @@ object PageTemplateContract {
                         null -> Unit
                     }
                     row.checked?.let { put(FIELD_CHECKED, it) }
+                    row.icon?.let { put(FIELD_ICON, it.toJson()) }
                 },
             )
         }
@@ -709,6 +735,8 @@ object PageTemplateContract {
         private val namespace: String?,
         /** Whether the pair negotiated composer tools; without them their fields are ignored, as an older hub would. */
         private val composerTools: Boolean,
+        /** Whether the pair negotiated row icons (v7); below it a row's `icon` is ignored, as an older hub would. */
+        private val rowIcons: Boolean = false,
     ) {
         private val actionTypes: Map<String, PageActionType?> = actions.mapValues { it.value.typed }
 
@@ -724,10 +752,20 @@ object PageTemplateContract {
                     enabled = if (entry.has("enabled")) entry.opt("enabled") as? Boolean ?: fail("enabled must be a boolean") else true,
                     target = if (entry.has("target")) target(entry.opt("target")) else null,
                     checked = if (entry.has(FIELD_CHECKED)) entry.opt(FIELD_CHECKED) as? Boolean ?: fail("checked must be a boolean") else null,
+                    icon = rowIcon(entry, index),
                 )
             }
             unique(rows.map(PageRow::id), "item")
             return rows
+        }
+
+        /** A v7 row icon: a well-formed `mono1` artwork within [MAX_ROW_ICON_EDGE]; anything else is an invalid page. */
+        private fun rowIcon(entry: JSONObject, index: Int): LauncherArtwork? {
+            if (!rowIcons || !entry.has(FIELD_ICON) || entry.isNull(FIELD_ICON)) return null
+            val parsed = runCatching { LauncherArtwork.parse(entry.opt(FIELD_ICON)) }.getOrNull() ?: fail("items[$index] icon is malformed")
+            check(parsed.encoding == LauncherArtwork.MONO1, "items[$index] icon must be mono1")
+            check(parsed.width <= MAX_ROW_ICON_EDGE && parsed.height <= MAX_ROW_ICON_EDGE, "items[$index] icon exceeds $MAX_ROW_ICON_EDGE px")
+            return parsed
         }
 
         fun facts(body: JSONObject, limit: Int): List<PageFact> {
