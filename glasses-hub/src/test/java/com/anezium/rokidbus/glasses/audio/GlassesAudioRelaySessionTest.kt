@@ -45,7 +45,6 @@ class GlassesAudioRelaySessionTest {
         val producer = PipedOutputStream(input)
         val attached = AtomicBoolean()
         val closed = AtomicBoolean()
-        val stopped = AtomicBoolean()
         val spawned = AtomicBoolean()
         val peerClosed = AtomicBoolean()
         val sent = CopyOnWriteArrayList<BusEnvelope>()
@@ -67,7 +66,6 @@ class GlassesAudioRelaySessionTest {
                 override fun close() { localClosed.set(true); producer.close(); input.close() }
             }
         }
-        override fun stop() { stopped.set(true) }
         override fun close() { closed.set(true); producer.close() }
         fun startRelay() { session.receive(BusEnvelope(BusPaths.CORE_AUDIO_RELAY_START, payload = C.start())); await { attached.get() || peerClosed.get() } }
         fun ready() {
@@ -98,18 +96,18 @@ class GlassesAudioRelaySessionTest {
         failure.startRelay()
         await { failure.peerClosed.get() }
         assertEquals("BRIDGE_UNAVAILABLE", failure.errorCode())
-        assertTrue(failure.closed.get()); assertTrue(failure.stopped.get())
+        assertTrue(failure.closed.get())
         val missing = Fixture(connects = false)
         missing.startRelay(); advance(5000)
         await { missing.peerClosed.get() }
         assertEquals("BRIDGE_UNAVAILABLE", missing.errorCode())
-        assertTrue(missing.closed.get()); assertTrue(missing.stopped.get())
+        assertTrue(missing.closed.get())
     }
     @Test fun `token deadline closes a blocked local reader and wrong tokens fail closed`() {
         val noToken = Fixture()
         noToken.startRelay(); advance(5000)
         await { noToken.peerClosed.get() }
-        assertTrue(noToken.localClosed.get()); assertTrue(noToken.stopped.get())
+        assertTrue(noToken.localClosed.get()); assertTrue(noToken.closed.get())
         val wrong = Fixture()
         wrong.startRelay(); wrong.producer.write(ByteArray(32))
         await { wrong.peerClosed.get() }
@@ -135,11 +133,11 @@ class GlassesAudioRelaySessionTest {
     }
     @Test fun `scheduled peer timeout closes local while the producer read is blocked`() {
         val fixture = Fixture(); fixture.ready(); advance(6000)
-        assertTrue(fixture.peerClosed.get()); assertTrue(fixture.localClosed.get()); assertTrue(fixture.stopped.get())
+        assertTrue(fixture.peerClosed.get()); assertTrue(fixture.localClosed.get()); assertTrue(fixture.closed.get())
     }
     @Test fun `phone close tears down capture immediately and a later session streams`() {
         val fixture = Fixture(); fixture.ready(); fixture.session.close()
-        assertTrue(fixture.peerClosed.get()); assertTrue(fixture.localClosed.get()); assertTrue(fixture.stopped.get())
+        assertTrue(fixture.peerClosed.get()); assertTrue(fixture.localClosed.get()); assertTrue(fixture.closed.get())
         val next = Fixture(); next.ready()
         assertEquals(GlassesAudioRelaySession.State.STREAMING, next.session.state)
     }

@@ -76,7 +76,6 @@ class GlassesAudioRelayServerTest {
                         override val output = ByteArrayOutputStream()
                         override fun close() { localClosed.set(true); producer.close(); pipe.close() }
                     }
-                    override fun stop() = Unit
                     override fun close() { producer.close() }
                 }.also { attachments += it }
             }, send, close, { workers.execute(it) }, { _, task -> ticks += task; ({ ticks.remove(task); Unit }) }, now::get)

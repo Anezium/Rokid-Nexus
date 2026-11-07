@@ -19,8 +19,6 @@ internal interface AudioCaptureAttachment : Closeable {
     val token: ByteArray
     fun start(): Boolean
     fun accept(): AudioCaptureConnection
-    /** Submit a stop without waiting for a shell-created response. */
-    fun stop()
 }
 
 internal class GlassesAudioRelaySession(
@@ -166,7 +164,6 @@ internal class GlassesAudioRelaySession(
         }
         runCatching { resources.first?.close() }
         runCatching { resources.second?.close() }
-        runCatching { resources.second?.stop() }
         // A blocked error write must never hold the speaker muted or keep RFCOMM alive.
         if (error == null) closePeer() else {
             schedule(250) { closePeer() }

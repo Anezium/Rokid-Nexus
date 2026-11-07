@@ -38,12 +38,17 @@ object GlassesAudioCaptureMain {
             runCatching { socket.close() }
             runCatching { recorder?.stop() }
         }
+        val exitGuard = CaptureExitGuard(::stop, { delay, halt ->
+            Thread({
+                try { Thread.sleep(delay) } finally { halt() }
+            }, "nexus-audio-exit").apply { isDaemon = true }.start()
+        }, { Runtime.getRuntime().halt(1) })
         try {
             output.write(ByteArray(32) { token.substring(it * 2, it * 2 + 2).toInt(16).toByte() })
             output.flush()
             val lastKeepalive = java.util.concurrent.atomic.AtomicLong(SystemClock.elapsedRealtime())
             watchdog.scheduleAtFixedRate({
-                if (SystemClock.elapsedRealtime() - lastKeepalive.get() >= C.LOCAL_KEEPALIVE_TIMEOUT_MS) stop()
+                if (SystemClock.elapsedRealtime() - lastKeepalive.get() >= C.LOCAL_KEEPALIVE_TIMEOUT_MS) exitGuard.stop()
             }, 250, 250, TimeUnit.MILLISECONDS)
             Thread({
                 try {
@@ -53,7 +58,7 @@ object GlassesAudioCaptureMain {
                             else -> break
                         }
                     }
-                } catch (_: Exception) { } finally { stop() }
+                } catch (_: Exception) { } finally { exitGuard.stop() }
             }, "nexus-audio-control").apply { isDaemon = true }.start()
             val context = AudioCaptureWorkarounds.shellContext()
             val record = AudioCaptureWorkarounds.createAudioRecord(context)
@@ -87,7 +92,7 @@ object GlassesAudioCaptureMain {
                 }
             }
         } finally {
-            stop()
+            exitGuard.stop()
             recorder?.release()
             watchdog.shutdownNow()
         }

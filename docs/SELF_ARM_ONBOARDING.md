@@ -170,9 +170,17 @@ The app binds a loopback TCP listener first and authenticates the capture's
 32-byte token; only this connection proves success. The app never reads a
 shell-created response, pidfile or log. The shell process owns REMOTE_SUBMIX and
 Opus encoding; the hub app owns the separate Bluetooth audio socket.
-`audio_capture_stop:<nonce>:<token>` takes no arguments and submits an
-idempotent guarded stop. Socket EOF or five seconds without a local keepalive
-also ends capture. Neither command's failure changes prepare/arm success.
+The app never submits `audio_capture_stop`, including at hub startup or session
+teardown: random-nonce filename ordering could otherwise deliver an old stop
+after a replacement start. Closing the loopback socket ends capture. EOF and
+the five-second local keepalive timeout arm an independent one-second forced
+process exit before framework cleanup, so stalled teardown cannot keep capture alive.
+Every `audio_capture_start` kills a predecessor by its exact `rokid-nexus-audio`
+nice name, waiting up to two seconds after TERM before KILL. A replacement is
+not spawned and its pidfile is not overwritten until the predecessor is gone.
+`audio_capture_stop:<nonce>:<token>` remains a manual/diagnostic command with
+that same guarded, bounded cleanup. A surviving or unrelated PID is retained
+and reported as an error. Neither command's failure changes prepare/arm success.
 The bridge self-updates from the installed APK on its existing 300-second
 schedule; Repair now can deploy it sooner.
 

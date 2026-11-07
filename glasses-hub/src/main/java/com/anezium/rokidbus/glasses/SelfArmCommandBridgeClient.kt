@@ -177,9 +177,6 @@ internal object SelfArmCommandBridgeClient {
         return submitAudio(context, SelfArmCommandBridgeProtocol.AUDIO_CAPTURE_START, nonce, listOf(port.toString()))
     }
 
-    fun stopAudioCapture(context: Context): Boolean =
-        submitAudio(context, SelfArmCommandBridgeProtocol.AUDIO_CAPTURE_STOP, randomHex(16), emptyList())
-
     // Submission alone is not success: the authenticated loopback attachment is the receipt.
     private fun submitAudio(context: Context, command: String, nonce: String, arguments: List<String>): Boolean = runCatching {
         val secret = loadSecretHex(context) ?: return false

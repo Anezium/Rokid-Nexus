@@ -112,7 +112,6 @@ internal class GlassesAudioRelayServer(
         @Synchronized fun ensureStarted(context: Context) {
             if (runtime != null) return
             val app = context.applicationContext
-            captureCommands.execute { SelfArmCommandBridgeClient.stopAudioCapture(app) }
             val server = GlassesAudioRelayServer(SppKeyStore(app), { workers.execute(it) }, ::schedule, SystemClock::elapsedRealtime) { send, close ->
                 GlassesAudioRelaySession({ LoopbackCapture(app) }, send, close, { workers.execute(it) }, ::schedule, SystemClock::elapsedRealtime)
             }
@@ -149,10 +148,7 @@ private class LoopbackCapture(private val context: Context) : AudioCaptureAttach
     private val nonce = ByteArray(16).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
     private val listener = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
     override val token = SelfArmCommandBridgeProtocol.audioSessionToken(secret, nonce)
-    override fun start() = captureCommands.submit<Boolean> {
-        SelfArmCommandBridgeClient.startAudioCapture(context, listener.localPort, nonce)
-    }.get()
-    override fun stop() { captureCommands.execute { SelfArmCommandBridgeClient.stopAudioCapture(context) } }
+    override fun start() = SelfArmCommandBridgeClient.startAudioCapture(context, listener.localPort, nonce)
     override fun close() = listener.close()
     override fun accept(): AudioCaptureConnection {
         val socket = listener.accept()
@@ -164,5 +160,3 @@ private class LoopbackCapture(private val context: Context) : AudioCaptureAttach
         }
     }
 }
-
-private val captureCommands = Executors.newSingleThreadExecutor()
