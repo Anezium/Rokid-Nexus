@@ -2,6 +2,7 @@ package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.shared.ActivityCommand
 import com.anezium.rokidbus.shared.AmbientSize
+import com.anezium.rokidbus.shared.ComposerToolContext
 import com.anezium.rokidbus.shared.PageSurfaceInvocation
 import com.anezium.rokidbus.shared.PageSurfaceRequest
 
@@ -74,8 +75,11 @@ internal sealed interface SessionEffect {
         companion object : RestoreUnderneath(Underneath.Unknown)
     }
 
-    /** Asks the phone to open [pluginId]'s immersion, exactly as the launcher opens an entry. */
-    data class SendLauncherOpen(val pluginId: String, val token: Long) : SessionEffect
+    /**
+     * Asks the phone to open [pluginId]'s immersion, exactly as the launcher opens an entry.
+     * [context] names the composer tool and conversation the open came from, when it did.
+     */
+    data class SendLauncherOpen(val pluginId: String, val token: Long, val context: ComposerToolContext? = null) : SessionEffect
 
     /** Closes a surface unseen, through the surface's own close path; no BACK is forwarded to it. */
     data class CloseSurface(val surfaceId: String, val reason: String) : SessionEffect

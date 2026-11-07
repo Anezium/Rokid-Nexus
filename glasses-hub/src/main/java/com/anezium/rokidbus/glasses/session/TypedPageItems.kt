@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.shared.AmbientSize
+import com.anezium.rokidbus.shared.LauncherInteractiveContract
 import com.anezium.rokidbus.shared.PageActionType
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageRow
@@ -40,7 +41,9 @@ internal data class TypedRow(
  * only the local launch ones named here.
  *
  * [extended] is whether the pair negotiated the launcher bundle: its page bodies are decoded and
- * its row fields drawn only then.
+ * its row fields drawn only then. [launcherVersion] is the bundle version the pair runs, which
+ * gates the fields later versions added (composer tools, message thumbnails); by default it is
+ * this build's whole bundle whenever [extended] holds.
  */
 internal class TypedPageItems(
     private val isLocalPage: (String) -> Boolean,
@@ -48,33 +51,37 @@ internal class TypedPageItems(
     private val providerPageAllowed: (String) -> Boolean,
     private val quickGate: QuickGate = QuickGate.NEVER,
     private val extended: () -> Boolean = { false },
+    private val launcherVersion: () -> Int = { if (extended()) LauncherInteractiveContract.VERSION else 0 },
     /** An owner's live `/activity/geometry`, which feeds the map of a route page carrying none. */
     private val liveGeometry: (String) -> RouteGeometry? = { null },
     /** An owner's saved ambient size, for the route page's Display row; null while automatic. */
     private val ambientSize: (String) -> AmbientSize? = { null },
 ) : PageItemResolver {
-    private data class Decoded(val page: PageSurfaceResponse.Page, val extended: Boolean, val body: PageBody?)
+    private data class Decoded(val page: PageSurfaceResponse.Page, val launcherVersion: Int, val body: PageBody?)
 
     private val decoded = ArrayDeque<Decoded>()
 
     /** The typed body, or null when this hub cannot draw it. */
-    fun body(page: PageSurfaceResponse.Page): PageBody? = decode(page, extended())
+    fun body(page: PageSurfaceResponse.Page): PageBody? = decode(page, currentVersion())
 
     /**
      * A retained snapshot's body, read with the templates it was accepted under, so a page the
      * bundle validated stays readable once the bundle is gone. Only ever drawn dimmed and inert:
      * rows, actions and new answers all go through [body] and the live negotiation.
      */
-    fun retainedBody(snapshot: Snapshot): PageBody? = decode(snapshot.page, snapshot.extended)
+    fun retainedBody(snapshot: Snapshot): PageBody? = decode(snapshot.page, if (snapshot.extended) LauncherInteractiveContract.VERSION else 0)
 
     override fun acceptsExtended(): Boolean = extended()
 
-    private fun decode(page: PageSurfaceResponse.Page, extended: Boolean): PageBody? {
-        decoded.firstOrNull { it.page === page && it.extended == extended }?.let { return it.body }
+    /** The bundle version pages are read with now: none without the bundle, whatever the glasses negotiated with it. */
+    private fun currentVersion(): Int = if (extended()) launcherVersion().coerceAtLeast(1) else 0
+
+    private fun decode(page: PageSurfaceResponse.Page, launcherVersion: Int): PageBody? {
+        decoded.firstOrNull { it.page === page && it.launcherVersion == launcherVersion }?.let { return it.body }
         val local = isLocalPage(page.correlation.pageId)
         val owner = PageTemplateContract.namespaceOf(page.correlation.pageId)
-        val body = (PageTemplateContract.decode(page, if (local) null else owner, extended) as? PageSurfaceValidationResult.Valid)?.value
-        decoded.addFirst(Decoded(page, extended, body))
+        val body = (PageTemplateContract.decode(page, if (local) null else owner, launcherVersion) as? PageSurfaceValidationResult.Valid)?.value
+        decoded.addFirst(Decoded(page, launcherVersion, body))
         while (decoded.size > CACHE_SIZE) decoded.removeLast()
         return body
     }

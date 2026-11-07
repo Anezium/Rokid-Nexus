@@ -1,8 +1,10 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.client.ui.NexusGlyphs
 import com.anezium.rokidbus.shared.ConversationMessage
 import com.anezium.rokidbus.shared.ConversationMessageStatus
 import com.anezium.rokidbus.shared.ConversationRole
+import com.anezium.rokidbus.shared.LauncherArtwork
 import com.anezium.rokidbus.shared.MediaPlaybackState
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PageBody
@@ -236,6 +238,8 @@ internal data class Bubble(
     val meta: String? = null,
     /** Who sent a received message, as its provider names it in a group thread; never guessed. */
     val sender: String? = null,
+    /** The message's thumbnail, drawn in the bubble above its text (launcher bundle v5). */
+    val image: LauncherArtwork? = null,
 )
 
 internal enum class MapSize { COMPACT, PANEL, FULL }
@@ -1025,7 +1029,10 @@ internal class SessionScreens(
             focus == null && facts.micUnavailable -> InlineFooter.StatusLine(MIC_UNAVAILABLE, USE_TYPE, glyph = GLYPH_MIC, style = StatusLineStyle.OFF)
             else -> InlineFooter.Buttons(
                 view.buttons.map { key ->
-                    FooterButton(key, buttonLabel(key), buttonGlyph(key), selected = focus?.key == key, enabled = !sending)
+                    FooterButton(
+                        key, ComposerRules.label(key, composer), ComposerRules.glyph(key, composer, NexusGlyphs::isBuiltIn),
+                        selected = focus?.key == key, enabled = !sending,
+                    )
                 },
             )
         }
@@ -1036,6 +1043,8 @@ internal class SessionScreens(
             capture?.kind == CaptureKind.TYPE -> ScreenHint(TAP_FINISH, BACK_CANCEL_TYPING)
             focus != null && focus.key == ComposerRules.SEND && composer != null ->
                 ScreenHint("swipe choose · tap send to ${composer.recipient}", BACK_READING)
+            focus != null && ComposerRules.toolId(focus.key) != null ->
+                ScreenHint("swipe choose · tap ${ComposerRules.label(focus.key, composer).lowercase()}", BACK_READING)
             focus != null && focus.key != ComposerRules.SEND && replacing != null ->
                 ScreenHint("tap start · $REPLACES_DRAFT ${replacing.recipient}", BACK_READING)
             focus != null -> ScreenHint(FOCUS_START, BACK_READING)
@@ -1076,19 +1085,8 @@ internal class SessionScreens(
                 ConversationMessageStatus.UNCONFIRMED -> UNCONFIRMED_CHECK_PHONE
                 null -> null
             },
+            image = message.image,
         )
-    }
-
-    private fun buttonLabel(key: String): String = when (key) {
-        ComposerRules.SEND -> SEND
-        ComposerRules.TYPE -> TYPE
-        else -> DICTATE
-    }
-
-    private fun buttonGlyph(key: String): String = when (key) {
-        ComposerRules.SEND -> GLYPH_SEND
-        ComposerRules.TYPE -> GLYPH_KEYBOARD
-        else -> GLYPH_MIC
     }
 
     /** A notification's age on the Notifications page: minutes within the hour, then hours. */
@@ -1248,9 +1246,9 @@ internal class SessionScreens(
                 "${NoticeSurfaceContract.MAX_HISTORY_ENTRIES} entries, ${NoticeSurfaceContract.MAX_HISTORY_AGE_MS / 3_600_000} h."
 
         // The composer (plan 028a §9).
-        const val DICTATE = "Dictate"
-        const val TYPE = "Type"
-        const val SEND = "Send"
+        const val DICTATE = ComposerRules.DICTATE_LABEL
+        const val TYPE = ComposerRules.TYPE_LABEL
+        const val SEND = ComposerRules.SEND_LABEL
         const val HANDED_TO_APP = "handed to the app"
         const val DRAFT_NOT_SENT = "draft · not sent yet"
         const val DRAFT_KEPT = "draft kept"
@@ -1268,9 +1266,9 @@ internal class SessionScreens(
         const val FOCUS_START = "swipe choose · tap start"
         const val REPLACES_DRAFT = "replaces the draft for"
         const val BACK_READING = "back reading"
-        const val GLYPH_MIC = "mic"
-        const val GLYPH_KEYBOARD = "keyboard"
-        const val GLYPH_SEND = "send"
+        const val GLYPH_MIC = ComposerRules.GLYPH_MIC
+        const val GLYPH_KEYBOARD = ComposerRules.GLYPH_KEYBOARD
+        const val GLYPH_SEND = ComposerRules.GLYPH_SEND
         const val CONVERSATION_BLOCK = "conversation"
         const val DRAFT_BUBBLE = "draft"
         const val LIVE_BUBBLE = "live"

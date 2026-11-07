@@ -1486,6 +1486,7 @@ internal object NexusSession {
         providerPageAllowed = { pageId -> PageTemplateContract.namespaceOf(pageId)?.let(::providerPagesReady) == true },
         quickGate = quickGate,
         extended = GlassesHub::launcherInteractiveActive,
+        launcherVersion = GlassesHub::launcherInteractiveVersion,
         liveGeometry = RouteLive::geometry,
         ambientSize = AmbientPreferences::size,
     )
@@ -2043,7 +2044,7 @@ internal object NexusSession {
          * the surface it waits for is presented, and a handoff here would outlive that surface.
          */
         private fun openPlugin(effect: SessionEffect.SendLauncherOpen) {
-            val result = GlassesHub.openLauncherEntry(effect.pluginId)
+            val result = GlassesHub.openLauncherEntry(effect.pluginId, effect.context)
             log("Session plugin open result: $result")
             if (!result.startsWith("launcherOpen=true")) {
                 dispatch(SessionEvent.OpenFailed(effect.token, OpenFailure.SEND_FAILED))

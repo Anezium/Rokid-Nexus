@@ -1075,4 +1075,34 @@ class LauncherRenderingTest {
         assertTrue(texts(player).containsAll(listOf("Next track", "New artist")))
     }
 
+    @Test
+    fun `a message thumbnail sits in its bubble above the text and alone when there is none`() {
+        val thumb = com.anezium.rokidbus.shared.LauncherArtwork(64, 32, java.util.Base64.getEncoder().encodeToString(ByteArray(64 * 32 / 8) { 0x55 }))
+        val bubbles = listOf(
+            Bubble("m:1", BubbleSide.LEFT, "Salut"),
+            Bubble("m:2", BubbleSide.LEFT, "Regarde", image = thumb),
+            Bubble("m:3", BubbleSide.RIGHT, "", image = thumb),
+        )
+        render(conversationScreen(bubbles))
+        val conversation = view.blockViews.getValue("conversation") as ConversationView
+        draw(conversation)
+        val drawn = conversation.drawn.associateBy { it.key }
+        assertEquals(bubbles.map { it.key }, conversation.drawn.map { it.key })
+        val plain = drawn.getValue("m:1")
+        val withText = drawn.getValue("m:2")
+        val alone = drawn.getValue("m:3")
+        assertNull(plain.imageRect)
+        // The thumbnail keeps its own size, leads the bubble, and the text follows under it.
+        val image = requireNotNull(withText.imageRect)
+        assertEquals(64f, image.width(), 0.5f)
+        assertEquals(32f, image.height(), 0.5f)
+        assertTrue(image.top >= withText.rect.top && image.bottom < withText.rect.bottom)
+        assertTrue(withText.rect.height() > plain.rect.height() + 32f)
+        assertTrue(withText.rect.width() >= 64f + 2 * ConversationView.PAD_H_PX)
+        // Alone, the bubble is the thumbnail plus its padding, on our side.
+        val aloneImage = requireNotNull(alone.imageRect)
+        assertEquals(32f + 2 * ConversationView.PAD_V_PX, alone.rect.height(), 2f)
+        assertEquals(64f, aloneImage.width(), 0.5f)
+        assertTrue(alone.rect.right > PageStyle.WIDTH_PX - 40f)
+    }
 }

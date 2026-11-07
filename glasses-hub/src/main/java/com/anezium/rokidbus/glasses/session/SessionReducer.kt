@@ -17,6 +17,7 @@ import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.ComposeDictateStart
 import com.anezium.rokidbus.shared.ComposeDictationReason
 import com.anezium.rokidbus.shared.ComposeTypeStart
+import com.anezium.rokidbus.shared.ComposerToolContext
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageCorrelation
@@ -445,7 +446,13 @@ internal class SessionReducer(
             else -> keep(model)
         }
 
-    private fun launch(model: SessionModel, state: SessionState, pluginId: String, nowMs: Long): SessionTransition {
+    private fun launch(
+        model: SessionModel,
+        state: SessionState,
+        pluginId: String,
+        nowMs: Long,
+        context: ComposerToolContext? = null,
+    ): SessionTransition {
         val token = model.nextId
         val deadline = nowMs + OPEN_TIMEOUT_MS
         return SessionTransition(
@@ -455,7 +462,7 @@ internal class SessionReducer(
                 // Opening the plugin again makes its next surface this open's answer, not a late one.
                 cancelledOpen = model.cancelledOpen - pluginId,
             ),
-            listOf(SessionEffect.SendLauncherOpen(pluginId, token), SessionEffect.ScheduleDeadline(deadline)),
+            listOf(SessionEffect.SendLauncherOpen(pluginId, token, context), SessionEffect.ScheduleDeadline(deadline)),
         )
     }
 
@@ -1630,6 +1637,35 @@ internal class SessionReducer(
             ComposerRules.SEND -> send(model, state, top, status, body, view, event.nowMs)
             ComposerRules.DICTATE -> startCapture(model, state, top, body, view, CaptureKind.DICTATE)
             ComposerRules.TYPE -> startCapture(model, state, top, body, view, CaptureKind.TYPE)
+            else -> toolTap(model, state, top, status, body, focus.key, event.nowMs)
+        }
+    }
+
+    /**
+     * A plugin's composer tool (launcher bundle v5): its `plugin` action runs as any confirmed page
+     * action, bound to the shown revision; its `immersion` action opens the provider's immersion
+     * with the page, thread and tool it came from. Both leave the composer's focus.
+     */
+    private fun toolTap(
+        model: SessionModel,
+        state: SessionState.InPage,
+        top: Frame,
+        status: FrameStatus.Shown,
+        body: PageBody.Conversation,
+        key: String,
+        nowMs: Long,
+    ): SessionTransition {
+        val composer = body.composer ?: return keep(model)
+        val tool = ComposerRules.tool(key, composer) ?: return keep(model)
+        val action = status.snapshot.page.actions.firstOrNull { it.id == tool.actionId } ?: return keep(model)
+        val owner = PageTemplateContract.namespaceOf(top.pageId) ?: return keep(model)
+        val cleared = state.withTop(top.copy(composerFocus = null))
+        return when (action.kind) {
+            PageSurfaceContract.KIND_PLUGIN -> invoke(model.copy(state = cleared), cleared, status, action.id, nowMs)
+            PageSurfaceContract.KIND_IMMERSION -> launch(
+                model.copy(state = cleared), cleared, owner, nowMs,
+                ComposerToolContext(top.pageId, top.paramsJson, body.threadKey, tool.id, action.id),
+            )
             else -> keep(model)
         }
     }
@@ -1735,8 +1771,9 @@ internal class SessionReducer(
         if (model.generation != capture.generation || state.frames.size != capture.frameIndex || top.pageId != capture.pageId) return model
         val (_, body) = top.shownConversation() ?: return model
         val view = composerView(model, top, body)?.takeIf { it.available } ?: return model
-        val index = view.buttons.indexOf(ComposerRules.TYPE)
-        return model.copy(state = state.withTop(top.copy(composerFocus = ComposerFocus(ComposerRules.TYPE, index))))
+        // A page that hides Type falls back to whatever capture button it shows, else its first tool.
+        val key = listOf(ComposerRules.TYPE, ComposerRules.DICTATE).firstOrNull { it in view.buttons } ?: view.buttons.firstOrNull() ?: return model
+        return model.copy(state = state.withTop(top.copy(composerFocus = ComposerFocus(key, view.buttons.indexOf(key)))))
     }
 
     /**

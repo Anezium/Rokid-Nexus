@@ -10,6 +10,7 @@ import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.view.View
+import com.anezium.rokidbus.glasses.drawable
 import com.anezium.rokidbus.glasses.session.Bubble
 import com.anezium.rokidbus.glasses.session.BubbleSide
 import com.anezium.rokidbus.glasses.session.BubbleStyle
@@ -19,7 +20,10 @@ import com.anezium.rokidbus.glasses.session.DocumentAnchor
  * A conversation read page by page, newest nearest the footer. Each message is one outlined
  * bubble at most four fifths of the width: received on the left in the hairline, ours on the
  * right in the dim green, an unknown author across the whole width; a draft or an unconfirmed
- * message is dashed bright, a capture in progress adds a caret. Nothing is ever filled.
+ * message is dashed bright, a capture in progress adds a caret. Nothing is ever filled. A
+ * message's thumbnail (launcher bundle v5) sits inside its bubble above the text, at its own
+ * size when it fits the bubble's width, else scaled down; a message with a thumbnail and no text
+ * is the thumbnail alone.
  *
  * Pages are filled from the newest message back, so the page the wearer lands on is full and
  * only the oldest one may be short; each page is drawn against the bottom. A message taller than
@@ -37,6 +41,8 @@ internal class ConversationView(context: Context) : View(context) {
         val height: Int,
         /** The bubble's sender line leads this piece: its first lines, of a received bubble that names one. */
         val sender: Boolean = false,
+        /** The bubble's thumbnail leads this piece: its first lines, of a bubble that carries one. */
+        val image: Boolean = false,
     )
 
     /** What a drawn bubble slice covers on the current page, for tests and accessibility. */
@@ -49,6 +55,8 @@ internal class ConversationView(context: Context) : View(context) {
         val outlineColor: Int,
         /** The sender line drawn above it, a group thread's received message only. */
         val sender: String? = null,
+        /** Where its thumbnail was drawn, when this slice leads with one. */
+        val imageRect: RectF? = null,
     )
 
     var onPaged: ((starts: List<DocumentAnchor>, anchorPage: Int) -> Unit)? = null
@@ -62,6 +70,8 @@ internal class ConversationView(context: Context) : View(context) {
     private var laidOutFor: Pair<Int, Int>? = null
     private var layouts: List<StaticLayout> = emptyList()
     private var widths: List<Float> = emptyList()
+    /** Each bubble's thumbnail as drawn, width to height in px, or null. */
+    private var images: List<Pair<Int, Int>?> = emptyList()
     private var pages: List<List<Piece>> = emptyList()
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -137,6 +147,7 @@ internal class ConversationView(context: Context) : View(context) {
         if (laidOutFor != width to height) {
             layouts = bubbles.map { layoutFor(it, width) }
             widths = layouts.map { layout -> (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 0f }
+            images = bubbles.map { imageSize(it, width) }
             pages = split(units(height), height)
             laidOutFor = width to height
         }
@@ -160,12 +171,26 @@ internal class ConversationView(context: Context) : View(context) {
             val layout = layouts[index]
             val metaHeight = if (bubble.meta.isNullOrBlank()) 0 else META_GAP_PX + metaLineHeight()
             val senderHeight = if (bubble.sender.isNullOrBlank()) 0 else metaLineHeight() + SENDER_GAP_PX
+            val imageHeight = images[index]?.second ?: 0
+            if (textless(index)) {
+                // The thumbnail alone: one slice, never split.
+                val leading = index == 0 && caption != null
+                result += Piece(
+                    index, 0, 1, caption = false, meta = metaHeight > 0,
+                    height = imageHeight + 2 * PAD_V_PX + metaHeight + (if (leading) captionHeight else 0) + senderHeight,
+                    sender = senderHeight > 0, image = true,
+                )
+                return@forEachIndexed
+            }
             var first = 0
             while (first < layout.lineCount) {
                 // The caption shares the first page with the first message, so its room is kept there;
-                // a sender line stays with its bubble's first line.
+                // a sender line and a thumbnail stay with their bubble's first line.
                 val leadsSender = first == 0 && senderHeight > 0
-                val budget = height - 2 * PAD_V_PX - (if (index == 0 && first == 0) captionHeight else 0) - if (leadsSender) senderHeight else 0
+                val leadsImage = first == 0 && imageHeight > 0
+                val imageRoom = if (leadsImage) imageHeight + IMAGE_GAP_PX else 0
+                val budget = height - 2 * PAD_V_PX - (if (index == 0 && first == 0) captionHeight else 0) -
+                    (if (leadsSender) senderHeight else 0) - imageRoom
                 var last = first + 1
                 while (last < layout.lineCount && layout.getLineBottom(last) - layout.getLineTop(first) <= budget) last++
                 val ends = last == layout.lineCount
@@ -177,8 +202,9 @@ internal class ConversationView(context: Context) : View(context) {
                 result += Piece(
                     index, first, last, caption = false, meta = withMeta,
                     height = lines + 2 * PAD_V_PX + (if (withMeta) metaHeight else 0) + (if (leading) captionHeight else 0) +
-                        if (leadsSender) senderHeight else 0,
+                        (if (leadsSender) senderHeight else 0) + imageRoom,
                     sender = leadsSender,
+                    image = leadsImage,
                 )
                 first = last
             }
@@ -257,16 +283,20 @@ internal class ConversationView(context: Context) : View(context) {
             canvas.drawText(sender, paddingLeft.toFloat(), sliceTop - small.ascent(), small)
         }
         val top = if (sender != null) sliceTop + metaLineHeight() + SENDER_GAP_PX else sliceTop
-        val linesHeight = layout.getLineBottom(unit.last - 1) - layout.getLineTop(unit.first)
+        val textless = textless(unit.bubble)
+        val image = images[unit.bubble]?.takeIf { unit.image }
+        val imageBlock = image?.let { it.second + if (textless) 0 else IMAGE_GAP_PX } ?: 0
+        val linesHeight = if (textless) 0 else layout.getLineBottom(unit.last - 1) - layout.getLineTop(unit.first)
         val live = bubble.style == BubbleStyle.LIVE
         val caretRoom = if (live) CARET_GAP_PX + CARET_WIDTH_PX else 0f
+        val inner = maxOf(if (textless) 0f else widths[unit.bubble] + caretRoom, (images[unit.bubble]?.first ?: 0).toFloat())
         val boxWidth = when (bubble.side) {
             BubbleSide.NONE -> contentWidth
-            else -> (widths[unit.bubble] + caretRoom + 2 * PAD_H_PX + PageStyle.HAIR_STROKE_PX).coerceAtMost(contentWidth * MAX_WIDTH_FRACTION)
+            else -> (inner + 2 * PAD_H_PX + PageStyle.HAIR_STROKE_PX).coerceAtMost(contentWidth * MAX_WIDTH_FRACTION)
         }
         val left = paddingLeft + if (bubble.side == BubbleSide.RIGHT) contentWidth - boxWidth else 0f
         val half = PageStyle.HAIR_STROKE_PX / 2f
-        val rect = RectF(left + half, top + half, left + boxWidth - half, top + linesHeight + 2 * PAD_V_PX - half)
+        val rect = RectF(left + half, top + half, left + boxWidth - half, top + imageBlock + linesHeight + 2 * PAD_V_PX - half)
 
         val dashed = bubble.style != BubbleStyle.SOLID
         val outlineColor = when {
@@ -299,12 +329,24 @@ internal class ConversationView(context: Context) : View(context) {
         }
         body.color = textColor
         val textLeft = left + PAD_H_PX
-        val textTop = top + PAD_V_PX
-        canvas.save()
-        canvas.clipRect(textLeft, textTop, left + boxWidth - PAD_H_PX + caretRoom, textTop + linesHeight)
-        canvas.translate(textLeft, textTop - layout.getLineTop(unit.first))
-        layout.draw(canvas)
-        canvas.restore()
+        var imageRect: RectF? = null
+        if (image != null) {
+            val drawn = RectF(textLeft, top + PAD_V_PX, textLeft + image.first, top + PAD_V_PX + image.second)
+            bubble.image?.drawable(context, PageStyle.phosphor)?.let { drawable ->
+                drawable.setBounds(drawn.left.toInt(), drawn.top.toInt(), drawn.right.toInt(), drawn.bottom.toInt())
+                drawable.alpha = if (dimmed) DIMMED_IMAGE_ALPHA else 255
+                drawable.draw(canvas)
+            }
+            imageRect = drawn
+        }
+        val textTop = top + PAD_V_PX + imageBlock
+        if (!textless) {
+            canvas.save()
+            canvas.clipRect(textLeft, textTop, left + boxWidth - PAD_H_PX + caretRoom, textTop + linesHeight)
+            canvas.translate(textLeft, textTop - layout.getLineTop(unit.first))
+            layout.draw(canvas)
+            canvas.restore()
+        }
 
         if (live && unit.last == layout.lineCount) {
             val line = unit.last - 1
@@ -327,8 +369,20 @@ internal class ConversationView(context: Context) : View(context) {
                 canvas.drawText(text, paddingLeft + contentWidth, baseline, small)
             }
         }
-        return DrawnBubble(bubble.key, bubble.side, bubble.style, RectF(rect), textColor, outlineColor, sender)
+        return DrawnBubble(bubble.key, bubble.side, bubble.style, RectF(rect), textColor, outlineColor, sender, imageRect)
     }
+
+    /** A thumbnail's drawn size: its own, scaled down only when the bubble's width cannot hold it. */
+    private fun imageSize(bubble: Bubble, width: Int): Pair<Int, Int>? {
+        val image = bubble.image ?: return null
+        val box = if (bubble.side == BubbleSide.NONE) width.toFloat() else width * MAX_WIDTH_FRACTION
+        val room = (box - 2 * PAD_H_PX - PageStyle.HAIR_STROKE_PX).coerceAtLeast(1f)
+        val scale = minOf(1f, room / image.width)
+        return (image.width * scale).toInt().coerceAtLeast(1) to (image.height * scale).toInt().coerceAtLeast(1)
+    }
+
+    /** A message that is its thumbnail alone: no text line is laid out for it. */
+    private fun textless(index: Int): Boolean = bubbles[index].text.isBlank() && bubbles[index].image != null
 
     private fun layoutFor(bubble: Bubble, width: Int): StaticLayout {
         val box = if (bubble.side == BubbleSide.NONE) width.toFloat() else width * MAX_WIDTH_FRACTION
@@ -357,6 +411,8 @@ internal class ConversationView(context: Context) : View(context) {
         const val GAP_PX = 8
         const val META_GAP_PX = 4
         const val SENDER_GAP_PX = 3
+        const val IMAGE_GAP_PX = 6
+        const val DIMMED_IMAGE_ALPHA = 110
         const val CAPTION_GAP_PX = 10
         const val BUBBLE_RADIUS_PX = 14f
         const val TAIL_RADIUS_PX = 4f

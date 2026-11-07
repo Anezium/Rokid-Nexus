@@ -666,7 +666,8 @@ object GlassesHub {
         return { launcherListeners.remove(listener) }
     }
 
-    fun openLauncherEntry(pluginId: String): String {
+    /** [toolContext] rides along when a composer tool opened the plugin: the page, thread and tool it came from. */
+    fun openLauncherEntry(pluginId: String, toolContext: com.anezium.rokidbus.shared.ComposerToolContext? = null): String {
         if (pluginId.isBlank()) return "launcherOpen=false reason=blank"
         if (pluginId == CAMERA_LAUNCHER_ID) {
             val context = appContext ?: return "launcherOpen=false reason=hub_not_started"
@@ -680,7 +681,9 @@ object GlassesHub {
         val error = sendRemote(
             BusEnvelope(
                 path = BusPaths.LAUNCHER_OPEN,
-                payload = JSONObject().put("pluginId", pluginId),
+                payload = JSONObject().put("pluginId", pluginId).apply {
+                    toolContext?.let { put(com.anezium.rokidbus.shared.ComposerToolContract.FIELD_CONTEXT, com.anezium.rokidbus.shared.ComposerToolContract.encode(it)) }
+                },
             ),
         )
         return if (error == null) {
