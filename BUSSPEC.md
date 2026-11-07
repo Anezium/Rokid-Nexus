@@ -2593,6 +2593,29 @@ it never takes a type from the glasses.
   row or quick: only the conversation composer's deliberate Send reaches it.
   No plugin field can make itself quick.
 
+### Launcher favourites
+
+Launcher bundle v8 (`FAVOURITES_VERSION`). The owner pins up to four
+applications to the root, under the activities, and orders them on the phone.
+
+- The phone owns the list. It sends `/core/launcher/favourites`
+  `{version: 1, revision, entries: [{kind: "plugin", id} | {kind: "app", package}]}`
+  to glasses that announced v8 or later, on link-up and on every change. The
+  list is whole and in the owner's order; `revision` only grows.
+- A malformed list (wrong version, more than four entries, an unknown kind, an
+  invalid plugin id or package, a duplicate) is refused whole and the glasses keep
+  the previous one. Nothing is truncated.
+- The glasses keep the latest list across restarts and resolve each entry
+  against the Applications catalog when a session opens. An entry missing from the
+  catalog (uninstalled, disabled, unapproved, a pages-only plugin whose pages are
+  not negotiated) is simply not drawn. Membership and order are frozen with the
+  root for the session, like every other stop.
+- A favourite opens exactly as its Applications row does: a pages plugin's main
+  page, an immersion plugin's launch, or a native app's launch, each on a fresh
+  tap.
+- This is a hub-to-hub control under `/core/`. No plugin capability sends or
+  reads it.
+
 ### Fresh contact
 
 An Enter that would cause an effect (a quick or confirmed plugin action, an

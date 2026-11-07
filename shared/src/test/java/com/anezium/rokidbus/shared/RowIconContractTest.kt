@@ -79,7 +79,7 @@ class RowIconContractTest {
     @Test
     fun `the bundle version announces row icons`() {
         assertEquals(7, LauncherInteractiveContract.ROW_ICONS_VERSION)
-        assertEquals(LauncherInteractiveContract.ROW_ICONS_VERSION, LauncherInteractiveContract.VERSION)
+        assertEquals(LauncherInteractiveContract.ROW_ICONS_VERSION + 1, LauncherInteractiveContract.FAVOURITES_VERSION)
         assertEquals(32, PageTemplateContract.MAX_ROW_ICON_EDGE)
     }
 
