@@ -33,8 +33,11 @@ class PhoneAudioRelayClientTest {
     private val playbackClosed = AtomicBoolean()
     private val retry = Semaphore(0)
     private var wire: Wire? = null
+    private var beforeFactoryReturns: () -> Unit = {}
+    private var afterAuthentication: () -> Unit = {}
+    private val authentications = AtomicInteger()
     private val client = PhoneAudioRelayClient(
-        connection = { connected.incrementAndGet(); Wire().also { wire = it } },
+        connection = { connected.incrementAndGet(); Wire().also { wire = it; beforeFactoryReturns() } },
         player = { _, _ ->
             players.incrementAndGet()
             object : AudioRelayPlayback {
@@ -65,7 +68,10 @@ class PhoneAudioRelayClientTest {
                 } catch (_: Exception) { }
             }
         }
-        override fun authenticate(nonces: SppAuthProtocol.RecentNonces) = SppAuthProtocol.connect(input, output, key, nonces)
+        override fun authenticate(nonces: SppAuthProtocol.RecentNonces): SppAuthProtocol.Session {
+            authentications.incrementAndGet()
+            return SppAuthProtocol.connect(input, output, key, nonces).also { afterAuthentication() }
+        }
         fun send(envelope: BusEnvelope) { await { session != null }; session!!.write(serverOutput, envelope) }
         override fun close() {
             closed.set(true); output.close(); serverOutput.close(); input.close(); serverInput.close()
@@ -103,6 +109,33 @@ class PhoneAudioRelayClientTest {
     @Test fun `disabled client never connects or allocates playback`() {
         client.setDesired(false); advance(20000)
         assertEquals(0, connected.get()); assertEquals(0, players.get())
+    }
+    @Test fun `gate off during connection preparation prevents connect and authentication`() {
+        val prepared = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        beforeFactoryReturns = { prepared.countDown(); check(release.await(3, TimeUnit.SECONDS)) }
+        try {
+            client.setDesired(true)
+            assertTrue(prepared.await(2, TimeUnit.SECONDS))
+            Thread { client.setDesired(false) }.apply { start(); join() }
+            release.countDown()
+            await { wire?.closed?.get() == true }
+            assertEquals(0, authentications.get()); assertTrue(received.isEmpty())
+        } finally { release.countDown() }
+    }
+    @Test fun `gate off while authentication returns prevents start and playback`() {
+        val authenticated = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        afterAuthentication = { authenticated.countDown(); check(release.await(3, TimeUnit.SECONDS)) }
+        try {
+            client.setDesired(true)
+            assertTrue(authenticated.await(2, TimeUnit.SECONDS))
+            client.setDesired(false)
+            release.countDown()
+            await { wire!!.closed.get() }
+            assertTrue(received.none { it.path == BusPaths.CORE_AUDIO_RELAY_START })
+            assertEquals(0, players.get())
+        } finally { release.countDown() }
     }
     @Test fun `start is first and no ready after three seconds closes without playback and backs off`() {
         start(); assertEquals(0, players.get()); advance(3000)

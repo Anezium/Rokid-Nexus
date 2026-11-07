@@ -80,8 +80,9 @@ internal class PhoneAudioRelayClient(
                             if (!desired || closed) { candidate.wire.close(); break }
                             current = candidate
                         }
+                        check(desired && !closed && !candidate.closed.get())
                         val session = candidate.wire.authenticate(nonces)
-                        check(!candidate.closed.get())
+                        check(desired && !closed && !candidate.closed.get())
                         candidate.session = session
                         candidate.lastPeer = nowMs()
                         candidate.lastKeepalive = nowMs()

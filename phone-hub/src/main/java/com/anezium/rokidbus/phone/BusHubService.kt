@@ -559,6 +559,7 @@ class BusHubService : Service() {
     @Volatile private var lastAnnouncedPhoneCapabilities: PhoneHubCapabilities? = null
     private var phoneBatteryReporter: PhoneBatteryReporter? = null
     private var audioRelayClient: PhoneAudioRelayClient? = null
+    private var audioRelayDestroyed = false
     private var audioRelayStore: PhoneAudioRelayStore? = null
     private var audioRelaySettingSubscription: AutoCloseable? = null
     private var audioRelayRouteProbe: PhoneSpeakerRouteProbe? = null
@@ -1514,6 +1515,7 @@ class BusHubService : Service() {
     }
 
     override fun onDestroy() {
+        audioRelayDestroyed = true
         pinHandler.removeCallbacks(audioRelayPoll)
         pinHandler.removeCallbacks(audioRelayRouteRefresh)
         audioRelayAudioManager?.unregisterAudioDeviceCallback(audioRelayDeviceCallback)
@@ -6155,6 +6157,12 @@ class BusHubService : Service() {
     }
 
     private fun updateAudioRelayGate() {
+        pinHandler.post { applyAudioRelayGate() }
+    }
+
+    private fun applyAudioRelayGate() {
+        check(Looper.myLooper() == pinHandler.looper)
+        if (audioRelayDestroyed) return
         val store = audioRelayStore ?: return
         val route = if (audioRelayRouteRejected) PhoneTtsRoute.GLASSES_LINK else
             audioRelayRouteProbe?.classifyRoute() ?: PhoneTtsRoute.PHONE_SPEAKER
