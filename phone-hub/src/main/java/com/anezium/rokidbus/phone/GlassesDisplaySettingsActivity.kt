@@ -75,6 +75,17 @@ class GlassesDisplaySettingsActivity : Activity() {
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
             addView(launcherCard(), NexusUi.block())
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
+            addView(
+                NexusUi.navCard(
+                    this@GlassesDisplaySettingsActivity,
+                    "Favourites",
+                    "Up to four apps pinned on the glasses home, right under the activities.",
+                ) {
+                    startActivity(Intent(this@GlassesDisplaySettingsActivity, LauncherFavouritesActivity::class.java))
+                },
+                NexusUi.block(),
+            )
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
             addView(islandSizeCard(), NexusUi.block())
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
             addView(

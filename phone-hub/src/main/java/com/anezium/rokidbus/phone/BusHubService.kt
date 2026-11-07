@@ -515,6 +515,7 @@ class BusHubService : Service() {
     private lateinit var activityPreferences: PhoneActivityPreferences
     private lateinit var quickActionPolicyStore: PluginQuickActionPolicyStore
     private lateinit var ambientSync: PhoneAmbientSync
+    private lateinit var launcherFavouritesSync: PhoneLauncherFavouritesSync
     private lateinit var activitySnapshotStore: PhoneActivitySnapshotStore
 
     /** Rises across hub restarts, so glasses never keep an older policy over a newer one. */
@@ -1220,6 +1221,12 @@ class BusHubService : Service() {
             hiddenOwners = ::ownersKeptOffGlasses,
             activityDisplays = ::activityDisplayPreferences,
             supportsActivityEvents = { (remoteLauncherInteractiveVersion ?: 0) >= LauncherInteractiveContract.ACTIVITY_EVENTS_VERSION },
+        )
+        launcherFavouritesSync = PhoneLauncherFavouritesSync(
+            store = PhoneLauncherFavouritesStore.shared(applicationContext),
+            send = { path, payload -> sendRemote(BusEnvelope(path = path, payload = payload)) },
+            launcherVersion = { remoteLauncherInteractiveVersion },
+            log = ::log,
         )
         ComposeKeyboardPrompt.sink = object : ComposeKeyboardSink {
             override fun onText(captureId: String, text: String) =
@@ -5880,8 +5887,15 @@ class BusHubService : Service() {
         if (activitySupported) activityRouter.resendIfAvailable()
         // The glasses keep only the latest policy they were sent; a fresh glasses session has none.
         executor.execute { pushQuickActionPolicy() }
+        executor.execute { pushLauncherFavourites() }
         executor.execute { noticeRouter.onGlassesAnnounced() }
         ambientExecutor.execute { if (::ambientSync.isInitialized) ambientSync.onGlassesAnnounced() }
+    }
+
+    /** The owner's launcher favourites, whole, to glasses that read them (bundle v8). */
+    private fun pushLauncherFavourites() {
+        if (!::launcherFavouritesSync.isInitialized) return
+        launcherFavouritesSync.push()
     }
 
     /**
@@ -6263,6 +6277,39 @@ class BusHubService : Service() {
         internal fun onLauncherBackendChanged() {
             activeInstance?.announcePhoneCapabilities()
         }
+
+        /** The owner pinned, unpinned or reordered a launcher favourite on the phone. */
+        internal fun onLauncherFavouritesChanged() {
+            activeInstance?.let { hub -> hub.executor.execute { hub.pushLauncherFavourites() } }
+        }
+
+        /**
+         * The plugins the glasses' Applications page lists, page providers included, for the
+         * favourites picker. Without a running hub the catalog alone decides, with a provider's
+         * declared page version standing in for the negotiated one.
+         */
+        fun launcherApplications(context: android.content.Context): List<PhoneLauncherApplication> =
+            activeInstance?.pluginRegistry?.launcherApplications(includePagesOnly = true)
+                ?: pluginCatalog(context).entries.mapNotNull { entry ->
+                    if (entry.state != PluginCatalogState.BUILT_IN && entry.state != PluginCatalogState.ENABLED) return@mapNotNull null
+                    val id = entry.id ?: return@mapNotNull null
+                    val pages = entry.principal?.descriptor?.pageSessionVersion ?: 0
+                    if (!entry.launchable && pages == 0) return@mapNotNull null
+                    PhoneLauncherApplication(
+                        id = id,
+                        displayName = entry.displayName,
+                        launchable = entry.launchable,
+                        pageVersion = pages,
+                        iconKey = entry.iconKey,
+                        packageName = entry.principal?.packageName,
+                        iconDrawableResId = entry.iconDrawableResId,
+                    )
+                }
+
+        /** The name the glasses give their Camera entry, or null while no camera plugin is approved. */
+        fun launcherCameraName(): String? = activeInstance
+            ?.takeIf { it::cameraConsumerReadiness.isInitialized && it.cameraConsumerReadiness.isReady() }
+            ?.cameraConsumerReadiness?.resolveApproved()?.descriptor?.displayName
 
         /** The user changed an island size on the phone; the glasses get the full map again. */
         internal fun onAmbientSizesChanged() {

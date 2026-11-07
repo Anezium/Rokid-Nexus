@@ -182,19 +182,37 @@ class PhonePluginRegistry(
         return controller.adopt(principal)
     }
 
+    /**
+     * The Applications rows the glasses list: approved plugins that launch, plus page providers
+     * without a full app when [includePagesOnly]. The launcher list and the favourites picker
+     * both read this, so the owner can only pin what the glasses can show.
+     */
+    fun launcherApplications(includePagesOnly: Boolean = pagesOnlyEntries()): List<PhoneLauncherApplication> =
+        catalog().entries.mapNotNull { entry ->
+            if (entry.state != PluginCatalogState.BUILT_IN && entry.state != PluginCatalogState.ENABLED) return@mapNotNull null
+            val id = entry.id ?: return@mapNotNull null
+            val pages = pageVersion(entry)
+            // An enabled provider with `LAUNCHABLE=false` is an Applications entry whose row opens its pages.
+            if (!entry.launchable && !(includePagesOnly && pages > 0)) return@mapNotNull null
+            PhoneLauncherApplication(
+                id = id,
+                displayName = entry.displayName,
+                launchable = entry.launchable,
+                pageVersion = pages,
+                iconKey = entry.iconKey,
+                packageName = entry.principal?.packageName,
+                iconDrawableResId = entry.iconDrawableResId,
+            )
+        }
+
     fun syncLauncherList() {
         val catalog = catalog()
-        val pagesOnly = pagesOnlyEntries()
         send(
             BusPaths.LAUNCHER_LIST,
             JSONObject().put(
                 "plugins",
                 JSONArray().also { array ->
-                    catalog.entries.forEach { entry ->
-                        if (entry.state != PluginCatalogState.BUILT_IN && entry.state != PluginCatalogState.ENABLED) return@forEach
-                        val pages = pageVersion(entry)
-                        // An enabled provider with `LAUNCHABLE=false` is an Applications entry whose row opens its pages.
-                        if (!entry.launchable && !(pagesOnly && pages > 0)) return@forEach
+                    launcherApplications().forEach { entry ->
                         array.put(
                             JSONObject()
                                 .put("id", entry.id)
@@ -202,7 +220,7 @@ class PhonePluginRegistry(
                                 .apply { entry.iconKey?.let { put("iconKey", it) } }
                                 .apply {
                                     // Absent means no pages, which is what an old glasses hub assumes anyway.
-                                    pages.takeIf { it > 0 }?.let {
+                                    entry.pageVersion.takeIf { it > 0 }?.let {
                                         put(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION, it)
                                     }
                                     if (!entry.launchable) put(FIELD_LAUNCHABLE, false)
