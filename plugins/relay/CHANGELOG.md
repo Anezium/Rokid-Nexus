@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.4.2
+
+Update Relay and the **glasses hub to Nexus 2.0.4** for the complete fix. Phone
+hubs 2.0.0 to 2.0.3 remain compatible; no new permission or approval is needed.
 
 - Suppress outbound reply echoes before display and read-aloud using
   MessagingStyle authorship or the same thread's matching remote-input history.
