@@ -46,17 +46,16 @@ internal class OpusEncoderPump(
         val info = MediaCodec.BufferInfo()
         while (true) {
             val index = codec.dequeueOutputBuffer(info, 0)
-            if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                check(!configured) { "Opus format changed twice" }
-                val csd = (0..2).map { n ->
-                    val buffer = checkNotNull(codec.outputFormat.getByteBuffer("csd-$n")).duplicate()
-                    ByteArray(buffer.remaining()).also(buffer::get)
-                }
-                header(C.ready(C.OPUS, csd).apply { remove("v") }.toString().toByteArray(Charsets.UTF_8))
-                configured = true
-            } else if (index >= 0) {
+            if (index >= 0) {
                 try {
-                    if (info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) {
+                    if (info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                        check(!configured) { "Opus codec config emitted twice" }
+                        val buffer = codec.getOutputBuffer(index)!!.duplicate()
+                        buffer.position(info.offset).limit(info.offset + info.size)
+                        val csd = OpusCodecConfig.csd(ByteArray(info.size).also(buffer::get))
+                        header(C.ready(C.OPUS, csd).apply { remove("v") }.toString().toByteArray(Charsets.UTF_8))
+                        configured = true
+                    } else if (info.size > 0) {
                         check(configured)
                         val suppress = suppression.floorEntry(info.presentationTimeUs)?.value ?: true
                         suppression.headMap(info.presentationTimeUs, true).clear()
@@ -67,7 +66,7 @@ internal class OpusEncoderPump(
                         }
                     }
                 } finally { codec.releaseOutputBuffer(index, false) }
-            } else return
+            } else if (index != MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) return
         }
     }
 

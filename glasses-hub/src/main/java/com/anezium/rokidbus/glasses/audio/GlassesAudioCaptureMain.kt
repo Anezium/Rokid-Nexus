@@ -14,7 +14,8 @@ import java.lang.reflect.InvocationTargetException
 
 object GlassesAudioCaptureMain {
     @JvmStatic fun main(args: Array<String>) {
-        try { capture(args) } catch (failure: Throwable) {
+        // app_process keeps the VM alive while framework threads (AudioRecord, binder) linger.
+        try { capture(args); System.exit(0) } catch (failure: Throwable) {
             var cause = failure
             while (cause is InvocationTargetException && cause.targetException != null) cause = cause.targetException
             Log.e("NexusAudioCapture", "${cause.javaClass.name}: ${cause.message}")

@@ -11,6 +11,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.os.Build
+import android.os.Looper
 import android.os.Parcel
 import java.lang.ref.WeakReference
 
@@ -20,6 +21,8 @@ internal object AudioCaptureWorkarounds {
     // Derived from scrcpy (Apache-2.0), Workarounds.java (ActivityThread initialization and app info).
     fun shellContext(): Context {
         check(Build.VERSION.SDK_INT in 31..32) { "Audio capture requires API 31/32" }
+        // The framework creates Handlers on the calling thread while building the system context.
+        Looper.prepareMainLooper()
         val threadClass = Class.forName("android.app.ActivityThread")
         val thread = threadClass.getDeclaredConstructor().apply { isAccessible = true }.newInstance()
         fun set(name: String, value: Any?) = threadClass.getDeclaredField(name).apply { isAccessible = true }.set(thread, value)
