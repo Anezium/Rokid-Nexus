@@ -38,6 +38,11 @@ class LauncherFavouritesActivity : Activity() {
     private var nativeStatus: String? = null
     private var receiverRegistered = false
 
+    private val retry = android.os.Handler(android.os.Looper.getMainLooper())
+    private val retryList = Runnable { if (started) requestNativeApps() }
+    private var started = false
+    private var nativeFailed = false
+
     private val stateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val state = intent?.let(NativeAppsPhoneContract::parseState) ?: return
@@ -46,11 +51,19 @@ class LauncherFavouritesActivity : Activity() {
                 NativeAppsUiState.Empty -> {
                     nativeApps = emptyList()
                     nativeStatus = null
+                    nativeFailed = false
                 }
-                is NativeAppsUiState.Error -> nativeStatus = state.message
+                is NativeAppsUiState.Error -> {
+                    nativeStatus = state.message
+                    nativeFailed = true
+                    // Glasses that come back are found without reopening the screen.
+                    retry.removeCallbacks(retryList)
+                    if (started) retry.postDelayed(retryList, RETRY_MS)
+                }
                 is NativeAppsUiState.Content -> {
                     nativeApps = state.apps
                     nativeStatus = null
+                    nativeFailed = false
                 }
             }
             render()
@@ -92,12 +105,21 @@ class LauncherFavouritesActivity : Activity() {
             )
             receiverRegistered = true
         }
+        started = true
+        requestNativeApps()
+    }
+
+    private fun requestNativeApps() {
+        retry.removeCallbacks(retryList)
         nativeStatus = STATUS_LOADING
+        nativeFailed = false
         render()
         sendBroadcast(NativeAppsPhoneContract.requestList(this, UUID.randomUUID().toString()))
     }
 
     override fun onStop() {
+        started = false
+        retry.removeCallbacks(retryList)
         if (receiverRegistered) {
             runCatching { unregisterReceiver(stateReceiver) }
             receiverRegistered = false
@@ -156,7 +178,14 @@ class LauncherFavouritesActivity : Activity() {
                 val status = nativeStatus
                 if (status != null) {
                     if (catalog.available.isNotEmpty()) addView(hairline())
-                    addView(emptyRow(status), NexusUi.block())
+                    addView(
+                        if (nativeFailed) {
+                            emptyRow("$status Tap to try again.").apply { setOnClickListener { requestNativeApps() } }
+                        } else {
+                            emptyRow(status)
+                        },
+                        NexusUi.block(),
+                    )
                 } else if (catalog.available.isEmpty()) {
                     addView(emptyRow("Everything the glasses list is already pinned."), NexusUi.block())
                 }
@@ -330,5 +359,6 @@ class LauncherFavouritesActivity : Activity() {
 
     private companion object {
         const val STATUS_LOADING = "Looking for apps on the glasses…"
+        private const val RETRY_MS = 10_000L
     }
 }
