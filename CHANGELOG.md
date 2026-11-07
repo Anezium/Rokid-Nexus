@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Glasses hub
+
+- **Glasses sound in earbuds.** Capture the glasses' output with shell-owned
+  REMOTE_SUBMIX and relay Opus over a dedicated authenticated Bluetooth socket
+  while the phone enables it. Local and remote keepalives end capture when the
+  relay loses its peer. End-to-end owner device acceptance remains pending.
+
+### Phone hub
+
+- **Glasses sound in earbuds.** An off-by-default switch under Settings → Voice
+  relays the glasses' sound to the phone's active external headset. Phone-speaker
+  and glasses-output routes disable the relay. Earbuds add their own A2DP
+  latency, typically 100–200 ms, on top of the relay delay.
+
 ## 2.0.4
 
 - **A clean Relay notification list.** Answered or removed Relay notifications

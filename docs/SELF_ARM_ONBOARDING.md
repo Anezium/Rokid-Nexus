@@ -153,12 +153,28 @@ or unopenable FIFO falls back to the sleep-based poll. The line is
 is a 32-byte value generated once, kept app-private and baked into the deployed script. Arguments
 that could contain `:` travel base64-encoded. The bridge re-validates everything itself and refuses
 on any surprise: unknown command, malformed nonce, replayed nonce, bad token, wrong shape.
-The current allow-list (helper `2026-10-31.1`) is `wifi_enable`, `wifi_disable`,
+The current allow-list (helper `2026-11-07.1`) is `wifi_enable`, `wifi_disable`,
 `wifi_connect`, `wifi_connect_files`, `wifi_forget`, `wifi_cleanup_files`,
-`delete_capture`, `adb_wifi_enable`, and `adb_wifi_disable`. The Wireless ADB
-plugin uses the last two only to toggle the transport; pairing start/stop uses
+`delete_capture`, `adb_wifi_enable`, `adb_wifi_disable`, `audio_capture_start`,
+and `audio_capture_stop`. The Wireless ADB plugin uses the two `adb_wifi_*`
+commands only to toggle the transport; pairing start/stop uses
 the hub's already authenticated local KADB identity with separately validated,
 fixed `service call adb` shapes.
+
+`audio_capture_start:<nonce>:<port>:<token>` accepts exactly one decimal port
+in 1024..65535, authenticated by the usual request digest and nonce replay
+checks. It stops a previous capture by guarded PID identity, derives a separate
+session token as `sha256(secret:audio-session:nonce)`, resolves the installed
+glasses APK and starts `GlassesAudioCaptureMain` under shell-uid `app_process`.
+The app binds a loopback TCP listener first and authenticates the capture's
+32-byte token; only this connection proves success. The app never reads a
+shell-created response, pidfile or log. The shell process owns REMOTE_SUBMIX and
+Opus encoding; the hub app owns the separate Bluetooth audio socket.
+`audio_capture_stop:<nonce>:<token>` takes no arguments and submits an
+idempotent guarded stop. Socket EOF or five seconds without a local keepalive
+also ends capture. Neither command's failure changes prepare/arm success.
+The bridge self-updates from the installed APK on its existing 300-second
+schedule; Repair now can deploy it sooner.
 
 `wifi_connect_files` takes the same authenticated base64 SSID/passphrase and
 security arguments as `wifi_connect`, with API-32-only target confirmation.

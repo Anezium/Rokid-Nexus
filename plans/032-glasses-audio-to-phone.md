@@ -1,6 +1,6 @@
 # Plan 032 — Glasses sound in the phone's earbuds (glasses audio relay v1)
 
-Status: TODO. Hub-to-hub feature; no plugin, SDK, AIDL or `/core` plugin surface. Both hubs change; `:shared` carries the contract; BUSSPEC.md is the wire authority.
+Status: IN PROGRESS — M1–M5 implemented; M2-D cleared by the owner on 2026-11-07; end-to-end owner device acceptance remains pending. Hub-to-hub feature; no plugin, SDK, AIDL or `/core` plugin surface. Both hubs change; `:shared` carries the contract; BUSSPEC.md is the wire authority.
 
 ## 1. Summary
 
@@ -171,6 +171,36 @@ Setup: install both debug hubs; wait ≤ 5 min or run Settings → Repair now so
 | D11 | Glasses become the phone's active A2DP output | `Waiting for earbuds`; no capture; no echo; back to buds → `Active` |
 | D12 | Phone music during `Active` | Music in buds only; glasses silent; no doubling |
 | D13 | `Active` idle 30 min | Glasses battery within a few % of a 30-min baseline; `silent:true` statuses, zero frames |
+
+### Device results — 2026-11-07
+
+M2-D is **cleared by the owner**. These measurements were supplied by the owner;
+the executor did not rerun the device probe during M3–M5 and did not install
+either hub. The owner used a debug APK pushed to `/data/local/tmp`, launched it
+through `app_process`, and cleaned up the temporary APK and ADB reverse mapping.
+
+The original executor probe stopped before HEADER with
+`java.lang.RuntimeException: Can't create handler inside thread Thread[main,5,main] that has not called Looper.prepare()`.
+Owner commit `3e3c8848` prepares the main Looper, parses the Opus CODEC_CONFIG
+buffer's Codec2 sections, and exits the VM after capture returns. MediaCodec
+remains synchronous. Android's encoder emits `AOPUSHDR` / `AOPUSDLY` /
+`AOPUSPRL` in a `BUFFER_FLAG_CODEC_CONFIG` buffer rather than CSD keys in the
+output format; the delivered implementation uses that buffer to send HEADER.
+
+| Check | Owner observation |
+|---|---|
+| HEADER | `codec:opus`, three CSDs present; csd0 is OpusHead, pre-skip 312 |
+| Decoder CSDs | csd0 `T3B1c0hlYWQBATgBgLsAAAAAAA==`, csd1 `oC5jAAAAAAA=`, csd2 `ALTEBAAAAAA=`; csd1/2 are little-endian u64 nanoseconds, 6,500,000 and 80,000,000 |
+| Silence transition | `silent:false`, then `silent:true` after approximately 25 blocks |
+| Silent traffic | Zero packets while silent |
+| Local watchdog | Keepalives stopped at T; socket EOF at T + 4.25 s; capture process gone |
+| Real audio packets | Not measured with this capture entry point; deferred to owner D1. The owner's earlier scrcpy REMOTE_SUBMIX capture proved Hi Rokid voice and speaker muting |
+
+The phone-side decoder configuration test passes the exact CSD values above
+through `GlassesAudioRelayContract.validateReady` and verifies that `csd-0/1/2`
+reach the decoder format byte for byte. These JVM checks do not establish
+end-to-end playback, source coverage, latency, routing changes or battery use;
+D0–D13 remain the owner's acceptance protocol.
 
 ## 6. Commands (exact; repo root; PowerShell `.\gradlew.bat`, Git Bash `./gradlew`)
 

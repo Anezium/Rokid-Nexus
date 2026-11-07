@@ -121,6 +121,8 @@ All of them install from the in-app **Nexus Store**, backed by the public
 SHA-256 and signer pinning enforced before every install, and show update
 badges when a newer release is published.
 
+**Glasses sound in earbuds** under Settings → Voice can relay the glasses' sound to the phone's active external headset; it is off by default and requires both updated hubs and the glasses command bridge.
+
 The phone hub also controls software that is already installed on the glasses.
 **Glasses apps** lists and opens launchable native APKs; **Keyboard & remote**
 provides previous/next/select/back navigation and sends transient keyboard
