@@ -62,6 +62,12 @@ does not approve it.
 </service>
 ```
 
+`LAUNCHABLE` says whether the plugin has a full app (an immersion) to open.
+A plugin whose whole glasses UI is launcher pages declares `false`: with hubs
+at bundle v7 it still appears in Applications as a row that opens its main
+page, and none of its pages or its activity card gets the hub's `Open app`.
+Older glasses do not list it; see [Pages](#pages).
+
 Plugin IDs use `[a-z][a-z0-9._-]{2,63}`. Requested capabilities are `surfaces`,
 `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`,
 `assistant`, and `wireless_debugging`. The skills grants, `skills_provider` and
@@ -2373,10 +2379,11 @@ navigation.
 | `PageBody.Document` | `segments` (`PageSegment(id, kind, text)`, kind `HEADER`, `PROSE` or `ASIDE`); `items`; optional `footer` |
 | `PageBody.Commands` | `items`; optional `text` |
 
-A row is `PageRow(id, label, sub, enabled, target)`. Its target opens another of
-your pages, `PageTarget.Page(pageId, paramsJson)`, or invokes one of the page's
-declared actions, `PageTarget.Action(actionId)`; a row without a target is
-readable but inert. Ids are unique within their list. A document keeps its text
+A row is `PageRow(id, label, sub, enabled, target, checked, icon)`. Its target
+opens another of your pages, `PageTarget.Page(pageId, paramsJson)`, or invokes
+one of the page's declared actions, `PageTarget.Action(actionId)`; a row
+without a target is readable but inert. `icon` is the row's own mark, drawn
+with bundle v7 (see [Row icons](#row-icons-launcher-bundle-v7)). Ids are unique within their list. A document keeps its text
 order, paragraphs, explicit line breaks and Unicode, and the wearer pages
 through it with swipes; its `footer` is paginated after the text, in the caption
 style. Summary or commands text that does not fit the HUD with the page's first
@@ -2660,6 +2667,35 @@ override fun onNexusPageAction(action: NexusPageAction): NexusPageResult = when 
 The image's `send-photo` is an ordinary plugin action on the preview revision,
 never `ComposeSend`. It sends only that photo after the wearer's deliberate
 tap; text Send, drafts and consent retain all existing hub-owned rules.
+
+### Row icons (launcher bundle v7)
+
+A row of any template may carry its own mark: `PageRow.icon` is a `mono1`
+`LauncherArtwork` of at most 32 px on each side (a brand mark, a contact's
+initial drawn as pixels). The glasses draw it left of the label in the row's
+tone, grey at rest and phosphor when selected, so a white-on-transparent
+rasterisation of your phone icon is the right source; `1` bits draw, `0` bits
+are transparent. Both hubs must negotiate bundle v7: check `supportsRowIcons()`.
+Below it the SDK sends the same page without the icons and the glasses draw
+plain rows; you need no fallback page. A `jpeg`, larger or malformed icon
+makes the page `INVALID_PAGE`.
+
+```kotlin
+PageRow(
+    id = "whatsapp",
+    label = "WhatsApp",
+    sub = "3 conversations",
+    target = PageTarget.Page("meta:service:whatsapp"),
+    icon = if (nexusClient?.supportsRowIcons() == true) whatsAppMark else null,
+)
+```
+
+A plugin whose whole glasses UI is pages also declares
+`com.anezium.rokidbus.plugin.LAUNCHABLE` `false` (see the manifest above).
+From bundle v7 the glasses keep it in Applications as a row opening `<id>:main`
+and never append the hub's **Open app** to its pages or its activity card;
+`onNexusOpen` is then never called. Older glasses do not list it, so a plugin
+that must reach pre-v7 glasses keeps `LAUNCHABLE` true and a minimal immersion.
 
 ### Visibility and live updates
 

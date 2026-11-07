@@ -33,7 +33,10 @@ actions. A visible page action can call `nexusSnapshotSession` with the existing
 signer-bound `camera` grant, without an immersion or `PLUGIN_OPEN`. Return a
 live Capturing summary immediately; publish the image on completion within the
 page lease, never block the eight-second action budget. Cancel/discard work on
-cover, close, refresh or lost registration; never auto-send a capture.
+cover, close, refresh or lost registration; never auto-send a capture. A plugin
+whose whole glasses UI is pages declares `LAUNCHABLE=false` (bundle v7): it
+stays in Applications, gets no hub `Open app`, and needs no immersion at all.
+Rows may carry their own `mono1` mark with `PageRow.icon` (`supportsRowIcons()`).
 Notices, pins, activities, Ink, editable notice fields and audio/speech remain
 supported; no additional capability or plugin bus path is introduced.
 

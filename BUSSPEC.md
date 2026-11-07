@@ -338,6 +338,10 @@ Phone to glasses:
 - `/surface/hide` hides a surface. On the plugin's last surface it may carry
   `detach:true` for the lease-bounded background transition defined above.
 - `/launcher/list` sends the available phone-side plugins to the glasses launcher.
+  Each entry is `{id, displayName, iconKey?, pageSessionVersion?, launchable?}`;
+  `launchable: false` marks a page provider without a full app, sent only to
+  glasses announcing launcher bundle v7 (see "Row icons and pages-only
+  applications (bundle v7)").
 
 Glasses to phone:
 
@@ -1876,7 +1880,8 @@ change underneath. A commands-first card's first tap enters command focus on
 `defaultActionId` and never executes. In focus, STEP moves along the plugin
 commands and then hub-owned navigation slots. A card with a destination has
 `Open page`; typed media labels it `Open player` and omits the redundant `Open app`
-slot. Other launchable owners retain `Open app` when available in Applications.
+slot. Other launchable owners retain `Open app` when available in Applications;
+a pages-only owner (`LAUNCHABLE=false`, bundle v7) never has one.
 The selected live commands-first card previews the strip without a selected
 control. A fresh SELECT in command focus runs the focused one immediately,
 in quick or confirmed mode; BACK leaves focus first. An offline entry still opens its
@@ -2096,9 +2101,11 @@ The bundle bodies have rules of their own:
 - No row of any template may target an action typed `compose.send`: a send is
   reached only through the composer.
 
-A row is `{id, label, sub?, enabled?, target?, checked?}`; `enabled` defaults to
-true. With the launcher bundle, the optional boolean `checked` draws a checkbox
-mark; it is meant for a row whose target is an action typed `setChecked`. A
+A row is `{id, label, sub?, enabled?, target?, checked?, icon?}`; `enabled`
+defaults to true. With the launcher bundle, the optional boolean `checked` draws
+a checkbox mark; it is meant for a row whose target is an action typed
+`setChecked`. From bundle v7, `icon` is the row's own `mono1` mark; see "Row
+icons and pages-only applications (bundle v7)" for its rules. A
 target is exactly one of `{pageId, params?}` or `{actionId}`; a row without one
 is readable but inert, and a disabled row can be selected but SELECT does
 nothing. Row, fact and segment ids follow the page id rules and are unique within
@@ -2507,6 +2514,39 @@ actions array. No hidden photo action stays invocable. This fallback is
 deliberate compatibility conversion; an unsupported template is still never
 decoded as a different body. `pageSessionVersion` stays 1, API stays 3, and no
 new grant, receive prefix or bus route is added.
+
+### Row icons and pages-only applications (bundle v7)
+
+Version 7 lets a row carry its own mark and lets a page provider live in
+Applications without a full app. Nothing here adds a capability, a path a
+plugin may send, or a way to open an immersion.
+
+A row of any template with `items` may carry `icon`: the "Detailed covers"
+artwork object restricted to `mono1`, at most 32 px on each side (128 decoded
+bytes), base64 `data`, no URI. The glasses draw it left of the label in the
+row's tone, grey at rest and phosphor when selected, exactly as a glyph; `1`
+bits are the mark and `0` bits transparent. A `jpeg`, oversized or malformed
+icon is an invalid page, never a missing icon; an explicit `null` is no icon.
+A hub-authored local row keeps the hub's own mark. The whole page still fits
+65,536 bytes.
+
+A plugin that declares pages and `com.anezium.rokidbus.plugin.LAUNCHABLE`
+`false` has no immersion to open: the phone refuses `/launcher/open` for it as
+before, and from v7 still lists it in `/launcher/list` with `launchable: false`
+and its `pageSessionVersion`. The glasses list such an entry in Applications
+as a row that opens `<id>:main`, give none of its pages the hub's `Open app`
+row, and give its activity card no `Open app` slot; the classic launcher and
+the glasses' own settings list skip it. Older glasses read every entry as a
+full app, so the phone withholds pages-only entries from glasses below v7 and
+sends the list again when the negotiated version changes.
+
+Both hubs announce `launcherInteractiveVersion: 7`; the pair runs the lower
+version. `ROW_ICONS_VERSION` is 7 and SDK `supportsRowIcons()` checks that
+pair. The phone strips every row `icon` from pages and result replacements
+before forwarding to glasses below v7; the SDK does the same before sending
+to a pair below v7, so such a page still shows with plain rows. The glasses
+ignore `icon` unless the negotiated version is at least 7. No exact-match
+tier version changes.
 
 ### Typed actions
 
