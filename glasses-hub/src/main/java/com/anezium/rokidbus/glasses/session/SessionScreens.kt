@@ -174,6 +174,18 @@ internal sealed interface ScreenBlock {
         val advancing: Boolean? = null,
     ) : ScreenBlock
 
+    /**
+     * An image page's picture: drawn as large as the column leaves, aspect kept, with its caption
+     * under it. The page's actions are ordinary rows after it. [dimmed] is a retained image of an
+     * unavailable page, drawn as inert.
+     */
+    data class Image(
+        override val key: String,
+        val image: com.anezium.rokidbus.shared.LauncherArtwork,
+        val caption: String? = null,
+        val dimmed: Boolean = false,
+    ) : ScreenBlock
+
     /** The next manoeuvre; [approximate] prefixes the distance with "~" for a degraded position. */
     data class Maneuver(
         override val key: String,
@@ -603,7 +615,8 @@ internal class SessionScreens(
 
     /** Retained content that fits beside the failure: what the page showed, dimmed, its actions left out. */
     private fun retainedBlocks(snapshot: Snapshot): List<ScreenBlock> = when (val body = items.retainedBody(snapshot)) {
-        is PageBody.Image -> emptyList() // Temporary until the image-page renderer is integrated.
+        // The picture as it was, dimmed; its actions are left out like every retained page's.
+        is PageBody.Image -> listOf(ScreenBlock.Image("last:image", body.image, body.caption, dimmed = true))
         is PageBody.Summary -> listOfNotNull(
             body.primary?.let { ScreenBlock.Text("last:primary", it, TextRole.FIGURE, dimmed = true) },
             body.secondary?.let { ScreenBlock.Text("last:secondary", it, TextRole.BODY, dimmed = true) },
@@ -630,7 +643,7 @@ internal class SessionScreens(
 
     /** What is read page by page: a document's own segments, or a body's text laid out as prose. */
     private fun readingSegments(body: PageBody?): List<PageSegment> = when (body) {
-        is PageBody.Image -> emptyList() // Temporary until the image-page renderer is integrated.
+        is PageBody.Image -> listOfNotNull(body.caption?.let { PageSegment("caption", PageSegmentKind.PROSE, it) })
         is PageBody.Document -> body.segments
         is PageBody.Summary -> listOfNotNull(
             body.primary?.let { PageSegment("primary", PageSegmentKind.PROSE, it) },
@@ -707,6 +720,8 @@ internal class SessionScreens(
                 body.facts.forEach { blocks += ScreenBlock.Fact("fact:${it.id}", it.label, it.value) }
             }
             body is PageBody.Commands -> body.text?.let { blocks += ScreenBlock.Text("text", it, TextRole.BODY) }
+            // The picture fills what its rows leave; it is never an entry, so the rows keep the selection.
+            body is PageBody.Image -> blocks += ScreenBlock.Image("image", body.image, body.caption)
             body is PageBody.Media ->
                 blocks += ScreenBlock.Media("media", body.title, body.artist, body.album, body.source, body.state, body.status,
                     body.artwork, body.positionMs, body.durationMs, status.snapshot.receivedAtMs, body.playbackSpeed, body.advancing)
@@ -1144,7 +1159,7 @@ internal class SessionScreens(
     private fun summaryOf(snapshot: Snapshot, frame: Frame, readable: Boolean): List<ScreenBlock> {
         val body = items.retainedBody(snapshot) ?: return listOf(ScreenBlock.Text("retained", snapshot.page.title, TextRole.BODY))
         val first = when (body) {
-            is PageBody.Image -> body.caption // Temporary until the image-page renderer is integrated.
+            is PageBody.Image -> body.caption
             is PageBody.Summary -> body.primary ?: body.secondary ?: body.text
             is PageBody.Document -> body.segments.firstOrNull()?.text
             is PageBody.Commands -> body.text ?: body.items.firstOrNull()?.label
