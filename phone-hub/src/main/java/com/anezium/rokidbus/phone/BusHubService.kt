@@ -10,6 +10,9 @@ import android.app.Service
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import android.media.AudioManager
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.graphics.BitmapFactory
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -555,6 +558,33 @@ class BusHubService : Service() {
     private var activeGlassesAppOperationId: Long? = null
     @Volatile private var lastAnnouncedPhoneCapabilities: PhoneHubCapabilities? = null
     private var phoneBatteryReporter: PhoneBatteryReporter? = null
+    private var audioRelayClient: PhoneAudioRelayClient? = null
+    private var audioRelayDestroyed = false
+    private var audioRelayStore: PhoneAudioRelayStore? = null
+    private var audioRelaySettingSubscription: AutoCloseable? = null
+    private var audioRelayRouteProbe: PhoneSpeakerRouteProbe? = null
+    private var audioRelayAudioManager: AudioManager? = null
+    @Volatile private var remoteAudioRelayCapable = false
+    @Volatile private var audioRelayRouteRejected = false
+    private val audioRelayBusIngressLogged = java.util.concurrent.atomic.AtomicBoolean()
+    private val audioRelayRouteRefresh = Runnable {
+        audioRelayRouteRejected = false
+        updateAudioRelayGate()
+    }
+    private val audioRelayPoll = object : Runnable {
+        override fun run() {
+            if (audioRelayClient == null) return
+            if (sppSession != null) {
+                audioRelayRouteRejected = false
+                updateAudioRelayGate()
+            }
+            pinHandler.postDelayed(this, 15000)
+        }
+    }
+    private val audioRelayDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(devices: Array<AudioDeviceInfo>) = refreshAudioRelayRoute()
+        override fun onAudioDevicesRemoved(devices: Array<AudioDeviceInfo>) = refreshAudioRelayRoute()
+    }
     private var phoneBatteryBadgeSubscription: PhoneBatteryBadgeStore.Subscription? = null
     @Volatile private var lastNotifiedStatus: String? = null
     @Volatile private var remoteImageSurfaceVersion = 0
@@ -1070,6 +1100,31 @@ class BusHubService : Service() {
         val phoneSpeakerRouteProbe = PhoneSpeakerRouteProbe(applicationContext) {
             prefs().getString(PREF_LAST_GLASSES_ADDRESS, null)
         }
+        audioRelayRouteProbe = phoneSpeakerRouteProbe
+        val relayStore = PhoneAudioRelayStore(applicationContext)
+        audioRelayStore = relayStore
+        audioRelayClient = PhoneAudioRelayClient(
+            connection = ::createAudioRelayConnection,
+            player = { ready, failure ->
+                PhoneAudioRelayPlayer(ready, prefs().getString(PREF_LAST_GLASSES_ADDRESS, null),
+                    { phoneSpeakerRouteProbe.classifyRoute(PhoneAudioRelayPlayer.audioAttributes()) }, { _ ->
+                        audioRelayRouteRejected = true
+                        updateAudioRelayGate()
+                    }, failure)
+            },
+            status = relayStore::setStatus,
+            schedule = { delay, task ->
+                val future = sppDeadlines.schedule(task, delay, TimeUnit.MILLISECONDS)
+                ({ future.cancel(false); Unit })
+            },
+            nowMs = SystemClock::elapsedRealtime,
+        )
+        audioRelaySettingSubscription = relayStore.addChangeListener(enabledOnly = true, listener = ::updateAudioRelayGate)
+        audioRelayAudioManager = getSystemService(AudioManager::class.java).also {
+            it.registerAudioDeviceCallback(audioRelayDeviceCallback, pinHandler)
+        }
+        updateAudioRelayGate()
+        pinHandler.postDelayed(audioRelayPoll, 15000)
         val phoneTtsSettings = PhoneTtsSettingsStore(applicationContext)
         phoneTtsDispatcher = PhoneTtsDispatcher(
             playback = PhoneTtsPlayback(
@@ -1460,6 +1515,14 @@ class BusHubService : Service() {
     }
 
     override fun onDestroy() {
+        audioRelayDestroyed = true
+        pinHandler.removeCallbacks(audioRelayPoll)
+        pinHandler.removeCallbacks(audioRelayRouteRefresh)
+        audioRelayAudioManager?.unregisterAudioDeviceCallback(audioRelayDeviceCallback)
+        audioRelaySettingSubscription?.close()
+        audioRelayClient?.close()
+        audioRelayClient = null
+        audioRelayStore?.let { it.setStatus(if (it.isEnabled()) PhoneAudioRelayStatus.WAITING_FOR_GLASSES else PhoneAudioRelayStatus.OFF) }
         if (::youtubeSetup.isInitialized) youtubeSetup.close()
         if (::redditSetup.isInitialized) redditSetup.close()
         stopPeriodicUpdateChecks()
@@ -1835,6 +1898,10 @@ class BusHubService : Service() {
     }
 
     private fun routeRemote(envelope: BusEnvelope, renderedMapOrigin: PhoneRenderedMapNegotiation.Origin?) {
+        if (BusPaths.isAudioRelayPath(envelope.path)) {
+            if (audioRelayBusIngressLogged.compareAndSet(false, true)) log("Dropped audio relay traffic on bus ingress")
+            return
+        }
         if (SppKeyProvisioning.isReserved(envelope.path)) return
         if (envelope.path == RenderedMapContract.PATH) {
             val supported = renderedMapsSupported()
@@ -4271,6 +4338,7 @@ class BusHubService : Service() {
                     sppBackoff.connected()
                     sppKeyStatus = null
                     log("SPP authenticated")
+                    updateAudioRelayGate()
                     notifyLinkState()
                     readSppLoop(candidate, session)
                     log("SPP link closed")
@@ -5716,6 +5784,9 @@ class BusHubService : Service() {
 
     private fun updateRemoteCapabilities(payload: JSONObject, renderedMapOrigin: PhoneRenderedMapNegotiation.Origin?) {
         val advertised = GlassesHubCapabilitiesContract.parse(payload)
+        remoteAudioRelayCapable = advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION &&
+            advertised.features and BusCapabilityBits.GLASSES_AUDIO_RELAY != 0
+        updateAudioRelayGate()
         val imageSupported = advertised.protocolVersion == GlassesHubCapabilitiesContract.VERSION &&
             advertised.features and BusCapabilityBits.IMAGE_SURFACE != 0 &&
             advertised.imageSurfaceVersion == ImageSurfaceContract.VERSION &&
@@ -6076,6 +6147,54 @@ class BusHubService : Service() {
             current
         }
         runCatching { retired?.close() }
+        remoteAudioRelayCapable = false
+        updateAudioRelayGate()
+    }
+
+    private fun refreshAudioRelayRoute() {
+        pinHandler.removeCallbacks(audioRelayRouteRefresh)
+        pinHandler.postDelayed(audioRelayRouteRefresh, 500)
+    }
+
+    private fun updateAudioRelayGate() {
+        pinHandler.post { applyAudioRelayGate() }
+    }
+
+    private fun applyAudioRelayGate() {
+        check(Looper.myLooper() == pinHandler.looper)
+        if (audioRelayDestroyed) return
+        val store = audioRelayStore ?: return
+        val route = if (audioRelayRouteRejected) PhoneTtsRoute.GLASSES_LINK else
+            audioRelayRouteProbe?.classifyRoute(PhoneAudioRelayPlayer.audioAttributes()) ?: PhoneTtsRoute.PHONE_SPEAKER
+        val enabled = store.isEnabled() && hubEnabled
+        val dataUp = sppSession != null && socket?.isConnected == true
+        val desired = PhoneAudioRelayGate.desired(enabled, route, remoteAudioRelayCapable, dataUp)
+        audioRelayClient?.setDesired(desired)
+        if (!desired) store.setStatus(PhoneAudioRelayGate.waitingStatus(enabled, route, remoteAudioRelayCapable, dataUp))
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun createAudioRelayConnection(): PhoneAudioRelayConnection {
+        val device = pickBondedDevice() ?: throw IOException("Glasses unavailable")
+        val prepared = sppPairing.prepare(device.address, ::sendSppProvisioning) ?: throw IOException("Pairing unavailable")
+        val candidate = device.createInsecureRfcommSocketToServiceRecord(BusConstants.AUDIO_SPP_UUID)
+        return object : PhoneAudioRelayConnection {
+            override val input get() = candidate.inputStream
+            override val output get() = candidate.outputStream
+            override fun close() = candidate.close()
+            override fun authenticate(nonces: SppAuthProtocol.RecentNonces): SppAuthProtocol.Session {
+                val deadline = SppHandshakeDeadline({ delay, task ->
+                    val future = sppDeadlines.schedule(task, delay, TimeUnit.MILLISECONDS)
+                    ({ future.cancel(false); Unit })
+                }, { runCatching { candidate.close() }; Unit })
+                try {
+                    candidate.connect()
+                    val session = sppPairing.authenticate(device.address, prepared, input, output, nonces)
+                    if (!deadline.complete()) throw IOException("Audio handshake timed out")
+                    return session
+                } catch (failure: Exception) { deadline.complete(); throw failure }
+            }
+        }
     }
 
     private fun isDebuggableBuild(): Boolean =
@@ -6162,6 +6281,10 @@ class BusHubService : Service() {
             activeInstance?.let { service ->
                 service.executor.execute { service.pushGlassesRepairConfig() }
             }
+        }
+
+        internal fun onGlassesAudioRelaySettingChanged() {
+            activeInstance?.updateAudioRelayGate()
         }
 
         internal fun isPhoneTtsReady(): Boolean =

@@ -1,0 +1,1 @@
+-keep class com.anezium.rokidbus.glasses.audio.GlassesAudioCaptureMain { *; }

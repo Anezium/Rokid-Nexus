@@ -5,6 +5,28 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SelfArmCommandBridgeProtocolTest {
+    @Test fun audioCommandsBindThePortAndRejectReplayAndMalformedShapes() {
+        val start = SelfArmCommandBridgeProtocol.AUDIO_CAPTURE_START
+        val request = SelfArmCommandBridgeProtocol.request(SECRET, start, NONCE, listOf("47000"))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Accepted(start, NONCE, listOf("47000")),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, emptySet()))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("replay"),
+            SelfArmCommandBridgeProtocol.verify(request, SECRET, setOf(NONCE)))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("auth"),
+            SelfArmCommandBridgeProtocol.verify(request.replace("47000", "47001"), SECRET, emptySet()))
+        listOf(emptyList(), listOf("0"), listOf("70000"), listOf("not-a-port"), listOf("47000", "extra")).forEach {
+            assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("format"),
+                SelfArmCommandBridgeProtocol.verify(SelfArmCommandBridgeProtocol.request(SECRET, start, NONCE, it), SECRET, emptySet()))
+        }
+        val stop = SelfArmCommandBridgeProtocol.AUDIO_CAPTURE_STOP
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Accepted(stop, NONCE),
+            SelfArmCommandBridgeProtocol.verify(SelfArmCommandBridgeProtocol.request(SECRET, stop, NONCE), SECRET, emptySet()))
+        assertEquals(SelfArmCommandBridgeProtocol.Verification.Rejected("format"),
+            SelfArmCommandBridgeProtocol.verify(SelfArmCommandBridgeProtocol.request(SECRET, stop, NONCE, listOf("1")), SECRET, emptySet()))
+        val expected = java.security.MessageDigest.getInstance("SHA-256").digest("$SECRET:audio-session:$NONCE".toByteArray())
+        org.junit.Assert.assertArrayEquals(expected, SelfArmCommandBridgeProtocol.audioSessionToken(SECRET, NONCE))
+    }
+
     @Test fun fileCleanupAuthenticatesExactlyTheFixedNoArgumentCommand() {
         val command = SelfArmCommandBridgeProtocol.WIFI_CLEANUP_FILES
         val request = SelfArmCommandBridgeProtocol.request(SECRET, command, NONCE)

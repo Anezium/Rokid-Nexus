@@ -9,6 +9,13 @@ import org.junit.Test
 
 class PathRulesTest {
     @Test
+    fun `audio relay is reserved and cannot be received by any plugin`() {
+        val path = BusPaths.CORE_AUDIO_RELAY_FRAME
+        assertTrue(PathRules.isReserved(path))
+        assertFalse(PathRules.isAllowedReceivePrefix(path, "relay", PluginCapability.entries.toSet()))
+    }
+
+    @Test
     fun `prefix matching respects segment boundaries`() {
         assertTrue(PathRules.matchesPrefix("/plugin/hello", "/plugin/hello"))
         assertTrue(PathRules.matchesPrefix("/plugin/hello/reply", "/plugin/hello"))

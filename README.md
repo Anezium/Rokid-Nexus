@@ -121,6 +121,8 @@ All of them install from the in-app **Nexus Store**, backed by the public
 SHA-256 and signer pinning enforced before every install, and show update
 badges when a newer release is published.
 
+**Glasses sound in earbuds**, in Settings under Voice, plays everything the glasses play — Hi Rokid's voice included — in the earbuds or headphones connected to your phone while the glasses stay quiet. It is off by default and needs both hubs 2.1.0 and the glasses command bridge.
+
 The phone hub also controls software that is already installed on the glasses.
 **Glasses apps** lists and opens launchable native APKs; **Keyboard & remote**
 provides previous/next/select/back navigation and sends transient keyboard

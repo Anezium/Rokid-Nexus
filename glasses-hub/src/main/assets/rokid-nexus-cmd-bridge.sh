@@ -10,7 +10,8 @@ SEENFILE="$BASE/$NAME.seen"
 PENDING_DISABLE="$BASE/$NAME.pending-disable"
 CHANNEL="/sdcard/Android/data/com.anezium.rokidbus.glasses/files/cmd_bridge"
 DOORBELL="$CHANNEL/doorbell"
-VERSION="2026-10-31.1"
+VERSION="2026-11-07.2"
+AUDIO_PIDFILE="$BASE/rokid-nexus-audio.pid"
 FILES_NETWORKS="$BASE/$NAME.files-networks"
 FILES_NETWORK_LIMIT=8
 CAPTURE_DIR="/sdcard/DCIM/Camera"
@@ -388,6 +389,43 @@ connect_files_network() (
   return "$files_connect_status"
 )
 
+audio_capture_pid_exists() {
+  [ -d "/proc/$1" ]
+}
+
+is_audio_capture_pid() {
+  # pid_cmdline renders app_process's trailing NUL padding as spaces, not class/argument text.
+  case "$(pid_cmdline "$1" | sed 's/ *$//')" in
+    "rokid-nexus-audio") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+wait_audio_capture_gone() {
+  audio_wait=0
+  while audio_capture_pid_exists "$audio_pid" && [ "$audio_wait" -lt 20 ]; do
+    sleep 0.1
+    audio_wait=$((audio_wait + 1))
+  done
+  ! audio_capture_pid_exists "$audio_pid"
+}
+
+stop_audio_capture() {
+  [ -f "$AUDIO_PIDFILE" ] || return 0
+  audio_pid="$(cat "$AUDIO_PIDFILE" 2>/dev/null)"
+  case "$audio_pid" in ""|0|1|*[!0-9]*) return 1 ;; esac
+  if audio_capture_pid_exists "$audio_pid"; then
+    is_audio_capture_pid "$audio_pid" || return 1
+    kill "$audio_pid" 2>/dev/null || :
+    if ! wait_audio_capture_gone; then
+      is_audio_capture_pid "$audio_pid" || return 1
+      kill -9 "$audio_pid" 2>/dev/null || :
+      wait_audio_capture_gone || return 1
+    fi
+  fi
+  rm -f "$AUDIO_PIDFILE"
+}
+
 process_request() {
   request_file="$1"
   request_name="${request_file##*/}"
@@ -427,7 +465,7 @@ EOF
     return
   fi
   case "$command" in
-    wifi_enable|wifi_disable|adb_wifi_enable|adb_wifi_disable|wifi_cleanup_files)
+    wifi_enable|wifi_disable|adb_wifi_enable|adb_wifi_disable|wifi_cleanup_files|audio_capture_stop)
       token="$field3"
       if [ -n "$field4" ] || [ -n "$field5" ] || [ -n "$field6" ] ||
         [ "$request_line" != "$command:$nonce:$token" ]; then
@@ -435,6 +473,20 @@ EOF
         return
       fi
       token_input="${SECRET}:${command}:${nonce}"
+      ;;
+    audio_capture_start)
+      audio_port="$field3"
+      token="$field4"
+      case "$audio_port" in
+        ""|*[!0-9]*) reject_request "$request_file" "$file_nonce" format; return ;;
+      esac
+      if [ "${#audio_port}" -gt 5 ] || [ "$audio_port" -lt 1024 ] || [ "$audio_port" -gt 65535 ] ||
+        [ -n "$field5" ] || [ -n "$field6" ] ||
+        [ "$request_line" != "$command:$nonce:$audio_port:$token" ]; then
+        reject_request "$request_file" "$file_nonce" format
+        return
+      fi
+      token_input="${SECRET}:${command}:${nonce}:${audio_port}"
       ;;
     wifi_connect|wifi_connect_files)
       ssid_encoded="$field3"
@@ -530,6 +582,24 @@ EOF
   rm -f "$request_file"
 
   case "$command" in
+    audio_capture_start)
+      if ! stop_audio_capture; then
+        write_response "$nonce" error
+        return
+      fi
+      audio_apk="$(pm path "$PACKAGE" 2>/dev/null | sed -n 's/^package://p' | head -n 1)"
+      if [ -n "$audio_apk" ]; then
+        audio_token="$(printf '%s' "${SECRET}:audio-session:${nonce}" | sha256sum | cut -d' ' -f1)"
+        NEXUS_AUDIO_TOKEN="$audio_token" CLASSPATH="$audio_apk" nohup app_process /system/bin --nice-name=rokid-nexus-audio com.anezium.rokidbus.glasses.audio.GlassesAudioCaptureMain "$audio_port" "$nonce" >/dev/null 2>&1 </dev/null &
+        echo "$!" > "$AUDIO_PIDFILE"
+        write_response "$nonce" ok
+      else
+        write_response "$nonce" error
+      fi
+      ;;
+    audio_capture_stop)
+      if stop_audio_capture; then write_response "$nonce" ok; else write_response "$nonce" error; fi
+      ;;
     wifi_connect_files)
       connect_result=error
       if [ "$(getprop ro.build.version.sdk 2>/dev/null)" = "32" ] &&
