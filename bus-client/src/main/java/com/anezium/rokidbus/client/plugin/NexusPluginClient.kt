@@ -334,6 +334,13 @@ class NexusPluginClient internal constructor(
         pages.launcherInteractiveVersion >= LauncherInteractiveContract.IMAGE_PAGES_VERSION
 
     /**
+     * Both hubs draw a row's own `mono1` icon left of its label (bundle v7). Without it the SDK
+     * strips `PageRow.icon` before sending and the rows are drawn as before; the page stays valid.
+     */
+    fun supportsRowIcons(): Boolean = supportsLauncherInteractive() &&
+        pages.launcherInteractiveVersion >= LauncherInteractiveContract.ROW_ICONS_VERSION
+
+    /**
      * Whether these glasses support the platform-owned activity tier.
      *
      * This intentionally ignores the current link. Like a pin, an activity is

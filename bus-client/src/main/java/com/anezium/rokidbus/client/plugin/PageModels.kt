@@ -516,6 +516,8 @@ internal class NexusPageChannel(
                     com.anezium.rokidbus.shared.LauncherArtwork.stripUnsupported(this, launcherInteractiveVersion)
                     // A pair below bundle v5 draws the default composer bar and text-only bubbles.
                     PageTemplateContract.stripConversationExtras(this, launcherInteractiveVersion)
+                    // A pair below bundle v7 draws rows without their own mark.
+                    PageTemplateContract.stripRowIcons(this, launcherInteractiveVersion)
                     if (launcherInteractiveVersion < LauncherInteractiveContract.ARTWORK_VERSION) {
                         remove("artwork")
                         remove("positionMs")
