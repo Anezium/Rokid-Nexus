@@ -53,6 +53,8 @@ class SettingsActivity : Activity() {
     private lateinit var bondValue: TextView
     private var speechValue: TextView? = null
     private var voiceValue: TextView? = null
+    private var audioRelayStatus: TextView? = null
+    private var audioRelaySubscription: AutoCloseable? = null
     private var displayValue: TextView? = null
     private var repairValue: TextView? = null
     private var repairStatus: TextView? = null
@@ -103,6 +105,9 @@ class SettingsActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        audioRelaySubscription = PhoneAudioRelayStore(this).addChangeListener {
+            runOnUiThread { renderAudioRelayStatus() }
+        }
         NexusPhoneState.addUpdateListener(updateStateListener)
         updateStateListener()
         val filter = IntentFilter(NexusPhoneState.ACTION_LOG)
@@ -115,6 +120,8 @@ class SettingsActivity : Activity() {
     }
 
     override fun onStop() {
+        audioRelaySubscription?.close()
+        audioRelaySubscription = null
         NexusPhoneState.removeUpdateListener(updateStateListener)
         runCatching { unregisterReceiver(logReceiver) }
         super.onStop()
@@ -126,6 +133,7 @@ class SettingsActivity : Activity() {
         // this activity sits behind one.
         renderSpeechRow()
         renderVoiceRow()
+        renderAudioRelayStatus()
         renderDisplayRow()
         resumeRecoveredNexusUpdateInstall()
         if (lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0) {
@@ -181,6 +189,8 @@ class SettingsActivity : Activity() {
             addView(speechRow(), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 10))
             addView(voiceRow(), NexusUi.block())
+            addView(BusTheme.gap(this@SettingsActivity, 10))
+            addView(glassesAudioRelayRow(), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 10))
             addView(
                 controlVisibilityRow(
@@ -669,6 +679,39 @@ class SettingsActivity : Activity() {
                 },
             )
         }
+
+    private fun glassesAudioRelayRow(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = NexusUi.bordered(this@SettingsActivity, NexusUi.PANEL, NexusUi.LINE, 15)
+        setPadding(NexusUi.dp(this@SettingsActivity, 15), NexusUi.dp(this@SettingsActivity, 10),
+            NexusUi.dp(this@SettingsActivity, 15), NexusUi.dp(this@SettingsActivity, 10))
+        val store = PhoneAudioRelayStore(this@SettingsActivity)
+        addView(LinearLayout(this@SettingsActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(LinearLayout(this@SettingsActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(NexusUi.rowTitle(this@SettingsActivity, "Glasses sound in earbuds"))
+                addView(BusTheme.gap(this@SettingsActivity, 3))
+                addView(NexusUi.rowSub(this@SettingsActivity,
+                    "When earbuds or headphones are your phone's output, what the glasses play — Hi Rokid's voice included — plays there and the glasses stay quiet."))
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(NexusUi.switch(this@SettingsActivity).apply {
+                isChecked = store.isEnabled()
+                setOnCheckedChangeListener { _, enabled ->
+                    store.setEnabled(enabled)
+                    BusHubService.onGlassesAudioRelaySettingChanged()
+                    renderAudioRelayStatus()
+                }
+            })
+        })
+        addView(BusTheme.gap(this@SettingsActivity, 6))
+        addView(NexusUi.rowSub(this@SettingsActivity, store.status().label).also { audioRelayStatus = it })
+    }
+
+    private fun renderAudioRelayStatus() {
+        audioRelayStatus?.text = PhoneAudioRelayStore(this).status().label
+    }
 
     private fun glassesRepairNowRow(): LinearLayout {
         val value = NexusUi.metaLabel(this, "Repair ›", NexusUi.GREEN)

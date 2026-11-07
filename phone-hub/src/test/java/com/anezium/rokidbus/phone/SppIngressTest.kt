@@ -44,6 +44,18 @@ class SppIngressTest {
         registrations.clear()
     }
 
+    @Test fun audioRelayBusIngressIsDroppedBeforeLocalDelivery() {
+        val type = BusHubService::class.java.declaredClasses.single { it.simpleName == "Registration" }
+        val constructor = type.declaredConstructors.single { it.parameterCount == 8 }.apply { isAccessible = true }
+        registrations += constructor.newInstance("audio-observer", listOf("/core"), Process.myUid() + 1,
+            callback.asBinder(), callback, IBinder.DeathRecipient {}, null, emptySet<Any>())
+        val ingress = BusHubService::class.java.getDeclaredMethod("routeRemote", BusEnvelope::class.java).apply { isAccessible = true }
+        listOf("/core/audio-relay", "/core/audio-relay/frame", "/core/audio-relay/keepalive").forEach {
+            ingress.invoke(hub, BusEnvelope(it)); ingress.invoke(hub, BusEnvelope(it, binary = byteArrayOf(1)))
+        }
+        assertTrue(received.isEmpty())
+    }
+
     @Test fun binderJsonAndBinaryDropReservedControlsBeforeDispatch() {
         for (path in listOf("/hub/spp", "/hub/spp/", SppKeyProvisioning.PATH, "/hub/spp/unknown")) {
             val offer = SppKeyProvisioning.offer(ByteArray(32) { 42 }).copy(path = path)
