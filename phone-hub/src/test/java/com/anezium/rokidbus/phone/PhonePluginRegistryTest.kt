@@ -313,6 +313,48 @@ class PhonePluginRegistryTest {
         registry.close()
     }
 
+    @Test
+    fun `a page provider without a full app is listed as pages-only for v7 glasses and withheld from older ones`() {
+        val pagesOnly = principal("meta", launchable = false, iconKey = "chat")
+            .let { it.copy(descriptor = it.descriptor.copy(launchable = false, pageSessionVersion = 1)) }
+        val headless = principal("tasker", launchable = false, iconKey = "bolt")
+        val app = principal("hello", launchable = true, iconKey = "star")
+        val catalog = PluginCatalog(
+            listOf(pagesOnly, headless, app).map { catalogEntry(it, PluginCatalogState.ENABLED, launchable = it.descriptor.launchable) },
+        )
+        var glassesReadPagesOnly = false
+        val sent = mutableListOf<BusEnvelope>()
+        val registry = PhonePluginRegistry(
+            context = RuntimeEnvironment.getApplication(),
+            plugins = emptyList(),
+            sendEnvelope = { envelope ->
+                sent += envelope
+                null
+            },
+            capabilitiesProvider = { 0 },
+            logger = {},
+            catalogProvider = { catalog },
+            glyphReader = { emptyList() },
+            pagesOnlyEntries = { glassesReadPagesOnly },
+        )
+
+        registry.syncLauncherList()
+        val older = sent.single().payload.getJSONArray("plugins")
+        assertEquals(listOf("hello"), (0 until older.length()).map { older.getJSONObject(it).getString("id") })
+
+        glassesReadPagesOnly = true
+        registry.syncLauncherList()
+        val newer = sent.last().payload.getJSONArray("plugins")
+        val entries = (0 until newer.length()).associate { index ->
+            val entry = newer.getJSONObject(index)
+            entry.getString("id") to entry.opt(PhonePluginRegistry.FIELD_LAUNCHABLE)
+        }
+        // The headless plugin provides no pages: it has no row to open and stays out of the list.
+        assertEquals(mapOf("meta" to false, "hello" to null), entries)
+        assertEquals(1, newer.getJSONObject(0).getInt("pageSessionVersion"))
+        registry.close()
+    }
+
 
     private class RecordingRuntime : ExternalPluginRuntime {
         val bound = mutableListOf<String>()

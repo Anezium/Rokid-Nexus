@@ -606,6 +606,35 @@ class PhonePageBrokerLauncherTest {
         assertEquals(1, invocations().size)
     }
 
+    private val rowMark = JSONObject().put("encoding", "mono1").put("width", 16).put("height", 16)
+        .put("data", java.util.Base64.getEncoder().encodeToString(ByteArray(32) { 0x3C }))
+
+    private fun iconList() = JSONObject().put("items", JSONArray().put(JSONObject().put("id", "wa").put("label", "WhatsApp").put("icon", rowMark)))
+
+    @Test
+    fun `v7 glasses get a row's icon as the provider sent it`() {
+        val registration = open(launcher = 7)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(body = iconList(), actions = JSONArray()), registration))
+        assertEquals("mono1", responses().single().getJSONObject("body").getJSONArray("items").getJSONObject(0).getJSONObject("icon").getString("encoding"))
+    }
+
+    @Test
+    fun `a malformed row icon is an invalid page where the icon is read`() {
+        val registration = open(launcher = 7)
+        val broken = iconList().apply { getJSONArray("items").getJSONObject(0).put("icon", "nope") }
+        assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, broker.onProvider(BusPaths.PAGE_RESPONSE, page(body = broken, actions = JSONArray()), registration))
+        assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, responses().single().getString("error"))
+    }
+
+    @Test
+    fun `glasses below v7 get the plain row`() {
+        val registration = open(launcher = 6)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(body = iconList(), actions = JSONArray()), registration))
+        val row = responses().single().getJSONObject("body").getJSONArray("items").getJSONObject(0)
+        assertFalse(row.has("icon"))
+        assertEquals("WhatsApp", row.getString("label"))
+    }
+
     @Test
     fun `glasses below v5 get the default bar and text-only bubbles`() {
         val registration = open(launcher = 4)

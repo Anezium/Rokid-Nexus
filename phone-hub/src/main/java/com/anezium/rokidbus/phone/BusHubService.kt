@@ -598,6 +598,10 @@ class BusHubService : Service() {
      * since the hub started. Kept across link loss like activity support.
      */
     @Volatile private var remoteLauncherInteractiveVersion: Int? = null
+
+    /** Whether the glasses list a page provider without a full app as an Applications entry (bundle v7). */
+    private fun pagesOnlyEntriesListed(): Boolean =
+        (remoteLauncherInteractiveVersion ?: 0) >= LauncherInteractiveContract.ROW_ICONS_VERSION
     private val renderedMapNegotiation = PhoneRenderedMapNegotiation()
     private val mapDiagnostics = MapFeedbackDiagnostics(SystemClock::elapsedRealtime, ::log)
     @Volatile private var remoteInkSurfaceVersion = 0
@@ -1343,6 +1347,7 @@ class BusHubService : Service() {
             externalController = externalPluginController,
             journal = pluginBusJournal,
             pageVersion = { entry -> entry.principal?.let { pageProviderFor(it.descriptor.id)?.descriptor?.pageSessionVersion } ?: 0 },
+            pagesOnlyEntries = ::pagesOnlyEntriesListed,
         )
         mediaSyncCoordinator = MediaSyncCoordinator(
             context = applicationContext,
@@ -5815,7 +5820,10 @@ class BusHubService : Service() {
                 0
             }
         // Set before the activity resend below: its stamps, capacity and trim follow this version.
+        val pagesOnlyBefore = pagesOnlyEntriesListed()
         remoteLauncherInteractiveVersion = GlassesHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(advertised)
+        // The launcher list went out on link-up, before these glasses said whether they read pages-only entries.
+        if (pagesOnlyBefore != pagesOnlyEntriesListed() && ::pluginRegistry.isInitialized && isCxrUp()) pluginRegistry.syncLauncherList()
         renderedMapNegotiation.announce(advertised, renderedMapOrigin)
         remoteInkSurfaceVersion = acceptedInkVersion
         remoteEditableSurfaceVersion = if (editableSupported) EditableSurfaceContract.VERSION else 0

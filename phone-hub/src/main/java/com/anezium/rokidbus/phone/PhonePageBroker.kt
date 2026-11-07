@@ -818,6 +818,8 @@ class PhonePageBroker(
             com.anezium.rokidbus.shared.LauncherArtwork.stripUnsupported(body, launcherVersion())
             // Glasses below bundle v5 draw the default composer bar and text-only bubbles.
             PageTemplateContract.stripConversationExtras(body, launcherVersion())
+            // Glasses below bundle v7 draw rows without their own mark.
+            PageTemplateContract.stripRowIcons(body, launcherVersion())
         }
         if (launcherVersion() < LauncherInteractiveContract.ARTWORK_VERSION) {
             for (body in listOfNotNull(compatible.optJSONObject("body"), compatible.optJSONObject("replacement")?.optJSONObject("body"))) {

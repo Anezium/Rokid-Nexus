@@ -36,6 +36,11 @@ class PhonePluginRegistry(
     glyphReader: ((PhonePluginPrincipal) -> List<GlyphContract.CustomGlyph>)? = null,
     /** The page version an approved entry provides; 0 for built-ins and plugins without pages. */
     private val pageVersion: (PluginCatalogEntry) -> Int = { it.principal?.descriptor?.pageSessionVersion ?: 0 },
+    /**
+     * Whether the glasses list a page provider that declares no full app (bundle v7). Older
+     * glasses read every entry as launchable, so such an entry is withheld from them.
+     */
+    private val pagesOnlyEntries: () -> Boolean = { false },
 ) : NexusPluginHost {
     private data class Subscription(
         val pathPrefix: String,
@@ -179,12 +184,17 @@ class PhonePluginRegistry(
 
     fun syncLauncherList() {
         val catalog = catalog()
+        val pagesOnly = pagesOnlyEntries()
         send(
             BusPaths.LAUNCHER_LIST,
             JSONObject().put(
                 "plugins",
                 JSONArray().also { array ->
-                    catalog.launchableEntries.forEach { entry ->
+                    catalog.entries.forEach { entry ->
+                        if (entry.state != PluginCatalogState.BUILT_IN && entry.state != PluginCatalogState.ENABLED) return@forEach
+                        val pages = pageVersion(entry)
+                        // An enabled provider with `LAUNCHABLE=false` is an Applications entry whose row opens its pages.
+                        if (!entry.launchable && !(pagesOnly && pages > 0)) return@forEach
                         array.put(
                             JSONObject()
                                 .put("id", entry.id)
@@ -192,9 +202,10 @@ class PhonePluginRegistry(
                                 .apply { entry.iconKey?.let { put("iconKey", it) } }
                                 .apply {
                                     // Absent means no pages, which is what an old glasses hub assumes anyway.
-                                    pageVersion(entry).takeIf { it > 0 }?.let {
+                                    pages.takeIf { it > 0 }?.let {
                                         put(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION, it)
                                     }
+                                    if (!entry.launchable) put(FIELD_LAUNCHABLE, false)
                                 },
                         )
                     }
@@ -418,5 +429,10 @@ class PhonePluginRegistry(
         if (!plugin.handlesBack) return outgoing
         if (outgoing === this) outgoing = JSONObject(toString())
         return outgoing.put("handlesBack", true)
+    }
+
+    companion object {
+        /** Absent means launchable; false marks a pages-only Applications entry (bundle v7). */
+        const val FIELD_LAUNCHABLE = "launchable"
     }
 }
