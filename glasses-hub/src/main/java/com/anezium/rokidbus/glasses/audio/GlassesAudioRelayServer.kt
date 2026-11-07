@@ -16,12 +16,13 @@ import com.anezium.rokidbus.shared.SppPairingKeyStore
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.security.SecureRandom
+import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** Owns only audio admission/session callbacks; it has no bus link-state callback. */
 internal class GlassesAudioRelayServer(
-    keys: SppPairingKeyStore,
+    private val keys: SppPairingKeyStore,
     execute: (() -> Unit) -> Unit,
     schedule: (Long, () -> Unit) -> (() -> Unit),
     nowMs: () -> Long,
@@ -93,6 +94,9 @@ internal class GlassesAudioRelayServer(
     }
 
     fun installKey(key: ByteArray) {
+        // The bus may have refused a replacement because persistence failed.
+        val persisted = runCatching { keys.load() }.getOrNull() ?: return
+        if (!MessageDigest.isEqual(persisted, key)) return
         val retired = synchronized(lock) {
             expectedKey = key.copyOf()
             peer.takeIf { admittedKey?.contentEquals(key) == false }

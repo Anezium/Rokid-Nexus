@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.glasses.audio
 
 import com.anezium.rokidbus.glasses.SppPeer
+import com.anezium.rokidbus.glasses.AuthenticatedSppServer
 import com.anezium.rokidbus.shared.SppAuthProtocol
 import com.anezium.rokidbus.shared.SppPairingKeyStore
 import com.anezium.rokidbus.shared.BusEnvelope
@@ -16,6 +17,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import java.io.ByteArrayOutputStream
 
 class GlassesAudioRelayServerTest {
@@ -25,11 +28,16 @@ class GlassesAudioRelayServerTest {
         val release = CountDownLatch(1)
         val connected = AtomicBoolean()
         val peer = Peer()
+        val persisted = AtomicReference(ByteArray(32) { 42 })
+        val loads = AtomicInteger()
         val server = GlassesAudioRelayServer(object : SppPairingKeyStore {
             override fun load(): ByteArray {
-                loading.countDown()
-                check(release.await(3, TimeUnit.SECONDS))
-                return ByteArray(32) { 42 }
+                val snapshot = persisted.get()
+                if (loads.incrementAndGet() == 1) {
+                    loading.countDown()
+                    check(release.await(3, TimeUnit.SECONDS))
+                }
+                return snapshot
             }
             override fun save(key: ByteArray) = false
         }, { workers.execute(it) }, { _, _ -> ({}) }, { 0L }) { _, _ ->
@@ -39,7 +47,9 @@ class GlassesAudioRelayServerTest {
         try {
             workers.execute { server.accept(peer) }
             assertTrue(loading.await(2, TimeUnit.SECONDS))
-            server.installKey(ByteArray(32) { 9 })
+            val replacement = ByteArray(32) { 9 }
+            persisted.set(replacement)
+            server.installKey(replacement)
             release.countDown()
             assertTrue(peer.closed.await(2, TimeUnit.SECONDS))
             assertFalse(connected.get())
@@ -51,6 +61,7 @@ class GlassesAudioRelayServerTest {
 
     @Test fun `watchdog closes authenticated pipe with peer reader blocked and permits another session`() {
         val workers = Executors.newCachedThreadPool()
+        val outstanding = AtomicInteger()
         val key = ByteArray(32) { 42 }
         val now = AtomicLong()
         val ticks = CopyOnWriteArrayList<() -> Unit>()
@@ -59,7 +70,10 @@ class GlassesAudioRelayServerTest {
         val server = GlassesAudioRelayServer(object : SppPairingKeyStore {
             override fun load() = key
             override fun save(key: ByteArray) = false
-        }, { workers.execute(it) }, { _, _ -> ({}) }, now::get) { send, close ->
+        }, { task ->
+            outstanding.incrementAndGet()
+            workers.execute { try { task() } finally { outstanding.decrementAndGet() } }
+        }, { _, _ -> ({}) }, now::get) { send, close ->
             GlassesAudioRelaySession({
                 val pipe = PipedInputStream(8192)
                 val producer = PipedOutputStream(pipe)
@@ -91,7 +105,8 @@ class GlassesAudioRelayServerTest {
             assertTrue(first.closed.await(2, TimeUnit.SECONDS)); assertTrue(localClosed.get())
             // A subsequent admission can proceed once the old reader's teardown completes.
             val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
-            while (workers.activeCountForTest() && System.nanoTime() < end) Thread.sleep(2)
+            while (outstanding.get() != 0 && System.nanoTime() < end) Thread.sleep(2)
+            assertEquals(0, outstanding.get())
             server.accept(second)
             SppAuthProtocol.connect(second.phoneInput, second.phoneOutput, key, SppAuthProtocol.RecentNonces())
         } finally {
@@ -99,9 +114,6 @@ class GlassesAudioRelayServerTest {
             workers.shutdownNow(); assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS))
         }
     }
-
-    private fun java.util.concurrent.ExecutorService.activeCountForTest(): Boolean =
-        (this as java.util.concurrent.ThreadPoolExecutor).activeCount > 0
 
     private class Peer : SppPeer {
         val phoneInput = PipedInputStream(8192)
@@ -114,11 +126,12 @@ class GlassesAudioRelayServerTest {
     }
     @Test fun `audio authentication refuses a second peer and has no bus callbacks`() {
         val key = ByteArray(32) { 42 }
+        val persisted = AtomicReference(key)
         val workers = Executors.newCachedThreadPool()
         val connected = CountDownLatch(1)
         val first = Peer(); val second = Peer()
         val server = GlassesAudioRelayServer(object : SppPairingKeyStore {
-            override fun load() = key
+            override fun load() = persisted.get()
             override fun save(key: ByteArray): Boolean = error("Audio must not persist a pairing key")
         }, { workers.execute(it) }, { _, _ -> ({}) }, { 0L }) { send, close ->
             connected.countDown()
@@ -133,10 +146,45 @@ class GlassesAudioRelayServerTest {
             assertEquals(1L, first.closed.count)
             server.installKey(key)
             assertEquals(1L, first.closed.count)
-            server.installKey(ByteArray(32) { 9 })
+            val replacement = ByteArray(32) { 9 }
+            persisted.set(replacement)
+            server.installKey(replacement)
             assertTrue(first.closed.await(1, TimeUnit.SECONDS))
         } finally {
             first.close(); second.close(); workers.shutdownNow()
+            assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS))
+        }
+    }
+
+    @Test fun `failed bus persistence preserves audio authentication with the retained key`() {
+        val workers = Executors.newCachedThreadPool()
+        val retained = ByteArray(32) { 42 }
+        val replacement = ByteArray(32) { 9 }
+        val saves = AtomicInteger()
+        val connected = CountDownLatch(1)
+        val peer = Peer()
+        val keys = object : SppPairingKeyStore {
+            override fun load() = retained
+            override fun save(key: ByteArray): Boolean { saves.incrementAndGet(); return false }
+        }
+        val audio = GlassesAudioRelayServer(keys, { workers.execute(it) }, { _, _ -> ({}) }, { 0L }) { send, close ->
+            connected.countDown()
+            GlassesAudioRelaySession({ error("No start received") }, send, close, { workers.execute(it) }, { _, _ -> ({}) }, { 0L })
+        }
+        val bus = AuthenticatedSppServer(keys, { workers.execute(it) }, { _, _ -> ({}) }, { 0L }, {}, {})
+        try {
+            bus.installKey(replacement)
+            assertEquals(1, saves.get())
+            audio.installKey(replacement)
+            audio.accept(peer)
+            SppAuthProtocol.connect(peer.phoneInput, peer.phoneOutput, retained, SppAuthProtocol.RecentNonces())
+            assertTrue(connected.await(2, TimeUnit.SECONDS))
+            // A repeated failed offer must also leave an already authenticated audio peer alive.
+            audio.installKey(replacement)
+            assertEquals(1L, peer.closed.count)
+            assertArrayEquals(retained, keys.load())
+        } finally {
+            peer.close(); workers.shutdownNow()
             assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS))
         }
     }
