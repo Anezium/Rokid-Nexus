@@ -58,12 +58,14 @@ object SppServerManager {
             val server = sessions
             if (server != null) {
                 server.installKey(copy)
+                com.anezium.rokidbus.glasses.audio.GlassesAudioRelayServer.installPairingKey(copy)
             } else {
                 val keys = SppKeyStore(application)
                 val loaded = runCatching { keys.load() }
                 val previous = loaded.getOrNull()
                 if (previous != null && MessageDigest.isEqual(previous, copy)) return@execute
                 if (keys.save(copy)) {
+                    com.anezium.rokidbus.glasses.audio.GlassesAudioRelayServer.installPairingKey(copy)
                     log(if (loaded.isFailure || previous != null) "SPP pairing key replaced" else "SPP pairing key installed")
                 }
             }

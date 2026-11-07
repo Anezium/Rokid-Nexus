@@ -43,6 +43,18 @@ class SppIngressTest {
         registrations.clear()
     }
 
+    @Test fun audioRelayBusIngressIsDroppedBeforeDispatch() {
+        val type = GlassesHub::class.java.declaredClasses.single { it.simpleName == "Registration" }
+        val constructor = type.declaredConstructors.single { it.parameterCount == 7 }.apply { isAccessible = true }
+        registrations += constructor.newInstance("audio-observer", listOf("/core"), Process.myUid() + 1, true,
+            callback.asBinder(), callback, IBinder.DeathRecipient {})
+        listOf("/core/audio-relay", "/core/audio-relay/frame", "/core/audio-relay/keepalive").forEach {
+            hub.onRemoteEnvelope(BusEnvelope(it))
+            hub.onRemoteEnvelope(BusEnvelope(it, binary = byteArrayOf(1)))
+        }
+        assertTrue(received.isEmpty())
+    }
+
     @Test fun binderJsonAndBinaryDropReservedControlsBeforeDispatch() {
         for (path in listOf("/hub/spp", "/hub/spp/", SppKeyProvisioning.PATH, "/hub/spp/unknown")) {
             val offer = SppKeyProvisioning.offer(ByteArray(32) { 42 }).copy(path = path)

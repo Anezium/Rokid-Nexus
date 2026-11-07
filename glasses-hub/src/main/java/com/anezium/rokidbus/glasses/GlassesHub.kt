@@ -107,6 +107,7 @@ object GlassesHub {
     )
 
     private val started = AtomicBoolean(false)
+    private val audioBusIngressLogged = AtomicBoolean(false)
     private val registrations = CopyOnWriteArrayList<Registration>()
     private val launcherListeners = CopyOnWriteArrayList<(List<LauncherEntry>) -> Unit>()
     private val pluginGlyphCache = PluginGlyphCache()
@@ -237,6 +238,7 @@ object GlassesHub {
                 WirelessAdbController.restorePairingExpiry(applicationContext)
             }
             SppServerManager.ensureStarted(context.applicationContext)
+            com.anezium.rokidbus.glasses.audio.GlassesAudioRelayServer.ensureStarted(context.applicationContext)
             CxrBusBridge.start(context.applicationContext)
             // Rokid's firmware blocks MY_PACKAGE_REPLACED (and other manifest broadcasts)
             // to third-party apps, so BootReceiver cannot re-arm accessibility after an
@@ -308,6 +310,10 @@ object GlassesHub {
     }
 
     fun onRemoteEnvelope(envelope: BusEnvelope) {
+        if (BusPaths.isAudioRelayPath(envelope.path)) {
+            if (audioBusIngressLogged.compareAndSet(false, true)) log("Dropped audio relay traffic on bus ingress")
+            return
+        }
         if (SppKeyProvisioning.isReserved(envelope.path)) return
         // File chunks arrive dozens per second; the SPP reader already logs each frame.
         if (envelope.path != GlassesFilesContract.DATA_PATH) log("remote RX ${envelope.path} id=${envelope.id}")
@@ -803,6 +809,7 @@ object GlassesHub {
                 BusCapabilityBits.GLASSES_FILES_HOTSPOT or
                 BusCapabilityBits.LAUNCHER_INTERACTIVE or
                 BusCapabilityBits.RENDERED_MAP or
+                BusCapabilityBits.GLASSES_AUDIO_RELAY or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
             imageSurfaceVersion = ImageSurfaceContract.VERSION,
             pinSurfaceVersion = PinSurfaceContract.VERSION,
