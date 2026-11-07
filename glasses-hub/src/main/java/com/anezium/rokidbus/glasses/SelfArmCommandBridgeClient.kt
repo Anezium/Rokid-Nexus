@@ -48,6 +48,8 @@ internal object SelfArmCommandBridgeProtocol {
     const val WIFI_CLEANUP_FILES = "wifi_cleanup_files"
     const val ADB_WIFI_ENABLE = "adb_wifi_enable"
     const val ADB_WIFI_DISABLE = "adb_wifi_disable"
+    const val AUDIO_CAPTURE_START = "audio_capture_start"
+    const val AUDIO_CAPTURE_STOP = "audio_capture_stop"
     const val MAX_REQUEST_BYTES = 512
     private val secretRegex = Regex("[0-9a-f]{64}")
     private val nonceRegex = Regex("[0-9a-f]{32}")
@@ -64,6 +66,8 @@ internal object SelfArmCommandBridgeProtocol {
         DELETE_CAPTURE,
         ADB_WIFI_ENABLE,
         ADB_WIFI_DISABLE,
+        AUDIO_CAPTURE_START,
+        AUDIO_CAPTURE_STOP,
     )
 
     sealed interface Verification {
@@ -129,7 +133,9 @@ internal object SelfArmCommandBridgeProtocol {
         if (command !in allowedCommands) return Verification.Rejected("command")
         val arguments = fields.subList(2, fields.lastIndex)
         val validShape = when (command) {
-            WIFI_ENABLE, WIFI_DISABLE, ADB_WIFI_ENABLE, ADB_WIFI_DISABLE, WIFI_CLEANUP_FILES -> arguments.isEmpty()
+            WIFI_ENABLE, WIFI_DISABLE, ADB_WIFI_ENABLE, ADB_WIFI_DISABLE, WIFI_CLEANUP_FILES, AUDIO_CAPTURE_STOP -> arguments.isEmpty()
+            AUDIO_CAPTURE_START -> arguments.size == 1 && Regex("[0-9]{1,5}").matches(arguments[0]) &&
+                arguments[0].toIntOrNull() in 1024..65535
             WIFI_CONNECT, WIFI_CONNECT_FILES -> arguments.size == 3 &&
                 arguments[0].length in 1..172 && encodedArgumentRegex.matches(arguments[0]) &&
                 when (WifiConnectSecurity.fromCommandKeyword(arguments[2])) {
@@ -158,9 +164,37 @@ internal object SelfArmCommandBridgeProtocol {
     }
 
     fun isValidSecret(secretHex: String): Boolean = secretRegex.matches(secretHex)
+
+    fun audioSessionToken(secretHex: String, nonce: String): ByteArray {
+        require(secretRegex.matches(secretHex) && nonceRegex.matches(nonce))
+        return MessageDigest.getInstance("SHA-256").digest("$secretHex:audio-session:$nonce".toByteArray(Charsets.UTF_8))
+    }
 }
 
 internal object SelfArmCommandBridgeClient {
+    fun startAudioCapture(context: Context, port: Int, nonce: String): Boolean {
+        if (port !in 1024..65535) return false
+        return submitAudio(context, SelfArmCommandBridgeProtocol.AUDIO_CAPTURE_START, nonce, listOf(port.toString()))
+    }
+
+    fun stopAudioCapture(context: Context): Boolean =
+        submitAudio(context, SelfArmCommandBridgeProtocol.AUDIO_CAPTURE_STOP, randomHex(16), emptyList())
+
+    // Submission alone is not success: the authenticated loopback attachment is the receipt.
+    private fun submitAudio(context: Context, command: String, nonce: String, arguments: List<String>): Boolean = runCatching {
+        val secret = loadSecretHex(context) ?: return false
+        val request = SelfArmCommandBridgeProtocol.request(secret, command, nonce, arguments)
+        if (SelfArmCommandBridgeProtocol.verify(request, secret, emptySet()) !is SelfArmCommandBridgeProtocol.Verification.Accepted) return false
+        val channel = ensureChannelDir(context) ?: return false
+        val temporary = File(channel, ".$nonce.audio.${UUID.randomUUID()}.tmp")
+        try {
+            temporary.writeText(request, Charsets.UTF_8)
+            if (!temporary.renameTo(File(channel, "$nonce.request"))) return false
+            ringDoorbell(File(channel, DOORBELL_NAME), nonce)
+            true
+        } finally { temporary.delete() }
+    }.getOrDefault(false)
+
     private const val CHANNEL_NAME = "cmd_bridge"
     private const val DOORBELL_NAME = "doorbell"
     private const val SECRET_FILE_NAME = "rokid-nexus-cmd-bridge.secret"
