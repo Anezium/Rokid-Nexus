@@ -157,21 +157,9 @@ jobs:
             exit 1
           fi
 
-      - name: Run the plugin's unit tests
-        if: env.PLUGIN_ID != 'patcher'
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./gradlew ":$PLUGIN_MODULE:testDebugUnitTest" -PskipCxrGlobal=true
-
-      - name: Run Patcher unit tests
+      - name: Check Patcher bundle preparation
         if: env.PLUGIN_ID == 'patcher'
-        env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ secrets.MORPHE_PACKAGES_TOKEN }}
-        run: |
-          python3 -m unittest discover -s plugins/patcher/scripts
-          ./gradlew :plugin-patcher:testDebugUnitTest -PskipCxrGlobal=true
+        run: python3 -m unittest discover -s plugins/patcher/scripts
 
       - name: Decode release keystore outside the checkout
         shell: bash
@@ -189,7 +177,7 @@ jobs:
           printf '%s' "$NEXUS_RELEASE_KEYSTORE_B64" | base64 --decode > "$keystore_path"
           echo "NEXUS_RELEASE_KEYSTORE=$keystore_path" >> "$GITHUB_ENV"
 
-      - name: Build signed release APK
+      - name: Test and build signed release APK
         if: env.PLUGIN_ID != 'patcher'
         shell: bash
         env:
@@ -197,16 +185,19 @@ jobs:
           NEXUS_RELEASE_KEY_ALIAS: ${{ secrets.NEXUS_RELEASE_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          ./gradlew ":$PLUGIN_MODULE:assembleRelease" -PskipCxrGlobal=true
+          ./gradlew ":$PLUGIN_MODULE:testReleaseUnitTest" ":$PLUGIN_MODULE:assembleRelease" \
+            -PskipCxrGlobal=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false
 
-      - name: Build signed Patcher APK
+      - name: Test and build signed Patcher APK
         if: env.PLUGIN_ID == 'patcher'
         env:
           NEXUS_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.NEXUS_RELEASE_KEYSTORE_PASSWORD }}
           NEXUS_RELEASE_KEY_ALIAS: ${{ secrets.NEXUS_RELEASE_KEY_ALIAS }}
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.MORPHE_PACKAGES_TOKEN }}
-        run: ./gradlew :plugin-patcher:assembleRelease -PskipCxrGlobal=true
+        run: >-
+          ./gradlew :plugin-patcher:testReleaseUnitTest :plugin-patcher:assembleRelease
+          -PskipCxrGlobal=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false
 
       - name: Prepare artifact and release notes
         shell: bash

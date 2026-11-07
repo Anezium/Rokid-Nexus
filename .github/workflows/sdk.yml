@@ -2,10 +2,15 @@ name: SDK
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  group: sdk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify-sdk:
@@ -16,7 +21,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: Test and lint public modules
         run: ./gradlew :shared:testDebugUnitTest :bus-client:testDebugUnitTest :ink-engine:test :shared:lintDebug :bus-client:lintDebug -PskipCxrGlobal=true
       - name: Publish SDK to the runner Maven local repository
