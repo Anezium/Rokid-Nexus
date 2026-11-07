@@ -24,6 +24,19 @@ plugins on Media Deck, Navigation and Relay
 ([Choosing a HUD kind](../docs/PLUGIN_SDK.md#choosing-a-hud-kind)). Nexus 2.0.0 ships SDK 0.24.0;
 plugins built against 0.23.0 must be rebuilt against 0.24.0.
 
+**Hard rule: new glasses UI uses launcher pages.** Do not add `NexusCard`
+menus, pickers or confirmations, or image-surface preview steps. The SDK marks
+`NexusCard`, its row models, `showCard`/`updateCard`, `NexusImage` and
+`showImage`/`updateImage` deprecated. Use `PageBody.Image` (launcher v6,
+`supportsImagePages()`) for a full photo preview and Send/Retake/Cancel page
+actions. A visible page action can call `nexusSnapshotSession` with the existing
+signer-bound `camera` grant, without an immersion or `PLUGIN_OPEN`. Return a
+live Capturing summary immediately; publish the image on completion within the
+page lease, never block the eight-second action budget. Cancel/discard work on
+cover, close, refresh or lost registration; never auto-send a capture.
+Notices, pins, activities, Ink, editable notice fields and audio/speech remain
+supported; no additional capability or plugin bus path is introduced.
+
 ## 1. What a plugin is
 
 A Nexus plugin is a **headless phone APK**. It has no launcher icon and no visible
@@ -407,15 +420,16 @@ central ~60% of the canvas); the Store downloads and shows it via the feed's
 (and update `iconAsset` accordingly): phones cache store icons by URL for seven
 days, so replacing the bytes at the same URL leaves stale icons on devices.
 
-The ordinary surface API renders **structured rows**, not free text: build
-`NexusCard` / `NexusReader` / `NexusTimedLines` / `NexusMedia` / image surfaces
-and let the glasses lay them out. For an authored layout, use a separately
+New browsing UI uses typed `PageBody` templates, including `Document`, `Media`
+and `Image`, and lets the launcher lay them out. Ordinary surfaces remain for
+compatibility and specialized engaged sessions; never copy their deprecated
+card menus or image previews into new work. For an authored layout, use a separately
 granted `NexusInkSurfaceSession`: the phone compiles a strict `.ink` subset into
 an inert document and the glasses project it to native Views. Ink v1 executes no
 JavaScript, fetches no URLs, and exposes only bounded data binding plus action
 ids; use the typed SDK instead of hand-building `/ink/*` payloads. An Ink
 `image` is currently a placeholder reference because the public session has no
-asset transfer; use the ordinary image surface for real pixels.
+asset transfer; use a launcher `PageBody.Image` for photo previews.
 
 Never pre-format monospace strings. Input arrives as DPAD-style events
 (`/system/plugin/input`): forward/back swipes, tap (ENTER), BACK. BACK at your root
@@ -425,8 +439,8 @@ Never pre-format monospace strings. Input arrives as DPAD-style events
 
 Declare `ink_surface`, create one session per local surface id, and gate rich UI
 on the live renderer bit. `supportsInkSurface` reports Ink v1 plus SPP, while
-`show` separately checks the plugin grant. Keep a card fallback for either kind
-of failure.
+`show` separately checks the plugin grant. Report unavailability on your launcher
+page when Ink cannot open; do not build a new card fallback.
 
 ```kotlin
 private var ink: NexusInkSurfaceSession? = null
@@ -440,7 +454,7 @@ override fun onNexusOpen() {
             handlesBack = false,
         ) == NexusSdkResult.SENT
     if (!shown) {
-        nexusSurfaceSession("main")?.showCard(NexusCard("Status", listOf("72")))
+        // Keep the launcher page available and report that Ink could not open.
     }
 }
 

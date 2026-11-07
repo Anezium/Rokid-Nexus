@@ -90,31 +90,17 @@ the consent, denial, and provider-error UX.
 
 ```kotlin
 class HelloPluginService : NexusPluginService() {
-    private var surface: NexusSurfaceSession? = null
-
-    override fun onNexusOpen() {
-        surface = nexusSurfaceSession("main")
-        surface?.showCard(
-            NexusCard(
-                title = "Hello Nexus",
-                lines = listOf("> First", "  Second"),
-                footer = "swipe · tap · back",
-            ),
+    override fun onNexusPageRequest(request: NexusPageRequest): NexusPage =
+        NexusPage.Content(
+            revision = (request.minimumRevision ?: 0) + 1,
+            title = "Hello Nexus",
+            body = PageBody.Summary(primary = "Welcome", text = "Your content belongs in the launcher."),
         )
-    }
-
-    override fun onNexusInput(event: NexusInputEvent) {
-        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_BACK) {
-            surface?.hide()
-        }
-    }
-
-    override fun onNexusClose() {
-        surface?.hide()
-        surface = null
-    }
 }
 ```
+
+Declare `rokidbus.plugin.pages = 1` on the service ([Opting in](#opting-in)).
+The wearer navigates back through the launcher; this page does not open an immersion.
 
 The hub can cold-start this service after the app process was stopped. Do not use
 an Activity initializer or static factory. `onNexusOpen`, `onNexusClose`, input,
@@ -159,6 +145,13 @@ set a trusted owner, global sequence, or arbitrary system path.
 
 ### Choosing a HUD kind
 
+**Deprecated: card immersions.** New glasses UI uses launcher pages. Do not add
+`NexusCard` menus, pickers, confirmations or image-surface photo previews.
+Use `PageBody.SelectableList`, `Commands`, `Document`, `Conversation`, `Media`
+or [Image pages and camera capture](#image-pages-and-camera-capture-launcher-bundle-v6).
+Ink immersions remain supported for authored engaged interactions; notices,
+pins, activities, editable notice fields and audio/speech sessions remain supported.
+
 Choose the object by what the wearer is doing, not by how large you want it to
 look:
 
@@ -187,6 +180,14 @@ chip, panel, flare, pulse, or hidden. Plugins cannot select a presentation or
 supply activity layouts, images, animations, colors, or timings.
 
 ### Surface list rows
+
+**Deprecated: card immersions.** This section describes compatibility APIs.
+`NexusCard`, `NexusCardLine`, `NexusRowTone` and
+`NexusSurfaceSession.showCard`/`updateCard` are deprecated. Return a
+`NexusPage.Content` with `PageBody` and `NexusPageActionSpec` from page callbacks;
+use `publishPage` for live changes. Do not copy the following legacy models
+into new navigation, pickers or confirmations. `EditableSurfaceField` itself is
+not deprecated: notices still use it.
 
 A card used to be a title and some lines. It can also be a **list**: rows with a
 second line, a weight saying how much each matters, and a selection the HUD
@@ -1438,6 +1439,12 @@ nexusClient?.withdrawNotice("9f2c")
 
 ### Real image surfaces
 
+**Deprecated: card immersions and image preview steps.** `NexusImage` and
+`NexusSurfaceSession.showImage`/`updateImage` remain for existing plugins only.
+Use `NexusPage.Content(body = PageBody.Image(...))`, ordinary page actions and
+`supportsImagePages()` for new photo previews. The binary rules below describe
+the legacy image surface, not the v6 page's base64 transport.
+
 Image surfaces use the existing `surfaces` grant; do not add a descriptor
 capability and do not change API version 3. They are available only while the
 glasses renderer has announced image v1 and the SPP binary link is live. Check
@@ -1580,16 +1587,16 @@ registered binder. Check `supportsInkSurface` immediately before `show` or
 `update`; it reports Ink v1 from the glasses plus the live SPP data link. The
 session separately checks that this plugin is approved for `ink_surface`.
 `hide` remains available during teardown even after the renderer bit disappears.
+If Ink cannot open, report unavailability on the launcher's page. Do not create
+a card fallback; Ink support itself remains fully supported.
 
 ```kotlin
 class StatusPluginService : NexusPluginService() {
     private var ink: NexusInkSurfaceSession? = null
-    private var card: NexusSurfaceSession? = null
     private var usingInk = false
 
     override fun onNexusOpen() {
         ink = nexusInkSurfaceSession("status")
-        card = nexusSurfaceSession("status")
         usingInk = nexusClient?.supportsInkSurface == true &&
             ink?.show(
                 page = STATUS_PAGE,
@@ -1598,7 +1605,6 @@ class StatusPluginService : NexusPluginService() {
                     .put("value", "72"),
                 handlesBack = false,
             ) == NexusSdkResult.SENT
-        if (!usingInk) showCardFallback()
     }
 
     override fun onNexusInkReady(surfaceId: String) = Unit
@@ -1620,22 +1626,17 @@ class StatusPluginService : NexusPluginService() {
     override fun onNexusInkError(surfaceId: String, problems: List<NexusInkProblem>) {
         if (surfaceId == "status") {
             usingInk = false
-            showCardFallback()
+            // Report the failure through the current launcher page.
         }
     }
 
     override fun onNexusClose() {
-        if (usingInk) ink?.hide() else card?.hide()
+        ink?.hide()
         ink = null
-        card = null
         usingInk = false
     }
 
     override fun onNexusInput(event: NexusInputEvent) = Unit
-
-    private fun showCardFallback() {
-        card?.showCard(NexusCard("Link", listOf("72")))
-    }
 
     private companion object {
         val STATUS_PAGE = """
@@ -1671,7 +1672,7 @@ Supported components are `view`, `text`, `scroll-view`, `chart` (line, area,
 pie, radar, and the sample-derived bar extension), `progress`, inline-JSON
 `lottie-view`, and declarative `nx-canvas`. `image` is accepted but currently
 renders a placeholder reference: the public session has no asset-transfer
-argument, so use `NexusSurfaceSession.showImage` for real pixels. Styles are a
+argument, so use launcher `PageBody.Image` for photo previews. Styles are a
 strict class-selector/WXSS subset with flexbox, box and text properties,
 opacity, transforms, transitions, `rpx`, percentages, and design-token custom
 properties. Unsupported tags, attributes, selectors, styles, scripts, sources,
@@ -2362,7 +2363,7 @@ envelope ids; you never write your plugin id or another owner into a page.
 
 `NexusPage.Content(revision, title, body, actions, live)` names one of the
 typed bodies from `com.anezium.rokidbus.shared`: the four below everywhere, and
-three more with the launcher bundle. The hub owns layout, selection and one-axis
+three more with the original launcher bundle, plus `Image` with bundle v6. The hub owns layout, selection and one-axis
 navigation.
 
 | Body | Content |
@@ -2400,6 +2401,7 @@ template as the fallback. `ink` stays reserved, and there is no Ink page body.
 | `PageBody.Conversation` | `threadKey` (your notices' `eventKey` for the thread); `messages` (`ConversationMessage(id, role, text, sender, status, image)`, at most 64, oldest first); optional `caption` (the one capture time, 64); optional `composer` |
 | `PageBody.Media` | `title` and `state` (`PLAYING`, `PAUSED`, `STOPPED`, `NONE`, `UNAVAILABLE`); optional `artist`, `album`, `source`, `status`; `controls` (up to 3 action ids in swipe order) and `defaultControl` |
 | `PageBody.Route` | `position` (`RoutePositionQuality`); optional `maneuver` (`RouteManeuver(glyph, distance, street, eta)`), `facts` (6), `follow` and `overview` `RouteGeometry`, `ribbon` (`RouteRibbon(stops, line, between, note)`), `fixAgeS` |
+| `PageBody.Image` (v6) | required `image: LauncherArtwork` (`jpeg` or `mono1`), optional `caption` (240); the envelope supplies the title (48) and ordinary page actions |
 
 - A message's `role` is `RECEIVED`, `OURS` or `UNKNOWN`, and it alone decides the
   side; `status` is `HANDED_OFF` or `UNCONFIRMED`. There are no per-message
@@ -2526,47 +2528,9 @@ empty `text` is the image alone. Thumbnails are at most 160 px on each side and
 12 KiB decoded, 4 per page and 32 KiB together; anything above is
 `INVALID_PAGE`. The whole page still fits 65,536 bytes.
 
-A **Photo** button that opens your camera flow for the thread the wearer is
-reading:
-
-```kotlin
-override fun onNexusPageRequest(request: NexusPageRequest): NexusPage {
-    val thread = threads[request.params?.optString("thread")] ?: return NexusPage.Unavailable
-    val tools = if (nexusClient?.supportsComposerTools() == true) {
-        listOf(ComposerTool("photo", "Photo", actionId = "camera", glyph = "camera"))
-    } else {
-        emptyList()
-    }
-    return NexusPage.Content(
-        revision = thread.revision,
-        title = thread.name,
-        body = PageBody.Conversation(
-            threadKey = thread.key,
-            messages = thread.messages.map { message ->
-                ConversationMessage(message.id, message.role, message.text, image = message.thumbnail)
-            },
-            composer = ConversationComposer(
-                recipient = thread.name, sendActionId = "send", maxChars = 500, replyable = true,
-                tools = tools,
-                layout = listOf(ComposerSlot.Tool("photo"), ComposerSlot.Dictate, ComposerSlot.Type, ComposerSlot.Send),
-            ),
-        ),
-        actions = listOf(
-            NexusPageActionSpec("send", "Send", typed = NexusActionType.ComposeSend),
-            NexusPageActionSpec("camera", "Photo", kind = NexusPageActionKind.IMMERSION),
-        ),
-        live = true,
-    )
-}
-
-override fun onNexusOpen(openType: String, context: ComposerToolContext?) {
-    if (openType == PluginOpenTypes.COMPOSER_TOOL && context?.toolId == "photo") {
-        openCameraFor(threadKey = context.threadKey)   // then send the picture to that thread
-    } else {
-        showHome()
-    }
-}
-```
+For a **Photo** tool, use a `PLUGIN` action and the v6 page capture flow below.
+An `IMMERSION` tool remains available for an authored Ink interaction a page
+cannot host; it must not introduce a new card or image-surface preview flow.
 
 `ComposerToolContext(pageId, paramsJson, threadKey, toolId, actionId)` names
 the page the tool was on, with the params it was opened with, its thread and
@@ -2575,6 +2539,127 @@ delivering it; the context is null for every other open type, and an older
 hub opens you with `PluginOpenTypes.OPEN` and no context. A plugin that only
 overrides `onNexusOpen()` or `onNexusOpen(openType)` keeps working: the
 composer-tool open reaches it like any other open.
+
+### Image pages and camera capture (launcher bundle v6)
+
+Check `nexusClient?.supportsImagePages() == true` before offering a photo flow.
+The service must opt into pages and hold `surfaces`; capture separately requires
+the approved, enabled, signer-bound `camera` grant. A visible page and its
+`PLUGIN` actions do not require `PLUGIN_OPEN`, an immersion or a foreground
+surface. Use `nexusSnapshotSession(callbacks).capture()` (or
+`client.snapshotSession(callbacks)`): this existing snapshot path already permits
+page-only providers, so v6 adds no camera privilege, descriptor key or route.
+The same camera consent, live-camera/snapshot busy exclusion, CXR-link check,
+timeout and owner-only reply rules apply. A grant denial is
+`CAPABILITY_NOT_GRANTED`; handle `BUSY`, `LINK_DOWN`, `CAPTURE_FAILED`, `TIMEOUT`
+and cancellation honestly. Page visibility alone never grants camera access.
+
+`PageBody.Image(image: LauncherArtwork, caption: String? = null)` contains one
+image, no body rows. The page envelope supplies its title and actions.
+`LauncherArtwork` uses `{encoding, width, height, data}` with base64 `data`:
+JPEG or packed row-major MONO1 (one bit per pixel, MSB first). Both edges are
+1..512 px; the decoded base64 bytes are at most 36,864 (36 KiB), or 49,152 base64
+characters. MONO1 requires exactly `ceil(width * height / 8)` bytes; JPEG's encoded
+dimensions must match. Correct orientation and resize/recompress the captured
+JPEG on the phone before constructing the preview. The original snapshot can be
+larger: keep it separately if the receiving app needs it. Covers and thumbnails
+retain their tighter existing limits. Caption is at most 240 characters, title
+48; the **entire response or result including replacement** remains at most
+65,536 UTF-8 bytes. A 36 KiB JPEG leaves about 16 KiB for metadata and actions.
+Above 3 KiB the page needs SPP, with the existing no-data-plane failure behavior.
+
+The SDK and phone validate image pages, then replace them toward a pair below
+v6 with an "Image preview unavailable" summary, retaining correlation, revision,
+title and caption but removing pixels and **all actions**. They also strip result
+replacements this way. Never offer Send when the wearer cannot see the preview.
+Both hubs announce version 6 and run the lower version; pageSessionVersion stays 1.
+The platform contract is ready; full image layout still needs the glasses renderer.
+
+**Timing:** a page action has eight seconds, including its result delivery. Do
+not wait for capture, JPEG processing or upload inside `onNexusPageAction`.
+Start capture, immediately return `done` with a higher-revision, `live = true`
+"Capturing…" summary, then publish the image at a still higher revision when
+ready. That publication is valid after the action deadline because it uses the
+current page's visible lease (at most 120 seconds), not the ended invocation.
+Never send a late second result. Keep the current `NexusPageRequest`, respect its
+revision floor, and discard/cancel pending capture and processing on cover,
+close, refresh, grant/registration loss or lease expiry. `cancel()` drops the
+SDK request/callback; the hub's already-started physical capture may still finish.
+No polling, lease renewal by the plugin or background retry is allowed.
+
+The core flow below lives in a `NexusPluginService`. `threadPage`,
+`preparePreviewAsync` and `enqueuePhotoOnce` are application helpers: the first
+returns a conversation with the Photo tool shown below; the second performs
+orientation/resize/compression off the main thread and calls back on it; the
+third hands the confirmed photo to the intended thread once, keyed by invocation.
+Store the latest page request in `currentRequest`, advance `revision` above its
+floor, and clear `photo`/`currentRequest` and cancel the snapshot on lifecycle loss.
+
+```kotlin
+// Inside threadPage(): only offer this tool when supportsImagePages() is true.
+val photoTool = ComposerTool("photo", "Photo", "capture", glyph = "camera")
+// composer.tools = listOf(photoTool); keep Dictate or Type for text drafts.
+val photoAction = NexusPageActionSpec("capture", "Photo") // PLUGIN, not IMMERSION
+// Text Send remains typed ComposeSend and belongs only to the hub composer.
+
+private var currentRequest: NexusPageRequest? = null
+private var revision = 0L
+private var photo: ByteArray? = null
+private var captureGeneration = 0L
+private val snapshot by lazy {
+    nexusSnapshotSession(object : NexusSnapshotCallbacks {
+        override fun onSnapshotCaptured(jpeg: ByteArray) {
+            val request = currentRequest ?: return
+            val generation = captureGeneration
+            preparePreviewAsync(jpeg) { preview: LauncherArtwork ->
+                if (currentRequest !== request || captureGeneration != generation) return@preparePreviewAsync
+                photo = jpeg
+                val page = NexusPage.Content(++revision, "Photo", PageBody.Image(preview, "Ready to send"),
+                    listOf(NexusPageActionSpec("send-photo", "Send"),
+                        NexusPageActionSpec("retake", "Retake"), NexusPageActionSpec("cancel", "Cancel")), live = true)
+                if (nexusClient?.publishPage(request, page) != NexusSdkResult.SENT) photo = null
+            }
+        }
+        override fun onSnapshotError(error: NexusSnapshotError) {
+            photo = null
+            currentRequest?.let { nexusClient?.publishPage(it,
+                NexusPage.Content(++revision, "Photo", PageBody.Summary(primary = "Capture failed: $error"), live = true)) }
+        }
+    })
+}
+
+override fun onNexusPageAction(action: NexusPageAction): NexusPageResult = when (action.actionId) {
+    "capture", "retake" -> {
+        captureGeneration++
+        if (nexusClient?.supportsImagePages() != true || snapshot?.capture() != NexusSdkResult.SENT) {
+            NexusPageResult.rejected("Camera unavailable")
+        } else {
+            photo = null
+            NexusPageResult.done(replacement = NexusPage.Content(++revision, "Photo",
+                PageBody.Summary(primary = "Capturing…"), live = true))
+        }
+    }
+    "send-photo" -> {
+        val bytes = photo
+        if (bytes == null) NexusPageResult.stale("Photo no longer available") else {
+            enqueuePhotoOnce(action.invocationId, bytes) // original thread fixed by current page state
+            photo = null
+            NexusPageResult.done(replacement = threadPage(++revision))
+        }
+    }
+    "cancel" -> {
+        captureGeneration++
+        snapshot?.cancel()
+        photo = null
+        NexusPageResult.done(replacement = threadPage(++revision))
+    }
+    else -> NexusPageResult.rejected()
+}
+```
+
+The image's `send-photo` is an ordinary plugin action on the preview revision,
+never `ComposeSend`. It sends only that photo after the wearer's deliberate
+tap; text Send, drafts and consent retain all existing hub-owned rules.
 
 ### Visibility and live updates
 

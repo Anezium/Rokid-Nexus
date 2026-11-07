@@ -118,7 +118,7 @@ and [User choice: Keep in activities](PLUGIN_SDK.md#user-choice-keep-in-activiti
 
 A page is typed content the glasses hub draws inside the launcher, over
 whatever was on screen, from data the plugin sends: a summary, a list, a
-document, a conversation, a media player or a route. It never replaces the
+document, a conversation, a media player, a route or a full image preview. It never replaces the
 screen underneath; BACK returns exactly where the wearer was. A card's tap or
 an Applications row opens it. `NexusPage` (`PageBody` templates,
 `NexusPageActionSpec`); plans 027 and 028. Shown today by Media Deck, Navigation,
@@ -150,6 +150,16 @@ A message may carry a **thumbnail**, drawn in its bubble. `ConversationComposer`
 `ComposerTool`, `ComposerSlot`, `ConversationMessage.image`; launcher bundle v5.
 See [Composer tools](PLUGIN_SDK.md#composer-tools-launcher-bundle-v5).
 
+**Image page and photo capture (launcher bundle v6)**
+
+An image page is one large JPEG or MONO1 image with an optional caption and
+ordinary actions such as Send, Retake and Cancel, inside the launcher. A
+conversation's Photo tool invokes a plugin page action; the camera-granted
+plugin captures a snapshot without opening an immersion, returns a Capturing
+page, then publishes the image preview. Sending requires another deliberate
+action. `PageBody.Image`, `LauncherArtwork`, `supportsImagePages()` and
+`nexusSnapshotSession`; see [Image pages and camera capture](PLUGIN_SDK.md#image-pages-and-camera-capture-launcher-bundle-v6).
+
 ## Immersion (Open app)
 
 An immersion is the plugin's own full-screen interaction on the glasses: its
@@ -163,6 +173,12 @@ retired pre-2.0 pattern and belong on pages instead. `NexusSurfaceSession`,
 Hello Nexus's Ink page is below. See
 [Choosing a HUD kind](PLUGIN_SDK.md#choosing-a-hud-kind) and
 [Actions](PLUGIN_SDK.md#actions).
+
+**Deprecated: card immersions.** `NexusCard`, its row models, card show/update
+calls and `NexusImage` image-surface preview calls remain for compatibility.
+Never create new card menus, pickers or confirmations. New glasses UI uses
+launcher pages, including photo previews; Ink immersions, notices, pins,
+activities, editable notice fields and audio/speech sessions remain supported.
 
 ![Hello Nexus's page, then Open app launching its Ink immersion](assets/glossary/immersion-open-app.gif)
 

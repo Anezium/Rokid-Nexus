@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Image pages (launcher bundle v6).** `PageBody.Image` carries one bounded
+  JPEG or MONO1 preview (512 px per edge, 36 KiB before base64), optional caption
+  and ordinary page actions. `supportsImagePages()` checks the pair. Older peers
+  receive a summary without pixels or photo actions. A camera-granted page-only
+  provider can already use `nexusSnapshotSession` without an immersion; the SDK
+  guide now documents immediate progress results and lease-bounded completion.
+  Image-page rendering is pending integration on the glasses.
+- **Deprecate card immersions.** SDK warnings direct `NexusCard`, card row
+  models, `showCard`/`updateCard`, `NexusImage` and `showImage`/`updateImage` to
+  launcher pages. Existing plugins remain compatible. Notices, pins, activities,
+  Ink, editable notice fields and audio/speech sessions remain supported.
+
 - **Composer tools (launcher bundle v5).** A conversation page can put its own
   buttons in the hub composer's bar (a **Photo** button, for instance), hide or
   rename Dictate and Type, and order the bar. A tool runs one of the page's
@@ -9,7 +21,7 @@
   from, delivered on `/system/plugin/open` as `type: composer_tool` with a
   `context`. Send stays the hub's and keeps every safety rule. Messages may carry
   a thumbnail drawn in the bubble (at most 4 per page, 160 px and 12 KiB each,
-  32 KiB together). Both hubs announce `launcherInteractiveVersion: 5`; older
+  32 KiB together). Introduced in `launcherInteractiveVersion: 5`; older
   peers see the default bar and text-only bubbles. SDK: `supportsComposerTools()`,
   `ComposerTool`, `ComposerSlot`, `ConversationMessage.image`,
   `onNexusOpen(openType, context)`, and the `camera` glyph.
