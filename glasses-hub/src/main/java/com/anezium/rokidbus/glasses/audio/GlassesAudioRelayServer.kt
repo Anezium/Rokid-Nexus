@@ -32,10 +32,18 @@ internal class GlassesAudioRelayServer(
     private var peerClosed = false
     private var inFlight = 0
     private var admittedKey: ByteArray? = null
+    private var expectedKey: ByteArray? = null
     @Volatile private var relay: GlassesAudioRelaySession? = null
     private val auth: AuthenticatedSppServer = AuthenticatedSppServer(
         keys = object : SppPairingKeyStore {
-            override fun load(): ByteArray? = keys.load()?.also { synchronized(lock) { admittedKey = it.copyOf() } }
+            override fun load(): ByteArray? {
+                val stored = keys.load() ?: return null
+                return synchronized(lock) {
+                    // A read opened before rotation may finish after the bus persisted its new key.
+                    if (expectedKey?.contentEquals(stored) == false) null
+                    else stored.also { admittedKey = it.copyOf() }
+                }
+            }
             // The bus owns persistence. Key forwarding occurs after that write completes.
             override fun save(key: ByteArray) = false
         },
@@ -74,6 +82,7 @@ internal class GlassesAudioRelayServer(
             if (peer != null) { candidate.close(); return }
             peer = wrapped
             peerClosed = false
+            admittedKey = null
         }
         auth.accept(wrapped)
         synchronized(lock) { releaseClosedPeer() }
@@ -84,7 +93,10 @@ internal class GlassesAudioRelayServer(
     }
 
     fun installKey(key: ByteArray) {
-        val retired = synchronized(lock) { peer.takeIf { admittedKey?.contentEquals(key) == false } }
+        val retired = synchronized(lock) {
+            expectedKey = key.copyOf()
+            peer.takeIf { admittedKey?.contentEquals(key) == false }
+        }
         retired?.close()
     }
 

@@ -19,6 +19,36 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.io.ByteArrayOutputStream
 
 class GlassesAudioRelayServerTest {
+    @Test fun `a key read that finishes after rotation cannot authenticate with the old enrollment`() {
+        val workers = Executors.newCachedThreadPool()
+        val loading = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val connected = AtomicBoolean()
+        val peer = Peer()
+        val server = GlassesAudioRelayServer(object : SppPairingKeyStore {
+            override fun load(): ByteArray {
+                loading.countDown()
+                check(release.await(3, TimeUnit.SECONDS))
+                return ByteArray(32) { 42 }
+            }
+            override fun save(key: ByteArray) = false
+        }, { workers.execute(it) }, { _, _ -> ({}) }, { 0L }) { _, _ ->
+            connected.set(true)
+            error("Stale key must not connect")
+        }
+        try {
+            workers.execute { server.accept(peer) }
+            assertTrue(loading.await(2, TimeUnit.SECONDS))
+            server.installKey(ByteArray(32) { 9 })
+            release.countDown()
+            assertTrue(peer.closed.await(2, TimeUnit.SECONDS))
+            assertFalse(connected.get())
+        } finally {
+            release.countDown(); peer.close(); workers.shutdownNow()
+            assertTrue(workers.awaitTermination(3, TimeUnit.SECONDS))
+        }
+    }
+
     @Test fun `watchdog closes authenticated pipe with peer reader blocked and permits another session`() {
         val workers = Executors.newCachedThreadPool()
         val key = ByteArray(32) { 42 }
