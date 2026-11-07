@@ -67,12 +67,15 @@ import com.anezium.rokidbus.glasses.session.CommandFacts
 import com.anezium.rokidbus.glasses.session.IconRef
 import com.anezium.rokidbus.glasses.session.LauncherQuickGate
 import com.anezium.rokidbus.glasses.session.QuickPolicyState
+import com.anezium.rokidbus.glasses.session.Favourites
+import com.anezium.rokidbus.glasses.session.FavouritesState
 import com.anezium.rokidbus.glasses.session.SessionFocus
 import com.anezium.rokidbus.glasses.session.FramePanel
 import com.anezium.rokidbus.glasses.session.LiveRoute
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.QuickActionPolicyContract
+import com.anezium.rokidbus.shared.LauncherFavouritesContract
 import com.anezium.rokidbus.shared.SetupCompletionMode
 import com.anezium.rokidbus.shared.SetupPairingResult
 import com.anezium.rokidbus.shared.SetupNote
@@ -1459,6 +1462,9 @@ internal object NexusSession {
     private val quickPolicy = QuickPolicyState()
     private val quickGate = LauncherQuickGate(GlassesHub::launcherInteractiveVersion) { quickPolicy.policy }
 
+    /** The owner's pinned applications as the phone last sent them; kept across restarts. */
+    private val favourites = FavouritesState()
+
     /** The activity tier's latest snapshot, replayed into the feed when the catalog changes. */
     private var latestActivities = ActivityRenderState()
 
@@ -1518,6 +1524,7 @@ internal object NexusSession {
             wallClock = System::currentTimeMillis,
             ownerApp = { owner -> if (ownerLaunchable(owner)) OpenApp(owner, pluginLabel(owner) ?: owner) else null },
             sessionClock = SystemClock::uptimeMillis,
+            favourites = { Favourites.resolve(favourites.keys, applications()) },
         ),
         clock = SystemClock::uptimeMillis,
         timer = HandlerSessionTimer(main),
@@ -1534,6 +1541,7 @@ internal object NexusSession {
     fun onServiceConnected(service: AccessibilityService) {
         runOnMain {
             appContext = service.applicationContext
+            favourites.restore(storedFavourites(service.applicationContext))
             host = SessionHost(
                 SessionOverlayWindow(service) { event -> dispatch(event) },
                 abort = { dispatch(SessionEvent.Abort) },
@@ -1602,6 +1610,7 @@ internal object NexusSession {
             runner.dispatch(if (connected) SessionEvent.LinkRestored else SessionEvent.LinkLost)
             // Approvals last only as long as the link: none until the phone sends them again.
             if (!connected && quickPolicy.reset()) runner.dispatch(SessionEvent.LauncherFactsChanged)
+            if (!connected) favourites.linkReset()
         }
     }
 
@@ -1631,6 +1640,39 @@ internal object NexusSession {
             if (quickPolicy.apply(policy)) runner.dispatch(SessionEvent.LauncherFactsChanged)
         }
     }
+
+    /**
+     * `/core/launcher/favourites`: the owner's pinned applications, whole and in order. A malformed
+     * list changes nothing. The root shows a change from the next session on, as it is frozen.
+     */
+    fun onLauncherFavourites(payload: JSONObject) {
+        runOnMain {
+            val list = LauncherFavouritesContract.parse(payload)
+            if (list == null) {
+                log("launcher favourites dropped reason=MALFORMED")
+                return@runOnMain
+            }
+            if (!favourites.apply(list)) return@runOnMain
+            appContext?.let { storeFavourites(it, favourites.keys) }
+            log("launcher favourites applied revision=${list.revision} count=${list.entries.size}")
+        }
+    }
+
+    private fun storedFavourites(context: Context): List<String> =
+        context.getSharedPreferences(FAVOURITES_PREFS, Context.MODE_PRIVATE)
+            .getString(FAVOURITES_KEYS, null)
+            ?.let { runCatching { org.json.JSONArray(it) }.getOrNull() }
+            ?.let { array -> (0 until array.length()).mapNotNull { array.optString(it).takeIf { key -> LauncherFavouritesContract.fromKey(key) != null } } }
+            .orEmpty()
+
+    private fun storeFavourites(context: Context, keys: List<String>) {
+        context.getSharedPreferences(FAVOURITES_PREFS, Context.MODE_PRIVATE).edit()
+            .putString(FAVOURITES_KEYS, org.json.JSONArray(keys).toString())
+            .apply()
+    }
+
+    private const val FAVOURITES_PREFS = "launcher_favourites"
+    private const val FAVOURITES_KEYS = "keys"
 
     /** An owner's `/activity/result`, forwarded by the phone for a command these glasses sent. */
     fun onActivityResult(payload: JSONObject) {

@@ -369,10 +369,13 @@ object GlassesHub {
         // policy may arrive before the phone's capabilities do, so it is kept either way: the
         // quick gate itself requires the negotiated bundle, and a result matches only a command
         // these glasses sent, which they send only over the bundle.
-        if (envelope.path == BusPaths.CORE_POLICY_QUICK_ACTIONS || envelope.path == BusPaths.ACTIVITY_RESULT) {
+        if (envelope.path == BusPaths.CORE_POLICY_QUICK_ACTIONS || envelope.path == BusPaths.ACTIVITY_RESULT ||
+            envelope.path == BusPaths.CORE_LAUNCHER_FAVOURITES
+        ) {
             when {
                 envelope.binary != null -> log("launcher bundle message dropped path=${envelope.path}")
                 envelope.path == BusPaths.ACTIVITY_RESULT -> NexusSession.onActivityResult(envelope.payload)
+                envelope.path == BusPaths.CORE_LAUNCHER_FAVOURITES -> NexusSession.onLauncherFavourites(envelope.payload)
                 else -> NexusSession.onQuickActionPolicy(envelope.payload)
             }
             return

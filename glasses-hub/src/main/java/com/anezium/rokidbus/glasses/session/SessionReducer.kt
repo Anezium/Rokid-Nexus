@@ -66,6 +66,8 @@ internal class SessionReducer(
      */
     private val ownerApp: (String) -> OpenApp? = { null },
     private val sessionClock: (() -> Long)? = null,
+    /** The owner's pinned applications, resolved against the catalog when a session opens. */
+    private val favourites: () -> List<FavouriteStop> = { emptyList() },
 ) {
     fun reduce(model: SessionModel, event: SessionEvent): SessionTransition {
         val reduced = when (event) {
@@ -295,7 +297,7 @@ internal class SessionReducer(
         if (event !is SessionEvent.TripleTap || model.noticeArmed || model.editableFocused || model.capture != null) return keep(model)
         val now = wallClock()
         val root = SessionState.Root(
-            RootStops.build(model.activities, model.history.rootPreview(now), model.history.visible(now).size),
+            RootStops.build(model.activities, model.history.rootPreview(now), model.history.visible(now).size, favourites()),
         )
         return SessionTransition(
             model.copy(
@@ -355,6 +357,7 @@ internal class SessionReducer(
                         stop.kind == RootStopKind.ACTIVITY && activity != null ->
                             activate(model, rootSite(state), activity, state, emptyList(), stop.pageId, event.nowMs)
                         stop.kind == RootStopKind.NOTICE_PREVIEW -> openNoticeStop(model, state, stop, event.nowMs)
+                        stop.favourite != null -> openFavourite(model, state, stop.favourite, event)
                         else -> openFrame(model, state, emptyList(), stop.pageId, null, event.nowMs)
                     }
                 } ?: keep(model)
@@ -1525,6 +1528,18 @@ internal class SessionReducer(
      * The fresh-contact rule (plan 028a §5.3), for an Enter that would cause an effect. A v1 pair
      * keeps its behaviour; over the bundle the press must have begun after the target was drawn.
      */
+    /** A pinned application opens as its Applications row would: a page, a launch, or a local launch. */
+    private fun openFavourite(model: SessionModel, state: SessionState.Root, open: FavouriteOpen, event: SessionEvent.Enter): SessionTransition =
+        when (open) {
+            is FavouriteOpen.Page -> openFrame(
+                model, state, emptyList(), open.pageId, null, event.nowMs,
+                openApp = PageTemplateContract.namespaceOf(open.pageId)?.let(ownerApp),
+            )
+            is FavouriteOpen.Launch -> if (fresh(model, event)) launch(model, state, open.pluginId, event.nowMs) else keep(model)
+            is FavouriteOpen.Local ->
+                if (fresh(model, event)) SessionTransition(model, listOf(SessionEffect.LaunchLocal(open.key, open.label))) else keep(model)
+        }
+
     private fun fresh(model: SessionModel, event: SessionEvent.Enter): Boolean =
         !launcherActive() || SessionFocus.isFresh(model, event.pressStartMs)
 
