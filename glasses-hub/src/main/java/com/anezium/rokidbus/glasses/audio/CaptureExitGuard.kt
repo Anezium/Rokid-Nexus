@@ -15,4 +15,7 @@ internal class CaptureExitGuard(
         scheduleHalt(1000, halt)
         stopCapture()
     }
+
+    /** Runs [block] with the guard armed on every exit, before any enclosing resource cleanup. */
+    inline fun <T> armedOnExit(block: () -> T): T = try { block() } finally { stop() }
 }

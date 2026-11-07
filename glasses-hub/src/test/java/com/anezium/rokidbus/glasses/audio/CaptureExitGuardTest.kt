@@ -39,4 +39,14 @@ class CaptureExitGuardTest {
         forcedExit!!.invoke()
         assertEquals(1, halts.get())
     }
+
+    @Test fun `capture failure arms forced exit before the encoder is closed`() {
+        val events = mutableListOf<String>()
+        val guard = CaptureExitGuard({ events += "stop" }, { _, _ -> events += "deadline" }, { })
+        val encoder = java.io.Closeable { events += "close-encoder" }
+        assertThrows(IllegalStateException::class.java) {
+            encoder.use { guard.armedOnExit<Unit> { error("encoder failed") } }
+        }
+        assertEquals(listOf("deadline", "stop", "close-encoder"), events)
+    }
 }

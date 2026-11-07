@@ -69,7 +69,8 @@ object GlassesAudioCaptureMain {
             OpusEncoderPump(
                 header = { LocalCaptureProtocol.write(output, LocalCaptureProtocol.HEADER, it); headerSent = true },
                 packet = { LocalCaptureProtocol.write(output, LocalCaptureProtocol.PACKET, it) },
-            ).use { encoder ->
+            ).use { encoder -> exitGuard.armedOnExit {
+                // Arm before use{} closes the codec: MediaCodec teardown can block while still recording.
                 record.startRecording()
                 check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "AudioRecord did not start" }
                 val stereo = ShortArray(1920)
@@ -90,7 +91,7 @@ object GlassesAudioCaptureMain {
                         lastSilent = silent
                     }
                 }
-            }
+            } }
         } finally {
             exitGuard.stop()
             recorder?.release()
