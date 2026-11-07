@@ -174,6 +174,12 @@ sealed interface PageBody {
     val template: String
     val items: List<PageRow>
 
+    /** Launcher v6: one image, the envelope's title/actions, and an optional caption. */
+    data class Image(val image: LauncherArtwork, val caption: String? = null) : PageBody {
+        override val template: String get() = PageSurfaceContract.TEMPLATE_IMAGE
+        override val items: List<PageRow> get() = emptyList()
+    }
+
     data class Summary(
         val primary: String? = null,
         val secondary: String? = null,
@@ -265,7 +271,8 @@ sealed interface PageBody {
  * keeps treating `body` as opaque; this decoder is the second check, run before a body is drawn
  * or a row is acted on. The base four templates are always decoded. `conversation`, `media` and
  * `route` are decoded only between hubs that negotiated the launcher bundle (`extended`); without
- * it they, and `ink` always, are valid envelopes this decoder reports as unsupported. Lengths count
+ * it they, and `ink` always, are valid envelopes this decoder reports as unsupported. `image`
+ * requires launcher v6. Lengths count
  * UTF-16 code units, as the envelope's own title and label limits do.
  */
 object PageTemplateContract {
@@ -334,17 +341,22 @@ object PageTemplateContract {
         PageSurfaceContract.TEMPLATE_COMMANDS,
     )
 
-    /** The base templates plus the launcher bundle's bodies. `ink` stays reserved either way. */
+    /** The base templates plus this build's whole launcher bundle. `ink` stays reserved. */
     val extendedTemplates: Set<String> = supportedTemplates + setOf(
         PageSurfaceContract.TEMPLATE_CONVERSATION,
         PageSurfaceContract.TEMPLATE_MEDIA,
         PageSurfaceContract.TEMPLATE_ROUTE,
+        PageSurfaceContract.TEMPLATE_IMAGE,
     )
 
     /** What a pair draws: [extendedTemplates] once it negotiated the launcher bundle. */
     fun supportedTemplates(extended: Boolean): Set<String> = if (extended) extendedTemplates else supportedTemplates
 
-    fun isSupported(template: String, extended: Boolean = false): Boolean = template in supportedTemplates(extended)
+    fun isSupported(template: String, extended: Boolean = false): Boolean = isSupported(template, versionOf(extended))
+
+    fun isSupported(template: String, launcherVersion: Int): Boolean =
+        if (template == PageSurfaceContract.TEMPLATE_IMAGE) launcherVersion >= LauncherInteractiveContract.IMAGE_PAGES_VERSION
+        else template in supportedTemplates(launcherVersion >= 1)
 
     /** A provider's conventional entry page. */
     fun mainPageId(pluginId: String): String = "$pluginId:$MAIN_PAGE"
@@ -465,12 +477,15 @@ object PageTemplateContract {
         namespace: String?,
         launcherVersion: Int,
     ): PageSurfaceValidationResult<PageBody> = try {
-        val extended = LauncherInteractiveContract.isActive(launcherVersion)
-        if (!isSupported(template, extended)) fail("template $template is not available on this hub")
+        if (!isSupported(template, launcherVersion)) fail("template $template is not available on this hub")
         val body = JSONObject(bodyJson)
         val reader = Reader(actions, namespace, launcherVersion >= LauncherInteractiveContract.COMPOSER_TOOLS_VERSION)
         PageSurfaceValidationResult.Valid(
             when (template) {
+                PageSurfaceContract.TEMPLATE_IMAGE -> PageBody.Image(
+                    image = LauncherArtwork.parse(body.opt("image"), fullPage = true) ?: fail("image is required"),
+                    caption = reader.optionalText(body, "caption", MAX_DETAIL_CHARS),
+                )
                 PageSurfaceContract.TEMPLATE_SUMMARY -> PageBody.Summary(
                     primary = reader.optionalText(body, "primary", MAX_PRIMARY_CHARS),
                     secondary = reader.optionalText(body, "secondary", MAX_DETAIL_CHARS),
@@ -507,6 +522,10 @@ object PageTemplateContract {
     /** The wire form of [body]; [decode] of it, with the same actions and namespace, gives [body] back. */
     fun encode(body: PageBody): JSONObject = JSONObject().apply {
         when (body) {
+            is PageBody.Image -> {
+                put("image", body.image.toJson())
+                body.caption?.let { put("caption", it) }
+            }
             is PageBody.Summary -> {
                 body.primary?.let { put("primary", it) }
                 body.secondary?.let { put("secondary", it) }

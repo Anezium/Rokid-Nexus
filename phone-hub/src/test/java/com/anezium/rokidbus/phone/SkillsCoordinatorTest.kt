@@ -580,10 +580,12 @@ class SkillsCoordinatorTest {
         }
         assertEquals(SkillsCoordinator.ERROR_LEASE_DENIED, coordinator.leaseRestriction(transit, BusPaths.NOTICE_WITHDRAW))
         assertEquals(SkillsCoordinator.ERROR_LEASE_DENIED, coordinator.leaseRestriction(transit, BusPaths.PAGE_RESPONSE))
+        assertEquals(SkillsCoordinator.ERROR_LEASE_DENIED, coordinator.leaseRestriction(transit, BusPaths.CAMERA_SNAPSHOT_REQUEST))
 
         // A page the wearer asked for is a display session: its answer goes through.
         host.displaySessions += transit.grantKey()
         assertNull(coordinator.leaseRestriction(transit, BusPaths.PAGE_RESPONSE))
+        assertNull(coordinator.leaseRestriction(transit, BusPaths.CAMERA_SNAPSHOT_REQUEST))
     }
 
     @Test

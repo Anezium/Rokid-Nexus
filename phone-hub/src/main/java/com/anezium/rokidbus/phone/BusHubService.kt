@@ -2490,6 +2490,8 @@ class BusHubService : Service() {
         request: BusEnvelope,
         principal: PhonePluginPrincipal,
     ) {
+        // The route policy already checked camera consent. A page-only binding may capture;
+        // no PLUGIN_OPEN or foreground surface is needed, and the busy/link rules stay shared.
         if (::cameraCompanionController.isInitialized &&
             cameraCompanionController.activeSessionId() != null
         ) {

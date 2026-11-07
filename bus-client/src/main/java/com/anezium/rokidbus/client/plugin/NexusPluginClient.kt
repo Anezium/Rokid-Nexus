@@ -329,6 +329,10 @@ class NexusPluginClient internal constructor(
     fun supportsComposerTools(): Boolean = supportsLauncherInteractive() &&
         pages.launcherInteractiveVersion >= LauncherInteractiveContract.COMPOSER_TOOLS_VERSION
 
+    /** Both hubs support full-page image previews (launcher bundle v6). */
+    fun supportsImagePages(): Boolean = supportsLauncherInteractive() &&
+        pages.launcherInteractiveVersion >= LauncherInteractiveContract.IMAGE_PAGES_VERSION
+
     /**
      * Whether these glasses support the platform-owned activity tier.
      *

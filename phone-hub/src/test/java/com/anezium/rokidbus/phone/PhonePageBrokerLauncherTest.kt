@@ -140,6 +140,72 @@ class PhonePageBrokerLauncherTest {
     private fun invocations() = host.delivered.filter { it.second == BusPaths.PAGE_ACTION }.map { it.third }
     private fun capabilities() = host.delivered.filter { it.second == BusPaths.HUB_CAPABILITIES }.map { it.third }
 
+    private fun imagePage(revision: Long = 1): JSONObject = page(revision, "image",
+        com.anezium.rokidbus.shared.PageTemplateContract.encode(com.anezium.rokidbus.shared.PageBody.Image(
+            com.anezium.rokidbus.shared.LauncherArtwork(512, 512, java.util.Base64.getEncoder().encodeToString(ByteArray(32_768))), "Ready")),
+        JSONArray().put(action("send-photo")).put(action("retake")).put(action("cancel")))
+
+    @Test fun `v6 image pages validate and keep ordinary actions while malformed previews are rejected`() {
+        val registration = open(6)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, imagePage(), registration))
+        assertEquals("image", responses().last().getString("template"))
+        visible()
+        invoke("i1", "retake", mode = "confirmed")
+        assertEquals("retake", invocations().single().getString("actionId"))
+        val invalid = imagePage(2).apply { getJSONObject("body").getJSONObject("image").put("width", 513) }
+        assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, broker.onProvider(BusPaths.PAGE_RESPONSE, invalid, registration))
+        assertEquals(1, responses().size)
+    }
+
+    @Test fun `v5 glasses receive an inert summary for initial and replacement image pages`() {
+        val registration = open(5)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), registration))
+        visible()
+        invoke("i1", "read", mode = "confirmed")
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, JSONObject().put("invocationId", "i1").put("status", "done")
+            .put("replacement", imagePage(2)), registration))
+        val replacement = host.glasses.last { it.first == BusPaths.PAGE_RESULT }.second.getJSONObject("replacement")
+        assertEquals("summary", replacement.getString("template"))
+        assertEquals(0, replacement.getJSONArray("actions").length())
+        assertFalse(replacement.getJSONObject("body").has("image"))
+        invoke("i2", "send-photo", mode = "confirmed", revision = 2)
+        assertEquals(1, invocations().size)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, imagePage(3), registration))
+        assertEquals("summary", responses().last().getString("template"))
+        assertEquals(0, responses().last().getJSONArray("actions").length())
+    }
+
+    @Test fun `page-only photo action may finish immediately and publish a leased preview after the action deadline`() {
+        val registration = open(6)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(actions = JSONArray().put(action("capture"))), registration))
+        visible()
+        invoke("i1", "capture", mode = "confirmed")
+        assertTrue(broker.holdsProviderBinding("relay"))
+        assertEquals(PluginRouteDecision.Allowed, PluginRoutePolicy.authorize(
+            PluginRouteCaller.Plugin("relay", setOf(PluginCapability.SURFACES, PluginCapability.CAMERA)), BusPaths.CAMERA_SNAPSHOT_REQUEST))
+        assertTrue(PluginRoutePolicy.authorize(PluginRouteCaller.Plugin("relay", setOf(PluginCapability.SURFACES)),
+            BusPaths.CAMERA_SNAPSHOT_REQUEST) is PluginRouteDecision.Denied)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, JSONObject().put("invocationId", "i1").put("status", "done")
+            .put("replacement", page(2, "summary", JSONObject().put("primary", "Capturing…"), JSONArray())), registration))
+        host.now += PageSurfaceContract.PAGE_TIMEOUT_MS + 1
+        broker.onTick()
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, imagePage(3), registration))
+        assertEquals("image", responses().last().getString("template"))
+        host.now += PageSurfaceContract.LEASE_MS
+        broker.onTick()
+        assertEquals(PhonePageBroker.ERROR_PAGE_NOT_REQUESTED, broker.onProvider(BusPaths.PAGE_RESPONSE, imagePage(4), registration))
+        assertFalse(host.delivered.any { it.second == BusPaths.PLUGIN_OPEN })
+    }
+
+    @Test fun `full image preview fails closed when only the control link remains`() {
+        val registration = open(6)
+        host.controlOnly = true
+        broker.onProvider(BusPaths.PAGE_RESPONSE, imagePage(), registration)
+        assertTrue(host.artworkRejections > 0)
+        assertFalse(responses().any { it.optString("template") == "image" })
+        assertFalse(broker.holdsProviderBinding("relay"))
+    }
+
     @Test
     fun `render feedback needs the accepted route revision request frame lease and registration`() {
         val registration = open()

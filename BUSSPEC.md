@@ -2066,6 +2066,7 @@ as another one. `ink` stays reserved, and no Ink page profile is announced.
 | `conversation` (bundle) | required `threadKey` (page-style id); optional `caption` (64); required `messages` (at most 64, oldest first) of `{id, role, sender?, text, status?, image?}`; optional `composer` `{recipient, sendActionId, maxChars, replyable, unavailableText?, unavailableSub?, tools?, layout?, dictateLabel?, typeLabel?, sendLabel?}` (`image` and the five composer fields from bundle v5) |
 | `media` (bundle) | required `title` (120, nonblank) and `state`; optional `artist`, `album` (120), `source` (48), `status` (120); `controls` (at most 3 action ids, swipe order); optional `defaultControl` |
 | `route` (bundle) | required `position` (`live`, `stale` or `none`); optional `maneuver` `{glyph, distance, street?, eta?}`, `facts` (at most 6), `follow` and `overview` geometry, `ribbon`, `fixAgeS` |
+| `image` (bundle v6) | required `image` artwork object `{encoding, width, height, data}`; optional `caption` (240). The envelope's title and actions apply; no body rows. See "Image pages (bundle v6)". |
 
 The bundle bodies have rules of their own:
 
@@ -2104,8 +2105,8 @@ nothing. Row, fact and segment ids follow the page id rules and are unique withi
 their array. A provider's navigation targets stay in its own namespace; an
 action target names one of the envelope's `actions` and confers no authority of
 its own. Unknown fields are ignored; wrong types, duplicate ids, missing or
-undeclared targets make the page `INVALID_PAGE`. Bodies carry text only: no
-markup, no URL is fetched, nothing is executed.
+undeclared targets make the page `INVALID_PAGE`. Bodies carry bounded typed
+content: no markup, no URL is fetched, nothing is executed.
 
 | Body limit | Value |
 |---|---:|
@@ -2364,7 +2365,7 @@ version is raised. HUD copy is English, like the rest of the session chrome.
 
 ### Cover and player anchors (bundle v2)
 
-Current hubs announce `launcherInteractiveVersion: 5`; v1 above remains the
+Current hubs announce `launcherInteractiveVersion: 6`; v1 above remains the
 baseline. Version 2 adds optional `artwork` on an activity and a `media` page body:
 `{"encoding":"mono1","width":96,"height":96,"data":"..."}`. Dimensions are
 integers from 1 through 128. Standard Base64 `data` is at most 2,732 characters
@@ -2467,13 +2468,45 @@ bubble's width cannot hold it; a message whose `text` is empty is its
 thumbnail alone. A page carrying thumbnails is sized like any page: above
 3 KiB it needs the SPP data plane.
 
-Negotiation is the bundle's: both hubs announce `launcherInteractiveVersion: 5`
-and the pair runs the lower version. The phone strips `tools`, `layout`, the
+Negotiation is the bundle's: both hubs announce at least `launcherInteractiveVersion: 5`
+for these fields and the pair runs the lower version. The phone strips `tools`, `layout`, the
 three labels and every `image` from pages and result replacements before
 forwarding to glasses below v5; the SDK does the same before sending to a pair
 below v5 (`supportsComposerTools()`), so such a page still shows with the
 default bar and text-only bubbles. The glasses ignore the same fields unless the
 negotiated version is at least 5. No exact-match tier version changes.
+
+### Image pages (bundle v6)
+
+Version 6 adds `template: image` to the existing page envelope. Its body is
+`{image: {encoding, width, height, data}, caption?}`: one `jpeg` or `mono1`
+`LauncherArtwork`, using base64 `data`, no URI, URL fetch or cross-owner asset.
+Each decoded edge is 1..512 px. Base64 decodes to at most 36,864 bytes (36 KiB),
+with at most 49,152 encoded characters. JPEG header dimensions must match the
+declared dimensions; MONO1 has exactly `ceil(width * height / 8)` bytes, packed
+row-major, MSB first. Caption is at most 240 UTF-16 units; the envelope title
+remains at most 48. The whole page, and a whole result with its replacement,
+still fit 65,536 UTF-8 bytes. This leaves about 16 KiB around a maximum-size
+JPEG for caption, metadata and actions. The existing covers and bubble
+thumbnails keep their smaller contextual limits. The existing 3 KiB CXR control
+threshold applies: larger pages require SPP, with no queue or reconnect replay.
+
+Actions such as `send-photo`, `retake` and `cancel` are ordinary `plugin` page
+actions under the existing owner/revision/visible-lease/fresh-contact rules.
+No new action type is introduced; in particular an image action is never an
+alternative route to `compose.send` or to a text draft. A preview alone never
+authorizes a send. Full image rendering is a glasses implementation step.
+
+Both hubs announce `launcherInteractiveVersion: 6`; the pair runs the lower
+version. `IMAGE_PAGES_VERSION` is 6 and SDK `supportsImagePages()` checks that
+pair. The phone validates a v6 image body before compatibility conversion.
+Below v6, the phone and SDK replace image pages (including result replacements)
+with a `summary`: "Image preview unavailable", update guidance and optional
+caption, same correlation/title/revision/live, no image bytes and an empty
+actions array. No hidden photo action stays invocable. This fallback is
+deliberate compatibility conversion; an unsupported template is still never
+decoded as a different body. `pageSessionVersion` stays 1, API stays 3, and no
+new grant, receive prefix or bus route is added.
 
 ### Typed actions
 
@@ -2790,6 +2823,37 @@ backend receivers require `android.permission.DUMP`, which adb shell keeps.
 The generic camera contract is available only to an installed plugin whose exact
 package, descriptor ID, and signing digest have an approved, enabled `camera`
 grant. Installation or a shared signer alone never grants access.
+
+### One-shot snapshots from pages
+
+`/camera/snapshot/request` is a phone-local, authenticated `camera`-gated
+request carrying `{version: 1, requestId}` (envelope id is the request id).
+`NexusSnapshotSession.capture()` / `nexusSnapshotSession` use this existing path.
+An open immersion or foreground surface is not required: a plugin bound for a
+visible page may capture from a `plugin` page action, without `PLUGIN_OPEN`.
+The normal route policy, exact enabled signer-bound grant, and skill-only lease
+restrictions still apply; page visibility grants no camera permission.
+
+The phone shares busy exclusion with live camera sessions and other snapshots,
+requires the CXR link, and performs its bounded capture asynchronously. It
+delivers a JPEG on `/camera/snapshot/result` as Binder binary, with
+`{version: 1, type: snapshot, requestId, pluginId, mimeType: image/jpeg,
+sizeBytes, width, height, quality}`; failures arrive on
+`/camera/snapshot/error` with `{version: 1, type: error, requestId, pluginId,
+code, message}`, code `BUSY`, `LINK_DOWN`, `CAPTURE_FAILED` or `TIMEOUT`.
+Replies are owner-scoped direct callbacks, without receive prefixes, never
+broadcast. The phone stamps plugin identity, and no photo enters the page
+until the plugin has resized/recompressed its preview to the v6 budget.
+
+A page action still has eight seconds. Start capture and return `done` promptly
+with a higher-revision live `summary` saying Capturing; when ready, publish a
+still newer `image` page against the same current request while it remains
+visible and leased. The capture may finish after the action deadline: it is a
+live revision, never a late second result. Cover, close, refresh, expired lease
+or registration loss cancels/discards page work. No polling or retry and no
+automatic send: the wearer must choose the preview's Send action separately.
+
+### Live camera sessions
 
 The bus carries control only. The heavy data path is out-of-band: during a
 session the glasses encode the camera as H.264 and serve it over a link

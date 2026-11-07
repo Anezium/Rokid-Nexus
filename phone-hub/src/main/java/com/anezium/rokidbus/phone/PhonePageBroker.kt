@@ -464,7 +464,7 @@ class PhonePageBroker(
                         frame.reservedRevision = maxOf(frame.reservedRevision ?: value.revision, value.revision)
                         val outgoing = forGlasses(stamped, value, frame.owner)
                         val candidate = Candidate(
-                            value.revision, value.live, value.actions.associateBy { it.id }, body.composer,
+                            value.revision, value.live, shownActions(value), body.composer,
                             answersRequest = true,
                             routeMap = body.routeMap,
                         )
@@ -489,7 +489,7 @@ class PhonePageBroker(
         frame.reservedRevision = page.revision
         val outgoing = forGlasses(stamped, page, frame.owner)
         val candidate = Candidate(
-            page.revision, page.live, page.actions.associateBy { it.id }, body.composer,
+            page.revision, page.live, shownActions(page), body.composer,
             answersRequest = false,
             routeMap = body.routeMap,
         )
@@ -527,7 +527,7 @@ class PhonePageBroker(
             }
             frame.reservedRevision = it.revision
             Candidate(
-                it.revision, it.live, it.actions.associateBy { action -> action.id }, body.composer,
+                it.revision, it.live, shownActions(it), body.composer,
                 answersRequest = false,
                 routeMap = body.routeMap,
             )
@@ -785,6 +785,11 @@ class PhonePageBroker(
     /** What the broker keeps of a page's body beside its actions. */
     private class AcceptedBody(val composer: ConversationComposer?, val routeMap: Boolean = false)
 
+    private fun shownActions(page: PageSurfaceResponse.Page): Map<String, PageSurfaceAction> =
+        if (page.template == PageSurfaceContract.TEMPLATE_IMAGE && launcherVersion() < LauncherInteractiveContract.IMAGE_PAGES_VERSION) {
+            emptyMap()
+        } else page.actions.associateBy { it.id }
+
     /**
      * Null when the body is invalid for its template. A template these glasses cannot draw (the
      * bundle's bodies without the bundle, `ink` always) passes as an envelope and the glasses show
@@ -793,8 +798,10 @@ class PhonePageBroker(
      */
     private fun acceptedBody(page: PageSurfaceResponse.Page, owner: String): AcceptedBody? {
         val launcher = launcherVersion()
-        if (!PageTemplateContract.isSupported(page.template, launcher >= 1)) return AcceptedBody(null)
-        val decoded = PageTemplateContract.decode(page, owner, launcher) as? PageSurfaceValidationResult.Valid
+        // Validate image bodies even when they will be replaced by the older-peer fallback.
+        val validationVersion = if (page.template == PageSurfaceContract.TEMPLATE_IMAGE) localLauncherVersion else launcher
+        if (!PageTemplateContract.isSupported(page.template, validationVersion)) return AcceptedBody(null)
+        val decoded = PageTemplateContract.decode(page, owner, validationVersion) as? PageSurfaceValidationResult.Valid
             ?: return null
         return AcceptedBody((decoded.value as? PageBody.Conversation)?.composer, decoded.value is PageBody.Route)
     }
@@ -805,14 +812,15 @@ class PhonePageBroker(
      * user approves now; without it every bundle field is removed, so the glasses get a v1 page.
      */
     private fun forGlasses(stamped: JSONObject, page: PageSurfaceResponse.Page?, owner: String): JSONObject {
-        if (launcherVersion() < 1) return PageSurfaceContract.stripLauncherFields(stamped)
-        for (body in listOfNotNull(stamped.optJSONObject("body"), stamped.optJSONObject("replacement")?.optJSONObject("body"))) {
+        val compatible = PageSurfaceContract.stripImagePages(stamped, launcherVersion())
+        if (launcherVersion() < 1) return PageSurfaceContract.stripLauncherFields(compatible)
+        for (body in listOfNotNull(compatible.optJSONObject("body"), compatible.optJSONObject("replacement")?.optJSONObject("body"))) {
             com.anezium.rokidbus.shared.LauncherArtwork.stripUnsupported(body, launcherVersion())
             // Glasses below bundle v5 draw the default composer bar and text-only bubbles.
             PageTemplateContract.stripConversationExtras(body, launcherVersion())
         }
         if (launcherVersion() < LauncherInteractiveContract.ARTWORK_VERSION) {
-            for (body in listOfNotNull(stamped.optJSONObject("body"), stamped.optJSONObject("replacement")?.optJSONObject("body"))) {
+            for (body in listOfNotNull(compatible.optJSONObject("body"), compatible.optJSONObject("replacement")?.optJSONObject("body"))) {
                 body.remove("artwork")
                 body.remove("positionMs")
                 body.remove("durationMs")
@@ -824,7 +832,7 @@ class PhonePageBroker(
         val quickIds = page?.actions.orEmpty()
             .filter { it.kind == PageSurfaceContract.KIND_PLUGIN && QuickActionPolicyContract.isQuick(it.typed, approved) }
             .mapTo(linkedSetOf()) { it.id }
-        return PageSurfaceContract.withHubQuick(stamped, quickIds)
+        return PageSurfaceContract.withHubQuick(compatible, quickIds)
     }
 
     /** The launcher bundle version pages run with these glasses: never without a page session. */

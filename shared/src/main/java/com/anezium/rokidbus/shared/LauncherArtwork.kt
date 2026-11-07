@@ -3,16 +3,16 @@ package com.anezium.rokidbus.shared
 import org.json.JSONObject
 import java.util.Base64
 
-/** A bounded, self-contained cover; it never names a URI or another owner's asset. */
+/** A bounded, self-contained image; covers and thumbnails apply their tighter contextual limits. */
 data class LauncherArtwork(val width: Int, val height: Int, val data: String, val encoding: String = MONO1) {
     init {
         require(encoding == MONO1 || encoding == JPEG)
-        val edge = if (encoding == JPEG) MAX_IMAGE_EDGE else MAX_EDGE
+        val edge = MAX_PAGE_EDGE
         require(width in 1..edge && height in 1..edge)
-        require(data.length <= if (encoding == JPEG) MAX_IMAGE_ENCODED_CHARS else MAX_ENCODED_CHARS)
+        require(data.length <= MAX_PAGE_ENCODED_CHARS)
         val bytes = Base64.getDecoder().decode(data)
         if (encoding == JPEG) {
-            require(bytes.isNotEmpty() && bytes.size <= MAX_IMAGE_BYTES)
+            require(bytes.isNotEmpty() && bytes.size <= MAX_PAGE_BYTES)
             require(ImageSurfaceContract.dimensions(ImageSurfaceContract.MIME_JPEG, bytes) == ImageDimensions(width, height))
         } else {
             require(bytes.size == (width * height + 7) / 8)
@@ -34,6 +34,11 @@ data class LauncherArtwork(val width: Int, val height: Int, val data: String, va
         const val MAX_IMAGE_BYTES = 32_768
         const val MAX_IMAGE_ENCODED_CHARS = 43_692
 
+        const val MAX_PAGE_EDGE = 512
+        // 36 KiB becomes 48 KiB base64, leaving 16 KiB of the page envelope for metadata/actions.
+        const val MAX_PAGE_BYTES = 36_864
+        const val MAX_PAGE_ENCODED_CHARS = 49_152
+
         fun stripUnsupported(container: JSONObject, negotiatedVersion: Int) {
             if (negotiatedVersion < LauncherInteractiveContract.ARTWORK_VERSION) container.remove("artwork")
             else if (negotiatedVersion < LauncherInteractiveContract.IMAGE_ARTWORK_VERSION &&
@@ -43,7 +48,9 @@ data class LauncherArtwork(val width: Int, val height: Int, val data: String, va
             }
         }
 
-        fun parse(value: Any?): LauncherArtwork? {
+        fun parse(value: Any?): LauncherArtwork? = parse(value, fullPage = false)
+
+        fun parse(value: Any?, fullPage: Boolean): LauncherArtwork? {
             if (value == null || value == JSONObject.NULL) return null
             require(value is JSONObject)
             val encoding = value.opt("encoding") as? String ?: throw IllegalArgumentException("Invalid artwork encoding")
@@ -53,7 +60,14 @@ data class LauncherArtwork(val width: Int, val height: Int, val data: String, va
                 return number.toInt()
             }
             return LauncherArtwork(dimension("width"), dimension("height"),
-                value.opt("data") as? String ?: throw IllegalArgumentException("Invalid artwork data"), encoding)
+                value.opt("data") as? String ?: throw IllegalArgumentException("Invalid artwork data"), encoding).also {
+                if (!fullPage) {
+                    val edge = if (encoding == JPEG) MAX_IMAGE_EDGE else MAX_EDGE
+                    require(it.width <= edge && it.height <= edge)
+                    require(it.data.length <= if (encoding == JPEG) MAX_IMAGE_ENCODED_CHARS else MAX_ENCODED_CHARS)
+                    require(it.bytes().size <= if (encoding == JPEG) MAX_IMAGE_BYTES else (MAX_EDGE * MAX_EDGE / 8))
+                }
+            }
         }
     }
 }

@@ -20,6 +20,11 @@ interface NexusSnapshotCallbacks {
     fun onSnapshotError(error: NexusSnapshotError)
 }
 
+/**
+ * One camera-granted still capture. An open immersion is not required: a visible page action
+ * may call [capture]. Return a live "Capturing…" page immediately and publish the image on
+ * completion; never block the page action's deadline. Cover/close must discard that work.
+ */
 class NexusSnapshotSession internal constructor(
     private val client: NexusPluginClient,
     private val callbacks: NexusSnapshotCallbacks,

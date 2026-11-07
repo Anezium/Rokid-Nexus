@@ -74,7 +74,8 @@ sealed class NexusPage {
     /**
      * [body] is one of the four base templates, or, once [NexusPluginClient.supportsLauncherInteractive]
      * is true, a `Conversation`, `Media` or `Route` body; otherwise those answer as invalid, so fall
-     * back to the base four. [live] promises revisions while the page is visible under its lease,
+     * back to the base four. `Image` requires [NexusPluginClient.supportsImagePages]; older pairs
+     * receive an inert summary without image bytes or photo actions. [live] promises revisions while the page is visible under its lease,
      * published through [NexusPluginClient.publishPage].
      */
     data class Content(
@@ -542,7 +543,14 @@ internal class NexusPageChannel(
                 .put("live", content.live)
         }.getOrNull() ?: return null
         val launcherFields = content.actions.any { it.typed != null } || content.body.items.any { it.checked != null }
-        val payload = if (extended || !launcherFields) built else PageSurfaceContract.stripLauncherFields(built)
+        if (content.body is PageBody.Image) {
+            val original = (PageSurfaceContract.validateResponse(built) as? PageSurfaceValidationResult.Valid)
+                ?.value as? PageSurfaceResponse.Page ?: return null
+            if (PageTemplateContract.decode(original, pluginId, LauncherInteractiveContract.IMAGE_PAGES_VERSION)
+                !is PageSurfaceValidationResult.Valid) return null
+        }
+        val compatible = PageSurfaceContract.stripImagePages(built, launcherInteractiveVersion)
+        val payload = if (extended || !launcherFields) compatible else PageSurfaceContract.stripLauncherFields(compatible)
         val pending = PageSurfaceRequest(correlation, NexusPageRequestReason.OPEN.wireValue)
         val page = (PageSurfaceContract.validateResponse(payload, pending) as? PageSurfaceValidationResult.Valid)
             ?.value as? PageSurfaceResponse.Page ?: return null

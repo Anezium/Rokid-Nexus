@@ -602,6 +602,7 @@ internal class SessionScreens(
 
     /** Retained content that fits beside the failure: what the page showed, dimmed, its actions left out. */
     private fun retainedBlocks(snapshot: Snapshot): List<ScreenBlock> = when (val body = items.retainedBody(snapshot)) {
+        is PageBody.Image -> emptyList() // Temporary until the image-page renderer is integrated.
         is PageBody.Summary -> listOfNotNull(
             body.primary?.let { ScreenBlock.Text("last:primary", it, TextRole.FIGURE, dimmed = true) },
             body.secondary?.let { ScreenBlock.Text("last:secondary", it, TextRole.BODY, dimmed = true) },
@@ -628,6 +629,7 @@ internal class SessionScreens(
 
     /** What is read page by page: a document's own segments, or a body's text laid out as prose. */
     private fun readingSegments(body: PageBody?): List<PageSegment> = when (body) {
+        is PageBody.Image -> emptyList() // Temporary until the image-page renderer is integrated.
         is PageBody.Document -> body.segments
         is PageBody.Summary -> listOfNotNull(
             body.primary?.let { PageSegment("primary", PageSegmentKind.PROSE, it) },
@@ -1141,6 +1143,7 @@ internal class SessionScreens(
     private fun summaryOf(snapshot: Snapshot, frame: Frame, readable: Boolean): List<ScreenBlock> {
         val body = items.retainedBody(snapshot) ?: return listOf(ScreenBlock.Text("retained", snapshot.page.title, TextRole.BODY))
         val first = when (body) {
+            is PageBody.Image -> body.caption // Temporary until the image-page renderer is integrated.
             is PageBody.Summary -> body.primary ?: body.secondary ?: body.text
             is PageBody.Document -> body.segments.firstOrNull()?.text
             is PageBody.Commands -> body.text ?: body.items.firstOrNull()?.label

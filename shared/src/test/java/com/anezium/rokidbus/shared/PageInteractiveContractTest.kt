@@ -68,7 +68,7 @@ class PageInteractiveContractTest {
         assertFalse(PageTemplateContract.isSupported(PageSurfaceContract.TEMPLATE_INK, extended = true))
         assertEquals(PageTemplateContract.supportedTemplates, PageTemplateContract.supportedTemplates(extended = false))
         assertEquals(
-            PageTemplateContract.supportedTemplates + setOf("conversation", "media", "route"),
+            PageTemplateContract.supportedTemplates + setOf("conversation", "media", "route", "image"),
             PageTemplateContract.supportedTemplates(extended = true),
         )
     }
