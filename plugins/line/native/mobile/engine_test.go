@@ -173,3 +173,22 @@ func TestPrivateSnapshotDoesNotExposeLoginSecrets(t *testing.T) {
 		t.Fatal("token leaked in conversation snapshot")
 	}
 }
+
+func TestRemoteUnsendRemovesOnlyTheMatchingChatMessage(t *testing.T) {
+	e, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	e.chats = []chat{
+		{ID: "first", History: []message{{ID: "remove", Text: "secret"}, {ID: "keep", Text: "other"}}},
+		{ID: "second", History: []message{{ID: "remove", Text: "unrelated"}}},
+	}
+	e.removeMessage("first", "remove")
+	if len(e.chats[0].History) != 1 || e.chats[0].History[0].ID != "keep" {
+		t.Fatal("unsent text remained")
+	}
+	if len(e.chats[1].History) != 1 {
+		t.Fatal("another chat was affected")
+	}
+}

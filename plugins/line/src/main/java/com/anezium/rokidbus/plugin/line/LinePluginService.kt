@@ -13,10 +13,16 @@ import com.anezium.rokidbus.client.plugin.NexusPageResult
 import com.anezium.rokidbus.client.plugin.NexusPageVisibility
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class LinePluginService : NexusPluginService() {
+    // Pages own this plugin's UI; it has no immersion or surface input.
+    override fun onNexusOpen() = Unit
+    override fun onNexusClose() { if (requests.isEmpty()) end() }
+    override fun onNexusInput(event: NexusInputEvent) = Unit
+
     private val main = Handler(Looper.getMainLooper())
     private val requests = linkedMapOf<String, NexusPageRequest>()
     private val visible = mutableSetOf<String>()
@@ -40,6 +46,7 @@ class LinePluginService : NexusPluginService() {
 
     private fun changed(lease: Any) {
         if (owner !== lease) return
+        if (LineSession.snapshot.state == "signed_out") { connectRequested = false; loaded.clear() }
         if (LineSession.snapshot.state == "offline" && !connectRequested) connect(lease)
         requests.keys.toList().forEach(::loadHistory)
         publish()

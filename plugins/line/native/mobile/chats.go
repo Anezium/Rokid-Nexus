@@ -20,6 +20,12 @@ func (e *Engine) loadChats() error {
 		return err
 	}
 	chats := make([]chat, 0, min(len(boxes.MessageBoxes), maxChats))
+	e.mu.Lock()
+	previous := make(map[string][]message, len(e.chats))
+	for _, item := range e.chats {
+		previous[item.ID] = item.History
+	}
+	e.mu.Unlock()
 	for _, box := range boxes.MessageBoxes[:min(len(boxes.MessageBoxes), maxChats)] {
 		if e.ctx.Err() != nil {
 			return e.ctx.Err()
@@ -28,6 +34,9 @@ func (e *Engine) loadChats() error {
 			continue
 		}
 		item := chat{ID: box.ID, Title: "Conversation", Group: !strings.HasPrefix(box.ID, "u"), History: []message{}}
+		if history, ok := previous[box.ID]; ok {
+			item.History = history
+		}
 		if item.Group {
 			if info, err := e.client.GetChats([]string{box.ID}, false, false); err == nil && len(info.Chats) > 0 {
 				item.Title = info.Chats[0].ChatName
@@ -186,6 +195,22 @@ func (e *Engine) listen(client *lineapi.Client, revision int64) {
 				e.setState("ready")
 				return
 			}
+			if event == "fullSync" {
+				e.op.Lock()
+				defer e.op.Unlock()
+				var payload struct {
+					NextRevision json.Number `json:"nextRevision"`
+				}
+				if json.Unmarshal([]byte(data), &payload) == nil {
+					if rev, err := payload.NextRevision.Int64(); err == nil {
+						revision = max(revision, rev)
+					}
+				}
+				if e.ctx.Err() == nil && e.loadChats() == nil {
+					e.changed()
+				}
+				return
+			}
 			var op lineapi.Operation
 			if event != "operation" || json.Unmarshal([]byte(data), &op) != nil {
 				return
@@ -198,6 +223,10 @@ func (e *Engine) listen(client *lineapi.Client, revision int64) {
 			if rev, err := op.Revision.Int64(); err == nil {
 				revision = max(revision, rev)
 			}
+			if op.Type == 64 || op.Type == 65 {
+				e.removeMessage(op.Param1, op.Param2)
+				return
+			}
 			if op.Message == nil || (op.Type != 25 && op.Type != 26) {
 				return
 			}
@@ -208,7 +237,7 @@ func (e *Engine) listen(client *lineapi.Client, revision int64) {
 			}
 			if e.findChat(id) == nil {
 				if e.loadChats() == nil {
-					e.changed()
+					e.addMessage(id, e.decode(row))
 				}
 				return
 			}
@@ -230,6 +259,17 @@ func (e *Engine) listen(client *lineapi.Client, revision int64) {
 		case <-timer.C:
 		}
 	}
+}
+
+func (e *Engine) removeMessage(chatID, messageID string) {
+	e.mu.Lock()
+	for i := range e.chats {
+		if e.chats[i].ID == chatID {
+			e.chats[i].History = slices.DeleteFunc(e.chats[i].History, func(row message) bool { return row.ID == messageID })
+		}
+	}
+	e.mu.Unlock()
+	e.changed()
 }
 
 func (e *Engine) addMessage(id string, row message) {

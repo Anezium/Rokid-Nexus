@@ -12,6 +12,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.NexusUi
 
@@ -82,6 +83,15 @@ class LineSettingsActivity : Activity() {
             }
         }
         content.addView(forget, NexusUi.block())
+        content.addView(NexusUi.textButton(this, "Open-source licenses").apply {
+            setOnClickListener {
+                val notice = assets.open("licenses/NOTICE.txt").bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val text = NexusUi.cardBody(this@LineSettingsActivity, notice).apply { setTextIsSelectable(true) }
+                AlertDialog.Builder(this@LineSettingsActivity).setTitle("Open-source licenses")
+                    .setView(ScrollView(this@LineSettingsActivity).apply { addView(text) })
+                    .setPositiveButton("Close", null).show()
+            }
+        }, NexusUi.block())
         val root = NexusUi.fixedRoot(this)
         root.addView(NexusUi.pluginHeader(this, NexusUi.iconTile(this, "L", 48), "LINE Messages", "Personal account · text prototype", ::finish))
         root.addView(NexusUi.screen(this, content), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -109,8 +119,8 @@ class LineSettingsActivity : Activity() {
         val bytes = login.qr
         qr.setImageBitmap(bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) })
         qr.visibility = if (bytes != null) View.VISIBLE else View.GONE
-        link.isEnabled = !pairing && !linked
-        link.visibility = if (linked) View.GONE else View.VISIBLE
+        link.isEnabled = !pairing && LineSession.snapshot.state == "signed_out"
+        link.visibility = if (linked || LineSession.snapshot.state == "failed") View.GONE else View.VISIBLE
         openLine.visibility = if (login.phase == "qr") View.VISIBLE else View.GONE
         cancel.visibility = if (pairing) View.VISIBLE else View.GONE
         forget.visibility = if (linked || LineSession.snapshot.state == "failed") View.VISIBLE else View.GONE
