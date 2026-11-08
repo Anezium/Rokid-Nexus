@@ -2,9 +2,13 @@ package com.anezium.rokidbus.plugin.line
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PersistableBundle
 import android.text.InputType
 import android.view.View
 import android.view.WindowManager
@@ -13,6 +17,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
 
@@ -22,6 +27,9 @@ import com.anezium.rokidbus.client.ui.NexusUi
  * part of the account card that matches the engine's state so the owner only ever
  * sees the step they are on.
  */
+/** `ClipDescription.EXTRA_IS_SENSITIVE`, spelled out because the constant only exists from API 33. */
+private const val EXTRA_IS_SENSITIVE = "android.content.extra.IS_SENSITIVE"
+
 class LineSettingsActivity : Activity() {
     private val owner = Any()
     private lateinit var status: LineUi.StatusLine
@@ -35,9 +43,12 @@ class LineSettingsActivity : Activity() {
     private lateinit var approval: View
     private lateinit var pin: LineUi.PinCode
     private lateinit var pinHint: TextView
+    private lateinit var copyPin: Button
     private lateinit var openLine: Button
     private lateinit var cancel: Button
     private lateinit var forget: View
+    /** The PIN last placed on the clipboard by the owner's tap, so it can be taken back off. */
+    private var copiedPin: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -119,6 +130,7 @@ class LineSettingsActivity : Activity() {
 
         pin = LineUi.PinCode(context)
         pinHint = NexusUi.cardBody(context, "")
+        copyPin = NexusUi.outlinePillButton(context, "Copy PIN").apply { setOnClickListener { copyPin() } }
         openLine = NexusUi.pillButton(context, "Open LINE").apply { setOnClickListener { openLine() } }
         cancel = NexusUi.textButton(context, "Cancel sign-in").apply { setOnClickListener { cancelSignIn() } }
         approval = LinearLayout(context).apply {
@@ -128,7 +140,13 @@ class LineSettingsActivity : Activity() {
             addView(BusTheme.gap(context, 10))
             addView(pinHint, NexusUi.block())
             addView(BusTheme.gap(context, 12))
-            addView(openLine, NexusUi.block())
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(copyPin, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = NexusUi.dp(context, 8)
+                })
+                addView(openLine, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            }, NexusUi.block())
             addView(cancel, NexusUi.block())
             visibility = View.GONE
         }
@@ -156,6 +174,35 @@ class LineSettingsActivity : Activity() {
             LineSignInRequest.clear()
             status.set("Sign-in could not start · keep Nexus visible and try again", LineUi.Tone.BAD)
             signIn.isEnabled = true
+        }
+    }
+
+    /**
+     * Only this tap puts the PIN on the clipboard, marked sensitive so the system keeps it
+     * out of its preview, and [forgetCopiedPin] takes it back off once the sign-in is over.
+     */
+    private fun copyPin() {
+        val code = LineSession.login.pin.filter { it.isDigit() }
+        if (code.isEmpty()) return
+        val clipboard = getSystemService(ClipboardManager::class.java) ?: return
+        val clip = ClipData.newPlainText("LINE PIN", code)
+        clip.description.extras = PersistableBundle().apply { putBoolean(EXTRA_IS_SENSITIVE, true) }
+        clipboard.setPrimaryClip(clip)
+        copiedPin = code
+        // Android 13 shows its own "copied" overlay; older phones say nothing.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            Toast.makeText(this, "PIN copied", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Clears the clipboard if it still holds the PIN this screen put there; leaves anything else alone. */
+    private fun forgetCopiedPin() {
+        val code = copiedPin ?: return
+        copiedPin = null
+        val clipboard = getSystemService(ClipboardManager::class.java) ?: return
+        runCatching {
+            val current = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
+            if (current == code) clipboard.clearPrimaryClip()
         }
     }
 
@@ -239,6 +286,7 @@ class LineSettingsActivity : Activity() {
                 else "Nexus is contacting LINE with the email you entered."
                 steps.highlight(2)
                 pin.set(login.pin)
+                if (login.phase != "pin") forgetCopiedPin()
                 pinHint.text = if (login.phase == "pin") "Type it in LINE within three minutes, then come back here."
                 else "Keep Nexus visible; the PIN appears here in a moment."
             }
@@ -251,6 +299,7 @@ class LineSettingsActivity : Activity() {
                     else -> "Your account is saved. Open Applications › LINE Messages on the glasses to connect. Nexus keeps LINE disconnected while it is not in use."
                 }
                 pin.set("")
+                forgetCopiedPin()
             }
             failed -> {
                 accountTitle.text = if (login.phase == "failed") "Sign-in did not go through" else "LINE unavailable"
@@ -258,6 +307,7 @@ class LineSettingsActivity : Activity() {
                 else "The LINE engine could not start. Forget the connection and sign in again."
                 steps.highlight(0)
                 pin.set("")
+                forgetCopiedPin()
             }
             else -> {
                 accountTitle.text = "Link your LINE account"
@@ -273,6 +323,7 @@ class LineSettingsActivity : Activity() {
         signIn.isEnabled = showForm && engine == "signed_out"
         approval.visibility = if (pairing) View.VISIBLE else View.GONE
         openLine.visibility = if (login.phase == "pin" || login.phase == "approve") View.VISIBLE else View.GONE
+        copyPin.visibility = if (login.phase == "pin" && login.pin.any { it.isDigit() }) View.VISIBLE else View.GONE
         forget.visibility = if (linked || failed) View.VISIBLE else View.GONE
     }
 }
