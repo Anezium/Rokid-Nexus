@@ -40,9 +40,10 @@ jobs:
         with:
           go-version: ${{ steps.line-go.outputs.version }}
           cache-dependency-path: plugins/line/native/go.sum
-      - uses: android-actions/setup-android@v3
+      # The hosted runner already carries the SDK; its sdkmanager is used directly because
+      # android-actions/setup-android installs the retired "tools" package and fails.
       - name: Provision the CI NDK
-        run: sdkmanager "ndk;27.1.12297006"
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.1.12297006" > /dev/null
       - name: Test and build the embedded engine
         working-directory: plugins/line/native
         run: |
