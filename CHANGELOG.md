@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.4.0
+
+Update both hubs together. LINE Messages 0.1.0 ships alongside and needs hubs
+2.4.0 for one behaviour below; Meta Messages 0.1.1 brings its own icon. Plugin
+developers get SDK 0.26.0. Hubs 2.2.x and 2.3.0 remain compatible with each
+other and with 2.4.0.
+
+### Glasses hub
+
+- **A refused message stays yours to send.** When a messaging plugin refuses a
+  send before anything left the phone (LINE Messages does this for a chat
+  without an encryption key), the composer keeps the draft ready and Send
+  available, instead of showing "unconfirmed" and asking you to check on the
+  phone. Plugins that cannot tell what happened still get the cautious
+  behaviour.
+- **Dictate stays after silence.** A dictation that heard nothing, or that you
+  cancelled, puts the focus on Type but keeps the glasses microphone on offer.
+  Only a microphone that is busy, unavailable or disconnected turns Dictate
+  off until the next try.
+
+### SDK 0.26.0
+
+- `NexusPageResult.CODE_NOT_SENT` (`not_sent`): the optional code a page
+  provider puts on a rejected compose send to say nothing was handed over, so
+  the hub keeps the draft sendable. Older hubs ignore the code. No wire bump.
+
+### Plugins
+
+- **LINE Messages 0.1.0**, new: LINE conversations on the glasses, replies by
+  dictation or the phone keyboard, photos from the glasses camera, all sent
+  with Letter Sealing. Its own changelog is in `plugins/line/CHANGELOG.md`.
+- **Meta Messages 0.1.1**: the Meta mark on the glasses launcher and as the
+  Android app icon.
+
 ## 2.3.0
 
 Update both hubs together to get the new setting; 2.2.x hubs stay compatible
