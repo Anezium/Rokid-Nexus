@@ -40,8 +40,10 @@ internal class CommandStripView(context: Context, private val icons: SessionIcon
         strokeWidth = PageStyle.STROKE_PX.toFloat()
     }
     private val rule = Paint().apply { color = PageStyle.outline }
+    // The footer is a fixed 48 px bar: at larger page text a three-button row would ellipsize
+    // "Open app" to "Open…", so button labels keep the base size.
     private val label = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = PageStyle.scaledPx(context, PageStyle.BODY_PX)
+        textSize = PageStyle.BODY_PX
         typeface = PageStyle.sans
     }
     private val rect = RectF()
