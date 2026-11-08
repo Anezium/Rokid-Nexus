@@ -53,23 +53,26 @@ type loginStatus struct {
 // op serializes protocol and crypto calls; mu protects snapshots and callbacks.
 // Cancel does not take op, so closing the last owner interrupts blocked network work.
 type Engine struct {
-	op          sync.Mutex
-	mu          sync.Mutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	file        *os.File
-	dir         string
-	client      *lineapi.Client
-	crypto      *e2ee.Manager
-	stored      storedSession
-	state       string
-	chats       []chat
-	version     int64
-	listener    Listener
-	login       loginStatus
-	loginCancel context.CancelFunc
-	closed      bool
+	op              sync.Mutex
+	mu              sync.Mutex
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	file            *os.File
+	dir             string
+	client          *lineapi.Client
+	crypto          *e2ee.Manager
+	stored          storedSession
+	state           string
+	chats           []chat
+	version         int64
+	listener        Listener
+	login           loginStatus
+	loginCancel     context.CancelFunc
+	closed          bool
+	inboxEntries    int
+	contactEntries  int
+	excludedEntries int
 }
 
 func Open(dir string) (*Engine, error) {
@@ -129,10 +132,13 @@ func (e *Engine) Snapshot() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return encode(struct {
-		State   string `json:"state"`
-		Version int64  `json:"version"`
-		Chats   []chat `json:"chats"`
-	}{e.state, e.version, e.chats})
+		State           string `json:"state"`
+		Version         int64  `json:"version"`
+		Chats           []chat `json:"chats"`
+		InboxEntries    int    `json:"inboxEntries"`
+		ContactEntries  int    `json:"contactEntries"`
+		ExcludedEntries int    `json:"excludedEntries"`
+	}{e.state, e.version, e.chats, e.inboxEntries, e.contactEntries, e.excludedEntries})
 }
 
 func (e *Engine) LoginStatus() string { e.mu.Lock(); defer e.mu.Unlock(); return encode(e.login) }

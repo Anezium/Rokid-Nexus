@@ -15,9 +15,39 @@ const maxChats = 48
 const maxMessages = 24
 
 func (e *Engine) loadChats() error {
-	boxes, err := e.client.GetMessageBoxes(lineapi.MessageBoxesOptions{MessageBoxCountLimit: maxChats, LastMessagesPerMessageBoxCount: 1})
+	// Match the reference client's inbox request; history is fetched separately.
+	boxes, err := e.client.GetMessageBoxes(lineapi.MessageBoxesOptions{ActiveOnly: true, MessageBoxCountLimit: 100, WithUnreadCount: true, LastMessagesPerMessageBoxCount: 0})
 	if err != nil {
 		return err
+	}
+	inboxEntries, contactEntries, excludedEntries := len(boxes.MessageBoxes), 0, 0
+	// New accounts can have contacts before Chrome's recent inbox exposes a
+	// thread. Resolve those contacts without inventing ids or including blocks.
+	if len(boxes.MessageBoxes) == 0 {
+		ids, err := e.client.GetAllContactIds()
+		if err != nil {
+			return err
+		}
+		contactEntries = len(ids)
+		blocked, err := e.client.GetBlockedContactIds()
+		if err != nil {
+			return err
+		}
+		excluded := map[string]bool{e.stored.Mid: true}
+		for _, id := range blocked {
+			excluded[id] = true
+		}
+		for _, id := range ids {
+			if excluded[id] || !validMid(id) || !strings.HasPrefix(id, "u") {
+				excludedEntries++
+				continue
+			}
+			excluded[id] = true
+			boxes.MessageBoxes = append(boxes.MessageBoxes, lineapi.MessageBox{ID: id})
+			if len(boxes.MessageBoxes) >= maxChats {
+				break
+			}
+		}
 	}
 	chats := make([]chat, 0, min(len(boxes.MessageBoxes), maxChats))
 	e.mu.Lock()
@@ -31,6 +61,7 @@ func (e *Engine) loadChats() error {
 			return e.ctx.Err()
 		}
 		if !validMid(box.ID) {
+			excludedEntries++
 			continue
 		}
 		item := chat{ID: box.ID, Title: "Conversation", Group: !strings.HasPrefix(box.ID, "u"), History: []message{}}
@@ -55,6 +86,7 @@ func (e *Engine) loadChats() error {
 	}
 	e.mu.Lock()
 	e.chats = chats
+	e.inboxEntries, e.contactEntries, e.excludedEntries = inboxEntries, contactEntries, excludedEntries
 	e.mu.Unlock()
 	return nil
 }
