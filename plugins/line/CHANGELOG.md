@@ -17,8 +17,10 @@ send, but a refused send shows as unconfirmed instead of staying editable.
   its preview leave the phone sealed with Letter Sealing; the key travels only
   inside the sealed message, never beside it.
 - **Sign in on the phone.** Email and password, then the PIN LINE shows: a
-  **Copy PIN** button puts it on the clipboard, marked sensitive, and clears it
-  once the sign-in is over. Credentials are masked and never leave the phone.
+  **Copy PIN** button puts it on the clipboard, marked sensitive, and the
+  screen clears it again, the next time it is in front, once the sign-in is
+  over. The email and password are used only to authenticate with LINE; the
+  password is masked and never saved.
 - **Letter Sealing required.** Conversations without an encryption key cannot be
   written to from the glasses; the plugin says so instead of sending plaintext.
   An ambiguous send is kept, never retried on its own.

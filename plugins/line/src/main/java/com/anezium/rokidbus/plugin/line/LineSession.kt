@@ -24,6 +24,13 @@ internal object LineSession {
     @Volatile var login = LineLogin()
         private set
 
+    /**
+     * The PIN the settings screen last put on the clipboard, until that screen could confirm the
+     * clipboard no longer holds it. Lives here rather than in the Activity so a rotation, Back, or
+     * a sign-in that finishes while LINE is in front does not lose the duty to clear it.
+     */
+    @Volatile var copiedPin: String? = null
+
     private fun path(context: Context) = File(context.applicationContext.noBackupFilesDir, "line-session").absolutePath
 
     fun acquire(context: Context, owner: Any, changed: () -> Unit) {

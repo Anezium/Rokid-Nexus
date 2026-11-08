@@ -48,7 +48,6 @@ class LineSettingsActivity : Activity() {
     private lateinit var cancel: Button
     private lateinit var forget: View
     /** The PIN last placed on the clipboard by the owner's tap, so it can be taken back off. */
-    private var copiedPin: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -188,7 +187,7 @@ class LineSettingsActivity : Activity() {
         val clip = ClipData.newPlainText("LINE PIN", code)
         clip.description.extras = PersistableBundle().apply { putBoolean(EXTRA_IS_SENSITIVE, true) }
         clipboard.setPrimaryClip(clip)
-        copiedPin = code
+        LineSession.copiedPin = code
         // Android 13 shows its own "copied" overlay; older phones say nothing.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             Toast.makeText(this, "PIN copied", Toast.LENGTH_SHORT).show()
@@ -197,18 +196,28 @@ class LineSettingsActivity : Activity() {
 
     /**
      * Clears the clipboard if it still holds the PIN this screen put there; leaves anything else
-     * alone. Ownership is kept until the clipboard could actually be read, since Android only
-     * lets a foreground app look at it, so a later render tries again.
+     * alone. Android only lets the focused app read the clipboard, so this runs when the window
+     * has focus and keeps the duty ([LineSession.copiedPin]) whenever the read came back empty:
+     * the next render or focus gain tries again. See [PinClipboard].
      */
     private fun forgetCopiedPin() {
-        val code = copiedPin ?: return
+        val code = LineSession.copiedPin ?: return
+        if (!hasWindowFocus()) return
         val clipboard = getSystemService(ClipboardManager::class.java) ?: return
-        val cleared = runCatching {
-            val current = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
-            if (current == code) clipboard.clearPrimaryClip()
-            true
-        }.getOrDefault(false)
-        if (cleared) copiedPin = null
+        val current = runCatching {
+            clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
+        }.getOrNull()
+        when (PinClipboard.step(code, current)) {
+            PinClipboardStep.CLEAR -> runCatching { clipboard.clearPrimaryClip() }.onSuccess { LineSession.copiedPin = null }
+            PinClipboardStep.DROP -> LineSession.copiedPin = null
+            PinClipboardStep.KEEP -> Unit
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Coming back from LINE after the PIN was accepted is the usual moment the clipboard becomes readable again.
+        if (hasFocus && LineSession.login.phase != "pin") forgetCopiedPin()
     }
 
     private fun openLine() {
@@ -263,7 +272,8 @@ class LineSettingsActivity : Activity() {
 
     override fun onDestroy() {
         // A PIN LINE is still asking for stays available to paste; once the sign-in is over it
-        // must not outlive this screen.
+        // should not outlive this screen. Without focus the clipboard is unreadable, and the
+        // duty then stays in LineSession for the next time this screen is in front.
         if (LineSession.login.phase != "pin") forgetCopiedPin()
         super.onDestroy()
     }
