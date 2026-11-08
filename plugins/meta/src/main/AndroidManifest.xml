@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <queries>
+        <intent><action android:name="com.anezium.rokidbus.action.HUB" /></intent>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+    </queries>
+    <application android:allowBackup="false" android:label="Meta Messages" android:supportsRtl="true" android:theme="@style/Theme.MetaMessages" android:usesCleartextTraffic="false">
+        <activity android:name=".MetaMessagesActivity" android:exported="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
+        <activity android:name=".AccountSettingsActivity" android:exported="false" android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
+        <activity android:name=".WhatsAppSettingsActivity" android:exported="false" android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
+        <activity android:name=".LicensesActivity" android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
+        <service android:name=".AccountLoginGraceService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="pending-login" />
+        </service>
+        <service android:name=".WhatsAppPairingGraceService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="pending-pairing" />
+        </service>
+        <service android:name=".MetaMessagesPluginService" android:exported="true" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="glasses-session" />
+            <intent-filter><action android:name="com.anezium.rokidbus.action.PLUGIN" /></intent-filter>
+            <meta-data android:name="com.anezium.rokidbus.plugin.ID" android:value="meta-messages" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME" android:value="Meta Messages" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.API_VERSION" android:value="3" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.CAPABILITIES" android:value="surfaces,stt,camera" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES" android:value="/plugin/meta-messages,/system/plugin,/stt,/camera/snapshot/result,/camera/snapshot/error" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.ICON" android:value="chat" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY" android:value="com.anezium.rokidbus.plugin.meta.MetaMessagesActivity" />
+            <!-- The whole glasses UI is pages: no immersion, so no Open app anywhere (bundle v7). -->
+            <meta-data android:name="com.anezium.rokidbus.plugin.LAUNCHABLE" android:value="false" />
+            <!-- Launcher pages for the glasses; not a capability. -->
+            <meta-data android:name="rokidbus.plugin.pages" android:value="1" />
+        </service>
+    </application>
+</manifest>
