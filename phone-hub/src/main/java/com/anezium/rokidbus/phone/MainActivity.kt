@@ -1193,7 +1193,8 @@ class MainActivity : Activity() {
             }
             step.statusLine?.let { status ->
                 addView(BusTheme.gap(this@MainActivity, 6))
-                addView(NexusUi.rowSub(this@MainActivity, status), NexusUi.block())
+                // The failure lines name what to check; a one-line ellipsis would cut that off.
+                addView(NexusUi.rowSub(this@MainActivity, status).apply { maxLines = 3 }, NexusUi.block())
             }
             val hasPrimaryAction = step.actionLabel != null && step.onAction != null
             val hasSecondaryAction = step.secondaryActionLabel != null && step.onSecondaryAction != null
