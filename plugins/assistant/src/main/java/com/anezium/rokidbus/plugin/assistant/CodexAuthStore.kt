@@ -191,20 +191,19 @@ class CodexAuthStore internal constructor(
     }
 
     fun providerEffort(id: String): String {
-        val preset = requireProviderPreset(id)
+        val allowed = modelEfforts(id)
         ensureProviderMigration()
-        if (preset.supportedEfforts.isEmpty()) return ""
         return prefs.getString(providerKey(KEY_PROVIDER_EFFORT_PREFIX, id), "")
             .orEmpty()
             .trim()
-            .takeIf(preset.supportedEfforts::contains)
+            .takeIf(allowed::contains)
             .orEmpty()
     }
 
     fun setProviderEffort(id: String, effort: String) {
         val preset = requireProviderPreset(id)
         val normalized = effort.trim()
-        require(normalized.isEmpty() || normalized in preset.supportedEfforts) {
+        require(normalized.isEmpty() || normalized in modelEfforts(id)) {
             "Unsupported ${preset.displayName} reasoning effort: $effort"
         }
         ensureProviderMigration()
@@ -218,12 +217,13 @@ class CodexAuthStore internal constructor(
         ensureProviderMigration()
         val key = providerKey(KEY_PROVIDER_MODEL_SUPPORTS_PHOTOS_PREFIX, id)
         val visionOverride = prefs.getBoolean(key, false).takeIf { prefs.contains(key) }
-        return ProviderCatalog.supportsVision(
-            preset = preset,
-            model = providerModel(id),
-            visionOverride = visionOverride,
-            backend = providerBackend(id),
-        )
+        return visionOverride ?: availableModels(id).firstOrNull { it.id == providerModel(id) }?.vision
+            ?: ProviderCatalog.supportsVision(
+                preset = preset,
+                model = providerModel(id),
+                visionOverride = visionOverride,
+                backend = providerBackend(id),
+            )
     }
 
     fun setProviderModelSupportsPhotos(id: String, supportsPhotos: Boolean) {
@@ -287,12 +287,15 @@ class CodexAuthStore internal constructor(
         ).orEmpty(),
     )
 
-    fun chatGptReasoningEffort(): String = ChatGptCodexApiClient.supportedReasoningEffort(
-        prefs.getString(
+    fun chatGptReasoningEffort(): String {
+        val requested = prefs.getString(
             KEY_CHATGPT_REASONING_EFFORT,
             ChatGptCodexApiClient.DEFAULT_REASONING_EFFORT,
-        ).orEmpty(),
-    )
+        ).orEmpty()
+        val model = availableModels(CHATGPT_PROVIDER_ID).firstOrNull { it.id == chatGptModel() }
+        if (model?.efforts != null) return model.effort(requested).orEmpty()
+        return ChatGptCodexApiClient.supportedReasoningEffort(requested)
+    }
 
     fun keepConversation(): Boolean = prefs.getBoolean(KEY_KEEP_CONVERSATION, true)
 
@@ -344,10 +347,72 @@ class CodexAuthStore internal constructor(
     }
 
     fun setChatGptReasoningEffort(effort: String) {
-        require(effort in ChatGptCodexApiClient.SUPPORTED_REASONING_EFFORTS) {
+        require(effort in modelEfforts(CHATGPT_PROVIDER_ID)) {
             "Unsupported ChatGPT reasoning effort: $effort"
         }
         prefs.edit().putString(KEY_CHATGPT_REASONING_EFFORT, effort).apply()
+    }
+
+    internal fun availableModels(id: String): List<AvailableModel> =
+        cachedModelCatalog(id)?.models ?: if (id == CHATGPT_PROVIDER_ID) {
+            ProviderCatalog.openAi.suggestedModels.map {
+                AvailableModel(it.id, it.title, it.vision)
+            }
+        } else {
+            requireProviderPreset(id).suggestedModels.map { AvailableModel(it.id, it.title, it.vision) }
+        }
+
+    internal fun modelEfforts(id: String): List<String> {
+        val model = if (id == CHATGPT_PROVIDER_ID) chatGptModel() else providerModel(id)
+        return availableModels(id).firstOrNull { it.id == model }?.efforts
+            ?: if (id == CHATGPT_PROVIDER_ID) ChatGptCodexApiClient.SUPPORTED_REASONING_EFFORTS.toList()
+            else requireProviderPreset(id).supportedEfforts
+    }
+
+    internal fun modelCatalogRequest(id: String): ModelCatalogRequest? {
+        val headers: Map<String, String>
+        val url: String
+        val identity: String
+        if (id == CHATGPT_PROVIDER_ID) {
+            val tokens = oauthTokens() ?: return null
+            url = "https://chatgpt.com/backend-api/codex/models?client_version=0.159.0"
+            headers = buildMap {
+                put("Authorization", "Bearer ${tokens.accessToken}")
+                put("originator", "codex_cli_rs")
+                tokens.accountId.takeIf(String::isNotBlank)?.let { put("ChatGPT-Account-Id", it) }
+            }
+            identity = tokens.accountId.ifBlank { tokens.email ?: tokens.accessToken }
+        } else {
+            val preset = requireProviderPreset(id)
+            val key = providerApiKey(id)?.takeIf(String::isNotBlank) ?: return null
+            val base = providerBaseUrl(id).trimEnd('/').takeIf(String::isNotBlank) ?: return null
+            url = "$base/models"
+            headers = preset.extraHeaders + ("Authorization" to "Bearer $key")
+            identity = key
+        }
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(JSONObject().put("id", id).put("url", url).put("identity", identity).toString().toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return ModelCatalogRequest(id, digest, url, headers)
+    }
+
+    internal fun cachedModelCatalog(id: String): ModelCatalogSnapshot? {
+        val request = modelCatalogRequest(id) ?: return null
+        val saved = prefs.getString("model_catalog.$id", null) ?: return null
+        return runCatching {
+            val value = JSONObject(saved)
+            if (value.getString("scope") != request.scope) return null
+            ModelCatalogSnapshot(AvailableModels.parse(value.toString(), false), value.getLong("updated_at"))
+        }.getOrNull()
+    }
+
+    internal fun saveModelCatalog(request: ModelCatalogRequest, snapshot: ModelCatalogSnapshot): Boolean {
+        if (modelCatalogRequest(request.providerId)?.scope != request.scope) return false
+        prefs.edit().putString("model_catalog.${request.providerId}", JSONObject()
+            .put("scope", request.scope)
+            .put("updated_at", snapshot.updatedAtMs)
+            .put("data", AvailableModels.encode(snapshot.models)).toString()).apply()
+        return true
     }
 
     fun setKeepConversation(enabled: Boolean) {

@@ -40,6 +40,7 @@ internal class OpenAiCompatApiClient(
     private val effortProvider: () -> String = { "" },
     private val backendProvider: () -> ProviderBackend = { preset.backend },
     private val responsesOverride: Boolean? = null,
+    private val modelInfoProvider: (String) -> AvailableModel? = { null },
 ) : OpenAiCompatChatClient {
     private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
 
@@ -91,18 +92,24 @@ internal class OpenAiCompatApiClient(
         return "$baseUrl/" + if (usesResponses(modelId)) "responses" else "chat/completions"
     }
 
-    private fun usesResponses(modelId: String): Boolean = preset.id == "openai" && modelId.startsWith("gpt-6") &&
+    private fun usesResponses(modelId: String): Boolean = preset.id == "openai" &&
+        (Regex("^gpt-([0-9]+)").find(modelId)?.groupValues?.get(1)?.toIntOrNull() ?: 0) >= 6 &&
         (responsesOverride ?: (baseUrlProvider().trim().trimEnd('/') == preset.defaultBaseUrl))
 
     internal fun requestBody(request: OpenAiCompatChatRequest): JSONObject =
-        if (usesResponses(request.modelId)) OpenAiResponsesAdapter.body(request, effortProvider().trim()) else JSONObject()
+        if (usesResponses(request.modelId)) OpenAiResponsesAdapter.body(request, effortProvider().trim(), modelInfoProvider(request.modelId)) else JSONObject()
             .put("model", request.modelId)
             .put("stream", true)
             .put("messages", request.messages)
             .apply {
                 val effort = effortProvider().trim()
-                if (effort in preset.supportedEfforts) {
-                    put("reasoning", JSONObject().put("effort", effort))
+                val allowed = modelInfoProvider(request.modelId)?.efforts ?: preset.supportedEfforts
+                if (effort.isNotBlank() && effort in allowed) {
+                    if (preset.id == "openrouter") put("reasoning", JSONObject().put("effort", effort))
+                    else put("reasoning_effort", effort)
+                }
+                if (preset.id == "deepseek") {
+                    put("thinking", JSONObject().put("type", if (effort.isNotBlank() && effort in allowed) "enabled" else "disabled"))
                 }
                 if (request.toolDefinitions.isNotEmpty()) {
                     put(
@@ -320,6 +327,7 @@ internal class OpenAiCompatProvider(
             val modelId = request.model ?: modelProvider()
             var messages = effectiveRequest.toChatCompletionMessages()
             val responseReasoning = mutableMapOf<String, List<JSONObject>>()
+            var lastPassReasoning = ""
 
             suspend fun streamPass(
                 messages: JSONArray,
@@ -328,6 +336,7 @@ internal class OpenAiCompatProvider(
                 val response = StringBuilder()
                 val toolCalls = OpenAiToolCallAccumulator()
                 val pendingReasoning = mutableListOf<JSONObject>()
+                val reasoningText = StringBuilder()
                 val thinkTagFilter = ThinkTagStreamFilter()
                 val textToolFilter = if (useTextToolBridge) {
                     ControlLineStreamFilter(COMPAT_TEXT_TOOL_REQUEST_TOKEN)
@@ -355,6 +364,7 @@ internal class OpenAiCompatProvider(
                 ).collect { event ->
                     when (event) {
                         is OpenAiChatSseEvent.Delta -> {
+                            event.reasoningContent?.let(reasoningText::append)
                             event.responseItem?.let { item ->
                                 when (item.optString("type")) {
                                     "reasoning" -> pendingReasoning += item
@@ -386,6 +396,7 @@ internal class OpenAiCompatProvider(
                     response.append(controlResult.text)
                     emit(AiProviderEvent.TextDelta(messageId, controlResult.text))
                 }
+                lastPassReasoning = reasoningText.toString()
                 return OpenAiCompatPassResult(
                     text = cleanCompatResponse(response.toString()),
                     toolCalls = toolCalls.completeCalls(),
@@ -440,7 +451,9 @@ internal class OpenAiCompatProvider(
                         }
                         replayMessages.put(JSONObject().put("role", "user").put("content", text.toString()))
                     } else {
-                        replayMessages.put(assistantToolCallMessage(pass.text, pass.toolCalls))
+                        replayMessages.put(assistantToolCallMessage(pass.text, pass.toolCalls).apply {
+                            if (lastPassReasoning.isNotEmpty()) put("reasoning_content", lastPassReasoning)
+                        })
                         results.forEach { (call, result) ->
                             if (result is AssistantToolResult.Image) {
                                 capturedPhoto = PhotoAttachment(result.mimeType, result.base64)
