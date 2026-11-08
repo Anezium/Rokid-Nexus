@@ -59,7 +59,7 @@
     <string name="onb_phase_pairing_via_phone">Your phone is finishing the pairing…</string>
     <string name="onb_phase_arming">Arming Nexus…</string>
     <string name="onb_phase_complete">Secure setup complete.</string>
-    <string name="onb_phase_manual_required">Automatic setup could not finish.</string>
+    <string name="onb_phase_manual_required">Automatic setup could not finish. Check ADB debugging in Hi Rokid on the phone.</string>
     <string name="onb_phase_failed">Setup stopped before it finished.</string>
 
     <!-- Failure reasons, shown in place of the phase line when setup stops. -->

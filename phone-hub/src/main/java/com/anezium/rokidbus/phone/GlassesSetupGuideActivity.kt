@@ -31,6 +31,18 @@ class GlassesSetupGuideActivity : Activity() {
             ),
             NexusUi.block(),
         )
+        content.addView(BusTheme.gap(this, 12))
+        // The one prerequisite the lens cannot show: a vendor switch Nexus can neither read nor
+        // flip. Without it the glasses pair normally and the setup dies on its first command.
+        content.addView(
+            NexusUi.cardBody(
+                this,
+                "Before you start: ADB debugging has to be on in the Hi Rokid app, developer " +
+                    "section. Nexus cannot see that switch. With it off, the glasses still pair " +
+                    "and setup stops halfway.",
+            ),
+            NexusUi.block(),
+        )
         content.addView(BusTheme.gap(this, 20))
 
         content.addView(
