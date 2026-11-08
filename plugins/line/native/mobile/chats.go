@@ -108,7 +108,9 @@ func (e *Engine) LoadHistory(id string) error {
 	history := make([]message, 0, len(rows))
 	for _, row := range rows {
 		if row != nil {
-			history = append(history, e.decode(row))
+			decoded := e.decode(row)
+			e.confirmOwnImage(id, decoded)
+			history = append(history, decoded)
 		}
 	}
 	// LINE returns newest first. The conversation template expects oldest first.
@@ -311,6 +313,7 @@ func (e *Engine) removeMessage(chatID, messageID string) {
 }
 
 func (e *Engine) addMessage(id string, row message) {
+	e.confirmOwnImage(id, row)
 	e.mu.Lock()
 	for i := range e.chats {
 		if e.chats[i].ID != id {

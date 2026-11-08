@@ -34,8 +34,9 @@ type chat struct {
 }
 
 type sendRecord struct {
-	Digest string `json:"digest"`
-	State  string `json:"state"`
+	Digest string     `json:"digest"`
+	State  string     `json:"state"`
+	Image  *sentImage `json:"image,omitempty"`
 }
 
 type storedSession struct {

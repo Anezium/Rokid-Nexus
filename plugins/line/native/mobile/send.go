@@ -46,19 +46,8 @@ func (e *Engine) Send(invocation, id, title, text string) string {
 	if !ready {
 		return "not_sent"
 	}
-	if len(e.stored.Sends) >= maxSends {
-		removed := false
-		for i, key := range e.stored.Order {
-			if e.stored.Sends[key].State == "sent" {
-				delete(e.stored.Sends, key)
-				e.stored.Order = append(e.stored.Order[:i], e.stored.Order[i+1:]...)
-				removed = true
-				break
-			}
-		}
-		if !removed {
-			return "not_sent"
-		}
+	if !e.makeSendRoom() {
+		return "not_sent"
 	}
 	msg := &lineapi.Message{From: e.stored.Mid, To: id, ContentType: 0, ContentMetadata: map[string]string{}}
 	if strings.HasPrefix(strings.ToLower(id), "c") {
@@ -117,4 +106,18 @@ func (e *Engine) Send(invocation, id, title, text string) string {
 	_ = e.save()
 	e.addMessage(id, message{ID: response.ID, Text: text, Mine: true})
 	return "sent"
+}
+
+func (e *Engine) makeSendRoom() bool {
+	if len(e.stored.Sends) < maxSends {
+		return true
+	}
+	for i, key := range e.stored.Order {
+		if e.stored.Sends[key].State == "sent" {
+			delete(e.stored.Sends, key)
+			e.stored.Order = append(e.stored.Order[:i], e.stored.Order[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
