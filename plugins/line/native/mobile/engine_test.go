@@ -59,6 +59,27 @@ func TestForgetCanRemoveCorruptSession(t *testing.T) {
 	}
 }
 
+func TestSavedSessionIsOnStandbyWithoutClaimingANetworkFailure(t *testing.T) {
+	dir := t.TempDir()
+	e, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.stored.Token, e.stored.Mid = "synthetic-token", "synthetic-account"
+	if err := e.save(); err != nil {
+		t.Fatal(err)
+	}
+	e.Close()
+	e, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	if e.state != "standby" || e.client != nil {
+		t.Fatal("dormant saved session was reported as a connection failure")
+	}
+}
+
 func TestAmbiguousSendSurvivesReopenWithoutResending(t *testing.T) {
 	dir := t.TempDir()
 	e, err := Open(dir)

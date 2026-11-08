@@ -19,9 +19,11 @@ import (
 type Listener interface{ Changed() }
 
 type message struct {
-	ID   string `json:"id"`
-	Text string `json:"text"`
-	Mine bool   `json:"mine"`
+	ID     string `json:"id"`
+	Text   string `json:"text"`
+	Mine   bool   `json:"mine"`
+	Media  string `json:"media,omitempty"`
+	source *mediaSource
 }
 
 type chat struct {
@@ -100,7 +102,7 @@ func Open(dir string) (*Engine, error) {
 			file.Close()
 			return nil, errors.New("saved session invalid; forget it on the phone")
 		}
-		e.state = "offline"
+		e.state = "standby"
 	} else if !os.IsNotExist(err) {
 		cancel()
 		file.Close()
@@ -172,6 +174,7 @@ func (b *ownedBody) Close() error { defer b.stop(); return b.ReadCloser.Close() 
 func (e *Engine) newClient(token string) *lineapi.Client {
 	c := lineapi.NewClient(token)
 	c.HTTPClient = &http.Client{Timeout: 6 * time.Second, Transport: requestTransport{e.ctx}}
+	c.OBSClient = mediaHTTPClient(e.ctx)
 	return c
 }
 

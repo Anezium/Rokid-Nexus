@@ -13,6 +13,8 @@ import com.anezium.rokidbus.client.plugin.NexusPageResult
 import com.anezium.rokidbus.client.plugin.NexusPageVisibility
 import com.anezium.rokidbus.client.plugin.NexusPluginService
 import com.anezium.rokidbus.shared.LinkStateBits
+import com.anezium.rokidbus.shared.LauncherArtwork
+import com.anezium.rokidbus.shared.PageTemplateContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -31,6 +33,9 @@ class LinePluginService : NexusPluginService() {
     private var owner: Any? = null
     private var revision = 0L
     private var connectRequested = false
+    private val thumbnails = linkedMapOf<Pair<String, String>, LauncherArtwork>()
+    private val mediaAsked = linkedSetOf<Pair<String, String>>()
+    private var mediaRunning = false
 
     override fun onNexusPageRequest(request: NexusPageRequest): NexusPage {
         if (owner == null) {
@@ -47,7 +52,7 @@ class LinePluginService : NexusPluginService() {
     private fun changed(lease: Any) {
         if (owner !== lease) return
         if (LineSession.snapshot.state == "signed_out") { connectRequested = false; loaded.clear() }
-        if (LineSession.snapshot.state == "offline" && !connectRequested) connect(lease)
+        if (LineSession.snapshot.state in setOf("standby", "offline") && !connectRequested) connect(lease)
         requests.keys.toList().forEach(::loadHistory)
         publish()
     }
@@ -93,11 +98,41 @@ class LinePluginService : NexusPluginService() {
 
     private fun render(pageId: String, floor: Long? = null): NexusPage.Content {
         revision = maxOf(revision + 1, (floor ?: -1) + 1)
-        return LinePages.render(pageId, revision, LineSession.snapshot, nexusClient?.supportsLauncherInteractive() == true)
+        return LinePages.render(pageId, revision, LineSession.snapshot, nexusClient?.supportsLauncherInteractive() == true) { chat, message ->
+            if (nexusClient?.supportsComposerTools() == true) thumbnails[chat.id to message.id] else null
+        }
     }
 
     private fun publish() {
         visible.toList().forEach { page -> requests[page]?.let { nexusClient?.publishPage(it, render(page)) } }
+        loadMedia()
+    }
+
+    private fun loadMedia() {
+        val lease = owner ?: return
+        if (mediaRunning || nexusClient?.supportsComposerTools() != true || LineSession.snapshot.state != "ready") return
+        val candidate = visible.asSequence().mapNotNull { LinePages.chat(it, LineSession.snapshot) }
+            .flatMap { chat -> chat.history.asReversed().filter { it.media in setOf("photo", "sticker") }
+                .take(PageTemplateContract.MAX_MESSAGE_IMAGES).asSequence().map { chat to it } }
+            .firstOrNull { (chat, message) -> (chat.id to message.id) !in mediaAsked } ?: return
+        val (chat, message) = candidate
+        val key = chat.id to message.id
+        mediaAsked += key
+        while (mediaAsked.size > 256) mediaAsked.remove(mediaAsked.first())
+        mediaRunning = true
+        // One download at a time keeps work bounded and avoids expiring queued native calls.
+        LineSession.call(this, lease, { LineThumbnailEncoder.encode(it.media(chat.id, message.id)) }) { result ->
+            if (owner === lease) {
+                mediaRunning = false
+                result.getOrNull()?.let { thumbnails[key] = it }
+                while (thumbnails.size > 64) {
+                    val oldest = thumbnails.keys.first()
+                    thumbnails.remove(oldest)
+                    mediaAsked.remove(oldest)
+                }
+                publish()
+            }
+        }
     }
 
     override fun onNexusPageAction(action: NexusPageAction): NexusPageResult {
@@ -138,6 +173,9 @@ class LinePluginService : NexusPluginService() {
         loaded.clear()
         answers.clear()
         connectRequested = false
+        thumbnails.clear()
+        mediaAsked.clear()
+        mediaRunning = false
     }
 
     override fun onDestroy() { end(); main.removeCallbacksAndMessages(null); super.onDestroy() }

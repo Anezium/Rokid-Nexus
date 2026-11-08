@@ -81,7 +81,7 @@ class LineSettingsActivity : Activity() {
             startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")))
         }, NexusUi.block())
 
-        setContentView(LineUi.screen(this, "Personal account · text only", content, ::finish))
+        setContentView(LineUi.screen(this, "Personal account", content, ::finish))
         render()
     }
 
@@ -214,7 +214,7 @@ class LineSettingsActivity : Activity() {
         val login = LineSession.login
         val engine = LineSession.snapshot.state
         val pairing = login.phase in setOf("starting", "approve", "pin")
-        val linked = engine in setOf("offline", "connecting", "ready")
+        val linked = engine in setOf("standby", "offline", "connecting", "ready")
         val failed = login.phase == "failed" || engine == "failed"
 
         val (headline, tone) = when {
@@ -224,7 +224,8 @@ class LineSettingsActivity : Activity() {
             login.phase == "failed" -> "Sign-in failed or expired" to LineUi.Tone.BAD
             engine == "ready" -> "Linked · ready" to LineUi.Tone.GOOD
             engine == "connecting" -> "Linked · connecting…" to LineUi.Tone.BUSY
-            engine == "offline" -> "Linked · offline" to LineUi.Tone.IDLE
+            engine == "standby" -> "Linked · on standby" to LineUi.Tone.IDLE
+            engine == "offline" -> "Linked · reconnecting…" to LineUi.Tone.BUSY
             engine == "signed_out" -> "Not linked" to LineUi.Tone.IDLE
             engine == "loading" -> "Checking LINE…" to LineUi.Tone.IDLE
             else -> "LINE unavailable" to LineUi.Tone.BAD
@@ -246,7 +247,8 @@ class LineSettingsActivity : Activity() {
                 accountBody.text = when (engine) {
                     "ready" -> "On the glasses, open Applications › LINE Messages. Dictate or type a reply; only Send sends it."
                     "connecting" -> "Reconnecting to LINE. Conversations show on the glasses once it is through."
-                    else -> "LINE is not reachable right now. Reopen LINE Messages on the glasses to reconnect."
+                    "offline" -> "The connection was interrupted. LINE retries while this session is open."
+                    else -> "Your account is saved. Open Applications › LINE Messages on the glasses to connect. Nexus keeps LINE disconnected while it is not in use."
                 }
                 pin.set("")
             }

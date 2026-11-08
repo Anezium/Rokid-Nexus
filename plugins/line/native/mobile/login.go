@@ -161,7 +161,7 @@ func (e *Engine) loginEmail(ctx context.Context, email, password string) error {
 	if err = e.save(); err != nil {
 		return err
 	}
-	e.setState("offline")
+	e.setState("standby")
 	e.setLogin(loginStatus{Phase: "linked"})
 	return nil
 }

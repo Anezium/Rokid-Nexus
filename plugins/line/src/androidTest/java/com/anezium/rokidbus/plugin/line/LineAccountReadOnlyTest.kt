@@ -17,6 +17,7 @@ class LineAccountReadOnlyTest {
     @Test fun recentConversationCanBeRead() {
         val expected = InstrumentationRegistry.getArguments().getString("conversationLabel").orEmpty()
         val requireText = InstrumentationRegistry.getArguments().getString("requireText", "true").toBoolean()
+        val requireMedia = InstrumentationRegistry.getArguments().getString("requireMedia", "false").toBoolean()
         assertTrue("Pass -e conversationLabel with the owner's chosen conversation", expected.isNotBlank())
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val engine = Mobile.open(File(context.noBackupFilesDir, "line-session").absolutePath)
@@ -39,19 +40,33 @@ class LineAccountReadOnlyTest {
             val rows = (0 until history.length()).map { history.getJSONObject(it) }
             assertTrue("No messages in the chosen conversation yet", rows.isNotEmpty())
             assertTrue("At least one message failed decryption", rows.none {
-                it.getString("text") == "[Unable to decrypt message]"
+                it.getString("text").startsWith("[Unable to decrypt")
             })
             val readableTexts = rows.count {
                 val text = it.getString("text")
-                text.isNotBlank() && text != "[Media message · open LINE on the phone]"
+                text.isNotBlank() && it.optString("media").isEmpty() &&
+                    !text.startsWith("[Media message") && !text.startsWith("[Video ·") && !text.startsWith("[Voice message ·") &&
+                    !text.startsWith("[Sticker unavailable]")
             }
-            val media = rows.count { it.getString("text") == "[Media message · open LINE on the phone]" }
+            val mediaRows = rows.filter { it.optString("media") in setOf("photo", "sticker") }.takeLast(4)
+            var photos = 0
+            var stickers = 0
+            for (row in mediaRows) {
+                val artwork = runCatching { LineThumbnailEncoder.encode(engine.media(id, row.getString("id"))) }.getOrNull()
+                if (artwork != null) {
+                    if (row.getString("media") == "photo") photos++ else stickers++
+                }
+            }
+            val media = rows.size - readableTexts
             InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
                 putInt("historyMessages", rows.size)
                 putInt("readableTextMessages", readableTexts)
-                putInt("unsupportedMediaMessages", media)
+                putInt("mediaMessages", media)
+                putInt("decodedPhotoPreviews", photos)
+                putInt("decodedStickerPreviews", stickers)
             })
             if (requireText) assertTrue("No readable text message in the chosen conversation", readableTexts > 0)
+            if (requireMedia) assertTrue("No media preview could be downloaded and decoded", photos + stickers > 0)
         } finally {
             engine.cancel()
             engine.close()

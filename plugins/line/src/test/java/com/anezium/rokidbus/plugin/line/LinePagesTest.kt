@@ -2,11 +2,43 @@ package com.anezium.rokidbus.plugin.line
 
 import com.anezium.rokidbus.client.plugin.NexusActionType
 import com.anezium.rokidbus.shared.PageBody
+import com.anezium.rokidbus.shared.LauncherArtwork
+import com.anezium.rokidbus.shared.PageTemplateContract
+import java.util.Base64
 import org.junit.Assert.*
 import org.junit.Test
 
 class LinePagesTest {
     private val chat = LineChat("u0123456789abcdef0123456789abcdef", "Alice", false, emptyList())
+
+    @Test fun newestFourMediaKeepTheirImagesAndOlderMessagesKeepTheirLabels() {
+        val thumbnail = LauncherArtwork(160, 160, Base64.getEncoder().encodeToString(ByteArray(3200)))
+        val loaded = chat.copy(history = (0..7).map { LineMessage("media-$it", "[Sticker]", false, "sticker") })
+        val page = LinePages.render(LinePages.pageId(chat), 1, LineSnapshot("ready", listOf(loaded)), true) { _, _ -> thumbnail }
+        val messages = (page.body as PageBody.Conversation).messages
+        assertEquals(listOf("media-4", "media-5", "media-6", "media-7"), messages.filter { it.image != null }.map { it.id })
+        assertTrue(messages.take(4).all { it.text == "[Sticker]" })
+        assertTrue(messages.takeLast(4).all { it.text.isEmpty() })
+        assertTrue(messages.sumOf { it.image?.bytes()?.size ?: 0 } <= PageTemplateContract.MAX_MESSAGE_IMAGES_TOTAL_BYTES)
+    }
+
+    @Test fun largeImagesAreDroppedWithoutHidingTheMediaLabel() {
+        val oversized = LauncherArtwork(512, 512, Base64.getEncoder().encodeToString(ByteArray(32768)))
+        val loaded = chat.copy(history = listOf(LineMessage("photo", "[Photo]", true, "photo")))
+        val page = LinePages.render(LinePages.pageId(chat), 1, LineSnapshot("ready", listOf(loaded)), true) { _, _ -> oversized }
+        val message = (page.body as PageBody.Conversation).messages.single()
+        assertNull(message.image)
+        assertEquals("[Photo]", message.text)
+    }
+
+    @Test fun escapedTextAndThumbnailsShareOnePageBudget() {
+        val thumbnail = LauncherArtwork(160, 160, Base64.getEncoder().encodeToString(ByteArray(3200)))
+        val loaded = chat.copy(history = (0..23).map { LineMessage("message-$it", "\u0001".repeat(2000), false, "photo") })
+        val page = LinePages.render(LinePages.pageId(chat), 1, LineSnapshot("ready", listOf(loaded)), true) { _, _ -> thumbnail }
+        val messages = (page.body as PageBody.Conversation).messages
+        assertEquals("message-23", messages.last().id)
+        assertTrue(messages.sumOf { it.text.length * 6 + (it.image?.data?.length ?: 0) + 800 } <= 48_000)
+    }
 
     @Test fun pageIdsDoNotExposeConversationIdentity() {
         val id = LinePages.pageId(chat)

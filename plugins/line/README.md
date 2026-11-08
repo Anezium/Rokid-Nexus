@@ -12,13 +12,19 @@ like WhatsApp's engine. No Matrix bridge, remote gateway or glasses APK is neede
   The newest messages that fit the launcher payload budget are displayed.
   If LINE returns no recent entries, unblocked contacts are listed instead.
 - Live text updates and remote unsends while the plugin pages are held open.
+- Photo and sticker previews in conversations on launcher v5 or newer, using
+  the same thumbnail limits as Meta Messages. Animated stickers show a static
+  frame. Downloads run only for the newest visible media, with a 4 MiB limit;
+  thumbnails stay in a bounded memory cache and are cleared on session close.
+- Encrypted photos are decrypted and authenticated locally. Missing keys or
+  invalid authentication keep a text fallback; media keys never enter page JSON.
 - Dictate or type through the hub composer; only its explicit Send dispatches text.
   Sends are journaled before dispatch, and ambiguous requests are not retried.
 - Letter Sealing is required for login and sending in this prototype. Missing
   keys, unsupported mixed groups and crypto errors block sending; there is no
   fallback to plaintext. Incoming plain text can still be read.
 
-Media are represented by a phone-only placeholder. Sending media, calls, OpenChat,
+Videos, voice messages and other files retain a phone-only placeholder. Sending media, calls, OpenChat,
 creating group keys and automatic token refresh are outside this first prototype.
 An expired/revoked session must be forgotten and linked again. A server-accepted
 send is reported as handed off, never as delivered or read.
@@ -83,5 +89,8 @@ The native session has one lock across phone settings and pages. Snapshots and
 native change callbacks feed live page revisions; no app polling, boot receiver or
 background account monitor is installed. Closing the last owner cancels network
 work and closes the session. Only user-started pairing has its bounded service.
+A saved session initially reports `standby`, not a network failure. Opening a
+glasses page starts the connection; `offline` means an active connection was
+interrupted and the existing SSE retry loop is running.
 
 See [the validation record](docs/validation.md) for what has actually been tested.

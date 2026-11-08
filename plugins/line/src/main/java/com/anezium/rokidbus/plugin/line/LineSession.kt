@@ -85,7 +85,7 @@ internal object LineSession {
                     add(LineChat(item.getString("id"), item.getString("title"), item.optBoolean("group"), buildList {
                         if (history != null) for (j in 0 until history.length()) {
                             val row = history.getJSONObject(j)
-                            add(LineMessage(row.getString("id"), row.optString("text"), row.optBoolean("mine")))
+                            add(LineMessage(row.getString("id"), row.optString("text"), row.optBoolean("mine"), row.optString("media")))
                         }
                     }))
                 }

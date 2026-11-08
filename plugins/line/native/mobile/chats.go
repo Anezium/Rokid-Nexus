@@ -149,23 +149,26 @@ func (e *Engine) findChat(id string) *chat {
 
 func (e *Engine) decode(row *lineapi.Message) message {
 	text := row.Text
+	plain := ""
 	if len(row.Chunks) > 0 {
-		text = "[Unable to decrypt message]"
-		if e.crypto != nil {
-			if plain, err := e.decrypt(row); err == nil {
-				var payload struct {
-					Text string `json:"text"`
-				}
-				if json.Unmarshal([]byte(plain), &payload) == nil {
-					text = payload.Text
-				}
-			}
+		if e.crypto == nil {
+			return message{ID: row.ID, Text: "[Unable to decrypt message]", Mine: row.From == e.stored.Mid}
 		}
+		var err error
+		plain, err = e.decrypt(row)
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err != nil || json.Unmarshal([]byte(plain), &payload) != nil {
+			return message{ID: row.ID, Text: "[Unable to decrypt message]", Mine: row.From == e.stored.Mid}
+		}
+		text = payload.Text
 	}
+	item := message{ID: row.ID, Text: text, Mine: row.From == e.stored.Mid}
 	if row.ContentType != 0 {
-		text = "[Media message · open LINE on the phone]"
+		item.Text, item.Media, item.source = decodeMedia(row, plain)
 	}
-	return message{ID: row.ID, Text: text, Mine: row.From == e.stored.Mid}
+	return item
 }
 
 func (e *Engine) decrypt(row *lineapi.Message) (string, error) {
