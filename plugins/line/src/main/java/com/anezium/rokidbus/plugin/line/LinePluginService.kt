@@ -41,6 +41,7 @@ class LinePluginService : NexusPluginService() {
     private val thumbnails = linkedMapOf<Pair<String, String>, LauncherArtwork>()
     private val mediaAsked = linkedSetOf<Pair<String, String>>()
     private var mediaRunning = false
+    private var historyPrefetching = false
 
     /**
      * The photo flow of one conversation page: the request it publishes against, its pure state
@@ -135,14 +136,30 @@ class LinePluginService : NexusPluginService() {
     private fun publish() {
         visible.toList().forEach { page -> requests[page]?.let { nexusClient?.publishPage(it, render(page)) } }
         loadMedia()
+        prefetchHistory()
+    }
+
+    /**
+     * While the list is on screen, loads the history of its first conversations one at a time, so
+     * opening one shows its messages at once and [loadMedia] has already fetched their thumbnails.
+     * The engine only lists conversations until a history is asked for. One call at a time keeps a
+     * page the wearer opens from waiting behind a burst of native calls.
+     */
+    private fun prefetchHistory() {
+        val lease = owner ?: return
+        if (historyPrefetching || LinePages.ROOT !in visible || LineSession.snapshot.state != "ready") return
+        val chat = LineSession.snapshot.chats.take(LinePages.PREFETCH_CHATS).firstOrNull { it.id !in loaded } ?: return
+        loaded += chat.id
+        historyPrefetching = true
+        LineSession.call(this, lease, { it.loadHistory(chat.id) }) {
+            if (owner === lease) { historyPrefetching = false; prefetchHistory() }
+        }
     }
 
     private fun loadMedia() {
         val lease = owner ?: return
         if (mediaRunning || nexusClient?.supportsComposerTools() != true || LineSession.snapshot.state != "ready") return
-        val candidate = visible.asSequence().mapNotNull { LinePages.chat(it, LineSession.snapshot) }
-            .flatMap { chat -> chat.history.asReversed().filter { it.media in setOf("photo", "sticker") }
-                .take(PageTemplateContract.MAX_MESSAGE_IMAGES).asSequence().map { chat to it } }
+        val candidate = LinePages.mediaCandidates(visible, LineSession.snapshot)
             .firstOrNull { (chat, message) -> (chat.id to message.id) !in mediaAsked } ?: return
         val (chat, message) = candidate
         val key = chat.id to message.id
@@ -347,6 +364,7 @@ class LinePluginService : NexusPluginService() {
         connectRequested = false
         thumbnails.clear()
         mediaAsked.clear()
+        historyPrefetching = false
         mediaRunning = false
     }
 

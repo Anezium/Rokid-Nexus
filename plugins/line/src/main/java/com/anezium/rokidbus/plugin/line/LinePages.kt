@@ -40,6 +40,24 @@ internal object LinePages {
 
     fun chat(pageId: String, state: LineSnapshot): LineChat? = state.chats.firstOrNull { pageId(it) == pageId }
 
+    /** How many conversations of the list get their thumbnails fetched ahead of being opened. */
+    const val PREFETCH_CHATS = 6
+
+    /**
+     * The media worth a thumbnail for the pages on screen, most useful first: the open
+     * conversations' newest pictures, then, while the list is on screen, the newest pictures of
+     * its first [PREFETCH_CHATS] conversations, so a conversation usually opens with its
+     * thumbnails already cached instead of filling in one by one. Each conversation contributes
+     * at most the [PageTemplateContract.MAX_MESSAGE_IMAGES] a page can show.
+     */
+    fun mediaCandidates(visible: Collection<String>, state: LineSnapshot): List<Pair<LineChat, LineMessage>> {
+        fun newest(chat: LineChat) = chat.history.asReversed().filter { it.media in setOf("photo", "sticker") }
+            .take(PageTemplateContract.MAX_MESSAGE_IMAGES).map { chat to it }
+        val open = visible.mapNotNull { chat(it, state) }
+        val listed = if (ROOT in visible) state.chats.take(PREFETCH_CHATS).filter { chat -> open.none { it.id == chat.id } } else emptyList()
+        return (open + listed).flatMap(::newest)
+    }
+
     fun render(pageId: String, revision: Long, state: LineSnapshot, interactive: Boolean, photoTool: Boolean = false,
         thumbnail: (LineChat, LineMessage) -> LauncherArtwork? = { _, _ -> null }): NexusPage.Content {
         if (pageId == ROOT) return NexusPage.Content(revision, "LINE", PageBody.SelectableList(
