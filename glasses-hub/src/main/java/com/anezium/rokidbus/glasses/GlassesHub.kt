@@ -1538,6 +1538,7 @@ object GlassesHub {
             pageSessionVersion = advertised.pageSessionVersion,
             launcherInteractiveVersion = advertised.launcherInteractiveVersion,
             launcherBackend = advertised.launcherBackend,
+            pageTextSize = advertised.pageTextSize,
         )
         // Whatever this announcement negotiates is the truth from now on, an older phone's included.
         launcherBundleAnnounced = LauncherInteractiveContract.isActive(PhoneHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(next))
@@ -1548,6 +1549,7 @@ object GlassesHub {
                 manualDp = next.hudTopInsetDp,
                 auto = next.hudPositionAuto,
             )
+            HudTextSize.set(it, next.pageTextSize)
             // Every announcement states the phone's backend choice, absent meaning no opinion, and
             // the bundle it negotiates; the launcher default follows this, never the live link.
             NexusInput.onPhoneAnnounced(it, next.launcherBackend, PhoneHubCapabilitiesContract.negotiatedLauncherInteractiveVersion(next))

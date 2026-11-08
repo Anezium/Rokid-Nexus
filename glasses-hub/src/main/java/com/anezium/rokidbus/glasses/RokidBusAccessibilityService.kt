@@ -2121,6 +2121,7 @@ private class SessionOverlayWindow(
     private val windowManager: WindowManager? = service.getSystemService(WindowManager::class.java)
     private var root: SessionScreenView? = null
     private var insetUnsubscribe: (() -> Unit)? = null
+    private var textSizeUnsubscribe: (() -> Unit)? = null
 
     override fun add(): Boolean {
         val manager = windowManager ?: return false
@@ -2147,12 +2148,15 @@ private class SessionOverlayWindow(
         insetUnsubscribe = HudTopInset.observe(service) { inset ->
             view.setTopInsetPx(BusTheme.dp(service, HudTopInset.sanitize(inset)))
         }
+        textSizeUnsubscribe = HudTextSize.observe(service, view::setTextSize)
         return true
     }
 
     override fun remove() {
         insetUnsubscribe?.invoke()
         insetUnsubscribe = null
+        textSizeUnsubscribe?.invoke()
+        textSizeUnsubscribe = null
         root?.let { view -> runCatching { windowManager?.removeView(view) } }
         root = null
     }

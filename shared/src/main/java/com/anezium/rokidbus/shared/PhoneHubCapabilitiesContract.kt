@@ -2,6 +2,19 @@ package com.anezium.rokidbus.shared
 
 import org.json.JSONObject
 
+/** How large the glasses draw their launcher pages' text; [wire] is its value on the bus. */
+enum class PageTextSize(val wire: String) {
+    NORMAL("normal"),
+    LARGE("large"),
+    XLARGE("xlarge"),
+    ;
+
+    companion object {
+        /** Anything but a known value reads as [NORMAL], so a future size degrades to the default. */
+        fun parse(value: Any?): PageTextSize = entries.firstOrNull { it.wire == value } ?: NORMAL
+    }
+}
+
 data class PhoneHubCapabilities(
     val features: Int,
     val cameraConsumerName: String?,
@@ -17,6 +30,7 @@ data class PhoneHubCapabilities(
      * [LauncherInteractiveContract.backends]; null when the user expressed no choice.
      */
     val launcherBackend: String? = null,
+    val pageTextSize: PageTextSize = PageTextSize.NORMAL,
 )
 
 /** Additive phone-to-glasses hub capabilities payload. Unknown fields remain ignorable. */
@@ -27,6 +41,7 @@ object PhoneHubCapabilitiesContract {
     const val MAX_HUD_TOP_INSET_DP = 120
     const val DEFAULT_HUD_TOP_INSET_DP = 0
     const val DEFAULT_HUD_POSITION_AUTO = true
+    const val FIELD_PAGE_TEXT_SIZE = "pageTextSize"
 
     fun create(
         features: Int,
@@ -37,6 +52,7 @@ object PhoneHubCapabilitiesContract {
         pageSessionVersion: Int = 0,
         launcherInteractiveVersion: Int = 0,
         launcherBackend: String? = null,
+        pageTextSize: PageTextSize = PageTextSize.NORMAL,
     ): PhoneHubCapabilities {
         val ready = features and BusCapabilityBits.CAMERA_CONSUMER_READY != 0
         return PhoneHubCapabilities(
@@ -48,6 +64,7 @@ object PhoneHubCapabilitiesContract {
             pageSessionVersion = PageSurfaceContract.sanitizeSessionVersion(pageSessionVersion),
             launcherInteractiveVersion = LauncherInteractiveContract.sanitizeVersion(launcherInteractiveVersion),
             launcherBackend = LauncherInteractiveContract.parseBackend(launcherBackend),
+            pageTextSize = pageTextSize,
         )
     }
 
@@ -57,6 +74,7 @@ object PhoneHubCapabilitiesContract {
         .put("activityAlwaysExpanded", capabilities.activityAlwaysExpanded)
         .put("hudTopInsetDp", sanitizeHudTopInsetDp(capabilities.hudTopInsetDp))
         .put("hudPositionAuto", capabilities.hudPositionAuto)
+        .put(FIELD_PAGE_TEXT_SIZE, capabilities.pageTextSize.wire)
         .put(
             PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION,
             PageSurfaceContract.sanitizeSessionVersion(capabilities.pageSessionVersion),
@@ -90,6 +108,7 @@ object PhoneHubCapabilitiesContract {
         launcherBackend = LauncherInteractiveContract.parseBackend(
             payload.opt(LauncherInteractiveContract.CAPABILITY_FIELD_LAUNCHER_BACKEND),
         ),
+        pageTextSize = PageTextSize.parse(payload.opt(FIELD_PAGE_TEXT_SIZE)),
     )
 
     /** The launcher bundle version a hub of [localVersion] runs with this phone; 0 means none. */

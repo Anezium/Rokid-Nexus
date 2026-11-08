@@ -3515,7 +3515,9 @@ unknown fields are ignorable in both directions, so fields only ever get added.
   `activityAlwaysExpanded` boolean carries the wearer's platform setting; it
   defaults to `false` when absent and is never plugin-controlled. Also
   `hudTopInsetDp` (0..120) and `hudPositionAuto`, the wearer's HUD position
-  settings; `pageSessionVersion`; `launcherInteractiveVersion`; and, only when
+  settings; `pageTextSize` (`normal`, `large` or `xlarge`; absent or unknown reads as
+  `normal`), the wearer's launcher page text size; `pageSessionVersion`;
+  `launcherInteractiveVersion`; and, only when
   the user chose one on the phone, `launcherBackend` (`session` or `legacy`).
   The glasses rebuild these capabilities field by field, so a new phone field
   must be carried through there too.

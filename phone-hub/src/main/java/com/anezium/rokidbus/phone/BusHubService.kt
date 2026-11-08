@@ -5683,6 +5683,7 @@ class BusHubService : Service() {
             pageSessionVersion = ANNOUNCED_PAGE_SESSION_VERSION,
             launcherInteractiveVersion = LauncherInteractiveContract.VERSION,
             launcherBackend = PhoneLauncherBackendStore(this).choice().wireValue,
+            pageTextSize = hudPosition.pageTextSize(),
         )
         if (announced == lastAnnouncedPhoneCapabilities) return
         val envelope = BusEnvelope(
@@ -6268,6 +6269,10 @@ class BusHubService : Service() {
         }
 
         internal fun onHudPositionPreferenceChanged() {
+            activeInstance?.announcePhoneCapabilities()
+        }
+
+        internal fun onPageTextSizeChanged() {
             activeInstance?.announcePhoneCapabilities()
         }
 

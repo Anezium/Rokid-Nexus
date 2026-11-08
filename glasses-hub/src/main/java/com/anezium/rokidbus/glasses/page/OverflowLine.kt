@@ -167,7 +167,7 @@ internal class OverflowLineView(context: Context) : TextView(context) {
     }
 
     fun style(sizePx: Float, color: Int, typeface: Typeface) {
-        setTextSize(TypedValue.COMPLEX_UNIT_PX, sizePx)
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, PageStyle.scaledPx(context, sizePx))
         setTextColor(color)
         this.typeface = typeface
     }
