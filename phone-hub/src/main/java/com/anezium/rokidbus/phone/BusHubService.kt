@@ -576,7 +576,7 @@ class BusHubService : Service() {
         override fun run() {
             if (audioRelayClient == null) return
             if (sppSession != null) {
-                audioRelayRouteRejected = false
+                if (PhoneAudioRelayGate.pollClearsRouteRejection(Build.VERSION.SDK_INT)) audioRelayRouteRejected = false
                 updateAudioRelayGate()
             }
             pinHandler.postDelayed(this, 15000)
@@ -1112,7 +1112,7 @@ class BusHubService : Service() {
             connection = ::createAudioRelayConnection,
             player = { ready, failure ->
                 PhoneAudioRelayPlayer(ready, prefs().getString(PREF_LAST_GLASSES_ADDRESS, null),
-                    { phoneSpeakerRouteProbe.classifyRoute(PhoneAudioRelayPlayer.audioAttributes()) }, { _ ->
+                    { phoneSpeakerRouteProbe.classifyRelayRoute() }, { _ ->
                         audioRelayRouteRejected = true
                         updateAudioRelayGate()
                     }, failure)
@@ -6189,7 +6189,7 @@ class BusHubService : Service() {
         if (audioRelayDestroyed) return
         val store = audioRelayStore ?: return
         val route = if (audioRelayRouteRejected) PhoneTtsRoute.GLASSES_LINK else
-            audioRelayRouteProbe?.classifyRoute(PhoneAudioRelayPlayer.audioAttributes()) ?: PhoneTtsRoute.PHONE_SPEAKER
+            audioRelayRouteProbe?.classifyRelayRoute() ?: PhoneTtsRoute.PHONE_SPEAKER
         val enabled = store.isEnabled() && hubEnabled
         val dataUp = sppSession != null && socket?.isConnected == true
         val desired = PhoneAudioRelayGate.desired(enabled, route, remoteAudioRelayCapable, dataUp)
@@ -6341,7 +6341,10 @@ class BusHubService : Service() {
         }
 
         internal fun onGlassesAudioRelaySettingChanged() {
-            activeInstance?.updateAudioRelayGate()
+            activeInstance?.let { service ->
+                service.audioRelayRouteRejected = false
+                service.updateAudioRelayGate()
+            }
         }
 
         internal fun isPhoneTtsReady(): Boolean =
