@@ -18,6 +18,7 @@ import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
 import com.anezium.rokidbus.shared.AmbientSize
 import com.anezium.rokidbus.shared.AmbientPreferencesContract
+import com.anezium.rokidbus.shared.PageTextSize
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 
 /**
@@ -244,6 +245,36 @@ class GlassesDisplaySettingsActivity : Activity() {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
+            )
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 8))
+            addView(
+                largerTextRow(),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+        }
+
+    private fun largerTextRow(): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val store = PhoneHudPositionStore(this@GlassesDisplaySettingsActivity)
+            addView(
+                LinearLayout(this@GlassesDisplaySettingsActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, "Larger text"))
+                    addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
+                    addView(note("Bigger type on the launcher pages. New launcher only."))
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(
+                styledSwitch(store.pageTextSize() == PageTextSize.LARGE) { enabled ->
+                    store.setPageTextSize(if (enabled) PageTextSize.LARGE else PageTextSize.NORMAL)
+                    BusHubService.onPageTextSizeChanged()
+                },
             )
         }
 
