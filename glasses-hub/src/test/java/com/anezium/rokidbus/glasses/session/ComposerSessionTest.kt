@@ -1387,6 +1387,37 @@ class ComposerSessionTest {
     private fun thread(thread: String, extra: List<ConversationMessage> = emptyList(), older: List<ConversationMessage> = emptyList()) =
         conversation(thread).let { it.copy(messages = older + it.messages + extra) }
 
+    @Test
+    fun `a refused send that says not_sent keeps the draft sendable`() {
+        openThread("t1", at = 1_000)
+        dictate("see you", at = 3_000)
+        val action = sendDraft(at = 5_000)
+        send(
+            SessionEvent.PageResult(
+                JSONObject().put("invocationId", action.invocationId).put("status", "rejected")
+                    .put("code", PageSurfaceContract.CODE_NOT_SENT).put("message", "Not sent · the connection is unavailable"),
+                5_500,
+            ),
+        )
+        assertEquals(DraftState.READY, model.draft?.state)
+        assertNull(model.pendingSend)
+        shown(5_600)
+        val draftBubble = conversationBlock().bubbles.single { it.key == SessionScreens.DRAFT_BUBBLE }
+        assertEquals(SessionScreens.DRAFT_NOT_SENT, draftBubble.meta)
+        assertTrue(effects.none { it is SendAction })
+    }
+
+    @Test
+    fun `a dictation that heard nothing keeps the microphone on offer`() {
+        openThread("t1", at = 1_000)
+        startCapture(CaptureKind.DICTATE, at = 3_000)
+        compose(ComposeInbound.Final(ComposeDictateFinal(model.capture!!.captureId, ComposeDictationReason.NO_SPEECH)))
+        assertNull(model.capture)
+        assertFalse(model.micUnavailable)
+        assertNull(model.draft)
+        assertEquals(ComposerRules.TYPE, top().composerFocus?.key)
+    }
+
     private fun ours(id: String, text: String, status: ConversationMessageStatus? = ConversationMessageStatus.HANDED_OFF) =
         ConversationMessage(id, ConversationRole.OURS, text, status = status)
 
