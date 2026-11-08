@@ -557,14 +557,19 @@ class MainActivity : Activity() {
         ) {
             return
         }
-        if (entry.principal != null && entry.state != PluginCatalogState.ENABLED) {
-            startActivity(Intent(this, PluginPermissionsActivity::class.java))
+        val principal = entry.principal
+        if (principal != null && entry.state != PluginCatalogState.ENABLED) {
+            startActivity(PluginPermissionsActivity.intent(
+                this, PluginGrantTarget(principal.packageName, principal.descriptor.id),
+            ))
             return
         }
         val target = entry.settingsComponent
         if (target == null) {
-            if (entry.principal != null) {
-                startActivity(Intent(this, PluginPermissionsActivity::class.java))
+            if (principal != null) {
+                startActivity(PluginPermissionsActivity.intent(
+                    this, PluginGrantTarget(principal.packageName, principal.descriptor.id),
+                ))
             } else {
                 Toast.makeText(this, "No settings available", Toast.LENGTH_SHORT).show()
             }
