@@ -2252,9 +2252,10 @@ the owner's policy approves at that moment; `compose` only for an action typed
 text of at most the composer's `maxChars` (and never above 1,000); `confirmed`
 never for `compose.send`. It delivers `mode`, `text` and its own copy of
 `typed` to the provider, and the SDK checks the mode against its own sent page
-once more. A result `code` refines the outcome; the hub acts on
-`authority_lost` only: the composer keeps the text and stops offering Send for
-it. The phone hub forwards, and the SDK dispatches, an
+once more. A result `code` refines the outcome; the hub acts on two:
+`authority_lost` keeps the text and stops offering Send for it; `not_sent` on
+a `rejected` send says nothing left the phone, so the draft stays sendable
+instead of being shown unconfirmed. The phone hub forwards, and the SDK dispatches, an
 action only for a frame whose current request was answered with a valid page
 that was sent on, at its shown revision and naming an action that page
 advertised, while the frame is visible under an unexpired lease; the phone hub
@@ -2795,8 +2796,9 @@ invalidation does. A page carrying an unconfirmed reply shows it instead of the
 draft's bubble; the draft stays, for Type only. `authority_lost`, `replyable: false`,
 a withdrawn event for the draft's thread, or the page going away keeps the text
 but never sends it as is. `stale` keeps the draft and needs a new Send on the
-new revision. No result in time shows `unconfirmed · check on the phone`, keeps
-the text and focuses Type next. Nothing is retried or resent on reconnect, and
+new revision. A `rejected` send is shown unconfirmed too, unless its code is
+`not_sent`, which keeps the draft sendable. No result in time shows
+`unconfirmed · check on the phone`, keeps the text and focuses Type next. Nothing is retried or resent on reconnect, and
 the draft never goes to another recipient.
 
 ### Ambient preferences (`/core/ambient/*`)

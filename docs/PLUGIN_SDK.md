@@ -2483,10 +2483,12 @@ answer, or one that could not be sent, leaves nothing of the earlier revision to
 act on. Return `NexusPageResult.done(message, replacement)`,
 `.rejected(message)` or `.stale(message)`; a message is at most 64 characters
 and a replacement is the same page at a higher revision. Each also takes an
-optional `code` (printable ASCII, at most 32); the hub acts on
-`NexusPageResult.CODE_AUTHORITY_LOST` only, for a composer whose reply authority
-is gone: it keeps the text and stops offering Send. A lost result shows as
-unconfirmed and is never resent. `IMMERSION` opens only your own immersion,
+optional `code` (printable ASCII, at most 32); the hub acts on two:
+`NexusPageResult.CODE_AUTHORITY_LOST`, for a composer whose reply authority
+is gone (it keeps the text and stops offering Send), and
+`NexusPageResult.CODE_NOT_SENT` on a rejected send, when you know nothing left
+the phone (the draft stays sendable). Any other rejected send, and a lost
+result, show as unconfirmed and are never resent. `IMMERSION` opens only your own immersion,
 directly on a fresh tap (from a composer tool, with the tool's context); `HUB`
 gives you no hub control.
 
