@@ -7,7 +7,8 @@
         <intent><action android:name="com.anezium.rokidbus.action.HUB" /></intent>
         <package android:name="jp.naver.line.android" />
     </queries>
-    <application android:allowBackup="false" android:label="LINE Messages"
+    <application android:allowBackup="false" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="LINE Messages"
         android:supportsRtl="true" android:theme="@style/Theme.LineMessages" android:usesCleartextTraffic="false">
         <activity android:name=".LineSettingsActivity" android:exported="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
@@ -22,7 +23,10 @@
             <meta-data android:name="com.anezium.rokidbus.plugin.API_VERSION" android:value="3" />
             <meta-data android:name="com.anezium.rokidbus.plugin.CAPABILITIES" android:value="surfaces,stt,camera" />
             <meta-data android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES" android:value="/plugin/line-messages,/system/plugin,/stt" />
-            <meta-data android:name="com.anezium.rokidbus.plugin.ICON" android:value="chat" />
+            <!-- "line" is no built-in key: the glasses draw it from the GLYPHS array below, the phone from ICON_DRAWABLE. -->
+            <meta-data android:name="com.anezium.rokidbus.plugin.ICON" android:value="line" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.ICON_DRAWABLE" android:resource="@drawable/nexus_icon_line" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.GLYPHS" android:resource="@array/nexus_glyphs" />
             <meta-data android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY" android:value="com.anezium.rokidbus.plugin.line.LineSettingsActivity" />
             <meta-data android:name="com.anezium.rokidbus.plugin.LAUNCHABLE" android:value="false" />
             <meta-data android:name="rokidbus.plugin.pages" android:value="1" />

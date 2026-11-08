@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  LINE Messages' launcher mark on the glasses: the LINE speech bubble as an outline, with
+  the word LINE inside it. Both come from the Simple Icons "LINE" geometry (CC0 1.0,
+  https://simpleicons.org): the bubble is its outline, fitted with the stroke's half-width
+  to spare so nothing is clipped; the letters are the centre lines of its letter outlines,
+  at their original size and spacing. The logo's letters are closed outlines about a unit
+  thick, and the glasses draw every path as one 1.7-unit stroke, so tracing both edges of
+  each letter closed them into a blob at 36 px; one line per limb keeps the word readable.
+  LINE is a trademark of LY Corporation; the mark identifies the service this plugin
+  talks to, nothing more.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M23.05,10.45C23.05,5.5 18.09,1.48 12,1.48C5.91,1.48.95,5.5.95,10.45C.95,14.88 4.88,18.59 10.19,19.29C10.55,19.37 11.04,19.53 11.16,19.84C11.28,20.12 11.24,20.54 11.2,20.83L11.05,21.77C11.01,22.05 10.83,22.86 12.01,22.37C13.2,21.87 18.38,18.61 20.7,15.94C22.29,14.2 23.05,12.42 23.05,10.45 M5.48,8.62 L5.48,12.81 L7.47,12.81 M9.37,8.62 L9.37,12.61 M11.35,12.61 L11.35,8.41 L14.65,12.81 L14.65,8.62 M18.58,8.41 L16.59,8.41 L16.59,12.81 L18.58,12.81 M16.59,10.61 L18.30,10.61"
+        android:strokeColor="#FF4DFF8C" android:strokeWidth="1.7" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

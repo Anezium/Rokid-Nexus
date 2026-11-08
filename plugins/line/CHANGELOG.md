@@ -24,6 +24,9 @@ send, but a refused send shows as unconfirmed instead of staying editable.
 - **Letter Sealing required.** Conversations without an encryption key cannot be
   written to from the glasses; the plugin says so instead of sending plaintext.
   An ambiguous send is kept, never retried on its own.
+- **LINE's own mark.** The LINE bubble, not a generic chat glyph: stroked on the
+  glasses launcher and notification cards, filled for the Android app icon and
+  the Nexus plugin list.
 - **Nothing in the background.** LINE connects only while its glasses page is
   open, and again when you come back.
 - **Unofficial client.** LINE Messages is not made or endorsed by LY
