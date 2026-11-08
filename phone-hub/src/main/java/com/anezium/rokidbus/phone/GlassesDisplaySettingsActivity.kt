@@ -217,28 +217,10 @@ class GlassesDisplaySettingsActivity : Activity() {
                 PhoneLauncherBackendChoice.LEGACY to "Classic launcher",
             )
             addView(
-                RadioGroup(this@GlassesDisplaySettingsActivity).apply {
-                    orientation = RadioGroup.VERTICAL
-                    options.forEach { (choice, label) ->
-                        addView(
-                            RadioButton(this@GlassesDisplaySettingsActivity).apply {
-                                id = View.generateViewId()
-                                text = label
-                                textSize = 13f
-                                setTextColor(NexusUi.INK)
-                                buttonTintList = ColorStateList(
-                                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                                    intArrayOf(NexusUi.GREEN, NexusUi.INK3),
-                                )
-                                isChecked = choice == current
-                                setOnCheckedChangeListener { _, checked ->
-                                    if (checked && store.choice() != choice) {
-                                        store.setChoice(choice)
-                                        BusHubService.onLauncherBackendChanged()
-                                    }
-                                }
-                            },
-                        )
+                choiceGroup(options, current) { choice ->
+                    if (store.choice() != choice) {
+                        store.setChoice(choice)
+                        BusHubService.onLauncherBackendChanged()
                     }
                 },
                 LinearLayout.LayoutParams(
@@ -258,24 +240,51 @@ class GlassesDisplaySettingsActivity : Activity() {
 
     private fun largerTextRow(): LinearLayout =
         LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            orientation = LinearLayout.VERTICAL
             val store = PhoneHudPositionStore(this@GlassesDisplaySettingsActivity)
+            addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, "Larger text"))
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
+            addView(note("Bigger type on the launcher pages. New launcher only."))
             addView(
-                LinearLayout(this@GlassesDisplaySettingsActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    addView(NexusUi.rowTitle(this@GlassesDisplaySettingsActivity, "Larger text"))
-                    addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 3))
-                    addView(note("Bigger type on the launcher pages. New launcher only."))
+                choiceGroup(
+                    listOf(
+                        PageTextSize.NORMAL to "Normal",
+                        PageTextSize.LARGE to "Large",
+                        PageTextSize.XLARGE to "Extra large",
+                    ),
+                    store.pageTextSize(),
+                ) { size ->
+                    if (store.pageTextSize() != size) {
+                        store.setPageTextSize(size)
+                        BusHubService.onPageTextSizeChanged()
+                    }
                 },
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
             )
-            addView(
-                styledSwitch(store.pageTextSize() == PageTextSize.LARGE) { enabled ->
-                    store.setPageTextSize(if (enabled) PageTextSize.LARGE else PageTextSize.NORMAL)
-                    BusHubService.onPageTextSizeChanged()
-                },
-            )
+        }
+
+    private fun <T> choiceGroup(options: List<Pair<T, String>>, current: T, onChoice: (T) -> Unit): RadioGroup =
+        RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            options.forEach { (choice, label) ->
+                addView(
+                    RadioButton(this@GlassesDisplaySettingsActivity).apply {
+                        id = View.generateViewId()
+                        text = label
+                        textSize = 13f
+                        setTextColor(NexusUi.INK)
+                        buttonTintList = ColorStateList(
+                            arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                            intArrayOf(NexusUi.GREEN, NexusUi.INK3),
+                        )
+                        isChecked = choice == current
+                        setOnCheckedChangeListener { _, checked -> if (checked) onChoice(choice) }
+                    },
+                )
+            }
         }
 
     /**

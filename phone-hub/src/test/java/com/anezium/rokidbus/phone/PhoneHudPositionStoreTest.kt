@@ -75,6 +75,8 @@ class PhoneHudPositionStoreTest {
 
         store.setPageTextSize(PageTextSize.LARGE)
         assertEquals(PageTextSize.LARGE, PhoneHudPositionStore(context).pageTextSize())
+        store.setPageTextSize(PageTextSize.XLARGE)
+        assertEquals(PageTextSize.XLARGE, PhoneHudPositionStore(context).pageTextSize())
         store.setPageTextSize(PageTextSize.NORMAL)
         assertEquals(PageTextSize.NORMAL, PhoneHudPositionStore(context).pageTextSize())
     }
