@@ -19,6 +19,9 @@ with each other and with 2.3.0, without it. Plugins and SDK are unchanged.
 
 - The Larger text choice lives with the other glasses display settings and is
   sent to the glasses with the HUD position, so older glasses simply ignore it.
+- Onboarding says plainly that ADB debugging has to be on in the Hi Rokid app
+  before Automatic setup, repeats it when setup cannot finish, and no longer
+  cuts that advice off after one line.
 
 ## 2.2.2
 
