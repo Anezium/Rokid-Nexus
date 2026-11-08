@@ -35,7 +35,7 @@ class ChatGptCodexProviderTest {
 
         client.streamResponses(
             request = request,
-            modelId = "unsupported-model",
+            modelId = "gpt-6-luna",
             reasoningEffort = "xhigh",
             toolDefinitions = listOf(
                 testTakePhotoTool { error("Tool was not expected.") },
@@ -105,7 +105,7 @@ class ChatGptCodexProviderTest {
     }
 
     @Test
-    fun providerRequestUsesStoredReasoningEffortAndOnlySupportedModel() = runTest {
+    fun providerRequestPreservesAnUnknownModelInsteadOfSilentlySubstituting() = runTest {
         val transport = FakeTransport(
             StubResponse(
                 statusCode = 200,
@@ -123,14 +123,14 @@ class ChatGptCodexProviderTest {
         provider.streamEvents(ChatRequest(userText = "Hello")).toList()
 
         val body = JSONObject(transport.requests.single().body)
-        assertEquals("gpt-6-luna", body.getString("model"))
-        assertEquals("medium", body.getJSONObject("reasoning").getString("effort"))
+        assertEquals("unsupported-model", body.getString("model"))
+        assertEquals("none", body.getJSONObject("reasoning").getString("effort"))
         assertEquals("auto", body.getJSONObject("reasoning").getString("summary"))
     }
 
     @Test
     fun everyCurrentTierSurvivesToTheRequestBody() = runTest {
-        listOf("gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra").forEach { modelId ->
+        listOf("gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra").forEach { modelId ->
             val transport = FakeTransport(
                 StubResponse(
                     statusCode = 200,
@@ -158,7 +158,7 @@ class ChatGptCodexProviderTest {
         assertEquals("gpt-6-astra", ChatGptCodexApiClient.DEEP_MODEL_ID)
         assertEquals(ChatGptCodexApiClient.FAST_MODEL_ID, ChatGptCodexApiClient.DEFAULT_MODEL_ID)
         assertEquals(
-            listOf("gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"),
+            listOf("gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"),
             ChatGptCodexApiClient.SUPPORTED_MODEL_IDS,
         )
         assertEquals("none", ChatGptCodexApiClient.DEFAULT_REASONING_EFFORT)
@@ -182,8 +182,9 @@ class ChatGptCodexProviderTest {
             "gpt-6-luna" to "gpt-6-luna",
             "gpt-6.1-sol" to "gpt-6.1-sol",
             "gpt-6-astra" to "gpt-6-astra",
-            "gpt-4o" to "gpt-6-luna",
-            "unsupported-model" to "gpt-6-luna",
+            "gpt-4o" to "gpt-4o",
+            "unsupported-model" to "unsupported-model",
+            "invalid model" to "gpt-6-luna",
             "" to "gpt-6-luna",
         ).forEach { (saved, expected) ->
             assertEquals(saved, expected, ChatGptCodexApiClient.supportedModel(saved))
@@ -222,6 +223,7 @@ class ChatGptCodexProviderTest {
     fun effortClampSendsOnlyEffortsTheModelAccepts() {
         val allowed = mapOf(
             "gpt-6-luna" to setOf("none", "low", "medium", "high", "xhigh", "max"),
+            "gpt-6.1-terra" to setOf("low", "medium", "high", "xhigh"),
             "gpt-6.1-sol" to setOf("low", "medium", "high", "xhigh", "ultra"),
             "gpt-6-astra" to setOf("low", "medium", "high", "xhigh", "ultra"),
         )

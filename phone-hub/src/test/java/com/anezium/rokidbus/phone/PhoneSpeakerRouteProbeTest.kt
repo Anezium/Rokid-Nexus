@@ -121,6 +121,64 @@ class PhoneSpeakerRouteProbeTest {
         )
     }
 
+    @Test
+    fun `relay scan starts when earbuds are listed alongside the glasses`() {
+        assertEquals(
+            PhoneTtsRoute.EXTERNAL_SINK,
+            PhoneTtsRouteClassifier.classifyRelayScan(
+                listOf(
+                    PhoneTtsRouteDevice(PhoneTtsRouteDeviceType.PHONE),
+                    bluetooth("AA:BB:CC:DD:EE:01"),
+                    bluetooth("AA:BB:CC:DD:EE:02"),
+                ),
+                glassesAddress = "aa:bb:cc:dd:ee:01",
+            ),
+        )
+        assertEquals(
+            PhoneTtsRoute.EXTERNAL_SINK,
+            PhoneTtsRouteClassifier.classifyRelayScan(
+                listOf(bluetooth("AA:BB:CC:DD:EE:01"), PhoneTtsRouteDevice(PhoneTtsRouteDeviceType.OTHER_EXTERNAL)),
+                glassesAddress = "AA:BB:CC:DD:EE:01",
+            ),
+        )
+    }
+
+    @Test
+    fun `relay scan does not start on the glasses alone or on unidentified bluetooth`() {
+        assertEquals(
+            PhoneTtsRoute.GLASSES_LINK,
+            PhoneTtsRouteClassifier.classifyRelayScan(
+                listOf(PhoneTtsRouteDevice(PhoneTtsRouteDeviceType.PHONE), bluetooth("AA:BB:CC:DD:EE:01")),
+                glassesAddress = "AA:BB:CC:DD:EE:01",
+            ),
+        )
+        assertEquals(
+            PhoneTtsRoute.GLASSES_LINK,
+            PhoneTtsRouteClassifier.classifyRelayScan(
+                listOf(bluetooth(address = null), bluetooth("AA:BB:CC:DD:EE:01")),
+                glassesAddress = "AA:BB:CC:DD:EE:01",
+            ),
+        )
+        assertEquals(
+            PhoneTtsRoute.PHONE_SPEAKER,
+            PhoneTtsRouteClassifier.classifyRelayScan(
+                listOf(bluetooth("AA:BB:CC:DD:EE:02")),
+                glassesAddress = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `tts scan still prefers the glasses when earbuds are listed`() {
+        assertEquals(
+            PhoneTtsRoute.GLASSES_LINK,
+            PhoneTtsRouteClassifier.classifyScannedDevices(
+                listOf(bluetooth("AA:BB:CC:DD:EE:01"), PhoneTtsRouteDevice(PhoneTtsRouteDeviceType.OTHER_EXTERNAL)),
+                glassesAddress = "AA:BB:CC:DD:EE:01",
+            ),
+        )
+    }
+
     private fun bluetooth(address: String?) = PhoneTtsRouteDevice(
         type = PhoneTtsRouteDeviceType.BLUETOOTH_EXTERNAL,
         address = address,

@@ -312,14 +312,19 @@ class StorePluginDetailActivity : Activity() {
         ) {
             return
         }
-        if (local.principal != null && local.state != PluginCatalogState.ENABLED) {
-            startActivity(Intent(this, PluginPermissionsActivity::class.java))
+        val principal = local.principal
+        if (principal != null && local.state != PluginCatalogState.ENABLED) {
+            startActivity(PluginPermissionsActivity.intent(
+                this, PluginGrantTarget(principal.packageName, principal.descriptor.id),
+            ))
             return
         }
         val target = local.settingsComponent
         if (target == null) {
-            if (local.principal != null) {
-                startActivity(Intent(this, PluginPermissionsActivity::class.java))
+            if (principal != null) {
+                startActivity(PluginPermissionsActivity.intent(
+                    this, PluginGrantTarget(principal.packageName, principal.descriptor.id),
+                ))
             } else {
                 Toast.makeText(this, "No settings available", Toast.LENGTH_SHORT).show()
             }
@@ -595,7 +600,6 @@ class StorePluginDetailActivity : Activity() {
     }
 
     private fun uninstallTarget(entry: StoreEntry): String? {
-        if (entry.localGrantState == PluginCatalogState.BUILT_IN) return null
         if (entry.state != StoreEntryState.INSTALLED &&
             entry.state != StoreEntryState.SIDELOADED &&
             entry.state != StoreEntryState.UPDATE_AVAILABLE

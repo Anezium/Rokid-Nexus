@@ -95,11 +95,7 @@ data class StoreCatalog(val entries: List<StoreEntry>) {
                     displayName = local.displayName,
                     category = LOCAL_CATEGORY,
                     summary = local.detail ?: "Installed outside the Nexus Store.",
-                    state = if (local.state == PluginCatalogState.BUILT_IN) {
-                        StoreEntryState.INSTALLED
-                    } else {
-                        StoreEntryState.SIDELOADED
-                    },
+                    state = StoreEntryState.SIDELOADED,
                     registryPlugin = null,
                     localEntry = local,
                     installedVersionCode = packageName?.let(installedVersionCodes::get),

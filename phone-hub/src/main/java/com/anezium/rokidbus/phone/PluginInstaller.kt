@@ -8,14 +8,11 @@ import android.content.pm.PackageInstaller as AndroidPackageInstaller
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
-import android.os.SystemClock
 import android.os.Looper
 import android.util.Log
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -369,58 +366,6 @@ internal class AndroidArtifactPackageInspector(
 }
 
 internal class DownloadCancelledException : IOException("Download cancelled")
-
-private const val PROGRESS_EMIT_INTERVAL_MS = 250L
-
-internal class HttpsArtifactDownloader : ArtifactDownloader {
-    override fun download(
-        url: String,
-        destination: File,
-        isCancelled: () -> Boolean,
-        onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit,
-    ) {
-        val parsedUrl = URL(url)
-        require(parsedUrl.protocol == "https") { "Artifact URL must use HTTPS" }
-        val connection = (parsedUrl.openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 15_000
-            readTimeout = 30_000
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "Rokid-Nexus-Store/1")
-        }
-        try {
-            val status = connection.responseCode
-            if (connection.url.protocol != "https") throw IOException("Artifact redirect left HTTPS")
-            if (status !in 200..299) throw IOException("Artifact download failed with HTTP $status")
-            val total = connection.contentLengthLong.takeIf { it >= 0L }
-            destination.outputStream().buffered().use { output ->
-                connection.inputStream.buffered().use { input ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    var downloaded = 0L
-                    // A large APK reads in thousands of buffers; emitting progress for each
-                    // one floods the UI thread. Throttle to a few updates per second and
-                    // always emit the final byte count.
-                    var lastEmit = SystemClock.elapsedRealtime()
-                    while (true) {
-                        if (isCancelled()) throw DownloadCancelledException()
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        downloaded += count
-                        val now = SystemClock.elapsedRealtime()
-                        if (now - lastEmit >= PROGRESS_EMIT_INTERVAL_MS) {
-                            onProgress(downloaded, total)
-                            lastEmit = now
-                        }
-                    }
-                    onProgress(downloaded, total)
-                }
-            }
-        } finally {
-            connection.disconnect()
-        }
-    }
-}
 
 internal class AndroidPackageInstallGateway(private val context: Context) : PackageInstallGateway {
     override fun install(

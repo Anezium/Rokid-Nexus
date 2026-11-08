@@ -41,7 +41,7 @@
     <string name="onb_adb_status">Nexus has no way to read this switch, so it has to ask.</string>
 
     <string name="onb_glasses_title">Set up your glasses</string>
-    <string name="onb_glasses_body">Put the glasses on and tap Automatic setup. Nexus opens the one switch you need to flip, then finishes the rest on its own.</string>
+    <string name="onb_glasses_body">Put the glasses on and tap Automatic setup. With ADB debugging on in Hi Rokid (step 4), Nexus opens the one switch left to flip on the lens and finishes the rest on its own.</string>
     <string name="onb_glasses_action">Automatic setup</string>
     <string name="onb_glasses_action_open_app">Open glasses app</string>
     <string name="onb_glasses_action_guided">Manual setup</string>
@@ -56,7 +56,7 @@
     <string name="onb_progress_no_action">No action needed right now. Keep the glasses on while Nexus finishes.</string>
     <string name="onb_progress_accessibility_action">On the glasses, switch on Rokid Nexus Glasses. This is the only switch Nexus asks you to change.</string>
     <string name="onb_progress_wifi_action">If this does not resume automatically, connect the glasses to Wi-Fi from the Hi Rokid app.</string>
-    <string name="onb_progress_guided_action">Open Manual setup on this phone to finish the remaining step.</string>
+    <string name="onb_progress_guided_action">First make sure ADB debugging is on in the Hi Rokid app, developer section: with it off the glasses pair normally and setup stops here. Then open Manual setup on this phone to finish the remaining step.</string>
 
     <string name="onb_notifications_title">Allow notifications</string>
     <string name="onb_notifications_body">Nexus keeps a quiet status notification while it holds the glasses link.</string>
@@ -82,8 +82,8 @@
     <string name="onb_phase_pairing_via_phone">Finishing the pairing from your phone…</string>
     <string name="onb_phase_arming">Arming Nexus on the glasses…</string>
     <string name="onb_phase_complete">Your glasses are ready.</string>
-    <string name="onb_phase_manual_required">Automatic setup could not finish — use manual setup.</string>
-    <string name="onb_phase_failed">Setup stopped before it finished.</string>
+    <string name="onb_phase_manual_required">Automatic setup could not finish. Check ADB debugging in Hi Rokid, then use manual setup.</string>
+    <string name="onb_phase_failed">Setup stopped before it finished. Check ADB debugging in Hi Rokid, then try again.</string>
 
     <!-- ===== Manual setup (the fallback when the automatic path cannot finish) =====
          The resource keys still read guided_* for churn reasons; the surface is called Manual

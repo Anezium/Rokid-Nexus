@@ -128,7 +128,7 @@ enum class NexusPageResultStatus(val wireValue: String) {
 /**
  * The outcome of an action; a [replacement] must be the same page at a higher revision. [code] is
  * a short machine-readable refinement (printable ASCII, at most 32); the hub acts on
- * [CODE_AUTHORITY_LOST] only.
+ * [CODE_AUTHORITY_LOST] and [CODE_NOT_SENT] only.
  */
 class NexusPageResult private constructor(
     val status: NexusPageResultStatus,
@@ -143,6 +143,13 @@ class NexusPageResult private constructor(
     companion object {
         /** A conversation's reply authority is gone: the composer keeps the text and stops offering Send. */
         const val CODE_AUTHORITY_LOST = PageSurfaceContract.CODE_AUTHORITY_LOST
+
+        /**
+         * With [rejected] on a send: nothing left the phone, so the draft stays sendable instead
+         * of being shown unconfirmed. Only say it when you know; a send that may have gone
+         * through is a plain [rejected].
+         */
+        const val CODE_NOT_SENT = PageSurfaceContract.CODE_NOT_SENT
 
         fun done(message: String? = null, replacement: NexusPage.Content? = null, code: String? = null) =
             NexusPageResult(NexusPageResultStatus.DONE, message, replacement, code)

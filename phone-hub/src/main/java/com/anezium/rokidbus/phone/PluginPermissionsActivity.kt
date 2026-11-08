@@ -16,6 +16,7 @@ import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.view.doOnLayout
 import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.shared.ActivityDisplayMode
 import com.anezium.rokidbus.shared.AmbientPreferencesContract
@@ -25,12 +26,14 @@ import com.anezium.rokidbus.shared.skills.SkillOperation
 
 class PluginPermissionsActivity : Activity() {
     private lateinit var content: LinearLayout
+    private lateinit var scroll: ScrollView
     private lateinit var grantStore: PluginGrantStore
     private lateinit var grantReconciler: PluginGrantReconciler
     private lateinit var skillGrantStore: SkillGrantStore
     private var installedPrincipals: List<PhonePluginPrincipal> = emptyList()
     private var developerDetails = false
     private var focusedTarget: PluginGrantTarget? = null
+    private var scrollToTarget = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,6 +44,7 @@ class PluginPermissionsActivity : Activity() {
             reconcileGrants = grantStore::reconcile,
         )
         focusedTarget = intent?.let(::targetFromIntent)
+        scrollToTarget = focusedTarget != null && savedInstanceState == null
         focusedTarget?.let { PluginInstallRecoveryStore(applicationContext).clearSuccess(it) }
         developerDetails = getSharedPreferences(PREFERENCES, MODE_PRIVATE)
             .getBoolean(KEY_DEVELOPER_DETAILS, DeveloperModeStore(applicationContext).isEnabled())
@@ -56,7 +60,7 @@ class PluginPermissionsActivity : Activity() {
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
         content = NexusUi.contentColumn(this)
-        val scroll = ScrollView(this).apply {
+        scroll = ScrollView(this).apply {
             setBackgroundColor(NexusUi.BG)
             isFillViewport = true
             isVerticalScrollBarEnabled = false
@@ -101,7 +105,12 @@ class PluginPermissionsActivity : Activity() {
         }
         candidates.forEachIndexed { index, candidate ->
             if (index > 0) content.addView(BusTheme.gap(this, 10))
-            content.addView(candidateCard(candidate), NexusUi.block())
+            val card = candidateCard(candidate)
+            content.addView(card, NexusUi.block())
+            if (scrollToTarget) {
+                scrollToTarget = false
+                scroll.doOnLayout { scroll.scrollTo(0, card.top - content.paddingTop) }
+            }
         }
     }
 

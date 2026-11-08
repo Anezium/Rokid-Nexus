@@ -115,6 +115,7 @@ jobs:
             :plugin-lens:testReleaseUnitTest \
             :plugin-lyrics:testReleaseUnitTest \
             :plugin-transit:testReleaseUnitTest \
+            :plugin-nav:testReleaseUnitTest \
             :plugin-feeds:testReleaseUnitTest \
             :plugin-media:testReleaseUnitTest \
             :plugin-tasker:testReleaseUnitTest \
@@ -122,6 +123,12 @@ jobs:
             :plugin-wireless-adb:testReleaseUnitTest \
             :plugin-sample:testReleaseUnitTest \
             -PskipCxrGlobal=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false
+
+      - name: Verify the vendored Kadb sources
+        run: python3 kadb-compat/verify_upstream.py
+
+      - name: Run kadb-compat host tests
+        run: ./gradlew :kadb-compat:testAndroidHostTest -PskipCxrGlobal=true
 
       - name: Check Patcher bundle preparation
         run: python3 -m unittest discover -s plugins/patcher/scripts

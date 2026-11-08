@@ -5,7 +5,7 @@ import org.json.JSONObject
 
 /** Converts the existing conversation/tool loop at the OpenAI transport boundary. */
 internal object OpenAiResponsesAdapter {
-    fun body(request: OpenAiCompatChatRequest, requestedEffort: String): JSONObject {
+    fun body(request: OpenAiCompatChatRequest, requestedEffort: String, model: AvailableModel? = null): JSONObject {
         val input = JSONArray()
         val instructions = mutableListOf<String>()
         for (index in 0 until request.messages.length()) {
@@ -38,7 +38,7 @@ internal object OpenAiResponsesAdapter {
             }
         }
         // Public API values are independent of the ChatGPT backend's legacy aliases and caps.
-        val effort = when {
+        val effort = if (model?.efforts != null) model.effort(requestedEffort) else when {
             requestedEffort == "ultra" -> "max"
             requestedEffort == "none" && request.modelId != "gpt-6-luna" && request.modelId != "gpt-6-sol" -> "low"
             requestedEffort in setOf("none", "low", "medium", "high", "xhigh", "max") -> requestedEffort
@@ -47,9 +47,9 @@ internal object OpenAiResponsesAdapter {
         }
         return JSONObject().put("model", request.modelId).put("stream", true).put("store", false)
             .put("instructions", instructions.joinToString("\n\n")).put("input", input)
-            .put("reasoning", JSONObject().put("effort", effort))
             .put("include", JSONArray().put("reasoning.encrypted_content"))
             .apply {
+                effort?.let { put("reasoning", JSONObject().put("effort", it)) }
                 if (request.toolDefinitions.isNotEmpty()) {
                     put("parallel_tool_calls", false)
                     put("tools", JSONArray().apply {

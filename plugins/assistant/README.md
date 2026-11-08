@@ -29,6 +29,24 @@ which go through the Responses API (`OpenAiResponsesAdapter`); the preset
 catalog lives in `ProviderCatalog.kt`.
 Each provider keeps its own encrypted key, model, and endpoint.
 
+**Current models.** Settings checks every configured provider's model catalog
+on opening, reusing a list for up to six hours, and refreshes again while the
+screen stays open. **Refresh models** checks immediately. **Choose model** opens
+a searchable list, including newly published IDs without an APK update. API
+providers use their configured `/models` endpoint; ChatGPT uses its authenticated
+Codex catalog. The selected model stays selected even when a refreshed catalog
+no longer lists it. A catalog entry is not a guarantee of quota or access.
+
+Lists and advertised photo/reasoning capabilities are cached per provider,
+endpoint and account/key. Failed or unsupported catalog requests keep the last
+successful list; before the first success, built-in suggestions remain available.
+API providers also retain manual model-ID entry and a photo override when the
+catalog does not declare image support. Providers without a compatible catalog
+still need a manual ID or updated built-in suggestions. Discovery updates model
+IDs and declared capabilities, not an incompatible future authentication or
+inference protocol. Model-list requests use the provider's saved credentials;
+catalogs contain no saved credentials and no third-party catalog service is used.
+
 Tools go through `AssistantToolRegistry`, and every structured provider runs
 them through one shared loop (`AssistantToolLoop`): up to four tool rounds and
 eight executed calls per turn, one at a time, with no new round once 60 seconds

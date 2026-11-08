@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import android.content.Context
+import com.anezium.rokidbus.shared.PageTextSize
 import com.anezium.rokidbus.shared.PhoneHubCapabilitiesContract
 
 /** Platform-owned wearer preference; plugins never receive or set this value. */
@@ -53,8 +54,20 @@ internal class PhoneHudPositionStore(context: Context) {
         preferences.edit().putBoolean(KEY_HUD_POSITION_AUTO, enabled).apply()
     }
 
+    fun pageTextSize(): PageTextSize {
+        val stored = runCatching { preferences.getString(KEY_PAGE_TEXT_SIZE, null) }.getOrNull()
+        val cleanValue = PageTextSize.parse(stored)
+        if (stored != cleanValue.wire) setPageTextSize(cleanValue)
+        return cleanValue
+    }
+
+    fun setPageTextSize(size: PageTextSize) {
+        preferences.edit().putString(KEY_PAGE_TEXT_SIZE, size.wire).apply()
+    }
+
     private companion object {
         const val KEY_HUD_TOP_INSET_DP = "hud_top_inset_dp"
         const val KEY_HUD_POSITION_AUTO = "hud_position_auto"
+        const val KEY_PAGE_TEXT_SIZE = "page_text_size"
     }
 }

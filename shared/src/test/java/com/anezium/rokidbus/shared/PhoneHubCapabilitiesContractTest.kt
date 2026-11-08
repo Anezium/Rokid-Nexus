@@ -142,6 +142,43 @@ class PhoneHubCapabilitiesContractTest {
     }
 
     @Test
+    fun `page text size survives round trip`() {
+        listOf(PageTextSize.LARGE to "large", PageTextSize.XLARGE to "xlarge").forEach { (size, wire) ->
+            val payload = PhoneHubCapabilitiesContract.toJson(
+                PhoneHubCapabilitiesContract.create(
+                    features = 0,
+                    cameraConsumerName = null,
+                    pageTextSize = size,
+                ),
+            )
+
+            assertEquals(wire, payload.getString("pageTextSize"))
+            assertEquals(size, PhoneHubCapabilitiesContract.parse(payload).pageTextSize)
+        }
+    }
+
+    @Test
+    fun `page text size is announced as normal by default`() {
+        val payload = PhoneHubCapabilitiesContract.toJson(PhoneHubCapabilitiesContract.create(0, null))
+
+        assertEquals("normal", payload.getString("pageTextSize"))
+    }
+
+    @Test
+    fun `page text size defaults to normal for older phones and unknown values`() {
+        assertEquals(
+            PageTextSize.NORMAL,
+            PhoneHubCapabilitiesContract.parse(JSONObject().put("features", 0)).pageTextSize,
+        )
+        listOf("huge", "LARGE", "XLARGE", "", 1, true, JSONObject.NULL).forEach { garbage ->
+            assertEquals(
+                PageTextSize.NORMAL,
+                PhoneHubCapabilitiesContract.parse(JSONObject().put("pageTextSize", garbage)).pageTextSize,
+            )
+        }
+    }
+
+    @Test
     fun `page session version defaults to zero and round trips when announced`() {
         assertEquals(0, PhoneHubCapabilitiesContract.parse(JSONObject().put("features", 0)).pageSessionVersion)
         val announced = PhoneHubCapabilitiesContract.create(0, null, pageSessionVersion = 1)

@@ -27,8 +27,11 @@ import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.client.ui.NexusUi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
@@ -47,6 +50,17 @@ class AssistantSettingsActivity : Activity() {
     private val accountContextSync by lazy { AccountContextSync(applicationContext) }
     private val hermesCapabilitiesClient by lazy { HermesCapabilitiesClient() }
     private val settingsScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val modelCatalog by lazy {
+        ModelCatalogRepository(authStore, refreshChatGpt = {
+            CodexChatGptOAuth.refreshStoredTokens(applicationContext)
+        })
+    }
+    private val refreshingModels = mutableSetOf<String>()
+    private val modelRefreshResults = mutableMapOf<String, ModelCatalogRefresh>()
+    private var modelCatalogStatus: TextView? = null
+    private var currentModelLabel: TextView? = null
+    private var modelEffortSlot: LinearLayout? = null
+    private var modelRefreshJob: Job? = null
     private val workspaceOwner = Any()
     private var workspaceController: WorkspaceController? = null
     private var workspaceVisible = false
@@ -84,12 +98,8 @@ class AssistantSettingsActivity : Activity() {
     private var modelField: EditText? = null
     private var endpointField: EditText? = null
     private var photosCapSection: LinearLayout? = null
-    private val planModelDots = mutableMapOf<String, View>()
-    private val planModelNames = mutableMapOf<String, TextView>()
     private val reasoningDots = mutableMapOf<String, View>()
     private val reasoningNames = mutableMapOf<String, TextView>()
-    private val apiModelDots = mutableMapOf<String, View>()
-    private val apiModelNames = mutableMapOf<String, TextView>()
     private val effortDots = mutableMapOf<String, View>()
     private val effortNames = mutableMapOf<String, TextView>()
     private val photosCapDots = mutableMapOf<Boolean, View>()
@@ -113,7 +123,6 @@ class AssistantSettingsActivity : Activity() {
     private var hermesProbeGeneration = 0L
 
     private data class ProviderEntry(val id: String, val title: String, val caption: String)
-    private data class ModelChoice(val id: String, val title: String, val caption: String)
     private data class ReasoningChoice(val id: String, val title: String, val hint: String? = null)
 
     /**
@@ -136,31 +145,8 @@ class AssistantSettingsActivity : Activity() {
         ProviderEntry(ProviderCatalog.custom.id, "Custom", "Any OpenAI-compatible server"),
     )
 
-    /**
-     * The current ChatGPT models, ordered the way a wearer picks: fastest first, because
-     * the glasses are a voice surface and most questions are quick ones. Captions follow
-     * how OpenAI positions the tiers -- speed and depth, not price, since a ChatGPT
-     * plan is not billed per token.
-     */
-    private val planModelChoices = listOf(
-        ModelChoice(
-            ChatGptCodexApiClient.FAST_MODEL_ID,
-            "GPT-6-Luna",
-            "Fastest. Best for quick questions",
-        ),
-        ModelChoice(
-            ChatGptCodexApiClient.BALANCED_MODEL_ID,
-            "GPT-6.1-Sol",
-            "Everyday workhorse. Good for most things",
-        ),
-        ModelChoice(
-            ChatGptCodexApiClient.DEEP_MODEL_ID,
-            "GPT-6-Astra",
-            "Frontier intelligence. Slower to answer",
-        ),
-    )
     private val reasoningChoices = listOf(
-        ReasoningChoice("none", "None", "Luna only; Low on Sol/Astra"),
+        ReasoningChoice("none", "None"),
         ReasoningChoice("low", "Low", "fast"),
         ReasoningChoice("medium", "Medium"),
         ReasoningChoice("high", "High"),
@@ -184,9 +170,16 @@ class AssistantSettingsActivity : Activity() {
         super.onStart()
         workspaceVisible = true
         workspaceController?.attach(workspaceOwner)
+        modelRefreshJob = settingsScope.launch {
+            while (isActive) {
+                delay(ModelCatalogRepository.REFRESH_INTERVAL_MS)
+                refreshConfiguredModels()
+            }
+        }
     }
 
     override fun onStop() {
+        modelRefreshJob?.cancel()
         workspaceVisible = false
         workspaceController?.detach(workspaceOwner)
         super.onStop()
@@ -516,9 +509,10 @@ class AssistantSettingsActivity : Activity() {
         modelField = null
         endpointField = null
         photosCapSection = null
-        planModelDots.clear(); planModelNames.clear()
+        modelCatalogStatus = null
+        currentModelLabel = null
+        modelEffortSlot = null
         reasoningDots.clear(); reasoningNames.clear()
-        apiModelDots.clear(); apiModelNames.clear()
         effortDots.clear(); effortNames.clear()
         photosCapDots.clear(); photosCapNames.clear()
 
@@ -530,6 +524,110 @@ class AssistantSettingsActivity : Activity() {
             ProviderCatalog.preset(selected)?.let { preset ->
                 buildApiProviderConfig(providerConfigSlot, preset)
             }
+        }
+        refreshConfiguredModels()
+    }
+
+    private fun refreshConfiguredModels() {
+        providerEntries.filter { providerReady(it.id) }.forEach { refreshModels(it.id) }
+    }
+
+    private fun refreshModels(id: String, force: Boolean = false) {
+        if (!refreshingModels.add(id)) return
+        renderModelCatalogStatus()
+        settingsScope.launch {
+            try {
+                modelRefreshResults[id] = modelCatalog.refresh(id, force)
+                if (id == selectedProvider()) {
+                    renderModelCatalogStatus()
+                    renderModelEfforts()
+                    if (id != CodexAuthStore.CHATGPT_PROVIDER_ID) {
+                        renderApiModelSelection(ProviderCatalog.requirePreset(id))
+                    }
+                }
+            } finally {
+                refreshingModels.remove(id)
+                if (id == selectedProvider()) renderModelCatalogStatus()
+            }
+        }
+    }
+
+    private fun modelCatalogControls(id: String): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(NexusUi.rowSub(this@AssistantSettingsActivity, "").also { currentModelLabel = it }, NexusUi.block())
+        addView(NexusUi.rowSub(this@AssistantSettingsActivity, "").also { modelCatalogStatus = it }, NexusUi.block())
+        addView(NexusUi.textButton(this@AssistantSettingsActivity, "Choose model").apply {
+            setOnClickListener {
+                showAssistantModelPicker(
+                    this@AssistantSettingsActivity,
+                    authStore.availableModels(id),
+                    if (id == CodexAuthStore.CHATGPT_PROVIDER_ID) authStore.chatGptModel() else authStore.providerModel(id),
+                ) { model ->
+                    if (id == CodexAuthStore.CHATGPT_PROVIDER_ID) {
+                        authStore.setChatGptModel(model.id)
+                    } else {
+                        authStore.setProviderModel(id, model.id)
+                        authStore.clearProviderModelSupportsPhotosOverride(id)
+                        modelField?.setText("")
+                        renderApiModelSelection(ProviderCatalog.requirePreset(id))
+                    }
+                    renderModelCatalogStatus()
+                    renderModelEfforts()
+                }
+            }
+        }, NexusUi.block())
+        addView(NexusUi.textButton(this@AssistantSettingsActivity, "Refresh models").apply {
+            isEnabled = providerReady(id)
+            setOnClickListener { refreshModels(id, force = true) }
+        }, NexusUi.block())
+        renderModelCatalogStatus()
+    }
+
+    private fun renderModelCatalogStatus() {
+        val id = selectedProvider()
+        val model = if (id == CodexAuthStore.CHATGPT_PROVIDER_ID) authStore.chatGptModel() else authStore.providerModel(id)
+        val cached = authStore.cachedModelCatalog(id)
+        currentModelLabel?.text = "Selected: ${model.ifBlank { "No model selected" }}"
+        if (cached != null && cached.models.none { it.id == model }) {
+            currentModelLabel?.append(" · Not in the current catalog")
+        }
+        modelCatalogStatus?.text = when {
+            id in refreshingModels -> "Checking available models…"
+            cached != null -> {
+                val date = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
+                    .format(java.util.Date(cached.updatedAtMs))
+                val unavailable = modelRefreshResults[id] == ModelCatalogRefresh.UNAVAILABLE
+                "${cached.models.size} models · Updated $date" + if (unavailable) " · Refresh unavailable; using saved list" else ""
+            }
+            !providerReady(id) -> "Connect this provider to check available models."
+            modelRefreshResults[id] == ModelCatalogRefresh.UNAVAILABLE ->
+                "Catalog unavailable. Using built-in suggestions; custom model IDs still work for API providers."
+            else -> "Models refresh automatically every 6 hours while settings are open."
+        }
+    }
+
+    private fun modelEffortsSection(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        modelEffortSlot = this
+        renderModelEfforts()
+    }
+
+    private fun renderModelEfforts() {
+        val slot = modelEffortSlot ?: return
+        slot.removeAllViews()
+        reasoningDots.clear(); reasoningNames.clear()
+        effortDots.clear(); effortNames.clear()
+        val id = selectedProvider()
+        if (authStore.modelEfforts(id).isEmpty()) return
+        slot.addView(BusTheme.gap(this, 22))
+        slot.addView(NexusUi.sectionRow(this, "Reasoning"), NexusUi.block())
+        slot.addView(BusTheme.gap(this, 12))
+        if (id == CodexAuthStore.CHATGPT_PROVIDER_ID) {
+            slot.addView(reasoningCard(), NexusUi.block())
+            renderReasoningSelection()
+        } else {
+            slot.addView(effortCard(ProviderCatalog.requirePreset(id)), NexusUi.block())
+            renderEffortSelection(ProviderCatalog.requirePreset(id))
         }
     }
 
@@ -614,12 +712,10 @@ class AssistantSettingsActivity : Activity() {
             slot.addView(BusTheme.gap(this, 22))
             slot.addView(NexusUi.sectionRow(this, "Model"), NexusUi.block())
             slot.addView(BusTheme.gap(this, 12))
-            slot.addView(planModelCard(), NexusUi.block())
-            slot.addView(BusTheme.gap(this, 22))
-            slot.addView(NexusUi.sectionRow(this, "Reasoning"), NexusUi.block())
-            slot.addView(BusTheme.gap(this, 12))
-            slot.addView(reasoningCard(), NexusUi.block())
-            renderPlanModelSelection()
+            slot.addView(NexusUi.card(this).apply {
+                addView(modelCatalogControls(CodexAuthStore.CHATGPT_PROVIDER_ID), NexusUi.block())
+            }, NexusUi.block())
+            slot.addView(modelEffortsSection(), NexusUi.block())
             renderReasoningSelection()
         }
     }
@@ -666,40 +762,11 @@ class AssistantSettingsActivity : Activity() {
             )
         }
 
-    private fun planModelCard(): LinearLayout =
-        NexusUi.card(this).apply {
-            planModelChoices.forEachIndexed { index, choice ->
-                if (index > 0) addView(NexusUi.divider(this@AssistantSettingsActivity))
-                addView(
-                    pickerRow(
-                        title = choice.title,
-                        caption = choice.caption,
-                        description = "Use ${choice.title}",
-                        onClick = {
-                            authStore.setChatGptModel(choice.id)
-                            renderPlanModelSelection()
-                        },
-                        nameSink = { planModelNames[choice.id] = it },
-                        dotSink = { planModelDots[choice.id] = it },
-                    ),
-                    NexusUi.block(),
-                )
-            }
-        }
-
-    private fun renderPlanModelSelection() {
-        val selected = authStore.chatGptModel()
-        planModelDots.forEach { (id, dotView) ->
-            NexusUi.setDotColor(dotView, if (id == selected) NexusUi.GREEN else NexusUi.INK4)
-        }
-        planModelNames.forEach { (id, nameView) ->
-            nameView.setTextColor(if (id == selected) NexusUi.INK else NexusUi.INK2)
-        }
-    }
-
     private fun reasoningCard(): LinearLayout =
         NexusUi.card(this).apply {
-            reasoningChoices.forEachIndexed { index, choice ->
+            authStore.modelEfforts(CodexAuthStore.CHATGPT_PROVIDER_ID).map { effort ->
+                reasoningChoices.firstOrNull { it.id == effort } ?: ReasoningChoice(effort, effort.replaceFirstChar(Char::uppercaseChar))
+            }.forEachIndexed { index, choice ->
                 if (index > 0) addView(NexusUi.divider(this@AssistantSettingsActivity))
                 addView(
                     pickerRow(
@@ -772,19 +839,15 @@ class AssistantSettingsActivity : Activity() {
         }
         slot.addView(photosCapSection, NexusUi.block())
 
-        if (preset.supportedEfforts.isNotEmpty()) {
-            slot.addView(BusTheme.gap(this, 22))
-            slot.addView(NexusUi.sectionRow(this, "Reasoning"), NexusUi.block())
-            slot.addView(BusTheme.gap(this, 12))
-            slot.addView(effortCard(preset), NexusUi.block())
-            renderEffortSelection(preset)
-        }
+        slot.addView(modelEffortsSection(), NexusUi.block())
 
         if (!needsEndpoint) {
             slot.addView(BusTheme.gap(this, 12))
             slot.addView(endpointCard(preset), NexusUi.block())
         }
         renderApiModelSelection(preset)
+        renderModelCatalogStatus()
+        renderModelEfforts()
     }
 
     private fun apiKeyCard(preset: ProviderPreset): LinearLayout =
@@ -950,31 +1013,12 @@ class AssistantSettingsActivity : Activity() {
 
     private fun apiModelCard(preset: ProviderPreset): LinearLayout =
         NexusUi.card(this).apply {
-            preset.suggestedModels.forEachIndexed { index, model ->
-                if (index > 0) addView(NexusUi.divider(this@AssistantSettingsActivity))
-                addView(
-                    pickerRow(
-                        title = model.title,
-                        caption = model.caption.takeIf(String::isNotBlank),
-                        description = "Use ${model.title}",
-                        onClick = { selectSuggestedModel(preset, model) },
-                        nameSink = { apiModelNames[model.id] = it },
-                        dotSink = { apiModelDots[model.id] = it },
-                    ),
-                    NexusUi.block(),
-                )
-            }
-            if (preset.suggestedModels.isNotEmpty()) {
-                addView(NexusUi.divider(this@AssistantSettingsActivity))
-            }
+            addView(modelCatalogControls(preset.id), NexusUi.block())
+            addView(NexusUi.divider(this@AssistantSettingsActivity))
             addView(
                 NexusUi.rowSub(
                     this@AssistantSettingsActivity,
-                    if (preset.suggestedModels.isEmpty()) {
-                        "The model id your server answers to"
-                    } else {
-                        "Or any ${preset.displayName} model id"
-                    },
+                    "Or type a ${preset.displayName} model id",
                 ),
                 NexusUi.block(),
             )
@@ -1008,7 +1052,7 @@ class AssistantSettingsActivity : Activity() {
     private fun modelInputField(preset: ProviderPreset): EditText =
         NexusUi.field(this, preset.defaultModel.ifBlank { "model-id" }).apply {
             val current = authStore.providerModel(preset.id)
-            if (preset.suggestedModels.none { it.id == current }) setText(current)
+            if (authStore.availableModels(preset.id).none { it.id == current }) setText(current)
             textSize = 14f
             isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -1026,14 +1070,6 @@ class AssistantSettingsActivity : Activity() {
             }
         }
 
-    private fun selectSuggestedModel(preset: ProviderPreset, model: SuggestedModel) {
-        authStore.setProviderModel(preset.id, model.id)
-        // A fresh model means yesterday's photo answer no longer applies.
-        authStore.clearProviderModelSupportsPhotosOverride(preset.id)
-        modelField?.setText("")
-        renderApiModelSelection(preset)
-    }
-
     private fun saveTypedModel(preset: ProviderPreset) {
         val field = modelField ?: return
         val typed = field.text.toString().trim()
@@ -1046,17 +1082,13 @@ class AssistantSettingsActivity : Activity() {
         hideKeyboard(field)
         renderApiModelSelection(preset)
         toast("Using $typed.")
+        renderModelCatalogStatus()
+        renderModelEfforts()
     }
 
     private fun renderApiModelSelection(preset: ProviderPreset) {
         val current = authStore.providerModel(preset.id)
-        val suggested = preset.suggestedModels.any { it.id == current }
-        apiModelDots.forEach { (id, dotView) ->
-            NexusUi.setDotColor(dotView, if (id == current) NexusUi.GREEN else NexusUi.INK4)
-        }
-        apiModelNames.forEach { (id, nameView) ->
-            nameView.setTextColor(if (id == current) NexusUi.INK else NexusUi.INK2)
-        }
+        val suggested = authStore.availableModels(preset.id).any { it.id == current && it.vision != null }
         // A model the catalog knows carries its own photo answer; only a typed one
         // needs the wearer to say whether it can see.
         photosCapSection?.visibility = if (suggested) View.GONE else View.VISIBLE
@@ -1108,7 +1140,7 @@ class AssistantSettingsActivity : Activity() {
 
     private fun effortCard(preset: ProviderPreset): LinearLayout =
         NexusUi.card(this).apply {
-            val choices = listOf("" to "None") + preset.supportedEfforts.map { effort ->
+            val choices = listOf("" to "Provider default") + authStore.modelEfforts(preset.id).map { effort ->
                 effort to effort.replaceFirstChar { it.uppercaseChar() }
             }
             choices.forEachIndexed { index, (effort, title) ->

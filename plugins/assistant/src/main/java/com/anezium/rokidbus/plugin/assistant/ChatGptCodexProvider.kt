@@ -212,6 +212,7 @@ internal class ChatGptCodexApiClient(
     private val transport: ChatGptCodexHttpTransport = HttpUrlConnectionChatGptCodexTransport(),
     private val endpointProvider: () -> String = { DEFAULT_ENDPOINT },
     private val sessionId: String = UUID.randomUUID().toString(),
+    private val modelsProvider: () -> List<AvailableModel> = { emptyList() },
 ) {
     fun streamResponses(
         request: ChatRequest,
@@ -282,7 +283,7 @@ internal class ChatGptCodexApiClient(
             val httpRequest = buildHttpRequest(
                 request = request,
                 modelId = supportedModel(modelId),
-                reasoningEffort = supportedReasoningEffort(modelId, reasoningEffort),
+                reasoningEffort = supportedReasoningEffort(modelId, reasoningEffort, modelsProvider()),
                 input = input,
                 toolDefinitions = toolDefinitions,
                 tokens = tokens,
@@ -410,6 +411,9 @@ internal class ChatGptCodexApiClient(
                     .put("effort", reasoningEffort)
                     .put("summary", "auto"),
             )
+            .apply {
+                if (modelsProvider().firstOrNull { it.id == modelId }?.efforts?.isEmpty() == true) remove("reasoning")
+            }
         return ChatGptCodexHttpRequest(
             endpoint = endpointProvider().trim().ifBlank { DEFAULT_ENDPOINT },
             headers = linkedMapOf(
@@ -461,6 +465,7 @@ internal class ChatGptCodexApiClient(
         const val DEFAULT_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
         const val FAST_MODEL_ID = "gpt-6-luna"
         const val BALANCED_MODEL_ID = "gpt-6.1-sol"
+        const val TERRA_MODEL_ID = "gpt-6.1-terra"
         const val DEEP_MODEL_ID = "gpt-6-astra"
 
         // Luna leads: the glasses are a voice surface where the answer has to land
@@ -468,10 +473,8 @@ internal class ChatGptCodexApiClient(
         // settings when a question deserves the wait.
         const val DEFAULT_MODEL_ID = FAST_MODEL_ID
 
-        // The current ChatGPT model trio. Older ids are still served but marked older,
-        // and anything else comes back "not supported when using Codex with a ChatGPT
-        // account".
-        val SUPPORTED_MODEL_IDS = listOf(FAST_MODEL_ID, BALANCED_MODEL_ID, DEEP_MODEL_ID)
+        // Offline defaults; the account catalog can advertise additional models.
+        val SUPPORTED_MODEL_IDS = listOf(FAST_MODEL_ID, TERRA_MODEL_ID, BALANCED_MODEL_ID, DEEP_MODEL_ID)
 
         // A selection saved by an earlier release keeps its tier rather than falling
         // back to the default.
@@ -486,6 +489,7 @@ internal class ChatGptCodexApiClient(
         private val REASONING_EFFORTS_BY_MODEL = mapOf(
             FAST_MODEL_ID to setOf("none", "low", "medium", "high", "xhigh", "max"),
             BALANCED_MODEL_ID to setOf("low", "medium", "high", "xhigh", "ultra"),
+            TERRA_MODEL_ID to setOf("low", "medium", "high", "xhigh"),
             DEEP_MODEL_ID to setOf("low", "medium", "high", "xhigh", "ultra"),
         )
 
@@ -497,8 +501,8 @@ internal class ChatGptCodexApiClient(
 
         fun supportedModel(modelId: String): String {
             val trimmed = modelId.trim()
-            return trimmed.takeIf(SUPPORTED_MODEL_IDS::contains)
-                ?: LEGACY_MODEL_ALIASES[trimmed]
+            return LEGACY_MODEL_ALIASES[trimmed]
+                ?: trimmed.takeIf { it.matches(Regex("[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,255}")) }
                 ?: DEFAULT_MODEL_ID
         }
 
@@ -507,10 +511,17 @@ internal class ChatGptCodexApiClient(
                 ?: DEFAULT_REASONING_EFFORT
 
         fun reasoningEffortsFor(modelId: String): Set<String> =
-            REASONING_EFFORTS_BY_MODEL.getValue(supportedModel(modelId))
+            REASONING_EFFORTS_BY_MODEL[supportedModel(modelId)] ?: setOf("none")
 
         /** The effort actually sent for [modelId]: always one that model accepts. */
-        fun supportedReasoningEffort(modelId: String, reasoningEffort: String): String {
+        fun supportedReasoningEffort(
+            modelId: String,
+            reasoningEffort: String,
+            models: List<AvailableModel> = emptyList(),
+        ): String {
+            models.firstOrNull { it.id == modelId.trim() }?.let { model ->
+                model.effort(reasoningEffort)?.let { return it }
+            }
             val allowed = reasoningEffortsFor(modelId)
             val requested = reasoningEffort.trim()
             return when {

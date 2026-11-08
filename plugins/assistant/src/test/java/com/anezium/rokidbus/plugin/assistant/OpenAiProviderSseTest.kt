@@ -34,13 +34,12 @@ class OpenAiProviderSseTest {
     }
 
     @Test
-    fun ignoresReasoningOnlyChunks() {
-        assertSame(
-            OpenAiChatSseEvent.Ignored,
-            OpenAiChatSseParser.parseLine(
-                """data: {"choices":[{"delta":{"reasoning_content":"Thinking"}}]}""",
-            ),
-        )
+    fun preservesReasoningForToolReplayWithoutTreatingItAsVisibleContent() {
+        val event = OpenAiChatSseParser.parseLine(
+            """data: {"choices":[{"delta":{"reasoning_content":"Thinking"}}]}""",
+        ) as OpenAiChatSseEvent.Delta
+        assertEquals("Thinking", event.reasoningContent)
+        assertEquals(null, event.content)
     }
 
     @Test

@@ -40,6 +40,12 @@ object ProviderCatalog {
                 vision = true,
             ),
             SuggestedModel(
+                id = "gpt-6.1-terra",
+                title = "GPT-6.1-Terra",
+                caption = "Fast writing and visual understanding",
+                vision = true,
+            ),
+            SuggestedModel(
                 id = "gpt-6.1-sol",
                 title = "GPT-6.1-Sol",
                 caption = "Everyday workhorse for most questions",
@@ -86,6 +92,12 @@ object ProviderCatalog {
         defaultModel = "MiniMax-M3",
         suggestedModels = listOf(
             SuggestedModel(
+                id = "MiniMax-M3.1-Flash",
+                title = "MiniMax M3.1 Flash",
+                caption = "Multimodal with tunable thinking depth",
+                vision = true,
+            ),
+            SuggestedModel(
                 id = "MiniMax-M3",
                 title = "MiniMax M3",
                 caption = "Flagship, and it sees photos",
@@ -101,17 +113,17 @@ object ProviderCatalog {
         id = "deepseek",
         displayName = "DeepSeek",
         defaultBaseUrl = "https://api.deepseek.com/v1",
-        defaultModel = "deepseek-chat",
+        defaultModel = "deepseek-flash",
         suggestedModels = listOf(
             SuggestedModel(
-                id = "deepseek-chat",
-                title = "DeepSeek Chat",
-                caption = "Fast general answers",
-                vision = false,
+                id = "deepseek-flash",
+                title = "DeepSeek V4.1 Flash",
+                caption = "Fast general answers and photos",
+                vision = true,
             ),
             SuggestedModel(
-                id = "deepseek-reasoner",
-                title = "DeepSeek Reasoner",
+                id = "deepseek-v4-pro",
+                title = "DeepSeek V4 Pro",
                 caption = "Thinks before answering",
                 vision = false,
             ),
@@ -125,14 +137,16 @@ object ProviderCatalog {
         id = "zai",
         displayName = "GLM (Z.ai)",
         defaultBaseUrl = "https://api.z.ai/api/paas/v4",
-        defaultModel = "glm-4.6",
+        defaultModel = "glm-5.3",
         suggestedModels = listOf(
             SuggestedModel(
-                id = "glm-4.6",
-                title = "GLM 4.6",
+                id = "glm-5.3",
+                title = "GLM 5.3",
                 caption = "Zhipu's flagship",
                 vision = false,
             ),
+            SuggestedModel("glm-5.3-flash", "GLM 5.3 Flash", "Fast multimodal answers", vision = true),
+            SuggestedModel("glm-5.3-flashx", "GLM 5.3 FlashX", "Multimodal answers", vision = true),
         ),
         supportedEfforts = emptyList(),
         extraHeaders = emptyMap(),

@@ -576,7 +576,7 @@ class BusHubService : Service() {
         override fun run() {
             if (audioRelayClient == null) return
             if (sppSession != null) {
-                audioRelayRouteRejected = false
+                if (PhoneAudioRelayGate.pollClearsRouteRejection(Build.VERSION.SDK_INT)) audioRelayRouteRejected = false
                 updateAudioRelayGate()
             }
             pinHandler.postDelayed(this, 15000)
@@ -1112,7 +1112,7 @@ class BusHubService : Service() {
             connection = ::createAudioRelayConnection,
             player = { ready, failure ->
                 PhoneAudioRelayPlayer(ready, prefs().getString(PREF_LAST_GLASSES_ADDRESS, null),
-                    { phoneSpeakerRouteProbe.classifyRoute(PhoneAudioRelayPlayer.audioAttributes()) }, { _ ->
+                    { phoneSpeakerRouteProbe.classifyRelayRoute() }, { _ ->
                         audioRelayRouteRejected = true
                         updateAudioRelayGate()
                     }, failure)
@@ -1338,13 +1338,10 @@ class BusHubService : Service() {
         skillsCoordinator = SkillsCoordinator(skillsHost, skillGrantStore)
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
-            plugins = emptyList(),
             sendEnvelope = ::sendBuiltInPluginEnvelope,
-            capabilitiesProvider = ::capabilities,
             logger = { message -> log(message) },
             catalogProvider = {
                 PluginCatalog.build(
-                    builtIns = emptyList(),
                     candidates = pluginDiscovery.discover(),
                     registryFeed = registryClient.cachedSnapshot()?.feed
                         ?: RegistryFeed(RegistryClient.SUPPORTED_VERSION, emptyList()),
@@ -5686,6 +5683,7 @@ class BusHubService : Service() {
             pageSessionVersion = ANNOUNCED_PAGE_SESSION_VERSION,
             launcherInteractiveVersion = LauncherInteractiveContract.VERSION,
             launcherBackend = PhoneLauncherBackendStore(this).choice().wireValue,
+            pageTextSize = hudPosition.pageTextSize(),
         )
         if (announced == lastAnnouncedPhoneCapabilities) return
         val envelope = BusEnvelope(
@@ -6189,7 +6187,7 @@ class BusHubService : Service() {
         if (audioRelayDestroyed) return
         val store = audioRelayStore ?: return
         val route = if (audioRelayRouteRejected) PhoneTtsRoute.GLASSES_LINK else
-            audioRelayRouteProbe?.classifyRoute(PhoneAudioRelayPlayer.audioAttributes()) ?: PhoneTtsRoute.PHONE_SPEAKER
+            audioRelayRouteProbe?.classifyRelayRoute() ?: PhoneTtsRoute.PHONE_SPEAKER
         val enabled = store.isEnabled() && hubEnabled
         val dataUp = sppSession != null && socket?.isConnected == true
         val desired = PhoneAudioRelayGate.desired(enabled, route, remoteAudioRelayCapable, dataUp)
@@ -6274,6 +6272,10 @@ class BusHubService : Service() {
             activeInstance?.announcePhoneCapabilities()
         }
 
+        internal fun onPageTextSizeChanged() {
+            activeInstance?.announcePhoneCapabilities()
+        }
+
         internal fun onLauncherBackendChanged() {
             activeInstance?.announcePhoneCapabilities()
         }
@@ -6291,7 +6293,7 @@ class BusHubService : Service() {
         fun launcherApplications(context: android.content.Context): List<PhoneLauncherApplication> =
             activeInstance?.pluginRegistry?.launcherApplications(includePagesOnly = true)
                 ?: pluginCatalog(context).entries.mapNotNull { entry ->
-                    if (entry.state != PluginCatalogState.BUILT_IN && entry.state != PluginCatalogState.ENABLED) return@mapNotNull null
+                    if (entry.state != PluginCatalogState.ENABLED) return@mapNotNull null
                     val id = entry.id ?: return@mapNotNull null
                     val pages = entry.principal?.descriptor?.pageSessionVersion ?: 0
                     if (!entry.launchable && pages == 0) return@mapNotNull null
@@ -6341,7 +6343,10 @@ class BusHubService : Service() {
         }
 
         internal fun onGlassesAudioRelaySettingChanged() {
-            activeInstance?.updateAudioRelayGate()
+            activeInstance?.let { service ->
+                service.audioRelayRouteRejected = false
+                service.updateAudioRelayGate()
+            }
         }
 
         internal fun isPhoneTtsReady(): Boolean =
@@ -6367,7 +6372,6 @@ class BusHubService : Service() {
             activeInstance?.pluginRegistry?.catalog()
                 ?: context.applicationContext.let { appContext ->
                     PluginCatalog.build(
-                        builtIns = emptyList(),
                         candidates = PhonePluginDiscovery(appContext.packageManager).discover(),
                         registryFeed = RegistryClient.create(appContext).cachedSnapshot()?.feed
                             ?: RegistryFeed(RegistryClient.SUPPORTED_VERSION, emptyList()),

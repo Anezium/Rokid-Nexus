@@ -1,5 +1,65 @@
 # Changelog
 
+## 2.3.0
+
+Update both hubs together to get the new setting; 2.2.x hubs stay compatible
+with each other and with 2.3.0, without it. Plugins and SDK are unchanged.
+
+### Glasses hub
+
+- **Larger text.** A new phone setting, Settings > Display > Glasses launcher >
+  **Larger text**, scales the text of the launcher pages: Normal, Large (one
+  quarter bigger) or Extra large (half again as big). Home, Applications,
+  Notifications, conversations, documents, media and navigation pages all
+  follow it, and a page that is open redraws in place when you change it.
+  Notices, pins, activity islands, the navigation island and the Classic
+  launcher keep their size. Asked for by a wearer with low vision.
+
+### Phone hub
+
+- The Larger text choice lives with the other glasses display settings and is
+  sent to the glasses with the HUD position, so older glasses simply ignore it.
+- Onboarding says plainly that ADB debugging has to be on in the Hi Rokid app
+  before Automatic setup, repeats it when setup cannot finish, and no longer
+  cuts that advice off after one line.
+
+## 2.2.2
+
+### Phone hub
+
+- **Keyboard prompt on Android 11 and 12.** When the glasses ask for text and
+  the keyboard screen cannot open by itself, the phone offers it through a
+  notification. That notification was silently skipped on Android 11 and 12,
+  because the hub checked a notification permission that only exists from
+  Android 13. Grant "Display over other apps" to Nexus and it opens directly;
+  otherwise the notification now appears.
+- **Glasses sound in earbuds on Android 11 and 12.** The switch stayed on
+  "Waiting for earbuds" while media already played in the earbuds, because the
+  glasses remain listed as an audio output on those versions. Before Android 13
+  the relay now starts as soon as an identified output other than the glasses is
+  present, and it refuses an output whose Bluetooth address is unknown so the
+  glasses' own sound is never fed back to them.
+- Removed the unused in-process plugin host left over from before plugins
+  became separate APKs. No behaviour change.
+
+Update the phone hub to receive these fixes. Glasses hub 2.2.0 and 2.2.1 remain
+compatible; the 2.2.2 glasses APK has only a version bump. Plugins and SDK are
+unchanged.
+
+## 2.2.1
+
+### Phone hub
+
+- Recover from GitHub release downloads failing with HTTP 502, 503, 504 or a
+  timeout. Nexus retries the exact release and APK once through GitHub's asset
+  API, covering phone updates, glasses updates and GitHub-hosted Store plugins.
+- Cancellation remains available during the fallback. A partial download is
+  restarted, and the existing APK hash, package and signature checks still run
+  before installation.
+
+Update the phone hub to receive this fix. Glasses hub 2.2.0 remains compatible;
+the 2.2.1 glasses APK has only a version bump. Plugins and SDK are unchanged.
+
 ## 2.2.0
 
 Update both Nexus hubs together. Meta Messages 0.1.0 ships alongside and needs

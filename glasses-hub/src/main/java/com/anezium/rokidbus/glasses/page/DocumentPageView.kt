@@ -159,17 +159,17 @@ internal class DocumentPageView(context: Context) : View(context) {
         val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
             when (segment.kind) {
                 PageSegmentKind.HEADER -> {
-                    textSize = PageStyle.CAPTION_PX
+                    textSize = sizeOf(PageSegmentKind.HEADER)
                     typeface = PageStyle.mono
                     color = PageStyle.muted
                 }
                 PageSegmentKind.PROSE -> {
-                    textSize = PageStyle.BODY_PX
+                    textSize = sizeOf(PageSegmentKind.PROSE)
                     typeface = PageStyle.sans
                     color = if (dimmed) PageStyle.muted else PageStyle.ink
                 }
                 PageSegmentKind.ASIDE -> {
-                    textSize = PageStyle.ASIDE_PX
+                    textSize = sizeOf(PageSegmentKind.ASIDE)
                     typeface = PageStyle.sans
                     color = PageStyle.muted
                 }
@@ -184,11 +184,14 @@ internal class DocumentPageView(context: Context) : View(context) {
     }
 
     /** The text size used for [kind], in logical pixels. */
-    fun sizeOf(kind: PageSegmentKind): Float = when (kind) {
-        PageSegmentKind.HEADER -> PageStyle.CAPTION_PX
-        PageSegmentKind.PROSE -> PageStyle.BODY_PX
-        PageSegmentKind.ASIDE -> PageStyle.ASIDE_PX
-    }
+    fun sizeOf(kind: PageSegmentKind): Float = PageStyle.scaledPx(
+        context,
+        when (kind) {
+            PageSegmentKind.HEADER -> PageStyle.CAPTION_PX
+            PageSegmentKind.PROSE -> PageStyle.BODY_PX
+            PageSegmentKind.ASIDE -> PageStyle.ASIDE_PX
+        },
+    )
 
     private companion object {
         /** The footer's place among the segments; the space keeps it apart from every wire id. */
