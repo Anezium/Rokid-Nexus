@@ -68,10 +68,12 @@ internal object RemoteKeyboardPrompt {
     }
 
     /** The runtime notification grant exists from Android 13 only. */
-    private fun postNotification(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+    internal fun notificationGrantMissing(context: Context): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
+
+    private fun postNotification(context: Context) {
+        if (notificationGrantMissing(context)) {
             Log.d(TAG, "Keyboard prompt skipped: POST_NOTIFICATIONS permission not granted")
             return
         }
