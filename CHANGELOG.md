@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.2.2
+
+### Phone hub
+
+- **Keyboard prompt on Android 11 and 12.** When the glasses ask for text and
+  the keyboard screen cannot open by itself, the phone offers it through a
+  notification. That notification was silently skipped on Android 11 and 12,
+  because the hub checked a notification permission that only exists from
+  Android 13. Grant "Display over other apps" to Nexus and it opens directly;
+  otherwise the notification now appears.
+- **Glasses sound in earbuds on Android 11 and 12.** The switch stayed on
+  "Waiting for earbuds" while media already played in the earbuds, because the
+  glasses remain listed as an audio output on those versions. Before Android 13
+  the relay now starts as soon as an identified output other than the glasses is
+  present, and it refuses an output whose Bluetooth address is unknown so the
+  glasses' own sound is never fed back to them.
+- Removed the unused in-process plugin host left over from before plugins
+  became separate APKs. No behaviour change.
+
+Update the phone hub to receive these fixes. Glasses hub 2.2.0 and 2.2.1 remain
+compatible; the 2.2.2 glasses APK has only a version bump. Plugins and SDK are
+unchanged.
+
 ## 2.2.1
 
 ### Phone hub
