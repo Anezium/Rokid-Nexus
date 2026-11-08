@@ -41,6 +41,7 @@ class LargerTextRenderingTest {
     private val view = SessionScreenView(context)
     private val paged = mutableListOf<SessionEvent.DocumentPaged>()
     private val scale = PageStyle.LARGE_TEXT_SCALE
+    private val largerSizes = listOf(PageTextSize.LARGE, PageTextSize.XLARGE)
     private val longText = List(80) { "A sentence long enough to wrap across the lines of the HUD." }.joinToString(" ")
     private var unsubscribe: (() -> Unit)? = null
 
@@ -101,7 +102,6 @@ class LargerTextRenderingTest {
 
     @Test
     fun `a row's text grows and stays whole`() {
-        view.setTextSize(PageTextSize.LARGE)
         view.show(
             screen(
                 ScreenBlock.Row("one", "Applications", selected = true),
@@ -109,50 +109,59 @@ class LargerTextRenderingTest {
                 ScreenBlock.Row("three", "A label long enough to wrap over several lines of a row, up to its cap of three", sub = "A sub long enough to wrap on two lines of the row, and then to be cut short"),
             ),
         )
-        layout()
+        largerSizes.forEach { size ->
+            view.setTextSize(size)
+            layout()
 
-        listOf("one", "two", "three").forEach { assertNoClipping(view.blockViews.getValue(it)) }
-        val label = texts(view.blockViews.getValue("one")).single()
-        assertEquals(PageStyle.BODY_PX * scale, label.textSize, 0.01f)
-        assertTrue(view.blockViews.getValue("one").height >= PageStyle.ROW_MIN_HEIGHT_PX)
+            listOf("one", "two", "three").forEach { assertNoClipping(view.blockViews.getValue(it)) }
+            val label = texts(view.blockViews.getValue("one")).single()
+            assertEquals(PageStyle.BODY_PX * PageStyle.scaleOf(size), label.textSize, 0.01f)
+            assertTrue(view.blockViews.getValue("one").height >= PageStyle.ROW_MIN_HEIGHT_PX)
+        }
     }
 
     @Test
     fun `a card and the page's fixed chrome hold their larger lines`() {
-        view.setTextSize(PageTextSize.LARGE)
         view.show(
             screen(
                 ScreenBlock.Card("card", "NAVIGATION", "12:24", "1.8 km", "Gare de Fontainebleau", "12 min", figure = true, ended = false, selected = true, tertiary = "Arrive 12:36"),
                 footer = InlineFooter.StatusLine("Listening to the wearer", sub = "Tap to stop"),
             ),
         )
-        layout()
+        largerSizes.forEach { size ->
+            view.setTextSize(size)
+            layout()
 
-        assertNoClipping(view.blockViews.getValue("card"))
-        assertNoClipping(view.footer)
-        val chrome = (0 until view.childCount).map(view::getChildAt).filter { it is ViewGroup && it !== view.viewport && it !== view.footer }
-        assertEquals(2, chrome.size)
-        chrome.forEach(::assertNoClipping)
+            assertNoClipping(view.blockViews.getValue("card"))
+            assertNoClipping(view.footer)
+            val chrome = (0 until view.childCount).map(view::getChildAt).filter { it is ViewGroup && it !== view.viewport && it !== view.footer }
+            assertEquals(2, chrome.size)
+            chrome.forEach(::assertNoClipping)
+        }
     }
 
     @Test
     fun `a document page holds its larger lines and takes more pages`() {
         view.show(screen(document()))
         layout()
-        val normalPages = paged.last().pageStarts.size
+        var fewerPages = paged.last().pageStarts.size
 
-        view.setTextSize(PageTextSize.LARGE)
-        layout()
+        largerSizes.forEach { size ->
+            view.setTextSize(size)
+            layout()
 
-        val page = view.blockViews.getValue("doc") as DocumentPageView
-        assertEquals(PageStyle.BODY_PX * scale, page.sizeOf(PageSegmentKind.PROSE), 0.01f)
-        assertTrue("${paged.last().pageStarts.size} pages after $normalPages", paged.last().pageStarts.size > normalPages)
-        val paint = TextPaint().apply {
-            textSize = PageStyle.BODY_PX * scale
-            typeface = PageStyle.sans
+            val page = view.blockViews.getValue("doc") as DocumentPageView
+            val sizePx = PageStyle.BODY_PX * PageStyle.scaleOf(size)
+            assertEquals(sizePx, page.sizeOf(PageSegmentKind.PROSE), 0.01f)
+            assertTrue("${paged.last().pageStarts.size} pages after $fewerPages", paged.last().pageStarts.size > fewerPages)
+            fewerPages = paged.last().pageStarts.size
+            val paint = TextPaint().apply {
+                textSize = sizePx
+                typeface = PageStyle.sans
+            }
+            val lines = page.visibleText().lines().size
+            assertTrue("$lines lines in ${page.height}", lines * paint.getFontMetricsInt(null) * 1.3f <= page.height)
         }
-        val lines = page.visibleText().lines().size
-        assertTrue("$lines lines in ${page.height}", lines * paint.getFontMetricsInt(null) * 1.3f <= page.height)
     }
 
     @Test

@@ -34,6 +34,7 @@ internal object PageStyle {
     const val CAPTION_PX = 12f
 
     const val LARGE_TEXT_SCALE = 1.25f
+    const val XLARGE_TEXT_SCALE = 1.5f
 
     /**
      * A root or Activities card and a guidance island: the figure and the line under it are
@@ -93,6 +94,7 @@ internal object PageStyle {
     fun scaleOf(size: PageTextSize): Float = when (size) {
         PageTextSize.NORMAL -> 1f
         PageTextSize.LARGE -> LARGE_TEXT_SCALE
+        PageTextSize.XLARGE -> XLARGE_TEXT_SCALE
     }
 
     /** [sizePx] at the text scale of the screen [context] belongs to. */
