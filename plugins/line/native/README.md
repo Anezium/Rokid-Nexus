@@ -28,3 +28,5 @@ See [SEND_IMAGE.md](SEND_IMAGE.md) for the photo wire contract, outcome semantic
 bounded durable deduplication and the security changes requiring device revalidation.
 The current diagnostic build enables raw `ENC_KM` metadata without a preview upload;
 [MEDIA_PROTOCOL_RESEARCH.md](MEDIA_PROTOCOL_RESEARCH.md) records the evidence and limits.
+For opt-in, redacted official-client envelope inspection, see
+[DESCRIBE_MEDIA.md](DESCRIBE_MEDIA.md) (`-e describeMedia true` in instrumentation).

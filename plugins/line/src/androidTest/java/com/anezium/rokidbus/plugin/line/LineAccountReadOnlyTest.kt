@@ -18,6 +18,7 @@ class LineAccountReadOnlyTest {
         val expected = InstrumentationRegistry.getArguments().getString("conversationLabel").orEmpty()
         val requireText = InstrumentationRegistry.getArguments().getString("requireText", "true").toBoolean()
         val requireMedia = InstrumentationRegistry.getArguments().getString("requireMedia", "false").toBoolean()
+        val describeMedia = InstrumentationRegistry.getArguments().getString("describeMedia", "false").toBoolean()
         assertTrue("Pass -e conversationLabel with the owner's chosen conversation", expected.isNotBlank())
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val engine = Mobile.open(File(context.noBackupFilesDir, "line-session").absolutePath)
@@ -34,6 +35,11 @@ class LineAccountReadOnlyTest {
                 "excluded=${snapshot.optInt("excludedEntries", -1)}, lengths=${snapshot.optJSONArray("excludedIdLengths")}", 1, matches.size)
             val id = matches.single().getString("id")
             engine.loadHistory(id)
+            if (describeMedia) {
+                InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
+                    putString("latestMediaDescription", engine.describeLatestMedia(id))
+                })
+            }
             val loaded = JSONObject(engine.snapshot()).getJSONArray("chats")
             val history = (0 until loaded.length()).map { loaded.getJSONObject(it) }
                 .single { it.getString("id") == id }.getJSONArray("history")
