@@ -39,7 +39,11 @@ func (e *Engine) StartLogin() error {
 		e.loginCancel = nil
 		e.mu.Unlock()
 		if err != nil {
-			e.setLogin(loginStatus{Phase: "failed"})
+			phase := "failed"
+			if errors.Is(err, context.Canceled) {
+				phase = "idle"
+			}
+			e.setLogin(loginStatus{Phase: phase})
 		}
 	}()
 	return nil
