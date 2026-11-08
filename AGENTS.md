@@ -1,5 +1,19 @@
 # Working in this repository
 
+## Branches, worktrees and pull requests
+
+The default workflow is an isolated topic branch, implementation and checks, then
+a pull request targeting `main`. Never edit or commit directly on `main`, and never
+push directly to it. Do not merge the pull request unless the user asks.
+
+Before editing, check `git status`, the current branch and `git worktree list`.
+For work spanning more than a few minutes, use a separate worktree so concurrent
+sessions cannot replace each other's files. Do not switch another session's shared
+checkout. Keep unrelated changes out of commits, commit coherent steps as you go,
+and report the branch, worktree, observed checks and PR URL at handoff.
+
+## Repository contracts
+
 Android/Kotlin. Phone hub, glasses hub, a shared bus client, and the plugins under
 `plugins/`. Start with `README.md` for what the product is; `plugins/AGENTS.md` covers
 plugin work specifically.

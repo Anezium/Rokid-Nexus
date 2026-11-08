@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <queries>
+        <intent><action android:name="com.anezium.rokidbus.action.HUB" /></intent>
+        <package android:name="jp.naver.line.android" />
+    </queries>
+    <application android:allowBackup="false" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="LINE Messages"
+        android:supportsRtl="true" android:theme="@style/Theme.LineMessages" android:usesCleartextTraffic="false">
+        <activity android:name=".LineSettingsActivity" android:exported="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
+        <service android:name=".LinePairingService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="pending-pairing" />
+        </service>
+        <service android:name=".LinePluginService" android:exported="true" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="glasses-session" />
+            <intent-filter><action android:name="com.anezium.rokidbus.action.PLUGIN" /></intent-filter>
+            <meta-data android:name="com.anezium.rokidbus.plugin.ID" android:value="line-messages" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME" android:value="LINE Messages" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.API_VERSION" android:value="3" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.CAPABILITIES" android:value="surfaces,stt,camera" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES" android:value="/plugin/line-messages,/system/plugin,/stt" />
+            <!-- "line" is no built-in key: the glasses draw it from the GLYPHS array below, the phone from ICON_DRAWABLE. -->
+            <meta-data android:name="com.anezium.rokidbus.plugin.ICON" android:value="line" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.ICON_DRAWABLE" android:resource="@drawable/nexus_icon_line" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.GLYPHS" android:resource="@array/nexus_glyphs" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY" android:value="com.anezium.rokidbus.plugin.line.LineSettingsActivity" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.LAUNCHABLE" android:value="false" />
+            <meta-data android:name="rokidbus.plugin.pages" android:value="1" />
+        </service>
+    </application>
+</manifest>

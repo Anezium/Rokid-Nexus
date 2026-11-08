@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The app icon and the phone-side identity mark: the LINE bubble, filled, letters cut
+  out, in Nexus green. Screens can afford a fill; the glasses glyph next to this file
+  cannot, so the two are drawn differently on purpose.
+  Geometry from Simple Icons "LINE" (CC0 1.0, https://simpleicons.org).
+  LINE is a trademark of LY Corporation.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M19.36 9.86c.35 0 .63.28.63.63 0 .34-.28.63-.63.63H17.61v1.12h1.75c.35 0 .63.28.63.63 0 .34-.28.63-.63.63h-2.39c-.34 0-.63-.28-.63-.63V8.11c0-.34.28-.63.63-.63h2.39c.35 0 .63.28.63.63 0 .35-.28.63-.63.63H17.61v1.12h1.75zm-3.85 3.02c0 .27-.17.51-.43.6-.06.02-.13.03-.2.03-.21 0-.39-.09-.51-.25l-2.44-3.32v2.94c0 .34-.28.63-.63.63-.35 0-.63-.28-.63-.63V8.11c0-.27.17-.51.43-.59.06-.02.14-.03.19-.03.2 0 .38.1.49.25l2.46 3.33V8.11c0-.34.28-.63.63-.63.34 0 .63.28.63.63v4.77zm-5.74 0c0 .34-.28.63-.63.63-.34 0-.63-.28-.63-.63V8.11c0-.34.28-.63.63-.63.35 0 .63.28.63.63v4.77zm-2.47.63H4.92c-.34 0-.63-.28-.63-.63V8.11c0-.34.28-.63.63-.63.35 0 .63.28.63.63v4.14h1.76c.35 0 .63.28.63.63 0 .34-.28.63-.63.63M24 10.31C24 4.94 18.61.57 12 .57S0 4.94 0 10.31c0 4.81 4.27 8.84 10.04 9.61.39.08.92.26 1.06.59.12.3.08.77.04 1.08l-.16 1.02c-.04.3-.24 1.19 1.05.65 1.29-.54 6.92-4.08 9.44-6.97C23.18 14.39 24 12.46 24 10.31" android:fillColor="#FF4DFF8C" android:fillType="evenOdd" />
+</vector>

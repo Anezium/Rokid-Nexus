@@ -18,6 +18,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  line:
+    name: LINE native engine and Android plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Read the pinned Go toolchain
+        id: line-go
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^toolchain[[:space:]]+go([0-9.]+)\r?$/\1/p' plugins/line/native/go.mod)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.line-go.outputs.version }}
+          cache-dependency-path: plugins/line/native/go.sum
+      # The hosted runner already carries the SDK; its sdkmanager is used directly because
+      # android-actions/setup-android installs the retired "tools" package and fails.
+      - name: Provision the CI NDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.1.12297006" > /dev/null
+      - name: Test and build the embedded engine
+        working-directory: plugins/line/native
+        run: |
+          go test ./mobile
+          go vet ./mobile
+          bash build-android.sh
+      - name: Test and assemble the phone plugin
+        run: ./gradlew :plugin-line:testDebugUnitTest :plugin-line:assembleDebug -PskipCxrGlobal=true
+
   hubs:
     name: Hub unit tests
     runs-on: ubuntu-latest
