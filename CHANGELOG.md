@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.3.0
+
+Update both hubs together to get the new setting; 2.2.x hubs stay compatible
+with each other and with 2.3.0, without it. Plugins and SDK are unchanged.
+
+### Glasses hub
+
+- **Larger text.** A new phone setting, Settings > Display > Glasses launcher >
+  **Larger text**, scales the text of the launcher pages: Normal, Large (one
+  quarter bigger) or Extra large (half again as big). Home, Applications,
+  Notifications, conversations, documents, media and navigation pages all
+  follow it, and a page that is open redraws in place when you change it.
+  Notices, pins, activity islands, the navigation island and the Classic
+  launcher keep their size. Asked for by a wearer with low vision.
+
+### Phone hub
+
+- The Larger text choice lives with the other glasses display settings and is
+  sent to the glasses with the HUD position, so older glasses simply ignore it.
+
 ## 2.2.2
 
 ### Phone hub
