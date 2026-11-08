@@ -6,7 +6,8 @@ like WhatsApp's engine. No Matrix bridge, remote gateway or glasses APK is neede
 
 ## Scope
 
-- Secondary-device QR login, with PIN approval in the official LINE app.
+- Email/password login, with PIN approval in the official LINE app on the same
+  phone. The password is used once and is never persisted.
 - Up to 48 recent conversations, direct or group, and 24 recent messages per chat.
   The newest messages that fit the launcher payload budget are displayed.
 - Live text updates and remote unsends while the plugin pages are held open.
@@ -24,11 +25,12 @@ send is reported as handed off, never as delivered or read.
 ## Link an account
 
 1. Install the plugin on the phone and approve it in Nexus. Open its settings.
-2. Read the unofficial-client notice and tap **Link account**.
-3. Try **Open LINE** on the same phone. That deep-link path still needs live
-   verification. If LINE cannot open it, open **LINE Messages** on the glasses and
-   scan its QR with LINE on the phone. Image pages require launcher v6 on both hubs.
-4. Enter the PIN in LINE if requested. Pairing is limited to three minutes, with a
+2. In the official LINE app on this phone, register an email/password under
+   **Settings › Account**, and enable **Allow login**.
+3. Enter that email and password in the plugin, then tap **Sign in**. The fields
+   are cleared immediately; credentials cross no Intent, Bundle or preference.
+4. Open LINE on this same phone and enter the displayed PIN when asked. Return
+   to Nexus after approval. Sign-in is limited to three minutes, with a
    cancellable notification so switching apps does not terminate the attempt.
 5. Open a conversation on the glasses, dictate/type, review the recipient and
    draft, then tap Send. Check LINE before manually repeating an unconfirmed send.
@@ -36,7 +38,7 @@ send is reported as handed off, never as delivered or read.
 LINE's Chrome client identity allows only one session of that type. Linking can
 replace an existing Chrome session. This is an unofficial client and LINE can
 restrict accounts; start with a test account. The plugin is not affiliated with
-LINE or LY Corporation. QR/PIN screens use `FLAG_SECURE`; credentials and keys stay
+LINE or LY Corporation. Credential/PIN screens use `FLAG_SECURE`; tokens and keys stay
 in this APK's `noBackupFilesDir`, with no credential logging or clipboard writes.
 **Forget this connection** removes local credentials/keys without deleting LINE
 messages; revoke the corresponding Chrome device in LINE for remote logout.

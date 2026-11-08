@@ -93,8 +93,7 @@ class LinePluginService : NexusPluginService() {
 
     private fun render(pageId: String, floor: Long? = null): NexusPage.Content {
         revision = maxOf(revision + 1, (floor ?: -1) + 1)
-        return LinePages.render(pageId, revision, LineSession.snapshot, nexusClient?.supportsLauncherInteractive() == true,
-            LineSession.login, nexusClient?.supportsImagePages() == true)
+        return LinePages.render(pageId, revision, LineSession.snapshot, nexusClient?.supportsLauncherInteractive() == true)
     }
 
     private fun publish() {

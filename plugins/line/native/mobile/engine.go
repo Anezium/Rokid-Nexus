@@ -47,7 +47,6 @@ type storedSession struct {
 
 type loginStatus struct {
 	Phase string `json:"phase"`
-	URL   string `json:"url,omitempty"`
 	PIN   string `json:"pin,omitempty"`
 }
 

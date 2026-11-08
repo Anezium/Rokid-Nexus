@@ -3,11 +3,11 @@ package mobile
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/beeper/line/pkg/e2ee"
 	lineapi "github.com/beeper/line/pkg/line"
-	qrcode "github.com/skip2/go-qrcode"
 )
 
 func (e *Engine) setLogin(status loginStatus) {
@@ -17,7 +17,11 @@ func (e *Engine) setLogin(status loginStatus) {
 	e.changed()
 }
 
-func (e *Engine) StartLogin() error {
+func (e *Engine) StartLogin(email, password string) error {
+	email = strings.TrimSpace(email)
+	if email == "" || password == "" || len(email) > 254 || len(password) > 1024 {
+		return errors.New("email and password required")
+	}
 	e.mu.Lock()
 	if e.closed || e.ctx.Err() != nil || e.loginCancel != nil || e.state != "signed_out" {
 		e.mu.Unlock()
@@ -34,7 +38,7 @@ func (e *Engine) StartLogin() error {
 		defer cancel()
 		e.op.Lock()
 		defer e.op.Unlock()
-		err := e.loginQR(ctx)
+		err := e.loginEmail(ctx, email, password)
 		e.mu.Lock()
 		e.loginCancel = nil
 		e.mu.Unlock()
@@ -58,55 +62,64 @@ func (e *Engine) AbortLogin() {
 	}
 }
 
-func (e *Engine) QrPNG() ([]byte, error) {
-	e.mu.Lock()
-	status := e.login
-	e.mu.Unlock()
-	if status.Phase != "qr" || status.URL == "" {
-		return nil, errors.New("QR unavailable")
-	}
-	return qrcode.Encode(status.URL, qrcode.Medium, 512)
+type emailLoginAPI interface {
+	LoginContext(context.Context, string, string, string) (*lineapi.LoginResult, error)
+	WaitForLogin(string, bool) (*lineapi.LoginResult, error)
 }
 
-func (e *Engine) loginQR(ctx context.Context) error {
+// Passwords exist only for the initial request; neither certificates nor passwords
+// are retained for unattended reauthentication.
+func approveEmailLogin(ctx context.Context, c emailLoginAPI, email, password string, update func(loginStatus)) (*lineapi.LoginResult, error) {
+	result, err := c.LoginContext(ctx, email, password, "")
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.NoE2EE {
+		return nil, errors.New("Letter Sealing required")
+	}
+	if result.AuthToken != "" {
+		return result, nil
+	}
+	if result.Verifier == "" || (result.Type != 0 && result.Type != 3) {
+		return nil, errors.New("unsupported login challenge")
+	}
+	status := loginStatus{Phase: "approve"}
+	status.PIN = result.PinCode
+	if status.PIN == "" {
+		status.PIN = result.Pin
+	}
+	if status.PIN != "" {
+		status.Phase = "pin"
+	}
+	update(status)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	result, err = c.WaitForLogin(result.Verifier, false)
+	if err != nil {
+		return nil, err
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if result == nil || result.NoE2EE || result.AuthToken == "" {
+		return nil, errors.New("login not authenticated")
+	}
+	return result, nil
+}
+
+func (e *Engine) loginEmail(ctx context.Context, email, password string) error {
 	c := e.newClient("")
-	session, qr, err := c.StartQRLogin(ctx)
+	defer func() {
+		if c.LoginAttempt != nil {
+			c.LoginAttempt.Close()
+		}
+	}()
+	result, err := approveEmailLogin(ctx, c, email, password, e.setLogin)
 	if err != nil {
 		return err
 	}
-	defer c.LoginAttempt.Close()
-	e.setLogin(loginStatus{Phase: "qr", URL: qr.CallbackURL})
-	timeout := time.Duration(qr.LongPollingIntervalSeconds) * time.Second
-	if timeout <= 0 || timeout > 150*time.Second {
-		timeout = 150 * time.Second
-	}
-	for attempt := 0; ; attempt++ {
-		err = c.CheckQRCodeVerifiedContext(ctx, session, timeout)
-		if err == nil {
-			break
-		}
-		if ctx.Err() != nil || !lineapi.IsQRLoginPollExpired(err) || attempt >= 2 {
-			return err
-		}
-	}
-	verified, err := c.VerifyQRCertificate(ctx, session, "")
-	if err != nil {
-		return err
-	}
-	if !verified {
-		pin, err := c.CreatePinCode(ctx, session)
-		if err != nil {
-			return err
-		}
-		e.setLogin(loginStatus{Phase: "pin", PIN: pin})
-		if err = c.CheckPinCodeVerifiedContext(ctx, session); err != nil {
-			return err
-		}
-	}
-	result, err := c.QRCodeLoginV2(ctx, session)
-	if err != nil {
-		return err
-	}
+	c.AccessToken = result.AuthToken
 	profile, err := c.GetProfileContext(ctx)
 	if err != nil {
 		return err
@@ -115,7 +128,7 @@ func (e *Engine) loginQR(ctx context.Context) error {
 		return errors.New("account mismatch")
 	}
 	keys := map[string]string{}
-	if result.EncryptedKeyChain != "" {
+	if result.EncryptedKeyChain != "" && result.Attempt != nil {
 		mgr := e2ee.NewManagerWithRunner(result.Attempt.Runner)
 		defer mgr.Close()
 		identity, err := c.GetEncryptedIdentityV3()
@@ -131,7 +144,7 @@ func (e *Engine) loginQR(ctx context.Context) error {
 		}
 	}
 	// A missing keychain must never silently turn a sealed account into plaintext.
-	// The prototype only accepts QR logins that carry usable Letter Sealing keys.
+	// The prototype only accepts logins that carry usable Letter Sealing keys.
 	if len(keys) == 0 {
 		return errors.New("Letter Sealing keychain required")
 	}

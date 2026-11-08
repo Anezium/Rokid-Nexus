@@ -161,7 +161,7 @@ func TestPrivateSnapshotDoesNotExposeLoginSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer e.Close()
-	e.setLogin(loginStatus{Phase: "qr", URL: "line://synthetic-secret", PIN: "123456"})
+	e.setLogin(loginStatus{Phase: "pin", PIN: "123456"})
 	var snapshot map[string]any
 	if err = json.Unmarshal([]byte(e.Snapshot()), &snapshot); err != nil {
 		t.Fatal(err)

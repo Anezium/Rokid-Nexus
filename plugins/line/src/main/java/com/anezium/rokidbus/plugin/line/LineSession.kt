@@ -1,17 +1,14 @@
 package com.anezium.rokidbus.plugin.line
 
 import android.content.Context
-import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import com.anezium.rokidbus.plugin.line.nativebridge.mobile.Engine
 import com.anezium.rokidbus.plugin.line.nativebridge.mobile.Listener
 import com.anezium.rokidbus.plugin.line.nativebridge.mobile.Mobile
-import com.anezium.rokidbus.shared.LauncherArtwork
 import org.json.JSONObject
 import java.io.File
-import java.util.Base64
 import java.util.concurrent.Executors
 
 /** One native session shared by the phone screen and visible launcher pages. */
@@ -95,27 +92,13 @@ internal object LineSession {
             })
             val progress = JSONObject(current.loginStatus())
             val phase = progress.optString("phase")
-            val png = if (phase == "qr") current.qrPNG() else null
-            login = LineLogin(phase, progress.optString("url"), progress.optString("pin"), png, png?.let(::qrArtwork))
+            login = LineLogin(phase, progress.optString("pin"))
             main.post {
                 if (synchronized(lock) { engine === current }) {
                     synchronized(lock) { owners.values.toList() }.forEach { it() }
                 }
             }
         }
-    }
-
-    private fun qrArtwork(png: ByteArray): LauncherArtwork? {
-        val bitmap = BitmapFactory.decodeByteArray(png, 0, png.size) ?: return null
-        return try {
-            val pixels = IntArray(bitmap.width * bitmap.height)
-            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-            val bits = ByteArray((pixels.size + 7) / 8)
-            pixels.forEachIndexed { index, color ->
-                if (color and 0xff > 127) bits[index / 8] = (bits[index / 8].toInt() or (0x80 ushr (index % 8))).toByte()
-            }
-            LauncherArtwork(bitmap.width, bitmap.height, Base64.getEncoder().encodeToString(bits))
-        } finally { bitmap.recycle() }
     }
 
     fun abortLogin() {

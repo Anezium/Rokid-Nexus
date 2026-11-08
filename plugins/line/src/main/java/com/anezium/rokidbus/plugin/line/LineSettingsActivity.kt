@@ -3,14 +3,13 @@ package com.anezium.rokidbus.plugin.line
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
-import android.graphics.BitmapFactory
-import android.net.Uri
 import android.os.Bundle
+import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Button
-import android.widget.ImageView
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -20,7 +19,8 @@ class LineSettingsActivity : Activity() {
     private val owner = Any()
     private lateinit var status: TextView
     private lateinit var pin: TextView
-    private lateinit var qr: ImageView
+    private lateinit var email: EditText
+    private lateinit var password: EditText
     private lateinit var link: Button
     private lateinit var openLine: Button
     private lateinit var cancel: Button
@@ -37,18 +37,34 @@ class LineSettingsActivity : Activity() {
                 "This connection uses LINE's Chrome session and can replace an existing LINE Chrome login. " +
                 "This prototype reads recent chats and sends text with Letter Sealing; media and calls are not supported."), NexusUi.block())
         content.addView(NexusUi.cardBody(this,
-            "Tap Link account, then try Open LINE to approve on this phone. If LINE cannot open the link, " +
-                "open LINE Messages on your glasses and scan its QR code with LINE on the phone. " +
-                "A second screen can also scan the QR shown below. Enter the PIN in LINE when asked. Pairing expires after 3 minutes."), NexusUi.block())
+            "Use the email registered in LINE Settings › Account, and enable Allow login there. " +
+                "Sign in below, then open LINE on this phone to approve using the PIN shown here. " +
+                "Return to Nexus afterwards. Your password is used once and is not saved. Sign-in expires after 3 minutes."), NexusUi.block())
+        email = credentialField("LINE account email", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)
+        password = credentialField("LINE password", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
+        content.addView(email, NexusUi.block())
+        content.addView(password, NexusUi.block())
         pin = NexusUi.cardTitle(this, "").apply { setTextIsSelectable(false) }
         content.addView(pin, NexusUi.block())
-        qr = ImageView(this).apply { adjustViewBounds = true; contentDescription = "LINE account pairing QR code" }
-        content.addView(qr, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, NexusUi.dp(this, 280)))
-        link = NexusUi.outlinePillButton(this, "Link account").apply {
+        link = NexusUi.outlinePillButton(this, "Sign in").apply {
             setOnClickListener {
+                val address = email.text.toString().trim()
+                val secret = password.text.toString()
+                if (address.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(address).matches()) {
+                    email.error = "Enter the email registered in LINE"
+                    return@setOnClickListener
+                }
+                if (secret.isEmpty() || secret.length > 1024) {
+                    password.error = "Enter your LINE password"
+                    return@setOnClickListener
+                }
                 isEnabled = false
+                LineSignInRequest.put(LineCredentials(address, secret))
+                email.text.clear()
+                password.text.clear()
                 if (runCatching { startForegroundService(Intent(this@LineSettingsActivity, LinePairingService::class.java)) }.isFailure) {
-                    status.text = "Pairing could not start; keep Nexus visible and try again"
+                    LineSignInRequest.clear()
+                    status.text = "Sign-in could not start; keep Nexus visible and try again"
                     isEnabled = true
                 }
             }
@@ -56,15 +72,14 @@ class LineSettingsActivity : Activity() {
         content.addView(link, NexusUi.block())
         openLine = NexusUi.outlinePillButton(this, "Open LINE").apply {
             setOnClickListener {
-                val uri = runCatching { Uri.parse(LineSession.login.url) }.getOrNull()
-                val allowed = uri?.scheme == "line" || (uri?.scheme == "https" && uri.host == "line.me")
-                if (!allowed || runCatching {
-                    startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage("jp.naver.line.android"))
-                }.isFailure) status.text = "Open LINE Messages on the glasses and scan its QR from LINE on the phone"
+                val launch = packageManager.getLaunchIntentForPackage("jp.naver.line.android")
+                if (launch == null || runCatching { startActivity(launch) }.isFailure) {
+                    status.text = "Open the LINE app on this phone to approve sign-in"
+                }
             }
         }
         content.addView(openLine, NexusUi.block())
-        cancel = NexusUi.textButton(this, "Cancel pairing").apply {
+        cancel = NexusUi.textButton(this, "Cancel sign-in").apply {
             setOnClickListener { stopService(Intent(this@LineSettingsActivity, LinePairingService::class.java)); LineSession.abortLogin() }
         }
         content.addView(cancel, NexusUi.block())
@@ -100,28 +115,40 @@ class LineSettingsActivity : Activity() {
     }
 
     override fun onStart() { super.onStart(); LineSession.acquire(this, owner, ::render) }
-    override fun onStop() { qr.setImageDrawable(null); pin.text = ""; LineSession.release(owner); super.onStop() }
+    override fun onStop() {
+        email.text.clear()
+        password.text.clear()
+        pin.text = ""
+        LineSession.release(owner)
+        super.onStop()
+    }
+
+    private fun credentialField(hint: String, type: Int): EditText = NexusUi.field(this, hint).apply {
+        inputType = type
+        isSaveEnabled = false
+        importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+        imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+    }
 
     private fun render() {
         if (isFinishing || isDestroyed) return
         val login = LineSession.login
-        val pairing = login.phase in setOf("starting", "qr", "pin")
+        val pairing = login.phase in setOf("starting", "approve", "pin")
         val linked = LineSession.snapshot.state in setOf("offline", "connecting", "ready")
         status.text = when (login.phase) {
-            "starting" -> "Getting your QR code…"
-            "qr" -> "Approve the connection in LINE"
+            "starting" -> "Signing in to LINE…"
+            "approve" -> "Approve this sign-in in LINE on the phone"
             "pin" -> "Enter this PIN in LINE"
-            "failed" -> "Pairing failed or expired · try again"
+            "failed" -> "Sign-in failed or expired · check your account and try again"
             "linked" -> "Account linked · open LINE Messages on the glasses"
             else -> if (linked) "Account linked" else LinePages.status(LineSession.snapshot.state)
         }
         pin.text = login.pin
-        val bytes = login.qr
-        qr.setImageBitmap(bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) })
-        qr.visibility = if (bytes != null) View.VISIBLE else View.GONE
+        email.visibility = if (linked || pairing) View.GONE else View.VISIBLE
+        password.visibility = email.visibility
         link.isEnabled = !pairing && LineSession.snapshot.state == "signed_out"
         link.visibility = if (linked || LineSession.snapshot.state == "failed") View.GONE else View.VISIBLE
-        openLine.visibility = if (login.phase == "qr") View.VISIBLE else View.GONE
+        openLine.visibility = if (login.phase == "pin" || login.phase == "approve") View.VISIBLE else View.GONE
         cancel.visibility = if (pairing) View.VISIBLE else View.GONE
         forget.visibility = if (linked || LineSession.snapshot.state == "failed") View.VISIBLE else View.GONE
     }

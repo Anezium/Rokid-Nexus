@@ -68,4 +68,14 @@ class LinePagesTest {
         dispatch.finish("sent")
         assertEquals("sent", dispatch.result())
     }
+
+    @Test fun credentialsAreConsumedOnceAndCanBeDiscarded() {
+        val credentials = LineCredentials("test@example.invalid", "synthetic-password")
+        LineSignInRequest.put(credentials)
+        assertSame(credentials, LineSignInRequest.take())
+        assertNull(LineSignInRequest.take())
+        LineSignInRequest.put(credentials)
+        LineSignInRequest.clear()
+        assertNull(LineSignInRequest.take())
+    }
 }

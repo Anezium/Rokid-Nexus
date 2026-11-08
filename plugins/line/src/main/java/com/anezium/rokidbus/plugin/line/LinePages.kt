@@ -6,7 +6,6 @@ import com.anezium.rokidbus.client.plugin.NexusPageActionSpec
 import com.anezium.rokidbus.shared.ConversationComposer
 import com.anezium.rokidbus.shared.ConversationMessage
 import com.anezium.rokidbus.shared.ConversationRole
-import com.anezium.rokidbus.shared.LauncherArtwork
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageRow
 import com.anezium.rokidbus.shared.PageSurfaceContract
@@ -17,7 +16,7 @@ import java.security.MessageDigest
 internal data class LineMessage(val id: String, val text: String, val mine: Boolean)
 internal data class LineChat(val id: String, val title: String, val group: Boolean, val history: List<LineMessage>)
 internal data class LineSnapshot(val state: String = "loading", val chats: List<LineChat> = emptyList())
-internal data class LineLogin(val phase: String = "idle", val url: String = "", val pin: String = "", val qr: ByteArray? = null, val artwork: LauncherArtwork? = null)
+internal data class LineLogin(val phase: String = "idle", val pin: String = "")
 
 internal object LinePages {
     const val ROOT = "line-messages:main"
@@ -29,13 +28,7 @@ internal object LinePages {
 
     fun chat(pageId: String, state: LineSnapshot): LineChat? = state.chats.firstOrNull { pageId(it) == pageId }
 
-    fun render(pageId: String, revision: Long, state: LineSnapshot, interactive: Boolean, pairing: LineLogin = LineLogin(), imagePages: Boolean = false): NexusPage.Content {
-        if (pageId == ROOT && state.state == "signed_out") {
-            if (pairing.phase == "qr" && imagePages && pairing.artwork != null) return NexusPage.Content(
-                revision, "Link LINE", PageBody.Image(pairing.artwork, "Scan with LINE on the phone · expires in 3 minutes"), live = true)
-            if (pairing.phase == "pin") return NexusPage.Content(revision, "Approve LINE",
-                PageBody.Summary(primary = pairing.pin, text = "Enter this PIN in LINE on the phone"), live = true)
-        }
+    fun render(pageId: String, revision: Long, state: LineSnapshot, interactive: Boolean): NexusPage.Content {
         if (pageId == ROOT) return NexusPage.Content(revision, "LINE", PageBody.SelectableList(
             state.chats.take(PageTemplateContract.MAX_ITEMS).map { chat ->
                 PageRow(pageId(chat).removePrefix(PREFIX), clip(chat.title, PageTemplateContract.MAX_LABEL_CHARS),
