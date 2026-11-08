@@ -22,6 +22,23 @@ class PhoneAudioRelayPlayerTest {
         assertEquals(AudioRelayRouteAdmission.PLAY, PhoneAudioRelayPlayer.routeAdmission(wired, "glasses"))
     }
 
+    @Test fun `bluetooth output is admitted only when it is identified and is not the glasses`() {
+        val a2dp = AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+        val glasses = "AA:BB:CC:DD:EE:01"
+        assertEquals(AudioRelayRouteAdmission.PLAY, PhoneAudioRelayPlayer.routeAdmission(a2dp, "AA:BB:CC:DD:EE:02", glasses))
+        assertEquals(AudioRelayRouteAdmission.REJECT, PhoneAudioRelayPlayer.routeAdmission(a2dp, "aa:bb:cc:dd:ee:01", glasses))
+        assertEquals(AudioRelayRouteAdmission.REJECT, PhoneAudioRelayPlayer.routeAdmission(a2dp, "", glasses))
+        assertEquals(AudioRelayRouteAdmission.REJECT, PhoneAudioRelayPlayer.routeAdmission(a2dp, null, glasses))
+        assertEquals(AudioRelayRouteAdmission.REJECT, PhoneAudioRelayPlayer.routeAdmission(a2dp, "AA:BB:CC:DD:EE:02", null))
+        assertEquals(AudioRelayRouteAdmission.PLAY, PhoneAudioRelayPlayer.routeAdmission(AudioDeviceInfo.TYPE_WIRED_HEADPHONES, "", null))
+    }
+
+    @Test fun `poll retries a rejected route only where the winning output is known`() {
+        assertFalse(PhoneAudioRelayGate.pollClearsRouteRejection(30))
+        assertFalse(PhoneAudioRelayGate.pollClearsRouteRejection(32))
+        assertTrue(PhoneAudioRelayGate.pollClearsRouteRejection(33))
+    }
+
     @Test fun `real glasses Opus CSDs pass validation and configure the decoder byte for byte`() {
         val encoded = listOf("T3B1c0hlYWQBATgBgLsAAAAAAA==", "oC5jAAAAAAA=", "ALTEBAAAAAA=")
         val wire = C.ready(C.OPUS, encoded.map { Base64.getDecoder().decode(it) })

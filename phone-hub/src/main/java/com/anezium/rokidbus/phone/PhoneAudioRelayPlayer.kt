@@ -133,10 +133,15 @@ internal class PhoneAudioRelayPlayer(
         fun audioAttributes(): AudioAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
 
-        fun routeAdmission(device: AudioDeviceInfo?, glassesAddress: String?): AudioRelayRouteAdmission = when {
-            device == null -> AudioRelayRouteAdmission.WAIT
-            !glassesAddress.isNullOrBlank() && device.address.equals(glassesAddress, ignoreCase = true) -> AudioRelayRouteAdmission.REJECT
-            device.type in setOf(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, AudioDeviceInfo.TYPE_BUILTIN_EARPIECE, AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE) -> AudioRelayRouteAdmission.REJECT
+        fun routeAdmission(device: AudioDeviceInfo?, glassesAddress: String?): AudioRelayRouteAdmission =
+            if (device == null) AudioRelayRouteAdmission.WAIT else routeAdmission(device.type, device.address, glassesAddress)
+
+        fun routeAdmission(type: Int, address: String?, glassesAddress: String?): AudioRelayRouteAdmission = when {
+            !glassesAddress.isNullOrBlank() && address.equals(glassesAddress, ignoreCase = true) -> AudioRelayRouteAdmission.REJECT
+            type in setOf(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, AudioDeviceInfo.TYPE_BUILTIN_EARPIECE, AudioDeviceInfo.TYPE_BUILTIN_SPEAKER_SAFE) -> AudioRelayRouteAdmission.REJECT
+            // An unidentified Bluetooth output could be the glasses, which would feed their sound back to them.
+            phoneTtsRouteDeviceType(type) == PhoneTtsRouteDeviceType.BLUETOOTH_EXTERNAL &&
+                (address.isNullOrBlank() || glassesAddress.isNullOrBlank()) -> AudioRelayRouteAdmission.REJECT
             else -> AudioRelayRouteAdmission.PLAY
         }
 
