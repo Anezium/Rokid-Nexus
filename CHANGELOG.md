@@ -1,18 +1,49 @@
 # Changelog
 
-## Unreleased
+## 2.2.0
 
-- **Image pages (launcher bundle v6).** `PageBody.Image` carries one bounded
-  JPEG or MONO1 preview (512 px per edge, 36 KiB before base64), optional caption
-  and ordinary page actions. `supportsImagePages()` checks the pair. Older peers
-  receive a summary without pixels or photo actions. A camera-granted page-only
-  provider can already use `nexusSnapshotSession` without an immersion; the SDK
-  guide now documents immediate progress results and lease-bounded completion.
-  Image-page rendering is pending integration on the glasses.
-- **Deprecate card immersions.** SDK warnings direct `NexusCard`, card row
-  models, `showCard`/`updateCard`, `NexusImage` and `showImage`/`updateImage` to
-  launcher pages. Existing plugins remain compatible. Notices, pins, activities,
-  Ink, editable notice fields and audio/speech sessions remain supported.
+Update both Nexus hubs together. Meta Messages 0.1.0 ships alongside and needs
+hubs 2.2.0. Plugin developers get SDK 0.25.0. Hubs 2.0.x remain compatible with
+each other and with 2.2.0, without the features below.
+
+### Glasses hub
+
+- **Glasses sound in earbuds.** With earbuds or headphones as your phone's
+  audio output, everything the glasses play, Hi Rokid's voice included, can now
+  play in them while the glasses stay quiet. The glasses capture their own sound
+  through the command bridge and stream it to the phone over a dedicated
+  Bluetooth channel, separate from Nexus's other traffic. They get their speaker
+  back within seconds whenever the earbuds disconnect, the switch is turned off,
+  the phone or the Bluetooth link goes away, or either hub stops. Expect about a
+  quarter of a second of delay, plus your earbuds' own Bluetooth latency.
+- **Favourites on the home.** Up to four applications you pin on the phone sit
+  right under your activity cards, above Notifications and Applications. One tap
+  opens each one exactly as Applications would. The glasses keep the list across
+  restarts; a pinned app that is no longer installed is simply not shown.
+- **Conversations scroll as one column.** A conversation reads from top to
+  bottom without paging, so long messages and pictures no longer leave gaps.
+- **Plugin buttons in the composer.** A conversation can add its own buttons
+  next to Dictate and Type, such as **Photo**, and messages can show a picture
+  thumbnail in their bubble.
+- **Full-page pictures.** A plugin can show a picture on a page with ordinary
+  actions under it, such as Send, Retake and Cancel for a photo you just took.
+- **Icons on list rows**, such as each service's logo in Meta Messages.
+- An application made only of pages opens from Applications without an
+  **Open app** row it has no use for.
+- A page that changes kind, such as a photo flow going from "Taking photo…" to
+  its preview, no longer shows a leftover "removed" row, and a page that
+  replaces itself after a tap no longer leaves "Done" in the footer.
+
+### Phone hub
+
+- **Glasses sound in earbuds** in Settings, under Voice; it is off by default.
+  The phone shows "Glasses hub too old" until the glasses are updated too, and
+  the glasses refresh their command bridge on their own after the update.
+- **Favourites** in Settings, under Display: pin up to four applications (plugins,
+  the camera or apps installed on the glasses), reorder them and unpin them. The
+  list follows the glasses as soon as they connect.
+
+### SDK 0.25.0
 
 - **Composer tools (launcher bundle v5).** A conversation page can put its own
   buttons in the hub composer's bar (a **Photo** button, for instance), hide or
@@ -21,28 +52,26 @@
   from, delivered on `/system/plugin/open` as `type: composer_tool` with a
   `context`. Send stays the hub's and keeps every safety rule. Messages may carry
   a thumbnail drawn in the bubble (at most 4 per page, 160 px and 12 KiB each,
-  32 KiB together). Introduced in `launcherInteractiveVersion: 5`; older
-  peers see the default bar and text-only bubbles. SDK: `supportsComposerTools()`,
-  `ComposerTool`, `ComposerSlot`, `ConversationMessage.image`,
-  `onNexusOpen(openType, context)`, and the `camera` glyph.
-
-## 2.1.0
-
-- **Glasses sound in earbuds.** With earbuds or headphones as your phone's
-  audio output, everything the glasses play — Hi Rokid's voice included — can
-  now play in them while the glasses stay quiet. Turn on **Glasses sound in
-  earbuds** in Settings, under Voice; it is off by default. The glasses capture
-  their own sound through the command bridge and stream it to the phone over a
-  dedicated Bluetooth channel, separate from Nexus's other traffic.
-- The glasses get their speaker back within seconds whenever the earbuds
-  disconnect, the switch is turned off, the phone or the Bluetooth link goes
-  away, or either hub stops. Expect about a quarter of a second of delay, plus
-  your earbuds' own Bluetooth latency.
-
-Install **both hubs 2.1.0** to use it: the phone shows "Glasses hub too old"
-until the glasses are updated, and the glasses refresh their command bridge on
-their own after the update. Hubs 2.0.x remain compatible with each other and
-with 2.1.0. Plugins and SDK requirements are unchanged.
+  32 KiB together). Older peers see the default bar and text-only bubbles. SDK:
+  `supportsComposerTools()`, `ComposerTool`, `ComposerSlot`,
+  `ConversationMessage.image`, `onNexusOpen(openType, context)`, and the `camera`
+  glyph.
+- **Image pages (launcher bundle v6).** `PageBody.Image` carries one bounded
+  JPEG or MONO1 preview (512 px per edge, 36 KiB before base64), an optional
+  caption and ordinary page actions. `supportsImagePages()` checks the pair.
+  Older peers receive a summary without pixels or photo actions. A
+  camera-granted page-only provider can use `nexusSnapshotSession` without an
+  immersion.
+- **Row icons (launcher bundle v7).** A page row may carry a small `mono1` icon
+  (`supportsRowIcons()`); older pairs draw the row without it. A plugin that
+  declares `LAUNCHABLE=false` and provides pages is listed in Applications as
+  pages only, with no **Open app**.
+- **Launcher favourites (launcher bundle v8)** are a hub-to-hub setting; plugins
+  have nothing to do and cannot read or change them.
+- **Card immersions are deprecated.** SDK warnings direct `NexusCard`, card row
+  models, `showCard`/`updateCard`, `NexusImage` and `showImage`/`updateImage` to
+  launcher pages. Existing plugins remain compatible. Notices, pins, activities,
+  Ink, editable notice fields and audio/speech sessions remain supported.
 
 ## 2.0.4
 

@@ -21,8 +21,8 @@ the retired pre-2.0 pattern: they still render, but do not write new ones and do
 not copy them from older plugins. Use notices for events and an immersion only
 for the engaged step a page cannot host, opened from a page action. Model new
 plugins on Media Deck, Navigation and Relay
-([Choosing a HUD kind](../docs/PLUGIN_SDK.md#choosing-a-hud-kind)). Nexus 2.0.0 ships SDK 0.24.0;
-plugins built against 0.23.0 must be rebuilt against 0.24.0.
+([Choosing a HUD kind](../docs/PLUGIN_SDK.md#choosing-a-hud-kind)). Nexus 2.2.0 ships SDK 0.25.0;
+plugins built against 0.23.0 or earlier must be rebuilt.
 
 **Hard rule: new glasses UI uses launcher pages.** Do not add `NexusCard`
 menus, pickers or confirmations, or image-surface preview steps. The SDK marks

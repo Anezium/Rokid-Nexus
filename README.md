@@ -58,16 +58,18 @@ expiring never ends the activity; its card stays in the launcher.
 
 ## Nexus 2.0
 
-Update **both hubs to 2.0.4**, plus Relay 1.4.2, Navigation 0.3.0, Media Deck
-1.0.4 and Sample 1.0.6. Plugin developers use SDK 0.24.0. See the
-[2.0.4 release](https://github.com/Anezium/Rokid-Nexus/releases/tag/v2.0.4)
+Update **both hubs to 2.2.0**, plus Relay 1.4.2, Navigation 0.3.0, Media Deck
+1.0.4 and Sample 1.0.6. Plugin developers use SDK 0.25.0. See the
+[2.2.0 release](https://github.com/Anezium/Rokid-Nexus/releases/tag/v2.2.0)
 and [changelog](CHANGELOG.md) for downloads and compatibility details. The
 **Classic launcher** stays available on the phone and the glasses, and older
 hubs keep it automatically.
 
-Relay 1.4.2 and the 2.0.4 glasses hub keep answered notifications out of the
-launcher history and allow consecutive replies while the conversation stays
-open. Phone hubs 2.0.0 to 2.0.3 remain compatible with this patch.
+Nexus 2.2.0 plays the glasses' sound in your phone's earbuds when you want it,
+puts up to four favourite applications on the glasses home, and lets plugins
+add their own composer buttons, picture thumbnails, full-page pictures and row
+icons. Meta Messages, a new plugin, brings WhatsApp, Instagram and Messenger
+conversations to the glasses with it.
 
 Plugins stay isolated in their own processes, appear only after explicit user
 approval, and draw on the HUD through declarative contracts: cards, synced
@@ -265,7 +267,7 @@ A plugin is a headless phone APK against the published SDK:
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.24.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.25.0")
 }
 ```
 
