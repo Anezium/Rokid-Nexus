@@ -143,16 +143,18 @@ class PhoneHubCapabilitiesContractTest {
 
     @Test
     fun `page text size survives round trip`() {
-        val payload = PhoneHubCapabilitiesContract.toJson(
-            PhoneHubCapabilitiesContract.create(
-                features = 0,
-                cameraConsumerName = null,
-                pageTextSize = PageTextSize.LARGE,
-            ),
-        )
+        listOf(PageTextSize.LARGE to "large", PageTextSize.XLARGE to "xlarge").forEach { (size, wire) ->
+            val payload = PhoneHubCapabilitiesContract.toJson(
+                PhoneHubCapabilitiesContract.create(
+                    features = 0,
+                    cameraConsumerName = null,
+                    pageTextSize = size,
+                ),
+            )
 
-        assertEquals("large", payload.getString("pageTextSize"))
-        assertEquals(PageTextSize.LARGE, PhoneHubCapabilitiesContract.parse(payload).pageTextSize)
+            assertEquals(wire, payload.getString("pageTextSize"))
+            assertEquals(size, PhoneHubCapabilitiesContract.parse(payload).pageTextSize)
+        }
     }
 
     @Test
@@ -168,7 +170,7 @@ class PhoneHubCapabilitiesContractTest {
             PageTextSize.NORMAL,
             PhoneHubCapabilitiesContract.parse(JSONObject().put("features", 0)).pageTextSize,
         )
-        listOf("huge", "LARGE", "", 1, true, JSONObject.NULL).forEach { garbage ->
+        listOf("huge", "LARGE", "XLARGE", "", 1, true, JSONObject.NULL).forEach { garbage ->
             assertEquals(
                 PageTextSize.NORMAL,
                 PhoneHubCapabilitiesContract.parse(JSONObject().put("pageTextSize", garbage)).pageTextSize,

@@ -6,6 +6,7 @@ import org.json.JSONObject
 enum class PageTextSize(val wire: String) {
     NORMAL("normal"),
     LARGE("large"),
+    XLARGE("xlarge"),
     ;
 
     companion object {
