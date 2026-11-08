@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The glasses-side twin of res/drawable/nexus_glyph_meta.xml: Nexus reads this array
+  cross-package and draws the identical geometry on the launcher, where the plugin's
+  APK is not available. If you move a point there, move it here.
+-->
+<resources>
+    <string-array name="nexus_glyphs">
+        <item>meta|M12.37,11.61 L14.64,13.39 L16.69,16.54 L17.54,17.53 L18.20,18.07 L19.17,18.47 L20.19,18.52 L21.16,18.24 L21.83,17.69 L22.22,17.09 L22.51,16.31 L22.69,15.42 L22.76,14.47 L22.75,13.34 L22.63,12.20 L22.39,10.95 L22.09,9.91 L21.29,8.07 L20.78,7.24 L20.23,6.56 L19.65,6.02 L19.01,5.58 L18.35,5.32 L17.73,5.23 L16.99,5.27 L16.08,5.55 L15.10,6.07 L14.49,6.51 L13.62,7.99 L13.04,9.74 L12.24,11.03 L11.53,11.57 L10.02,12.90 L8.04,15.98 L6.86,17.41 L6.23,17.93 L5.51,18.32 L4.84,18.50 L4.09,18.53 L3.41,18.41 L2.87,18.18 L2.43,17.82 L2.04,17.30 L1.72,16.61 L1.49,15.78 L1.38,14.87 L1.36,13.77 L1.65,11.56 L2.30,9.43 L2.78,8.41 L3.30,7.56 L3.84,6.86 L4.45,6.28 L4.99,5.90 L5.44,5.70 L6.17,5.53 L6.77,5.51 L8.06,5.78 L9.36,6.46 L9.52,6.57 L9.96,7.21 L10.66,8.45 L10.98,9.39 L11.12,10.24 L11.77,11.21 Z</item>
+    </string-array>
+</resources>

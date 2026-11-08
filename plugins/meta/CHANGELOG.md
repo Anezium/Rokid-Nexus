@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- **Meta's own mark.** The plugin now shows the Meta infinity instead of the
+  generic chat glyph: as one green stroke on the glasses launcher and in
+  notification cards, and as the filled mark for the Android app icon and the
+  Nexus plugin list. The APK had no icon of its own before.
+
 ## 0.1.0
 
 First release. Needs **both hubs at Nexus 2.2.0** for photos, thumbnails and
