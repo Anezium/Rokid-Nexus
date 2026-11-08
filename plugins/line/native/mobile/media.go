@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"image"
 	"image/jpeg"
 	"io"
 	"net/http"
@@ -27,6 +28,7 @@ const maxMediaBytes = 4 * 1024 * 1024
 // Download locators and sealing keys stay native, outside snapshots and page ids.
 type mediaSource struct {
 	sticker, oid, publicPath, messageID string
+	previewOID                          string
 	options                             lineapi.OBSDownloadOptions
 	keys                                []string
 	encrypted                           bool
@@ -153,6 +155,11 @@ func (e *Engine) downloadMedia(ctx context.Context, source *mediaSource) ([]byte
 		return e.client.DownloadOBSPublicResource(ctx, resource.RequestURI())
 	}
 	if source.oid != "" {
+		if source.previewOID != "" {
+			if preview, err := e.client.DownloadOBSWithOptions(ctx, source.previewOID, source.messageID, source.options); err == nil {
+				return preview, nil
+			}
+		}
 		return e.client.DownloadOBSWithOptions(ctx, source.oid, source.messageID, source.options)
 	}
 	// Unsealed photos use the plain message endpoint and no talk-meta message id.
@@ -245,4 +252,59 @@ func validImageJPEG(data []byte) bool {
 	config, err := jpeg.DecodeConfig(bytes.NewReader(data))
 	return err == nil && config.Width > 0 && config.Height > 0 &&
 		config.Width <= 16_384 && config.Height <= 16_384 && int64(config.Width)*int64(config.Height) <= 32_000_000
+}
+
+// Diagnostic B matches 5241f577: the parent's FileEncryption key and counter
+// encrypt the preview too. This is CTR keystream reuse, not an independent nonce.
+func encryptThumbnail(plain []byte, key string) ([]byte, error) {
+	material, err := base64.StdEncoding.DecodeString(key)
+	if err != nil || len(material) != 32 {
+		return nil, errors.New("invalid photo key")
+	}
+	derived := make([]byte, 76)
+	if _, err := io.ReadFull(hkdf.New(sha256.New, material, nil, []byte("FileEncryption")), derived); err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(derived[:32])
+	if err != nil {
+		return nil, err
+	}
+	counter := make([]byte, aes.BlockSize)
+	copy(counter, derived[64:])
+	ciphertext := make([]byte, len(plain))
+	cipher.NewCTR(block, counter).XORKeyStream(ciphertext, plain)
+	mac := hmac.New(sha256.New, derived[32:64])
+	mac.Write(ciphertext)
+	return append(ciphertext, mac.Sum(nil)...), nil
+}
+
+// The standard-library scaler and JPEG quality/size match the engine at 5241f577.
+// Only the preview is re-encoded; the original JPEG remains unchanged.
+func generateThumbnail(data []byte) ([]byte, int, int, error) {
+	if !validImageJPEG(data) {
+		return nil, 0, 0, errors.New("invalid JPEG")
+	}
+	source, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	bounds := source.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	longEdge := max(width, height)
+	var thumbnail image.Image = source
+	if longEdge > 1280 {
+		width, height = max(1, width*1280/longEdge), max(1, height*1280/longEdge)
+		scaled := image.NewRGBA(image.Rect(0, 0, width, height))
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				scaled.Set(x, y, source.At(bounds.Min.X+x*bounds.Dx()/width, bounds.Min.Y+y*bounds.Dy()/height))
+			}
+		}
+		thumbnail = scaled
+	}
+	var encoded bytes.Buffer
+	if err := jpeg.Encode(&encoded, thumbnail, &jpeg.Options{Quality: 60}); err != nil {
+		return nil, 0, 0, err
+	}
+	return encoded.Bytes(), width, height, nil
 }

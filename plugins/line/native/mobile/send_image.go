@@ -15,9 +15,9 @@ import (
 
 const maxImageBytes = 6 * 1024 * 1024
 
-// Requested diagnostic variant A: test whether the official client needs ENC_KM.
-// This exposes the raw media key to LINE; the requirement remains unconfirmed.
-const diagnosticImageKeyInMetadata = true
+// Diagnostic selector: true = A (raw ENC_KM, no preview), false = B (preview,
+// sealed-body key only). B deliberately reproduces the reference's CTR reuse.
+const diagnosticImageKeyInMetadata = false
 
 // Retain only the encrypted upload's locator/key, never the captured JPEG.
 // This also ties a late own-message echo to an ambiguous invocation after reopening.
@@ -26,6 +26,7 @@ type sentImage struct {
 	OID         string `json:"oid"`
 	KeyMaterial string `json:"keyMaterial"`
 	MessageID   string `json:"messageId,omitempty"`
+	Preview     bool   `json:"preview,omitempty"`
 }
 
 func imageDigest(chatID string, jpeg []byte) string {
@@ -80,8 +81,8 @@ func (e *Engine) sendPreparedImage(invocation, chatID, digest string, jpeg []byt
 		return "not_sent"
 	}
 
-	// Upload exactly one ciphertext. Never publish an encrypted preview with this
-	// key: a second plaintext would reuse the original file's CTR keystream.
+	// Variant B reproduces the pinned reference's encrypted preview without
+	// exposing ENC_KM. Its key/nonce reuse is an explicit diagnostic limitation.
 	upload, keyMaterial, err := encryptFileData(jpeg)
 	if err != nil {
 		return "not_sent"
@@ -98,6 +99,17 @@ func (e *Engine) sendPreparedImage(invocation, chatID, digest string, jpeg []byt
 	if diagnosticImageKeyInMetadata {
 		metadata["ENC_KM"] = keyMaterial
 	}
+	previewUploaded := false
+	if !diagnosticImageKeyInMetadata {
+		if preview, width, height, err := generateThumbnail(jpeg); err == nil {
+			if encrypted, err := encryptThumbnail(preview, keyMaterial); err == nil {
+				if e.client.UploadOBSWithOID(encrypted, oid+"__ud-preview") == nil {
+					previewUploaded = true
+					metadata["MEDIA_THUMB_INFO"] = encode(map[string]int{"width": width, "height": height})
+				}
+			}
+		}
+	}
 	payload, _ := json.Marshal(map[string]string{"keyMaterial": keyMaterial})
 	chunks, err := seal(payload)
 	if err != nil || len(chunks) == 0 || e.ctx.Err() != nil {
@@ -112,7 +124,7 @@ func (e *Engine) sendPreparedImage(invocation, chatID, digest string, jpeg []byt
 	} else if strings.HasPrefix(strings.ToLower(chatID), "r") {
 		msg.ToType = 1
 	}
-	image := &sentImage{ChatID: chatID, OID: oid, KeyMaterial: keyMaterial}
+	image := &sentImage{ChatID: chatID, OID: oid, KeyMaterial: keyMaterial, Preview: previewUploaded}
 	record := sendRecord{Digest: digest, State: "unconfirmed", Image: image}
 	if !e.journalSend(invocation, record) {
 		return "not_sent"
@@ -167,6 +179,9 @@ func (e *Engine) appendOwnImage(image *sentImage) {
 		return
 	}
 	source := &mediaSource{oid: image.OID, messageID: image.MessageID, keys: []string{image.KeyMaterial}, encrypted: true}
+	if image.Preview {
+		source.previewOID = image.OID + "__ud-preview"
+	}
 	e.addMessage(image.ChatID, message{ID: image.MessageID, Text: "[Photo]", Mine: true, Media: "photo", source: source})
 }
 
@@ -179,6 +194,9 @@ func (e *Engine) confirmOwnImage(chatID string, row message) {
 		image := record.Image
 		if image == nil || image.ChatID != chatID || image.OID != row.source.oid {
 			continue
+		}
+		if image.Preview {
+			row.source.previewOID = image.OID + "__ud-preview"
 		}
 		if record.State != "sent" || image.MessageID != row.ID {
 			record.State, image.MessageID = "sent", row.ID

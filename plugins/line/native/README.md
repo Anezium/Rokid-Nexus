@@ -26,7 +26,9 @@ output is `../libs/line-engine.aar`. From the repository root, verify it with:
 
 See [SEND_IMAGE.md](SEND_IMAGE.md) for the photo wire contract, outcome semantics,
 bounded durable deduplication and the security changes requiring device revalidation.
-The current diagnostic build enables raw `ENC_KM` metadata without a preview upload;
+The current diagnostic B build omits raw `ENC_KM` metadata and restores the preview upload;
 [MEDIA_PROTOCOL_RESEARCH.md](MEDIA_PROTOCOL_RESEARCH.md) records the evidence and limits.
 For opt-in, redacted official-client envelope inspection, see
 [DESCRIBE_MEDIA.md](DESCRIBE_MEDIA.md) (`-e describeMedia true` in instrumentation).
+Its preview probe reports only a boolean and a fixed status for authenticated
+preview decryption with the sealed-body key; no media/key/locator bytes are output.

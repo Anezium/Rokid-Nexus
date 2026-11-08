@@ -95,3 +95,22 @@ leaves invocation tombstones, rollback and own-photo history unchanged. Its resu
 can test whether restoring the metadata key alone fixes this official-client
 rendering failure. Success would establish that compatibility observation, not
 that every official client emits raw metadata keys or that they are confidential.
+
+## Variant B follow-up
+
+The owner reported that A (`b28c78f5`: raw `ENC_KM`, no preview) still produced an
+unopenable placeholder in the official app. Restoring that field alone therefore
+did not repair this failure. B keeps `ENC_KM` absent and restores the preview,
+matching `5241f577`'s format and its known CTR key/nonce reuse. The single selector
+is now `diagnosticImageKeyInMetadata=false` by default. Tombstones, rollback and
+the sealed media-key body remain unchanged.
+
+The redacted diagnostic now attempts authenticated preview decryption with only
+the sealed-body key, using the same HKDF/counter as the file decryptor, followed
+by JPEG/PNG header parsing. `previewDecryptsWithBodyKey=true` establishes that
+compatibility fact for the inspected sample. Combined with successful original
+decryption on a controlled official-app send, it is evidence of protocol-level
+key/nonce reuse for that sample, to be documented as a limitation rather than
+silently changed. Missing keys/objects or a failed fetch remain inconclusive and
+are distinguished by a fixed status. No official-client probe result has been
+assumed here before the device session reports it.

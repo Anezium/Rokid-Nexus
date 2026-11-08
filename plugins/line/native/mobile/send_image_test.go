@@ -125,12 +125,18 @@ func newImageFixture(t *testing.T, group bool) *imageFixture {
 			if strings.HasSuffix(req.URL.Path, "/object_info.obs") {
 				return imageRPC(`{"status":"exist"}`), nil
 			}
-			return imageRPC(string(f.objects["object"])), nil
+			key := "object"
+			if strings.HasSuffix(req.URL.Path, "object__ud-preview") {
+				key = "preview"
+			}
+			return imageRPC(string(f.objects[key])), nil
 		}
 		step := "upload"
 		key := "object"
-		if !strings.Contains(req.URL.Path, "/reqid-") {
-			t.Fatal("unexpected second OBS upload or preview endpoint")
+		if strings.HasSuffix(req.URL.Path, "object__ud-preview") {
+			step, key = "preview", "preview"
+		} else if !strings.Contains(req.URL.Path, "/reqid-") {
+			t.Fatal("unexpected OBS endpoint")
 		}
 		f.steps = append(f.steps, step)
 		if f.failure == step {
@@ -176,13 +182,32 @@ func TestImageEncryptionRoundTrip(t *testing.T) {
 	if err != nil || !bytes.Equal(plain, original) || len(encrypted) != len(original)+32 {
 		t.Fatal("original JPEG changed or encryption failed")
 	}
+	preview, width, height, err := generateThumbnail(original)
+	if err != nil || width != 1280 || height != 640 {
+		t.Fatalf("preview dimensions %dx%d: %v", width, height, err)
+	}
+	encryptedPreview, err := encryptThumbnail(preview, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodedPreview, err := decryptPhoto(encryptedPreview, key)
+	if err != nil || !bytes.Equal(decodedPreview, preview) {
+		t.Fatal("preview format differs from 5241f577")
+	}
+	// Lock down the requested compatibility experiment; this is the known risk,
+	// not a claim that using the same CTR keystream for two plaintexts is safe.
+	for i := range min(len(original), len(preview)) {
+		if encrypted[i]^encryptedPreview[i] != original[i]^preview[i] {
+			t.Fatal("variant B no longer reproduces the reference counter convention")
+		}
+	}
 	_, otherKey, err := encryptFileData(original)
 	if err != nil || otherKey == key {
 		t.Fatal("new uploads reused their media key")
 	}
 }
 
-func TestSendImageVariantAIncludesRawMetadataKeyButNoPreviewForDirectAndGroup(t *testing.T) {
+func TestSendImageVariantBHasNoMetadataKeyAndUploadsPreviewForDirectAndGroup(t *testing.T) {
 	for _, group := range []bool{false, true} {
 		t.Run(fmt.Sprint("group=", group), func(t *testing.T) {
 			f := newImageFixture(t, group)
@@ -198,13 +223,11 @@ func TestSendImageVariantAIncludesRawMetadataKeyButNoPreviewForDirectAndGroup(t 
 				t.Fatal("sealed payload and private journal disagree")
 			}
 			metadata := msg.ContentMetadata
-			// The owner requested this diagnostic default to isolate an official-client
-			// compatibility hypothesis. It is not evidence that raw ENC_KM is required.
-			if !diagnosticImageKeyInMetadata || metadata["ENC_KM"] != body["keyMaterial"] {
-				t.Fatal("variant A must carry the same raw key in metadata and the sealed body")
+			if _, present := metadata["ENC_KM"]; present || diagnosticImageKeyInMetadata || strings.Contains(encode(metadata), body["keyMaterial"]) {
+				t.Fatal("variant B must carry the key only in the sealed body")
 			}
-			if _, advertised := metadata["MEDIA_THUMB_INFO"]; advertised {
-				t.Fatal("outbound message advertises an encrypted thumbnail")
+			if _, advertised := metadata["MEDIA_THUMB_INFO"]; !advertised {
+				t.Fatal("variant B is missing its uploaded preview metadata")
 			}
 			if metadata["OID"] != "object" || metadata["SID"] != "emi" || metadata["contentType"] != "1" || metadata["FILE_NAME"] != "image.jpg" || metadata["e2eeVersion"] == "" {
 				t.Fatal("required image metadata missing")
@@ -217,7 +240,7 @@ func TestSendImageVariantAIncludesRawMetadataKeyButNoPreviewForDirectAndGroup(t 
 				t.Fatal("recipient could not recover original JPEG")
 			}
 			steps := f.steps
-			if !reflect.DeepEqual(steps[len(steps)-2:], []string{"upload", "sendMessage"}) || len(f.objects) != 1 || strings.Count(strings.Join(steps, ","), "upload") != 1 {
+			if !reflect.DeepEqual(steps[len(steps)-3:], []string{"upload", "preview", "sendMessage"}) || len(f.objects) != 2 {
 				t.Fatalf("upload/send order: %v", steps)
 			}
 			history := f.e.findChat(f.chatID).History
@@ -225,7 +248,8 @@ func TestSendImageVariantAIncludesRawMetadataKeyButNoPreviewForDirectAndGroup(t 
 				t.Fatal("sent photo absent from snapshot history")
 			}
 			media, err := f.e.Media(f.chatID, history[0].ID)
-			if err != nil || !bytes.Equal(media, f.input) {
+			preview, previewErr := decryptPhoto(f.objects["preview"], body["keyMaterial"])
+			if err != nil || previewErr != nil || !bytes.Equal(media, preview) {
 				t.Fatalf("own uploaded photo cannot be read through Media: %v", err)
 			}
 		})
@@ -235,7 +259,7 @@ func TestSendImageVariantAIncludesRawMetadataKeyButNoPreviewForDirectAndGroup(t 
 func TestSendImageFailureMapping(t *testing.T) {
 	for _, test := range []struct{ failure, outcome string }{
 		{"determineMediaMessageFlow", "not_sent"}, {"plain-flow", "not_sent"}, {"sealing", "not_sent"}, {"cancel-before-send", "not_sent"},
-		{"acquireEncryptedAccessToken", "not_sent"}, {"upload", "not_sent"},
+		{"acquireEncryptedAccessToken", "not_sent"}, {"upload", "not_sent"}, {"preview", "sent"},
 		{"send-failure", "unconfirmed"}, {"sendMessage", "unconfirmed"}, {"missing-ack", "unconfirmed"},
 	} {
 		t.Run(test.failure, func(t *testing.T) {
@@ -249,6 +273,9 @@ func TestSendImageFailureMapping(t *testing.T) {
 			}
 			if test.outcome == "unconfirmed" && f.e.stored.Sends["photo"].State != "unconfirmed" {
 				t.Fatal("ambiguous result not journaled")
+			}
+			if test.failure == "preview" && f.message.ContentMetadata["MEDIA_THUMB_INFO"] != "" {
+				t.Fatal("failed preview was advertised")
 			}
 		})
 	}

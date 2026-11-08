@@ -121,7 +121,7 @@ func TestDescribeLatestMediaSelectsNewestImageFromServerForEitherSender(t *testi
 				nil, {ContentType: 0, CreatedTime: "3000", Text: "private-newer-text"},
 				{ContentType: 1, CreatedTime: "1000", ContentMetadata: map[string]string{"OLD_FIELD": "private-old-value"}},
 				{ID: "private-new-image", From: from, ContentType: 1, CreatedTime: "2000", Chunks: []string{"private-chunks"},
-					ContentMetadata: map[string]string{"SID": "emi", "e2eeVersion": "2", "contentType": "1"}},
+					ContentMetadata: map[string]string{"SID": "emi", "e2eeVersion": "2", "contentType": "1", "MEDIA_THUMB_INFO": "{}", "OID": "private-preview-oid", "ENC_KM": "private-metadata-key"}},
 			}
 			calls := 0
 			e.client.HTTPClient.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -139,6 +139,9 @@ func TestDescribeLatestMediaSelectsNewestImageFromServerForEitherSender(t *testi
 			}
 			if calls != 1 || !description.SealedBody.Present || description.SealedBody.Decrypted || description.SealedBody.KeyMaterialPresent {
 				t.Fatal("diagnostic must report unknown sealed content when no crypto manager is available")
+			}
+			if description.PreviewDecryptsWithBodyKey || description.PreviewProbeStatus != "body_not_decrypted" {
+				t.Fatal("unknown body decryption was misreported as a preview result")
 			}
 			if encode(e.stored) != before || e.Snapshot() != beforeSnapshot {
 				t.Fatal("diagnostic mutated the journal or public snapshot")
