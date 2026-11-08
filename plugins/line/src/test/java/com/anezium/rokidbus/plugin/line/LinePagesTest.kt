@@ -110,4 +110,24 @@ class LinePagesTest {
         LineSignInRequest.clear()
         assertNull(LineSignInRequest.take())
     }
+
+    @Test fun thumbnailsAreFetchedForOpenConversationsFirstThenTheListedOnes() {
+        fun photo(id: String) = LineMessage(id, "[Photo]", false, media = "photo")
+        fun text(id: String) = LineMessage(id, "hi", false)
+        val a = LineChat("a", "A", false, listOf(photo("a1"), text("a2"), photo("a3"), photo("a4"), photo("a5"), photo("a6")))
+        val b = LineChat("b", "B", true, listOf(photo("b1"), LineMessage("b2", "[Sticker]", true, media = "sticker")))
+        val c = LineChat("c", "C", false, listOf(text("c1")))
+        val others = (1..6).map { LineChat("x$it", "X$it", false, listOf(photo("x${it}p"))) }
+        val state = LineSnapshot("ready", listOf(b, c, a) + others)
+
+        // An open conversation: its newest pictures only, newest first, capped at what a page shows.
+        assertEquals(listOf("a6", "a5", "a4", "a3"), LinePages.mediaCandidates(setOf(LinePages.pageId(a)), state).map { it.second.id })
+        // The list alone: the first chats in list order, each capped the same way; chats without pictures add nothing.
+        val listed = LinePages.mediaCandidates(setOf(LinePages.ROOT), state)
+        assertEquals(listOf("b2", "b1", "a6", "a5", "a4", "a3", "x1p", "x2p", "x3p"), listed.map { it.second.id })
+        // An open conversation comes before the list, and is not fetched twice.
+        val both = LinePages.mediaCandidates(setOf(LinePages.pageId(a), LinePages.ROOT), state)
+        assertEquals(listOf("a6", "a5", "a4", "a3", "b2", "b1", "x1p", "x2p", "x3p"), both.map { it.second.id })
+        assertTrue(LinePages.mediaCandidates(emptySet(), state).isEmpty())
+    }
 }
