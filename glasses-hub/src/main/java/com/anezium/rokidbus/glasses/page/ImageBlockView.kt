@@ -41,7 +41,7 @@ internal class ImageBlockView(context: Context, block: ScreenBlock.Image) : Line
         }
         private val missing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = PageStyle.muted
-            textSize = PageStyle.CAPTION_PX
+            textSize = PageStyle.scaledPx(context, PageStyle.CAPTION_PX)
             textAlign = Paint.Align.CENTER
         }
         private val bounds = RectF()

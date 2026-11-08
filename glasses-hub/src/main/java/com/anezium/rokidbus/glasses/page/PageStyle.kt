@@ -1,12 +1,23 @@
 package com.anezium.rokidbus.glasses.page
 
 import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.util.TypedValue
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.shared.PageTextSize
+
+/**
+ * The context of a session screen's views, carrying the wearer's text scale down the view tree.
+ * Whatever else draws with [PageStyle], such as the navigation island, never has this context
+ * and keeps its sizes.
+ */
+internal class PageTextContext(base: Context) : ContextWrapper(base) {
+    var scale = 1f
+}
 
 /**
  * Sizes are logical HUD pixels at the 480x640 reference, set as raw pixels: the glasses run at
@@ -21,6 +32,8 @@ internal object PageStyle {
     const val BODY_PX = 17f
     const val ASIDE_PX = 13f
     const val CAPTION_PX = 12f
+
+    const val LARGE_TEXT_SCALE = 1.25f
 
     /**
      * A root or Activities card and a guidance island: the figure and the line under it are
@@ -77,6 +90,14 @@ internal object PageStyle {
     val sans: Typeface = Typeface.SANS_SERIF
     val sansBold: Typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
 
+    fun scaleOf(size: PageTextSize): Float = when (size) {
+        PageTextSize.NORMAL -> 1f
+        PageTextSize.LARGE -> LARGE_TEXT_SCALE
+    }
+
+    /** [sizePx] at the text scale of the screen [context] belongs to. */
+    fun scaledPx(context: Context, sizePx: Float): Float = sizePx * ((context as? PageTextContext)?.scale ?: 1f)
+
     fun text(
         context: Context,
         value: CharSequence,
@@ -87,7 +108,7 @@ internal object PageStyle {
         letterSpacing: Float = 0f,
     ): TextView = TextView(context).apply {
         text = value
-        setTextSize(TypedValue.COMPLEX_UNIT_PX, sizePx)
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, scaledPx(context, sizePx))
         setTextColor(color)
         this.typeface = typeface
         includeFontPadding = false

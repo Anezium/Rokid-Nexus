@@ -41,7 +41,7 @@ internal class CommandStripView(context: Context, private val icons: SessionIcon
     }
     private val rule = Paint().apply { color = PageStyle.outline }
     private val label = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = PageStyle.BODY_PX
+        textSize = PageStyle.scaledPx(context, PageStyle.BODY_PX)
         typeface = PageStyle.sans
     }
     private val rect = RectF()

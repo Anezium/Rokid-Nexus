@@ -90,11 +90,11 @@ internal class ConversationView(context: Context) : View(context) {
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val body = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = PageStyle.BODY_PX
+        textSize = PageStyle.scaledPx(context, PageStyle.BODY_PX)
         typeface = PageStyle.sans
     }
     private val small = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = PageStyle.CAPTION_PX
+        textSize = PageStyle.scaledPx(context, PageStyle.CAPTION_PX)
         typeface = PageStyle.mono
         color = PageStyle.muted
     }
@@ -381,7 +381,7 @@ internal class ConversationView(context: Context) : View(context) {
             val x = textLeft + layout.getLineRight(line).coerceAtLeast(0f) + CARET_GAP_PX
             val lineTop = box.textTop + layout.getLineTop(line)
             val lineBottom = box.textTop + layout.getLineBottom(line)
-            val caretHeight = PageStyle.BODY_PX * CARET_HEIGHT_EM
+            val caretHeight = body.textSize * CARET_HEIGHT_EM
             val caretTop = lineTop + ((lineBottom - lineTop) - caretHeight) / 2f
             canvas.drawRect(x, caretTop, x + CARET_WIDTH_PX, caretTop + caretHeight, caret)
         }
