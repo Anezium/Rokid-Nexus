@@ -94,7 +94,7 @@ class PageSurfaceContractTest {
 
     @Test
     fun `every reserved template is accepted and unknown templates fail closed`() {
-        assertEquals(setOf("summary", "selectableList", "document", "commands", "conversation", "media", "route", "ink"), PageSurfaceContract.templates)
+        assertEquals(setOf("summary", "selectableList", "document", "commands", "conversation", "media", "route", "ink", "image"), PageSurfaceContract.templates)
         PageSurfaceContract.templates.forEach { valid(PageSurfaceContract.validateResponse(response().put("template", it))) }
         invalid(PageSurfaceContract.ERROR_INVALID_PAGE, PageSurfaceContract.validateResponse(response().put("template", "grid")))
     }

@@ -109,7 +109,8 @@ object LauncherOverlayRenderer {
         }
         if (unsubscribeLauncher == null) {
             unsubscribeLauncher = GlassesHub.observeLauncher { entries ->
-                pluginEntries = entries
+                // The classic launcher opens full apps only; a pages-only entry has nothing for it.
+                pluginEntries = entries.filter { it.launchable }
                 updateEntries()
             }
         }

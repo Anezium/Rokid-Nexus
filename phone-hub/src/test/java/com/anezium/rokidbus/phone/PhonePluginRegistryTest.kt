@@ -19,6 +19,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import com.anezium.rokidbus.shared.ComposerToolContext
+import com.anezium.rokidbus.shared.ComposerToolContract
 
 @RunWith(RobolectricTestRunner::class)
 class PhonePluginRegistryTest {
@@ -308,6 +310,95 @@ class PhonePluginRegistryTest {
             entry.getString("id") to entry.opt("pageSessionVersion")
         }
         assertEquals(mapOf("nav" to 1, "hello" to null, "relay" to null), versions)
+        registry.close()
+    }
+
+    @Test
+    fun `a page provider without a full app is listed as pages-only for v7 glasses and withheld from older ones`() {
+        val pagesOnly = principal("meta", launchable = false, iconKey = "chat")
+            .let { it.copy(descriptor = it.descriptor.copy(launchable = false, pageSessionVersion = 1)) }
+        val headless = principal("tasker", launchable = false, iconKey = "bolt")
+        val app = principal("hello", launchable = true, iconKey = "star")
+        val catalog = PluginCatalog(
+            listOf(pagesOnly, headless, app).map { catalogEntry(it, PluginCatalogState.ENABLED, launchable = it.descriptor.launchable) },
+        )
+        var glassesReadPagesOnly = false
+        val sent = mutableListOf<BusEnvelope>()
+        val registry = PhonePluginRegistry(
+            context = RuntimeEnvironment.getApplication(),
+            plugins = emptyList(),
+            sendEnvelope = { envelope ->
+                sent += envelope
+                null
+            },
+            capabilitiesProvider = { 0 },
+            logger = {},
+            catalogProvider = { catalog },
+            glyphReader = { emptyList() },
+            pagesOnlyEntries = { glassesReadPagesOnly },
+        )
+
+        registry.syncLauncherList()
+        val older = sent.single().payload.getJSONArray("plugins")
+        assertEquals(listOf("hello"), (0 until older.length()).map { older.getJSONObject(it).getString("id") })
+
+        glassesReadPagesOnly = true
+        registry.syncLauncherList()
+        val newer = sent.last().payload.getJSONArray("plugins")
+        val entries = (0 until newer.length()).associate { index ->
+            val entry = newer.getJSONObject(index)
+            entry.getString("id") to entry.opt(PhonePluginRegistry.FIELD_LAUNCHABLE)
+        }
+        // The headless plugin provides no pages: it has no row to open and stays out of the list.
+        assertEquals(mapOf("meta" to false, "hello" to null), entries)
+        assertEquals(1, newer.getJSONObject(0).getInt("pageSessionVersion"))
+        registry.close()
+    }
+
+
+    private class RecordingRuntime : ExternalPluginRuntime {
+        val bound = mutableListOf<String>()
+        override fun bind(principal: PhonePluginPrincipal): Boolean { bound += principal.descriptor.id; return true }
+        override fun isRegistered(principal: PhonePluginPrincipal): Boolean = false
+        override fun deliver(principal: PhonePluginPrincipal, path: String, id: String, payload: JSONObject): Boolean = false
+        override fun hideOwnedSurfaces(pluginId: String) = Unit
+        override fun unbind(principal: PhonePluginPrincipal) = Unit
+    }
+
+    private object NoScheduler : ExternalPluginScheduler {
+        override fun schedule(key: String, delayMs: Long, action: () -> Unit) = Unit
+        override fun cancel(key: String) = Unit
+    }
+
+    @Test
+    fun `a launcher open with a composer tool context opens only for the tool's own provider`() {
+        val meta = principal("meta", launchable = true, iconKey = "star")
+        val catalog = PluginCatalog(listOf(catalogEntry(meta, PluginCatalogState.ENABLED, launchable = true)))
+        val journal = PluginBusJournal().apply { enabled.set(true) }
+        val runtime = RecordingRuntime()
+        val registry = registry(
+            journal = journal,
+            catalogProvider = { catalog },
+            externalController = ExternalPluginController(runtime, NoScheduler),
+        )
+        fun open(context: JSONObject?) = registry.handleRemote(
+            BusEnvelope(
+                path = BusPaths.LAUNCHER_OPEN,
+                payload = JSONObject().put("pluginId", "meta").apply { context?.let { put(ComposerToolContract.FIELD_CONTEXT, it) } },
+            ),
+        )
+        val own = ComposerToolContext("meta:thread", null, "t1", "photo", "camera")
+
+        assertFalse(open(ComposerToolContract.encode(own.copy(pageId = "relay:thread"))))
+        assertEquals("BAD_CONTEXT", journal.snapshot().last().reason)
+        assertFalse(open(JSONObject().put("pageId", "meta:thread")))
+        assertEquals("BAD_CONTEXT", journal.snapshot().last().reason)
+        assertTrue(runtime.bound.isEmpty())
+
+        assertTrue(open(ComposerToolContract.encode(own)))
+        assertEquals(PluginBusJournal.Verdict.OK, journal.snapshot().last().verdict)
+        assertEquals(listOf("meta"), runtime.bound)
+        assertTrue(open(null))
         registry.close()
     }
 }

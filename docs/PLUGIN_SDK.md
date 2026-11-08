@@ -22,7 +22,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.24.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.25.0")
 }
 ```
 
@@ -30,10 +30,11 @@ For local development against a checkout, publish a snapshot instead:
 `.\gradlew.bat :shared:publishToMavenLocal :bus-client:publishToMavenLocal
 '-PversionName=0.1.0-SNAPSHOT'` and consume it from `mavenLocal()`.
 
-SDK `sdk-v0.24.0` includes the launcher-bundle APIs documented below: interactive
-activity destinations, typed actions, conversation/media/route templates, artwork
-and user-owned Floating Activities settings. Update both hubs to Nexus 2.0.0 for
-the complete launcher experience; continue negotiating individual capabilities
+SDK `sdk-v0.25.0` includes the launcher-bundle APIs documented below: interactive
+activity destinations, typed actions, conversation/media/route templates, artwork,
+user-owned Floating Activities settings, composer tools and message thumbnails,
+image pages and row icons. Update both hubs to Nexus 2.2.0 for the complete
+launcher experience; continue negotiating individual capabilities
 for older peers. Plugins built against 0.23.0 must be rebuilt against 0.24.0.
 
 Use `compileSdk = 36`. The bus-client AAR supports `minSdk >= 26`; the
@@ -61,6 +62,12 @@ does not approve it.
     <meta-data android:name="com.anezium.rokidbus.plugin.LAUNCHABLE" android:value="true" />
 </service>
 ```
+
+`LAUNCHABLE` says whether the plugin has a full app (an immersion) to open.
+A plugin whose whole glasses UI is launcher pages declares `false`: with hubs
+at bundle v7 it still appears in Applications as a row that opens its main
+page, and none of its pages or its activity card gets the hub's `Open app`.
+Older glasses do not list it; see [Pages](#pages).
 
 Plugin IDs use `[a-z][a-z0-9._-]{2,63}`. Requested capabilities are `surfaces`,
 `ink_surface`, `http_proxy`, `microphone`, `stt`, `tts`, `camera`, `mediasync`,
@@ -90,31 +97,17 @@ the consent, denial, and provider-error UX.
 
 ```kotlin
 class HelloPluginService : NexusPluginService() {
-    private var surface: NexusSurfaceSession? = null
-
-    override fun onNexusOpen() {
-        surface = nexusSurfaceSession("main")
-        surface?.showCard(
-            NexusCard(
-                title = "Hello Nexus",
-                lines = listOf("> First", "  Second"),
-                footer = "swipe · tap · back",
-            ),
+    override fun onNexusPageRequest(request: NexusPageRequest): NexusPage =
+        NexusPage.Content(
+            revision = (request.minimumRevision ?: 0) + 1,
+            title = "Hello Nexus",
+            body = PageBody.Summary(primary = "Welcome", text = "Your content belongs in the launcher."),
         )
-    }
-
-    override fun onNexusInput(event: NexusInputEvent) {
-        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_BACK) {
-            surface?.hide()
-        }
-    }
-
-    override fun onNexusClose() {
-        surface?.hide()
-        surface = null
-    }
 }
 ```
+
+Declare `rokidbus.plugin.pages = 1` on the service ([Opting in](#opting-in)).
+The wearer navigates back through the launcher; this page does not open an immersion.
 
 The hub can cold-start this service after the app process was stopped. Do not use
 an Activity initializer or static factory. `onNexusOpen`, `onNexusClose`, input,
@@ -124,7 +117,9 @@ matters *why* the plugin was opened: `PluginOpenTypes.OPEN` is a deliberate
 pick (the glasses launcher, or *Open* on the phone), `PluginOpenTypes.AI_ASSIST`
 is the assist button handing over, and `PluginOpenTypes.RESUME` returns a plugin
 from lease-bounded background audio; treat anything else like `OPEN`. The
-default forwards to the plain `onNexusOpen()`. A granted background detach calls
+default forwards to the plain `onNexusOpen()`. `PluginOpenTypes.COMPOSER_TOOL`
+comes with a `ComposerToolContext` through `onNexusOpen(openType, context)`:
+see [Composer tools](#composer-tools-launcher-bundle-v5). A granted background detach calls
 `onNexusBackground()` rather than `onNexusClose()`; the latter remains the final
 close callback. Duplicate lifecycle IDs are ignored. The glasses path already deduplicates
 paired directional aliases; plugins should act once on each delivered input.
@@ -157,13 +152,33 @@ set a trusted owner, global sequence, or arbitrary system path.
 
 ### Choosing a HUD kind
 
+**Deprecated: card immersions.** New glasses UI uses launcher pages. Do not add
+`NexusCard` menus, pickers, confirmations or image-surface photo previews.
+Use `PageBody.SelectableList`, `Commands`, `Document`, `Conversation`, `Media`
+or [Image pages and camera capture](#image-pages-and-camera-capture-launcher-bundle-v6).
+Ink immersions remain supported for authored engaged interactions; notices,
+pins, activities, editable notice fields and audio/speech sessions remain supported.
+
 Choose the object by what the wearer is doing, not by how large you want it to
 look:
 
 - **Ongoing process** the wearer follows → **activity**.
 - **Discrete event** needing attention or a response → **notice**.
-- **Engaged interaction** the wearer is driving → **surface**.
+- **Content the wearer browses or picks from** — a list of items, chats,
+  contacts or options, a summary, a document, a conversation → **page**.
+- **Engaged interaction** the wearer is driving that a page cannot host → **surface**.
 - **Trivial static fact** that just needs to stay put → **pin**.
+
+**Do not build navigation out of surface cards.** Before Nexus 2.0, plugins
+made menus, pickers and multi-step lists from `NexusCard` rows in an immersion
+(a service picker, then a contact list, then a confirmation, each a card). That
+pattern still renders for compatibility but is retired for new work: it bypasses
+the launcher, replaces whatever the wearer was looking at, and does not look or
+behave like the rest of the launcher. Browse with [Pages](#pages) (`rokidbus.plugin.pages`,
+`PageBody` templates, page actions), answer events with notices, and open an
+immersion only for the engaged step itself, from a page action. Media Deck,
+Navigation and Relay are the reference implementations; copy their structure,
+not an older card flow.
 
 An activity is not a frequently updated pin. If there is a state machine behind
 the value — a route, delivery, ride, workout, or timer — use an activity. Your
@@ -172,6 +187,14 @@ chip, panel, flare, pulse, or hidden. Plugins cannot select a presentation or
 supply activity layouts, images, animations, colors, or timings.
 
 ### Surface list rows
+
+**Deprecated: card immersions.** This section describes compatibility APIs.
+`NexusCard`, `NexusCardLine`, `NexusRowTone` and
+`NexusSurfaceSession.showCard`/`updateCard` are deprecated. Return a
+`NexusPage.Content` with `PageBody` and `NexusPageActionSpec` from page callbacks;
+use `publishPage` for live changes. Do not copy the following legacy models
+into new navigation, pickers or confirmations. `EditableSurfaceField` itself is
+not deprecated: notices still use it.
 
 A card used to be a title and some lines. It can also be a **list**: rows with a
 second line, a weight saying how much each matters, and a selection the HUD
@@ -1423,6 +1446,12 @@ nexusClient?.withdrawNotice("9f2c")
 
 ### Real image surfaces
 
+**Deprecated: card immersions and image preview steps.** `NexusImage` and
+`NexusSurfaceSession.showImage`/`updateImage` remain for existing plugins only.
+Use `NexusPage.Content(body = PageBody.Image(...))`, ordinary page actions and
+`supportsImagePages()` for new photo previews. The binary rules below describe
+the legacy image surface, not the v6 page's base64 transport.
+
 Image surfaces use the existing `surfaces` grant; do not add a descriptor
 capability and do not change API version 3. They are available only while the
 glasses renderer has announced image v1 and the SPP binary link is live. Check
@@ -1565,16 +1594,16 @@ registered binder. Check `supportsInkSurface` immediately before `show` or
 `update`; it reports Ink v1 from the glasses plus the live SPP data link. The
 session separately checks that this plugin is approved for `ink_surface`.
 `hide` remains available during teardown even after the renderer bit disappears.
+If Ink cannot open, report unavailability on the launcher's page. Do not create
+a card fallback; Ink support itself remains fully supported.
 
 ```kotlin
 class StatusPluginService : NexusPluginService() {
     private var ink: NexusInkSurfaceSession? = null
-    private var card: NexusSurfaceSession? = null
     private var usingInk = false
 
     override fun onNexusOpen() {
         ink = nexusInkSurfaceSession("status")
-        card = nexusSurfaceSession("status")
         usingInk = nexusClient?.supportsInkSurface == true &&
             ink?.show(
                 page = STATUS_PAGE,
@@ -1583,7 +1612,6 @@ class StatusPluginService : NexusPluginService() {
                     .put("value", "72"),
                 handlesBack = false,
             ) == NexusSdkResult.SENT
-        if (!usingInk) showCardFallback()
     }
 
     override fun onNexusInkReady(surfaceId: String) = Unit
@@ -1605,22 +1633,17 @@ class StatusPluginService : NexusPluginService() {
     override fun onNexusInkError(surfaceId: String, problems: List<NexusInkProblem>) {
         if (surfaceId == "status") {
             usingInk = false
-            showCardFallback()
+            // Report the failure through the current launcher page.
         }
     }
 
     override fun onNexusClose() {
-        if (usingInk) ink?.hide() else card?.hide()
+        ink?.hide()
         ink = null
-        card = null
         usingInk = false
     }
 
     override fun onNexusInput(event: NexusInputEvent) = Unit
-
-    private fun showCardFallback() {
-        card?.showCard(NexusCard("Link", listOf("72")))
-    }
 
     private companion object {
         val STATUS_PAGE = """
@@ -1656,7 +1679,7 @@ Supported components are `view`, `text`, `scroll-view`, `chart` (line, area,
 pie, radar, and the sample-derived bar extension), `progress`, inline-JSON
 `lottie-view`, and declarative `nx-canvas`. `image` is accepted but currently
 renders a placeholder reference: the public session has no asset-transfer
-argument, so use `NexusSurfaceSession.showImage` for real pixels. Styles are a
+argument, so use launcher `PageBody.Image` for photo previews. Styles are a
 strict class-selector/WXSS subset with flexbox, box and text properties,
 opacity, transforms, transitions, `rpx`, percentages, and design-token custom
 properties. Unsupported tags, attributes, selectors, styles, scripts, sources,
@@ -2347,7 +2370,7 @@ envelope ids; you never write your plugin id or another owner into a page.
 
 `NexusPage.Content(revision, title, body, actions, live)` names one of the
 typed bodies from `com.anezium.rokidbus.shared`: the four below everywhere, and
-three more with the launcher bundle. The hub owns layout, selection and one-axis
+three more with the original launcher bundle, plus `Image` with bundle v6. The hub owns layout, selection and one-axis
 navigation.
 
 | Body | Content |
@@ -2357,10 +2380,11 @@ navigation.
 | `PageBody.Document` | `segments` (`PageSegment(id, kind, text)`, kind `HEADER`, `PROSE` or `ASIDE`); `items`; optional `footer` |
 | `PageBody.Commands` | `items`; optional `text` |
 
-A row is `PageRow(id, label, sub, enabled, target)`. Its target opens another of
-your pages, `PageTarget.Page(pageId, paramsJson)`, or invokes one of the page's
-declared actions, `PageTarget.Action(actionId)`; a row without a target is
-readable but inert. Ids are unique within their list. A document keeps its text
+A row is `PageRow(id, label, sub, enabled, target, checked, icon)`. Its target
+opens another of your pages, `PageTarget.Page(pageId, paramsJson)`, or invokes
+one of the page's declared actions, `PageTarget.Action(actionId)`; a row
+without a target is readable but inert. `icon` is the row's own mark, drawn
+with bundle v7 (see [Row icons](#row-icons-launcher-bundle-v7)). Ids are unique within their list. A document keeps its text
 order, paragraphs, explicit line breaks and Unicode, and the wearer pages
 through it with swipes; its `footer` is paginated after the text, in the caption
 style. Summary or commands text that does not fit the HUD with the page's first
@@ -2382,9 +2406,10 @@ template as the fallback. `ink` stays reserved, and there is no Ink page body.
 
 | Body | Content |
 |---|---|
-| `PageBody.Conversation` | `threadKey` (your notices' `eventKey` for the thread); `messages` (`ConversationMessage(id, role, text, sender, status)`, at most 64, oldest first); optional `caption` (the one capture time, 64); optional `composer` |
+| `PageBody.Conversation` | `threadKey` (your notices' `eventKey` for the thread); `messages` (`ConversationMessage(id, role, text, sender, status, image)`, at most 64, oldest first); optional `caption` (the one capture time, 64); optional `composer` |
 | `PageBody.Media` | `title` and `state` (`PLAYING`, `PAUSED`, `STOPPED`, `NONE`, `UNAVAILABLE`); optional `artist`, `album`, `source`, `status`; `controls` (up to 3 action ids in swipe order) and `defaultControl` |
 | `PageBody.Route` | `position` (`RoutePositionQuality`); optional `maneuver` (`RouteManeuver(glyph, distance, street, eta)`), `facts` (6), `follow` and `overview` `RouteGeometry`, `ribbon` (`RouteRibbon(stops, line, between, note)`), `fixAgeS` |
+| `PageBody.Image` (v6) | required `image: LauncherArtwork` (`jpeg` or `mono1`), optional `caption` (240); the envelope supplies the title (48) and ordinary page actions |
 
 - A message's `role` is `RECEIVED`, `OURS` or `UNKNOWN`, and it alone decides the
   side; `status` is `HANDED_OFF` or `UNCONFIRMED`. There are no per-message
@@ -2408,7 +2433,8 @@ template as the fallback. `ink` stays reserved, and there is no Ink page body.
   the page's actions typed `NexusActionType.ComposeSend`, and no row may target
   that action. `maxChars` is 1..1,000. With `replyable = false` the hub keeps the
   text but withholds Send, showing your optional `unavailableText` and
-  `unavailableSub`.
+  `unavailableSub`. Its `tools`, `layout` and labels, and a message's `image`,
+  need `supportsComposerTools()`: see [Composer tools](#composer-tools-launcher-bundle-v5).
 - Media `controls` must name page actions typed `MediaPrevious`, `MediaPlay`,
   `MediaPause` or `MediaNext`; they are the hub's command strip, not rows.
 - Route geometry follows the activity geometry rules above; the whole page
@@ -2461,7 +2487,8 @@ optional `code` (printable ASCII, at most 32); the hub acts on
 `NexusPageResult.CODE_AUTHORITY_LOST` only, for a composer whose reply authority
 is gone: it keeps the text and stops offering Send. A lost result shows as
 unconfirmed and is never resent. `IMMERSION` opens only your own immersion,
-directly on a fresh tap; `HUB` gives you no hub control.
+directly on a fresh tap (from a composer tool, with the tool's context); `HUB`
+gives you no hub control.
 
 ```kotlin
 override fun onNexusPageAction(action: NexusPageAction): NexusPageResult {
@@ -2473,6 +2500,203 @@ override fun onNexusPageAction(action: NexusPageAction): NexusPageResult {
     return NexusPageResult.done(replacement = listPage(++revision))
 }
 ```
+
+### Composer tools (launcher bundle v5)
+
+A conversation page may put its own buttons in the hub composer's bar, hide or
+rename the built-in ones, and show a thumbnail in a bubble. Both hubs must
+negotiate bundle v5: check `supportsComposerTools()`. Below it the SDK sends
+the same page without these fields, so the glasses draw the default Dictate /
+Type / Send bar and text-only bubbles; you need no fallback page.
+
+`ConversationComposer` gains:
+
+- `tools`: up to 3 `ComposerTool(id, label, actionId, glyph)`. The label is at
+  most 12 characters; `actionId` names one of the page's actions, either a
+  `PLUGIN` one (not the `ComposeSend`), which a fresh tap invokes through
+  `onNexusPageAction` in `CONFIRMED` mode like a row, or an `IMMERSION` one,
+  which opens your immersion with a `ComposerToolContext`. `glyph` is an
+  optional shared glyph name (`camera` is new in this SDK); a hub that does not
+  know it draws the label alone.
+- `layout`: the bar left to right as `ComposerSlot`s: `Dictate`, `Type`, `Send`
+  and `Tool(id)`. A built-in you leave out is hidden; `Send` is always drawn,
+  first if you leave it out; every tool you declared must appear. Without a
+  layout the bar is Send, Dictate, Type, then your tools.
+- `dictateLabel`, `typeLabel`, `sendLabel`: at most 12 characters each.
+
+Send stays the hub's: it appears only once the wearer has a draft for this
+exact thread, sends only on a fresh tap after the text was drawn, and a
+`replyable` composer must keep Dictate or Type so a draft can be made (an
+`INVALID_PAGE` otherwise). A composer with `replyable = false` shows the hub's
+unavailable line and no buttons at all, tools included.
+
+`ConversationMessage.image` is a `LauncherArtwork` (`mono1` or `jpeg`) drawn in
+the bubble above the text, at its own size; a message with an image and an
+empty `text` is the image alone. Thumbnails are at most 160 px on each side and
+12 KiB decoded, 4 per page and 32 KiB together; anything above is
+`INVALID_PAGE`. The whole page still fits 65,536 bytes.
+
+For a **Photo** tool, use a `PLUGIN` action and the v6 page capture flow below.
+An `IMMERSION` tool remains available for an authored Ink interaction a page
+cannot host; it must not introduce a new card or image-surface preview flow.
+
+`ComposerToolContext(pageId, paramsJson, threadKey, toolId, actionId)` names
+the page the tool was on, with the params it was opened with, its thread and
+the tool and action you declared. The hub checks that the page is yours before
+delivering it; the context is null for every other open type, and an older
+hub opens you with `PluginOpenTypes.OPEN` and no context. A plugin that only
+overrides `onNexusOpen()` or `onNexusOpen(openType)` keeps working: the
+composer-tool open reaches it like any other open.
+
+### Image pages and camera capture (launcher bundle v6)
+
+Check `nexusClient?.supportsImagePages() == true` before offering a photo flow.
+The service must opt into pages and hold `surfaces`; capture separately requires
+the approved, enabled, signer-bound `camera` grant. A visible page and its
+`PLUGIN` actions do not require `PLUGIN_OPEN`, an immersion or a foreground
+surface. Use `nexusSnapshotSession(callbacks).capture()` (or
+`client.snapshotSession(callbacks)`): this existing snapshot path already permits
+page-only providers, so v6 adds no camera privilege, descriptor key or route.
+The same camera consent, live-camera/snapshot busy exclusion, CXR-link check,
+timeout and owner-only reply rules apply. A grant denial is
+`CAPABILITY_NOT_GRANTED`; handle `BUSY`, `LINK_DOWN`, `CAPTURE_FAILED`, `TIMEOUT`
+and cancellation honestly. Page visibility alone never grants camera access.
+
+`PageBody.Image(image: LauncherArtwork, caption: String? = null)` contains one
+image, no body rows. The page envelope supplies its title and actions.
+`LauncherArtwork` uses `{encoding, width, height, data}` with base64 `data`:
+JPEG or packed row-major MONO1 (one bit per pixel, MSB first). Both edges are
+1..512 px; the decoded base64 bytes are at most 36,864 (36 KiB), or 49,152 base64
+characters. MONO1 requires exactly `ceil(width * height / 8)` bytes; JPEG's encoded
+dimensions must match. Correct orientation and resize/recompress the captured
+JPEG on the phone before constructing the preview. The original snapshot can be
+larger: keep it separately if the receiving app needs it. Covers and thumbnails
+retain their tighter existing limits. Caption is at most 240 characters, title
+48; the **entire response or result including replacement** remains at most
+65,536 UTF-8 bytes. A 36 KiB JPEG leaves about 16 KiB for metadata and actions.
+Above 3 KiB the page needs SPP, with the existing no-data-plane failure behavior.
+
+The SDK and phone validate image pages, then replace them toward a pair below
+v6 with an "Image preview unavailable" summary, retaining correlation, revision,
+title and caption but removing pixels and **all actions**. They also strip result
+replacements this way. Never offer Send when the wearer cannot see the preview.
+Both hubs announce version 6 and run the lower version; pageSessionVersion stays 1.
+The platform contract is ready; full image layout still needs the glasses renderer.
+
+**Timing:** a page action has eight seconds, including its result delivery. Do
+not wait for capture, JPEG processing or upload inside `onNexusPageAction`.
+Start capture, immediately return `done` with a higher-revision, `live = true`
+"Capturing…" summary, then publish the image at a still higher revision when
+ready. That publication is valid after the action deadline because it uses the
+current page's visible lease (at most 120 seconds), not the ended invocation.
+Never send a late second result. Keep the current `NexusPageRequest`, respect its
+revision floor, and discard/cancel pending capture and processing on cover,
+close, refresh, grant/registration loss or lease expiry. `cancel()` drops the
+SDK request/callback; the hub's already-started physical capture may still finish.
+No polling, lease renewal by the plugin or background retry is allowed.
+
+The core flow below lives in a `NexusPluginService`. `threadPage`,
+`preparePreviewAsync` and `enqueuePhotoOnce` are application helpers: the first
+returns a conversation with the Photo tool shown below; the second performs
+orientation/resize/compression off the main thread and calls back on it; the
+third hands the confirmed photo to the intended thread once, keyed by invocation.
+Store the latest page request in `currentRequest`, advance `revision` above its
+floor, and clear `photo`/`currentRequest` and cancel the snapshot on lifecycle loss.
+
+```kotlin
+// Inside threadPage(): only offer this tool when supportsImagePages() is true.
+val photoTool = ComposerTool("photo", "Photo", "capture", glyph = "camera")
+// composer.tools = listOf(photoTool); keep Dictate or Type for text drafts.
+val photoAction = NexusPageActionSpec("capture", "Photo") // PLUGIN, not IMMERSION
+// Text Send remains typed ComposeSend and belongs only to the hub composer.
+
+private var currentRequest: NexusPageRequest? = null
+private var revision = 0L
+private var photo: ByteArray? = null
+private var captureGeneration = 0L
+private val snapshot by lazy {
+    nexusSnapshotSession(object : NexusSnapshotCallbacks {
+        override fun onSnapshotCaptured(jpeg: ByteArray) {
+            val request = currentRequest ?: return
+            val generation = captureGeneration
+            preparePreviewAsync(jpeg) { preview: LauncherArtwork ->
+                if (currentRequest !== request || captureGeneration != generation) return@preparePreviewAsync
+                photo = jpeg
+                val page = NexusPage.Content(++revision, "Photo", PageBody.Image(preview, "Ready to send"),
+                    listOf(NexusPageActionSpec("send-photo", "Send"),
+                        NexusPageActionSpec("retake", "Retake"), NexusPageActionSpec("cancel", "Cancel")), live = true)
+                if (nexusClient?.publishPage(request, page) != NexusSdkResult.SENT) photo = null
+            }
+        }
+        override fun onSnapshotError(error: NexusSnapshotError) {
+            photo = null
+            currentRequest?.let { nexusClient?.publishPage(it,
+                NexusPage.Content(++revision, "Photo", PageBody.Summary(primary = "Capture failed: $error"), live = true)) }
+        }
+    })
+}
+
+override fun onNexusPageAction(action: NexusPageAction): NexusPageResult = when (action.actionId) {
+    "capture", "retake" -> {
+        captureGeneration++
+        if (nexusClient?.supportsImagePages() != true || snapshot?.capture() != NexusSdkResult.SENT) {
+            NexusPageResult.rejected("Camera unavailable")
+        } else {
+            photo = null
+            NexusPageResult.done(replacement = NexusPage.Content(++revision, "Photo",
+                PageBody.Summary(primary = "Capturing…"), live = true))
+        }
+    }
+    "send-photo" -> {
+        val bytes = photo
+        if (bytes == null) NexusPageResult.stale("Photo no longer available") else {
+            enqueuePhotoOnce(action.invocationId, bytes) // original thread fixed by current page state
+            photo = null
+            NexusPageResult.done(replacement = threadPage(++revision))
+        }
+    }
+    "cancel" -> {
+        captureGeneration++
+        snapshot?.cancel()
+        photo = null
+        NexusPageResult.done(replacement = threadPage(++revision))
+    }
+    else -> NexusPageResult.rejected()
+}
+```
+
+The image's `send-photo` is an ordinary plugin action on the preview revision,
+never `ComposeSend`. It sends only that photo after the wearer's deliberate
+tap; text Send, drafts and consent retain all existing hub-owned rules.
+
+### Row icons (launcher bundle v7)
+
+A row of any template may carry its own mark: `PageRow.icon` is a `mono1`
+`LauncherArtwork` of at most 32 px on each side (a brand mark, a contact's
+initial drawn as pixels). The glasses draw it left of the label in the row's
+tone, grey at rest and phosphor when selected, so a white-on-transparent
+rasterisation of your phone icon is the right source; `1` bits draw, `0` bits
+are transparent. Both hubs must negotiate bundle v7: check `supportsRowIcons()`.
+Below it the SDK sends the same page without the icons and the glasses draw
+plain rows; you need no fallback page. A `jpeg`, larger or malformed icon
+makes the page `INVALID_PAGE`.
+
+```kotlin
+PageRow(
+    id = "whatsapp",
+    label = "WhatsApp",
+    sub = "3 conversations",
+    target = PageTarget.Page("meta:service:whatsapp"),
+    icon = if (nexusClient?.supportsRowIcons() == true) whatsAppMark else null,
+)
+```
+
+A plugin whose whole glasses UI is pages also declares
+`com.anezium.rokidbus.plugin.LAUNCHABLE` `false` (see the manifest above).
+From bundle v7 the glasses keep it in Applications as a row opening `<id>:main`
+and never append the hub's **Open app** to its pages or its activity card;
+`onNexusOpen` is then never called. Older glasses do not list it, so a plugin
+that must reach pre-v7 glasses keeps `LAUNCHABLE` true and a minimal immersion.
 
 ### Visibility and live updates
 
@@ -2498,7 +2722,9 @@ whether pages can be served at all: approved with `surfaces`, both hubs on page
 v1 for your plugin, and a usable link (CXR control or the SPP data plane). After
 the link drops it stays false until the hub sends its next page version.
 `supportsLauncherInteractive()` adds the launcher bundle on top: the three new
-bodies, typed actions, quick actions and the composer. Without it, typed actions
+bodies, typed actions, quick actions and the composer; `supportsComposerTools()`
+adds the composer's tools, layout, labels and message thumbnails (bundle v5).
+Without it, typed actions
 and checked rows are dropped from what you send, and a page with a
 `ComposeSend` action is answered as `INVALID_PAGE`, since a hub without the
 composer would otherwise offer your send as an ordinary confirmed action.

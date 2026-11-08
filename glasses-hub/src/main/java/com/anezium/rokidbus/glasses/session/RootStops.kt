@@ -2,6 +2,7 @@ package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.shared.ActivityAction
 import com.anezium.rokidbus.shared.ActivityActivation
+import com.anezium.rokidbus.shared.LauncherFavouritesContract
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PageDestination
 import com.anezium.rokidbus.shared.PageSurfaceContract
@@ -73,7 +74,7 @@ internal data class NoticePreview(
     val icon: IconRef? = null,
 )
 
-internal enum class RootStopKind { ACTIVITY, NOTICE_PREVIEW, ACTIVITIES, NOTIFICATIONS, APPLICATIONS }
+internal enum class RootStopKind { ACTIVITY, NOTICE_PREVIEW, ACTIVITIES, FAVOURITE, NOTIFICATIONS, APPLICATIONS }
 
 internal data class RootStop(
     val id: String,
@@ -94,12 +95,15 @@ internal data class RootStop(
     val paramsJson: String? = null,
     /** What the notification stop stands for; its identity is kept for the whole session. */
     val notice: NoticeCard? = null,
+    /** How a pinned application opens; null for every other kind. */
+    val favourite: FavouriteOpen? = null,
 )
 
 /**
  * Builds the anchored root once per session. The order is fixed by the plan: the first two
  * collection entries in [ORDER], latest notification preview, `Activities · n` when the
- * collection holds more than the two promoted cards, `Notifications · n`, Applications. Any
+ * collection holds more than the two promoted cards, the owner's favourites in their order,
+ * `Notifications · n`, Applications. Any
  * number of activities is accepted; the collection's capacity is negotiated elsewhere.
  */
 internal object RootStops {
@@ -119,6 +123,9 @@ internal object RootStops {
 
     private const val VISIBLE_ACTIVITY_STOPS = 2
 
+    /** A favourite stop's id: its catalog key under the hub's namespace. */
+    const val FAVOURITE_PREFIX = "nexus:favourite:"
+
     /**
      * The collection's deterministic order (plan 028a §1.3): the wearer's pins first, then live
      * before offline, then the primary, then the latest significant update, then the earliest
@@ -135,6 +142,7 @@ internal object RootStops {
         activities: List<ActivityStop>,
         preview: NoticePreview?,
         notificationCount: Int,
+        favourites: List<FavouriteStop> = emptyList(),
     ): List<RootStop> {
         val ordered = activities.sortedWith(ORDER)
         val stops = buildList {
@@ -142,6 +150,10 @@ internal object RootStops {
             preview?.let { add(applyPreview(RootStop(PREVIEW_STOP_ID, RootStopKind.NOTICE_PREVIEW, it.pageId, it.text), it)) }
             if (ordered.size > VISIBLE_ACTIVITY_STOPS) {
                 add(RootStop(ACTIVITIES_PAGE_ID, RootStopKind.ACTIVITIES, ACTIVITIES_PAGE_ID, "Activities", ordered.size))
+            }
+            favourites.take(LauncherFavouritesContract.MAX_ENTRIES).forEach { pinned ->
+                val pageId = (pinned.open as? FavouriteOpen.Page)?.pageId ?: APPLICATIONS_PAGE_ID
+                add(RootStop(FAVOURITE_PREFIX + pinned.key, RootStopKind.FAVOURITE, pageId, pinned.label, icon = pinned.icon, favourite = pinned.open))
             }
             add(
                 RootStop(
@@ -156,7 +168,7 @@ internal object RootStops {
                 ),
             )
         }
-        return stops.take(PageSurfaceContract.MAX_ROOT_STOPS)
+        return stops.take(PageSurfaceContract.MAX_ROOT_STOPS + LauncherFavouritesContract.MAX_ENTRIES)
     }
 
     /** A single-preview count, for callers that build a root from one preview and no history. */

@@ -651,6 +651,20 @@ class SessionReducerTest {
             ),
         )
         assertEquals(5L, (top().status as FrameStatus.Shown).revision)
+        // The replacement is the feedback: no "Done" lingers under the page it was about.
+        assertNull(top().outcome)
+
+        send(Enter(7_000))
+        val worded = effects.filterIsInstance<SendAction>().single().action
+        send(
+            PageResult(
+                JSONObject().put("invocationId", worded.invocationId).put("status", "done").put("message", "Sent")
+                    .put("replacement", page(request, revision = 6, actions = listOf(action("mute")))),
+                7_100,
+            ),
+        )
+        assertEquals(6L, (top().status as FrameStatus.Shown).revision)
+        assertEquals(ActionOutcome("unmute", "done", "Sent"), top().outcome)
     }
 
     @Test

@@ -282,8 +282,11 @@ Lifecycle payloads include `version`, `type`, `id`, and `pluginId`. On
 follow-up on `/system/plugin/ai-assist` carries the gesture id and whether the
 button is still held), `adopted` when a restarted hub found the plugin already
 on the glasses, `resume` when an audio-backgrounded plugin returns to the active
-slot, and `camera_session_open` for a camera session. A receiver treats any
-value it does not know as `open`. Input also
+slot, `camera_session_open` for a camera session, and `composer_tool` when a
+composer tool on one of the plugin's conversation pages opened its immersion
+(launcher bundle v5): the payload then carries `context`, see "Composer tools
+and message thumbnails (bundle v5)". A receiver treats any value it does not
+know as `open`. Input also
 includes the plugin-local `localSurfaceId`, `keyCode`, and `action`. Version 1
 receivers ignore unknown fields and ignore duplicate event IDs. SDK lifecycle
 callbacks are serialized on the Android application main thread.
@@ -335,13 +338,18 @@ Phone to glasses:
 - `/surface/hide` hides a surface. On the plugin's last surface it may carry
   `detach:true` for the lease-bounded background transition defined above.
 - `/launcher/list` sends the available phone-side plugins to the glasses launcher.
+  Each entry is `{id, displayName, iconKey?, pageSessionVersion?, launchable?}`;
+  `launchable: false` marks a page provider without a full app, sent only to
+  glasses announcing launcher bundle v7 (see "Row icons and pages-only
+  applications (bundle v7)").
 
 Glasses to phone:
 
 - `/surface/input` reports key input while a surface is visible.
 - `/surface/text-committed` reports what the wearer typed or that they
   cancelled, for a card's `editable` field. See "Editable field" below.
-- `/launcher/open` asks the phone hub to open a plugin.
+- `/launcher/open` asks the phone hub to open a plugin: `{pluginId}`, plus the
+  optional `context` of a composer tool (launcher bundle v5).
 
 Every surface payload carries:
 
@@ -1872,7 +1880,8 @@ change underneath. A commands-first card's first tap enters command focus on
 `defaultActionId` and never executes. In focus, STEP moves along the plugin
 commands and then hub-owned navigation slots. A card with a destination has
 `Open page`; typed media labels it `Open player` and omits the redundant `Open app`
-slot. Other launchable owners retain `Open app` when available in Applications.
+slot. Other launchable owners retain `Open app` when available in Applications;
+a pages-only owner (`LAUNCHABLE=false`, bundle v7) never has one.
 The selected live commands-first card previews the strip without a selected
 control. A fresh SELECT in command focus runs the focused one immediately,
 in quick or confirmed mode; BACK leaves focus first. An offline entry still opens its
@@ -2059,9 +2068,10 @@ as another one. `ink` stays reserved, and no Ink page profile is announced.
 | `selectableList` | required `items` array; optional `emptyText` |
 | `document` | required `segments` array of `{id, kind, text}`, kind `header`, `prose` or `aside`; optional `items`, `footer` |
 | `commands` | required `items` array; optional `text` |
-| `conversation` (bundle) | required `threadKey` (page-style id); optional `caption` (64); required `messages` (at most 64, oldest first) of `{id, role, sender?, text, status?}`; optional `composer` `{recipient, sendActionId, maxChars, replyable, unavailableText?, unavailableSub?}` |
+| `conversation` (bundle) | required `threadKey` (page-style id); optional `caption` (64); required `messages` (at most 64, oldest first) of `{id, role, sender?, text, status?, image?}`; optional `composer` `{recipient, sendActionId, maxChars, replyable, unavailableText?, unavailableSub?, tools?, layout?, dictateLabel?, typeLabel?, sendLabel?}` (`image` and the five composer fields from bundle v5) |
 | `media` (bundle) | required `title` (120, nonblank) and `state`; optional `artist`, `album` (120), `source` (48), `status` (120); `controls` (at most 3 action ids, swipe order); optional `defaultControl` |
 | `route` (bundle) | required `position` (`live`, `stale` or `none`); optional `maneuver` `{glyph, distance, street?, eta?}`, `facts` (at most 6), `follow` and `overview` geometry, `ribbon`, `fixAgeS` |
+| `image` (bundle v6) | required `image` artwork object `{encoding, width, height, data}`; optional `caption` (240). The envelope's title and actions apply; no body rows. See "Image pages (bundle v6)". |
 
 The bundle bodies have rules of their own:
 
@@ -2072,7 +2082,10 @@ The bundle bodies have rules of their own:
   `caption`, one per page. `composer.sendActionId` must name a page action typed
   `compose.send`; `recipient` is at most 48 characters, `maxChars` 1 through
   1,000, and `unavailableText`/`unavailableSub` at most 64. A provider uses the
-  same value for `threadKey` and for its notices' `eventKey`.
+  same value for `threadKey` and for its notices' `eventKey`. From bundle v5 a
+  message may carry an `image` thumbnail and the composer its `tools`,
+  `layout` and labels; see "Composer tools and message thumbnails (bundle v5)"
+  for their rules. Below v5 those fields are ignored, as any unknown field is.
 - `media`: `state` is `playing`, `paused`, `stopped`, `none` or `unavailable`.
   Every control names a page action typed `media.*`, ids are unique, and
   `defaultControl` is one of them. Controls are the hub's command strip, not
@@ -2088,17 +2101,19 @@ The bundle bodies have rules of their own:
 - No row of any template may target an action typed `compose.send`: a send is
   reached only through the composer.
 
-A row is `{id, label, sub?, enabled?, target?, checked?}`; `enabled` defaults to
-true. With the launcher bundle, the optional boolean `checked` draws a checkbox
-mark; it is meant for a row whose target is an action typed `setChecked`. A
+A row is `{id, label, sub?, enabled?, target?, checked?, icon?}`; `enabled`
+defaults to true. With the launcher bundle, the optional boolean `checked` draws
+a checkbox mark; it is meant for a row whose target is an action typed
+`setChecked`. From bundle v7, `icon` is the row's own `mono1` mark; see "Row
+icons and pages-only applications (bundle v7)" for its rules. A
 target is exactly one of `{pageId, params?}` or `{actionId}`; a row without one
 is readable but inert, and a disabled row can be selected but SELECT does
 nothing. Row, fact and segment ids follow the page id rules and are unique within
 their array. A provider's navigation targets stay in its own namespace; an
 action target names one of the envelope's `actions` and confers no authority of
 its own. Unknown fields are ignored; wrong types, duplicate ids, missing or
-undeclared targets make the page `INVALID_PAGE`. Bodies carry text only: no
-markup, no URL is fetched, nothing is executed.
+undeclared targets make the page `INVALID_PAGE`. Bodies carry bounded typed
+content: no markup, no URL is fetched, nothing is executed.
 
 | Body limit | Value |
 |---|---:|
@@ -2357,7 +2372,7 @@ version is raised. HUD copy is English, like the rest of the session chrome.
 
 ### Cover and player anchors (bundle v2)
 
-Current hubs announce `launcherInteractiveVersion: 4`; v1 above remains the
+Current hubs announce `launcherInteractiveVersion: 6`; v1 above remains the
 baseline. Version 2 adds optional `artwork` on an activity and a `media` page body:
 `{"encoding":"mono1","width":96,"height":96,"data":"..."}`. Dimensions are
 integers from 1 through 128. Standard Base64 `data` is at most 2,732 characters
@@ -2405,6 +2420,134 @@ still strips the artwork key completely. `supportsLauncherImageArtwork()` report
 whether the pair negotiated v3; `supportsLauncherArtwork()` still reports v2 or
 later.
 
+### Composer tools and message thumbnails (bundle v5)
+
+Version 5 lets a `conversation` page shape the hub composer's bar and put a
+thumbnail in a bubble. Nothing here adds a capability, a path a plugin may
+send, or a way for a plugin to send text: Send stays the hub's, exactly as in
+"Composer capture" below.
+
+The `composer` object gains:
+
+| Field | Rule |
+|---|---|
+| `tools` | at most 3 of `{id, label, actionId, glyph?}`. `id` is a page-style id, unique among the tools and never `dictate`, `type` or `send`. `label` is nonblank, at most 12 characters. `actionId` names one of the envelope's `actions` of kind `plugin` not typed `compose.send`, or of kind `immersion`; a `hub` action, a send or an unknown id make the page `INVALID_PAGE`. `glyph` is a shared glyph name (lowercase letters, digits, hyphens, at most 32); a hub that does not draw that name shows the label alone. |
+| `layout` | the bar left to right: strings `dictate`, `type`, `send` and the tool ids, each at most once, every declared tool present, nothing else. A `dictate` or `type` left out is hidden. `send` is always drawn, first when left out. Without `layout` the bar is `send`, `dictate`, `type`, then the tools in their order. |
+| `dictateLabel`, `typeLabel`, `sendLabel` | nonblank, at most 12 characters; the hub's own words otherwise. |
+
+A `replyable` composer must keep `dictate` or `type` in its bar, so a draft
+can be made for Send; a composer with `replyable: false` may hide both and
+show tools alone, but while it is unavailable the hub draws its own line and no
+button at all. Send keeps every existing rule: it exists only for a ready
+draft of this exact thread, is focused first then, and sends only on a fresh
+tap after the text was drawn. A hidden `type` sends a failed dictation to
+`dictate` instead (or to the first tool when neither is shown).
+
+A tool is a composer button like the hub's own: a tap focuses the bar, STEP
+walks it in `layout` order, and a fresh tap on a focused tool acts. A `plugin`
+tool invokes its action on `/page/action` in `confirmed` mode with the shown
+revision, like a plugin row; the phone and the SDK check it as they check any
+action. An `immersion` tool opens the provider's own immersion as the launcher
+would, and the glasses add to `/launcher/open` a `context`:
+
+```json
+{"pluginId": "meta", "context": {"pageId": "meta:thread", "params": {"thread": "t1"},
+ "threadKey": "t1", "toolId": "photo", "actionId": "camera"}}
+```
+
+`pageId`, `threadKey`, `toolId` and `actionId` follow the page id rules and
+`params` the page params bound (2,048 bytes). The phone parses it fail-closed:
+a context that is malformed or whose `pageId` is not in the named plugin's own
+namespace refuses the open (`BAD_CONTEXT` in the journal) rather than opening
+blind. An accepted context reaches the plugin on `/system/plugin/open` as
+`type: composer_tool` with the same `context` object; the SDK hands it to
+`onOpen(openType, context)` and drops a context for another provider's page. An
+older phone ignores `context` and opens the plugin plainly; a receiver that
+does not know `composer_tool` opens as `open`.
+
+Each message may carry `image`, the "Detailed covers" artwork object (`mono1`
+or `jpeg`) with tighter bounds for a bubble: at most 160 px on each side and
+12,288 decoded bytes, at most 4 thumbnails on a page and 32,768 decoded bytes
+together, so half the 65,536-byte page stays for its text. A malformed or
+oversized thumbnail is an invalid page, never a missing image. The glasses draw
+it inside the bubble above the text at its own size, scaled down only when the
+bubble's width cannot hold it; a message whose `text` is empty is its
+thumbnail alone. A page carrying thumbnails is sized like any page: above
+3 KiB it needs the SPP data plane.
+
+Negotiation is the bundle's: both hubs announce at least `launcherInteractiveVersion: 5`
+for these fields and the pair runs the lower version. The phone strips `tools`, `layout`, the
+three labels and every `image` from pages and result replacements before
+forwarding to glasses below v5; the SDK does the same before sending to a pair
+below v5 (`supportsComposerTools()`), so such a page still shows with the
+default bar and text-only bubbles. The glasses ignore the same fields unless the
+negotiated version is at least 5. No exact-match tier version changes.
+
+### Image pages (bundle v6)
+
+Version 6 adds `template: image` to the existing page envelope. Its body is
+`{image: {encoding, width, height, data}, caption?}`: one `jpeg` or `mono1`
+`LauncherArtwork`, using base64 `data`, no URI, URL fetch or cross-owner asset.
+Each decoded edge is 1..512 px. Base64 decodes to at most 36,864 bytes (36 KiB),
+with at most 49,152 encoded characters. JPEG header dimensions must match the
+declared dimensions; MONO1 has exactly `ceil(width * height / 8)` bytes, packed
+row-major, MSB first. Caption is at most 240 UTF-16 units; the envelope title
+remains at most 48. The whole page, and a whole result with its replacement,
+still fit 65,536 UTF-8 bytes. This leaves about 16 KiB around a maximum-size
+JPEG for caption, metadata and actions. The existing covers and bubble
+thumbnails keep their smaller contextual limits. The existing 3 KiB CXR control
+threshold applies: larger pages require SPP, with no queue or reconnect replay.
+
+Actions such as `send-photo`, `retake` and `cancel` are ordinary `plugin` page
+actions under the existing owner/revision/visible-lease/fresh-contact rules.
+No new action type is introduced; in particular an image action is never an
+alternative route to `compose.send` or to a text draft. A preview alone never
+authorizes a send. Full image rendering is a glasses implementation step.
+
+Both hubs announce `launcherInteractiveVersion: 6`; the pair runs the lower
+version. `IMAGE_PAGES_VERSION` is 6 and SDK `supportsImagePages()` checks that
+pair. The phone validates a v6 image body before compatibility conversion.
+Below v6, the phone and SDK replace image pages (including result replacements)
+with a `summary`: "Image preview unavailable", update guidance and optional
+caption, same correlation/title/revision/live, no image bytes and an empty
+actions array. No hidden photo action stays invocable. This fallback is
+deliberate compatibility conversion; an unsupported template is still never
+decoded as a different body. `pageSessionVersion` stays 1, API stays 3, and no
+new grant, receive prefix or bus route is added.
+
+### Row icons and pages-only applications (bundle v7)
+
+Version 7 lets a row carry its own mark and lets a page provider live in
+Applications without a full app. Nothing here adds a capability, a path a
+plugin may send, or a way to open an immersion.
+
+A row of any template with `items` may carry `icon`: the "Detailed covers"
+artwork object restricted to `mono1`, at most 32 px on each side (128 decoded
+bytes), base64 `data`, no URI. The glasses draw it left of the label in the
+row's tone, grey at rest and phosphor when selected, exactly as a glyph; `1`
+bits are the mark and `0` bits transparent. A `jpeg`, oversized or malformed
+icon is an invalid page, never a missing icon; an explicit `null` is no icon.
+A hub-authored local row keeps the hub's own mark. The whole page still fits
+65,536 bytes.
+
+A plugin that declares pages and `com.anezium.rokidbus.plugin.LAUNCHABLE`
+`false` has no immersion to open: the phone refuses `/launcher/open` for it as
+before, and from v7 still lists it in `/launcher/list` with `launchable: false`
+and its `pageSessionVersion`. The glasses list such an entry in Applications
+as a row that opens `<id>:main`, give none of its pages the hub's `Open app`
+row, and give its activity card no `Open app` slot; the classic launcher and
+the glasses' own settings list skip it. Older glasses read every entry as a
+full app, so the phone withholds pages-only entries from glasses below v7 and
+sends the list again when the negotiated version changes.
+
+Both hubs announce `launcherInteractiveVersion: 7`; the pair runs the lower
+version. `ROW_ICONS_VERSION` is 7 and SDK `supportsRowIcons()` checks that
+pair. The phone strips every row `icon` from pages and result replacements
+before forwarding to glasses below v7; the SDK does the same before sending
+to a pair below v7, so such a page still shows with plain rows. The glasses
+ignore `icon` unless the negotiated version is at least 7. No exact-match
+tier version changes.
+
 ### Typed actions
 
 `typed` is an optional object on a page action (`kind: plugin`) or an activity
@@ -2450,10 +2593,34 @@ it never takes a type from the glasses.
   row or quick: only the conversation composer's deliberate Send reaches it.
   No plugin field can make itself quick.
 
+### Launcher favourites
+
+Launcher bundle v8 (`FAVOURITES_VERSION`). The owner pins up to four
+applications to the root, under the activities, and orders them on the phone.
+
+- The phone owns the list. It sends `/core/launcher/favourites`
+  `{version: 1, revision, entries: [{kind: "plugin", id} | {kind: "app", package}]}`
+  to glasses that announced v8 or later, on link-up and on every change. The
+  list is whole and in the owner's order; `revision` only grows.
+- A malformed list (wrong version, more than four entries, an unknown kind, an
+  invalid plugin id or package, a duplicate) is refused whole and the glasses keep
+  the previous one. Nothing is truncated.
+- The glasses keep the latest list across restarts and resolve each entry
+  against the Applications catalog when a session opens. An entry missing from the
+  catalog (uninstalled, disabled, unapproved, a pages-only plugin whose pages are
+  not negotiated) is simply not drawn. Membership and order are frozen with the
+  root for the session, like every other stop.
+- A favourite opens exactly as its Applications row does: a pages plugin's main
+  page, an immersion plugin's launch, or a native app's launch, each on a fresh
+  tap.
+- This is a hub-to-hub control under `/core/`. No plugin capability sends or
+  reads it.
+
 ### Fresh contact
 
 An Enter that would cause an effect (a quick or confirmed plugin action, an
-activity command, the composer's Send, an app launch including native apps and
+activity command, the composer's Send or one of its tools, an app launch
+including native apps and
 Camera in Applications) is accepted only if its press began strictly after the
 focused target was displayed: after the host's
 draw acknowledgement of the frame that showed that focus. A new revision, a new
@@ -2608,7 +2775,10 @@ link loss during a capture cancels it and keeps the previous draft.
 
 Send is offered only while the current page is a live conversation whose
 `threadKey` and owner equal the draft's and whose composer is `replyable`, and
-only for a fresh focus that keeps the fresh-contact rule. `done` hands the draft
+only for a fresh focus that keeps the fresh-contact rule. The page may rename
+the three buttons, hide Dictate or Type and add its own tools beside them
+(bundle v5, "Composer tools and message thumbnails"); none of that changes
+what Send does or when it exists. `done` hands the draft
 off (`handed to the app`) and clears it. The glasses keep the sent text on the
 frame it was sent from until that page carries the reply. Copies are counted,
 never matched by id or place: the page carries it once it shows more `ours`
@@ -2716,6 +2886,37 @@ backend receivers require `android.permission.DUMP`, which adb shell keeps.
 The generic camera contract is available only to an installed plugin whose exact
 package, descriptor ID, and signing digest have an approved, enabled `camera`
 grant. Installation or a shared signer alone never grants access.
+
+### One-shot snapshots from pages
+
+`/camera/snapshot/request` is a phone-local, authenticated `camera`-gated
+request carrying `{version: 1, requestId}` (envelope id is the request id).
+`NexusSnapshotSession.capture()` / `nexusSnapshotSession` use this existing path.
+An open immersion or foreground surface is not required: a plugin bound for a
+visible page may capture from a `plugin` page action, without `PLUGIN_OPEN`.
+The normal route policy, exact enabled signer-bound grant, and skill-only lease
+restrictions still apply; page visibility grants no camera permission.
+
+The phone shares busy exclusion with live camera sessions and other snapshots,
+requires the CXR link, and performs its bounded capture asynchronously. It
+delivers a JPEG on `/camera/snapshot/result` as Binder binary, with
+`{version: 1, type: snapshot, requestId, pluginId, mimeType: image/jpeg,
+sizeBytes, width, height, quality}`; failures arrive on
+`/camera/snapshot/error` with `{version: 1, type: error, requestId, pluginId,
+code, message}`, code `BUSY`, `LINK_DOWN`, `CAPTURE_FAILED` or `TIMEOUT`.
+Replies are owner-scoped direct callbacks, without receive prefixes, never
+broadcast. The phone stamps plugin identity, and no photo enters the page
+until the plugin has resized/recompressed its preview to the v6 budget.
+
+A page action still has eight seconds. Start capture and return `done` promptly
+with a higher-revision live `summary` saying Capturing; when ready, publish a
+still newer `image` page against the same current request while it remains
+visible and leased. The capture may finish after the action deadline: it is a
+live revision, never a late second result. Cover, close, refresh, expired lease
+or registration loss cancels/discards page work. No polling or retry and no
+automatic send: the wearer must choose the preview's Send action separately.
+
+### Live camera sessions
 
 The bus carries control only. The heavy data path is out-of-band: during a
 session the glasses encode the camera as H.264 and serve it over a link

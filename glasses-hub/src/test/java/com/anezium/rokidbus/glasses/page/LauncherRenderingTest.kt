@@ -561,7 +561,7 @@ class LauncherRenderingTest {
     }
 
     @Test
-    fun `a long conversation pages by bubble keys and opens on its newest page`() {
+    fun `a long conversation scrolls through stops named by bubble keys and opens at its end`() {
         val bubbles = (1..12).map {
             Bubble("m:$it", if (it % 2 == 0) BubbleSide.RIGHT else BubbleSide.LEFT, "Message $it " + "lorem ipsum dolor sit amet ".repeat(4), latest = it == 12)
         } + Bubble("draft", BubbleSide.RIGHT, "on my way", style = BubbleStyle.DASHED, meta = "draft · not sent yet")
@@ -578,7 +578,12 @@ class LauncherRenderingTest {
         assertEquals(conversation.pageStarts, report.pageStarts)
         assertTrue(report.pageStarts.all { it.segmentId.startsWith("m:") || it.segmentId == "draft" })
 
-        // The reducer's anchor for the first page brings the oldest messages and the caption.
+        // The composer stays where it is under the viewport, however long the thread.
+        assertEquals(View.VISIBLE, view.footer.visibility)
+        assertEquals(view.viewport.bottom + PageStyle.FOOTER_TOP_GAP_PX, view.footer.top)
+        assertTrue(conversation.bottom <= view.viewport.bottom)
+
+        // The reducer's anchor for the first stop brings the oldest messages and the caption.
         render(conversationScreen(bubbles, anchor = report.pageStarts.first()))
         assertEquals(0, conversation.page)
         assertTrue("m:1" in conversation.visibleKeys())
@@ -586,9 +591,72 @@ class LauncherRenderingTest {
         assertTrue(conversation.captionShown)
         assertEquals(0, paged.last().anchorPage)
 
-        // An anchor whose bubble is gone falls back to the newest page.
+        // Each stop moves the window by about half of it, never a whole window: the stops overlap.
+        val height = conversation.height.toFloat()
+        report.pageStarts.zipWithNext().forEachIndexed { index, (from, to) ->
+            render(conversationScreen(bubbles, anchor = from))
+            draw(conversation)
+            val before = conversation.drawn.associate { it.key to it.rect.top }
+            render(conversationScreen(bubbles, anchor = to))
+            assertEquals(index + 1, conversation.page)
+            draw(conversation)
+            val shared = conversation.drawn.filter { it.key in before }
+            assertTrue("stop $index shares nothing with the next", shared.isNotEmpty())
+            val moved = before.getValue(shared.first().key) - shared.first().rect.top
+            assertTrue("stop $index moved $moved", moved >= height / 6 && moved <= height * 2 / 3 + 1)
+        }
+
+        // An anchor whose bubble is gone falls back to the end.
         render(conversationScreen(bubbles, anchor = DocumentAnchor("live", 0)))
         assertEquals(conversation.pageStarts.lastIndex, conversation.page)
+    }
+
+    @Test
+    fun `tall thumbnails scroll in the column with the text and leave no blank window`() {
+        val tall = com.anezium.rokidbus.shared.LauncherArtwork(96, 128, java.util.Base64.getEncoder().encodeToString(ByteArray(96 * 128 / 8) { 0x33 }))
+        val bubbles = (1..10).flatMap {
+            listOf(
+                Bubble("m:$it", BubbleSide.LEFT, "Regarde ça $it", image = tall),
+                Bubble("r:$it", BubbleSide.RIGHT, "ok, je vois $it " + "et toi ".repeat(it % 4)),
+            )
+        } + Bubble("m:last", BubbleSide.LEFT, "", image = tall, latest = true)
+        render(conversationScreen(bubbles))
+        val conversation = view.blockViews.getValue("conversation") as ConversationView
+        val starts = conversation.pageStarts
+        assertTrue(starts.size > 2)
+        // Opens at the end: the newest thumbnail alone, against the footer.
+        assertEquals(starts.lastIndex, conversation.page)
+        draw(conversation)
+        val newest = conversation.drawn.last()
+        assertEquals("m:last", newest.key)
+        assertNotNull(newest.imageRect)
+        assertTrue(conversation.height - newest.rect.bottom < 4f)
+
+        val height = conversation.height.toFloat()
+        val seen = mutableSetOf<String>()
+        starts.forEachIndexed { index, anchor ->
+            render(conversationScreen(bubbles, anchor = anchor))
+            assertEquals(index, conversation.page)
+            draw(conversation)
+            seen += conversation.visibleKeys()
+            val tops = conversation.drawn.map { it.rect.top }
+            val bottoms = conversation.drawn.map { it.rect.bottom }
+            // Something is drawn at the top of the window and something reaches its bottom: a
+            // thumbnail that does not fit is clipped by the window, never pushed out whole.
+            assertTrue("stop $index starts at ${tops.minOrNull()}", tops.min() <= PageStyle.CAPTION_PX * 3)
+            assertTrue("stop $index ends at ${bottoms.maxOrNull()}", bottoms.max() >= height - PageStyle.BODY_PX * 3)
+            assertEquals(tops.sorted(), tops)
+        }
+        // Every message is readable at some stop, thumbnails and text alike.
+        assertEquals(bubbles.map { it.key }.toSet(), seen)
+
+        // A window that cuts a thumbnail still draws it, clipped: its rect crosses the window's edge.
+        val clipped = starts.indices.any { index ->
+            render(conversationScreen(bubbles, anchor = starts[index]))
+            draw(conversation)
+            conversation.drawn.any { bubble -> bubble.imageRect?.let { it.top < 0f && it.bottom > 0f || it.top < height && it.bottom > height } == true }
+        }
+        assertTrue(clipped)
     }
 
     @Test
@@ -663,6 +731,22 @@ class LauncherRenderingTest {
         // The check's lower vertex is drawn on the checked box only.
         assertTrue(lit(checked, 9, 14))
         assertFalse(lit(unchecked, 9, 14))
+    }
+
+    @Test
+    fun `a row's own mark is drawn in its icon slot and takes the row's tone`() {
+        val mark = com.anezium.rokidbus.shared.LauncherArtwork(16, 16, java.util.Base64.getEncoder().encodeToString(ByteArray(32) { 0x3C }))
+        val blocks = listOf(
+            ScreenBlock.Row("wa", "WhatsApp", "3 conversations", icon = IconRef.Artwork(mark), selected = true),
+            ScreenBlock.Row("ig", "Instagram", icon = IconRef.Artwork(mark)),
+            ScreenBlock.Row("fb", "Messenger"),
+        )
+        render(SessionScreen(ScreenHeader("MESSAGES"), blocks, null, focusKey = "wa"))
+        fun tags(key: String) = find<ImageView>(view.blockViews.getValue(key)).mapNotNull { it.tag as? IconTag }
+        assertEquals(listOf(IconTag(IconRef.Artwork(mark), IconTone.BRIGHT)), tags("wa"))
+        assertEquals(listOf(IconTag(IconRef.Artwork(mark), IconTone.REST)), tags("ig"))
+        assertTrue(tags("fb").isEmpty())
+        assertEquals(PageStyle.ROW_ICON_PX, find<ImageView>(view.blockViews.getValue("wa")).single().width)
     }
 
     @Test
@@ -1075,4 +1159,34 @@ class LauncherRenderingTest {
         assertTrue(texts(player).containsAll(listOf("Next track", "New artist")))
     }
 
+    @Test
+    fun `a message thumbnail sits in its bubble above the text and alone when there is none`() {
+        val thumb = com.anezium.rokidbus.shared.LauncherArtwork(64, 32, java.util.Base64.getEncoder().encodeToString(ByteArray(64 * 32 / 8) { 0x55 }))
+        val bubbles = listOf(
+            Bubble("m:1", BubbleSide.LEFT, "Salut"),
+            Bubble("m:2", BubbleSide.LEFT, "Regarde", image = thumb),
+            Bubble("m:3", BubbleSide.RIGHT, "", image = thumb),
+        )
+        render(conversationScreen(bubbles))
+        val conversation = view.blockViews.getValue("conversation") as ConversationView
+        draw(conversation)
+        val drawn = conversation.drawn.associateBy { it.key }
+        assertEquals(bubbles.map { it.key }, conversation.drawn.map { it.key })
+        val plain = drawn.getValue("m:1")
+        val withText = drawn.getValue("m:2")
+        val alone = drawn.getValue("m:3")
+        assertNull(plain.imageRect)
+        // The thumbnail keeps its own size, leads the bubble, and the text follows under it.
+        val image = requireNotNull(withText.imageRect)
+        assertEquals(64f, image.width(), 0.5f)
+        assertEquals(32f, image.height(), 0.5f)
+        assertTrue(image.top >= withText.rect.top && image.bottom < withText.rect.bottom)
+        assertTrue(withText.rect.height() > plain.rect.height() + 32f)
+        assertTrue(withText.rect.width() >= 64f + 2 * ConversationView.PAD_H_PX)
+        // Alone, the bubble is the thumbnail plus its padding, on our side.
+        val aloneImage = requireNotNull(alone.imageRect)
+        assertEquals(32f + 2 * ConversationView.PAD_V_PX, alone.rect.height(), 2f)
+        assertEquals(64f, aloneImage.width(), 0.5f)
+        assertTrue(alone.rect.right > PageStyle.WIDTH_PX - 40f)
+    }
 }

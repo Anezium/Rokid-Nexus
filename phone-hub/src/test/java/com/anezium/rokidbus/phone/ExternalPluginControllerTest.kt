@@ -11,6 +11,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.anezium.rokidbus.shared.ComposerToolContext
+import com.anezium.rokidbus.shared.ComposerToolContract
 
 class ExternalPluginControllerTest {
     private class FakeScheduler : ExternalPluginScheduler {
@@ -465,5 +467,27 @@ class ExternalPluginControllerTest {
         assertTrue(events.any { it.pluginId == "registration-timeout" && it.reason == "REGISTRATION_TIMEOUT" && it.category == PluginBusJournal.Category.REGISTRATION })
         assertTrue(events.any { it.pluginId == "ack-timeout" && it.reason == "OPEN_ACK_TIMEOUT" && it.verdict == PluginBusJournal.Verdict.REJECTED })
         assertTrue(events.any { it.pluginId == "ack-timeout" && it.reason == "REBIND_ATTEMPT" && it.verdict == PluginBusJournal.Verdict.OK })
+    }
+
+
+    @Test
+    fun `a composer tool open carries its context on the open and nowhere else`() {
+        val runtime = FakeRuntime()
+        val controller = ExternalPluginController(runtime, FakeScheduler())
+        val principal = principal()
+        val context = ComposerToolContract.encode(ComposerToolContext("hello:thread", """{"thread":"t1"}""", "t1", "photo", "camera"))
+        assertTrue(controller.open(principal, ExternalPluginOpenRequest(type = PluginOpenTypes.COMPOSER_TOOL, context = context)))
+        runtime.registered = true
+        controller.onRegistered(principal)
+        val (path, payload) = runtime.deliveries.single()
+        assertEquals(BusPaths.PLUGIN_OPEN, path)
+        assertEquals(PluginOpenTypes.COMPOSER_TOOL, payload.getString("type"))
+        assertEquals("hello:thread", payload.getJSONObject(ComposerToolContract.FIELD_CONTEXT).getString("pageId"))
+        assertEquals("photo", payload.getJSONObject(ComposerToolContract.FIELD_CONTEXT).getString("toolId"))
+
+        // A plain open carries none, and a resume of a backgrounded plugin keeps the tool type.
+        assertTrue(controller.open(principal))
+        assertFalse(runtime.deliveries.last().second.has(ComposerToolContract.FIELD_CONTEXT))
+        assertEquals(PluginOpenTypes.OPEN, runtime.deliveries.last().second.getString("type"))
     }
 }

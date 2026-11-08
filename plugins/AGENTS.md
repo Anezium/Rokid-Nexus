@@ -11,8 +11,34 @@ Companion documents: [docs/PLUGIN_SDK.md](../docs/PLUGIN_SDK.md) (public typed S
 [docs/GLOSSARY.md](../docs/GLOSSARY.md) (what a pin, notice band, island, card,
 page and immersion look like on the glasses).
 This file gives agent-facing implementation rules; use the SDK guide and wire
-specification for their respective contracts. Nexus 2.0.0 ships SDK 0.24.0;
-plugins built against 0.23.0 must be rebuilt against 0.24.0.
+specification for their respective contracts.
+
+**Glasses UI in Nexus 2.0: pages first.** Anything the wearer browses or picks
+from (lists, menus, contacts, conversations, summaries) is a **page** in the
+launcher (`rokidbus.plugin.pages`, see [Pages](../docs/PLUGIN_SDK.md#pages)), not
+a chain of `NexusCard` surfaces in an immersion. Card-built menus and pickers are
+the retired pre-2.0 pattern: they still render, but do not write new ones and do
+not copy them from older plugins. Use notices for events and an immersion only
+for the engaged step a page cannot host, opened from a page action. Model new
+plugins on Media Deck, Navigation and Relay
+([Choosing a HUD kind](../docs/PLUGIN_SDK.md#choosing-a-hud-kind)). Nexus 2.2.0 ships SDK 0.25.0;
+plugins built against 0.23.0 or earlier must be rebuilt.
+
+**Hard rule: new glasses UI uses launcher pages.** Do not add `NexusCard`
+menus, pickers or confirmations, or image-surface preview steps. The SDK marks
+`NexusCard`, its row models, `showCard`/`updateCard`, `NexusImage` and
+`showImage`/`updateImage` deprecated. Use `PageBody.Image` (launcher v6,
+`supportsImagePages()`) for a full photo preview and Send/Retake/Cancel page
+actions. A visible page action can call `nexusSnapshotSession` with the existing
+signer-bound `camera` grant, without an immersion or `PLUGIN_OPEN`. Return a
+live Capturing summary immediately; publish the image on completion within the
+page lease, never block the eight-second action budget. Cancel/discard work on
+cover, close, refresh or lost registration; never auto-send a capture. A plugin
+whose whole glasses UI is pages declares `LAUNCHABLE=false` (bundle v7): it
+stays in Applications, gets no hub `Open app`, and needs no immersion at all.
+Rows may carry their own `mono1` mark with `PageRow.icon` (`supportsRowIcons()`).
+Notices, pins, activities, Ink, editable notice fields and audio/speech remain
+supported; no additional capability or plugin bus path is introduced.
 
 ## 1. What a plugin is
 
@@ -232,7 +258,9 @@ pages (opted-in plugins, session backend, once both hubs announce page v1):
   wearer selects a page → hub uses your live registration or binds you cold
   (registration within the 8 s page budget) → /page/request → your answer on
   /page/response → /page/visibility (lease) → optional live revisions and
-  confirmed (or user-approved quick, or composer) /page/action → /page/closed
+  confirmed (or user-approved quick, or composer, or composer tool) /page/action
+  → /page/closed; an immersion composer tool instead opens you with
+  /system/plugin/open `type: composer_tool` and its `context`
   → page-only binding released
 ```
 
@@ -296,7 +324,9 @@ or configures a network, and `disable` must remain scoped to ADB rather than
 turning normal Wi-Fi off.
 
 Paths a plugin **receives** (reserved, hub-generated — you never send these):
-`/system/plugin/registration`, `/system/plugin/open`, `/system/plugin/close`,
+`/system/plugin/registration`, `/system/plugin/open` (with `type: composer_tool`
+and a `context` when one of your conversation pages' tools opened you; the SDK
+drops a context for a page that is not yours), `/system/plugin/close`,
 `/system/plugin/input`, `/glasses/device-info`, `/surface/text-committed`, plus
 deliveries into your `/plugin/<id>/…` namespace. An opted-in page provider also
 receives `/page/request`, `/page/action`, `/page/visibility` and `/page/closed`,
@@ -393,15 +423,16 @@ central ~60% of the canvas); the Store downloads and shows it via the feed's
 (and update `iconAsset` accordingly): phones cache store icons by URL for seven
 days, so replacing the bytes at the same URL leaves stale icons on devices.
 
-The ordinary surface API renders **structured rows**, not free text: build
-`NexusCard` / `NexusReader` / `NexusTimedLines` / `NexusMedia` / image surfaces
-and let the glasses lay them out. For an authored layout, use a separately
+New browsing UI uses typed `PageBody` templates, including `Document`, `Media`
+and `Image`, and lets the launcher lay them out. Ordinary surfaces remain for
+compatibility and specialized engaged sessions; never copy their deprecated
+card menus or image previews into new work. For an authored layout, use a separately
 granted `NexusInkSurfaceSession`: the phone compiles a strict `.ink` subset into
 an inert document and the glasses project it to native Views. Ink v1 executes no
 JavaScript, fetches no URLs, and exposes only bounded data binding plus action
 ids; use the typed SDK instead of hand-building `/ink/*` payloads. An Ink
 `image` is currently a placeholder reference because the public session has no
-asset transfer; use the ordinary image surface for real pixels.
+asset transfer; use a launcher `PageBody.Image` for photo previews.
 
 Never pre-format monospace strings. Input arrives as DPAD-style events
 (`/system/plugin/input`): forward/back swipes, tap (ENTER), BACK. BACK at your root
@@ -411,8 +442,8 @@ Never pre-format monospace strings. Input arrives as DPAD-style events
 
 Declare `ink_surface`, create one session per local surface id, and gate rich UI
 on the live renderer bit. `supportsInkSurface` reports Ink v1 plus SPP, while
-`show` separately checks the plugin grant. Keep a card fallback for either kind
-of failure.
+`show` separately checks the plugin grant. Report unavailability on your launcher
+page when Ink cannot open; do not build a new card fallback.
 
 ```kotlin
 private var ink: NexusInkSurfaceSession? = null
@@ -426,7 +457,7 @@ override fun onNexusOpen() {
             handlesBack = false,
         ) == NexusSdkResult.SENT
     if (!shown) {
-        nexusSurfaceSession("main")?.showCard(NexusCard("Status", listOf("72")))
+        // Keep the launcher page available and report that Ink could not open.
     }
 }
 

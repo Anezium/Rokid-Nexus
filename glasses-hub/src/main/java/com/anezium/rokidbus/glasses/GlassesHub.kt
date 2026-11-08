@@ -94,6 +94,8 @@ object GlassesHub {
         val iconKey: String? = null,
         /** The page version the phone vouches this approved plugin provides; 0 for none. */
         val pageSessionVersion: Int = 0,
+        /** False for a page provider without a full app (bundle v7): its row opens its pages, never an immersion. */
+        val launchable: Boolean = true,
     )
 
     private data class Registration(
@@ -367,10 +369,13 @@ object GlassesHub {
         // policy may arrive before the phone's capabilities do, so it is kept either way: the
         // quick gate itself requires the negotiated bundle, and a result matches only a command
         // these glasses sent, which they send only over the bundle.
-        if (envelope.path == BusPaths.CORE_POLICY_QUICK_ACTIONS || envelope.path == BusPaths.ACTIVITY_RESULT) {
+        if (envelope.path == BusPaths.CORE_POLICY_QUICK_ACTIONS || envelope.path == BusPaths.ACTIVITY_RESULT ||
+            envelope.path == BusPaths.CORE_LAUNCHER_FAVOURITES
+        ) {
             when {
                 envelope.binary != null -> log("launcher bundle message dropped path=${envelope.path}")
                 envelope.path == BusPaths.ACTIVITY_RESULT -> NexusSession.onActivityResult(envelope.payload)
+                envelope.path == BusPaths.CORE_LAUNCHER_FAVOURITES -> NexusSession.onLauncherFavourites(envelope.payload, appContext)
                 else -> NexusSession.onQuickActionPolicy(envelope.payload)
             }
             return
@@ -666,7 +671,8 @@ object GlassesHub {
         return { launcherListeners.remove(listener) }
     }
 
-    fun openLauncherEntry(pluginId: String): String {
+    /** [toolContext] rides along when a composer tool opened the plugin: the page, thread and tool it came from. */
+    fun openLauncherEntry(pluginId: String, toolContext: com.anezium.rokidbus.shared.ComposerToolContext? = null): String {
         if (pluginId.isBlank()) return "launcherOpen=false reason=blank"
         if (pluginId == CAMERA_LAUNCHER_ID) {
             val context = appContext ?: return "launcherOpen=false reason=hub_not_started"
@@ -680,7 +686,9 @@ object GlassesHub {
         val error = sendRemote(
             BusEnvelope(
                 path = BusPaths.LAUNCHER_OPEN,
-                payload = JSONObject().put("pluginId", pluginId),
+                payload = JSONObject().put("pluginId", pluginId).apply {
+                    toolContext?.let { put(com.anezium.rokidbus.shared.ComposerToolContract.FIELD_CONTEXT, com.anezium.rokidbus.shared.ComposerToolContract.encode(it)) }
+                },
             ),
         )
         return if (error == null) {
@@ -1325,6 +1333,7 @@ object GlassesHub {
                                 pageSessionVersion = PageSurfaceContract.parseSessionVersion(
                                     item.opt(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION),
                                 ),
+                                launchable = item.optBoolean("launchable", true),
                             ),
                         )
                     }

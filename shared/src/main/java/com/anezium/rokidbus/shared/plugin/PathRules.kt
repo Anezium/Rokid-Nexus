@@ -19,6 +19,8 @@ object PathRules {
     private val hubOnlyPaths = setOf(
         RenderedMapContract.PATH,
         BusPaths.TTS_CANCEL,
+        // The owner's launcher favourites: only the phone hub may send them, debug callers included.
+        BusPaths.CORE_LAUNCHER_FAVOURITES,
         BusPaths.SKILLS_CATALOG_REPLY,
         BusPaths.SKILLS_RESULT,
         BusPaths.SKILLS_PROVIDER_INVOKE,

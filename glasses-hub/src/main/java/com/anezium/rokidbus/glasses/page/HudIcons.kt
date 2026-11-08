@@ -14,6 +14,7 @@ import com.anezium.rokidbus.client.ui.GlyphDrawable
 import com.anezium.rokidbus.client.ui.NexusGlyphs
 import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.glasses.GlassesHub
+import com.anezium.rokidbus.glasses.drawable
 import com.anezium.rokidbus.glasses.session.IconPlace
 import com.anezium.rokidbus.glasses.session.IconRef
 
@@ -41,6 +42,7 @@ internal object HubIconSource : SessionIconSource {
         is IconRef.Native -> runCatching { context.packageManager.getApplicationIcon(ref.packageName) }.getOrNull()
             ?: placeDrawable(context, IconPlace.GRID)
         is IconRef.Glyph -> HudGlyphs.drawable(context, ref.name) { owner, glyph -> GlassesHub.activityGlyphDrawable(context, owner, glyph) }
+        is IconRef.Artwork -> ref.artwork.drawable(context, PageStyle.phosphor)
     }
 
     fun placeDrawable(context: Context, place: IconPlace): Drawable? {

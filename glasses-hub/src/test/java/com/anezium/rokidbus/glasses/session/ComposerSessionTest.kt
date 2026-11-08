@@ -1131,6 +1131,39 @@ class ComposerSessionTest {
         assertEquals("tap reply", screen().hint?.action)
     }
 
+    @Test
+    fun `a conversation follows its end until scrolled up, then keeps its stop across layouts`() {
+        openThread("t1", at = 1_000)
+        val frame = FrameIdentity(model.generation, 1)
+        val revision = (top().status as FrameStatus.Shown).revision
+        val starts = listOf(DocumentAnchor("m:m1", 0), DocumentAnchor("m:m2", 0), DocumentAnchor("m:m3", 0))
+        // The first layout lands at the end, with no anchor: the end is followed.
+        send(SessionEvent.DocumentPaged(frame, "relay:thread", revision, starts, 0))
+        assertEquals(2, top().page)
+        assertNull(top().anchor)
+        assertEquals("swipe scroll · tap reply", screen().hint?.action)
+        assertEquals("3/3", screen().header?.trail)
+
+        // Scrolled up, the stop is held by its anchor; a longer layout keeps it where it falls.
+        send(SessionEvent.Step(-1, 2_000))
+        assertEquals(1, top().page)
+        assertEquals(starts[1], top().anchor)
+        val longer = starts + DocumentAnchor("m:m3", 40)
+        send(SessionEvent.DocumentPaged(frame, "relay:thread", revision, longer, 1))
+        assertEquals(1, top().page)
+        assertEquals(starts[1], top().anchor)
+
+        // Scrolled back to the end, the end is followed again: a longer layout lands on its last stop.
+        send(SessionEvent.Step(1, 2_100))
+        send(SessionEvent.Step(1, 2_200))
+        assertEquals(3, top().page)
+        assertNull(top().anchor)
+        send(SessionEvent.DocumentPaged(frame, "relay:thread", revision, longer + DocumentAnchor("live", 0), 3))
+        assertEquals(4, top().page)
+        assertNull(top().anchor)
+        assertTrue(effects.none { it is RequestPage || it is SendAction })
+    }
+
     // ---- notifications ------------------------------------------------------------------------
 
     @Test

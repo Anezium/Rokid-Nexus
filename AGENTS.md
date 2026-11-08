@@ -4,6 +4,16 @@ Android/Kotlin. Phone hub, glasses hub, a shared bus client, and the plugins und
 `plugins/`. Start with `README.md` for what the product is; `plugins/AGENTS.md` covers
 plugin work specifically.
 
+Glasses UI for plugins is pages-first: browsing and picking happen on launcher
+pages, not on chains of surface cards in an immersion, which is the retired
+pre-2.0 pattern (see `plugins/AGENTS.md` and `docs/PLUGIN_SDK.md#choosing-a-hud-kind`).
+New glasses UI must use launcher pages. Never add `NexusCard` menus, pickers,
+confirmations or card/image-surface photo-preview flows. Use launcher v6
+`PageBody.Image` and ordinary page actions for photos; a page-only provider with
+the `camera` grant can use `nexusSnapshotSession` without `PLUGIN_OPEN`.
+Keep notices, pins, activities, Ink immersions and audio/speech sessions on their
+existing typed APIs. Card/image surface APIs remain deprecated compatibility only.
+
 The activity island is user-owned (Floating Activities). Launcher v4's `eventKey`
 identifies a real event independently of priority and wake; only Nexus chooses
 visibility and duration. Keep the retained Activities card separate from the

@@ -72,7 +72,7 @@ Notifications represent events; activities represent ongoing things to consult/c
 Use the r17 mockup as the target, not the obsolete detail/mode/review menu chain:
 - Open the exact authenticated conversation directly, on its newest captured page.
 - Received messages left, our replies right, transparent outline bubbles; capture time only, bounded history.
-- Reading swipe pages the chat. Tap focuses inline Dictate first, Type second. Dictate uses the glasses microphone; Type uses the phone keyboard.
+- Reading swipe scrolls the chat, about half a screen a step, opening at its end. Tap focuses inline Dictate first, Type second. Dictate uses the glasses microphone; Type uses the phone keyboard.
 - Capture stays in the same chat. Tap finishes to an unsent draft in reading mode; Back cancels capture and restores the earlier draft. No silent phone-microphone fallback.
 - Only when a draft exists is Envoyer available. A fresh tap enters action focus; an additional intentional activation after that displayed focus hands the answer to the exact current recipient. No residual contact or automatic send on capture completion.
 - Successful handoff says transmise à l'app; uncertain acknowledgement says non confirmée, never invented delivered/read states. Unconfirmed recovery focuses Type to edit the retained text.

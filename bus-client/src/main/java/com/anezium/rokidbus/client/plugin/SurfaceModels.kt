@@ -33,6 +33,7 @@ import java.util.UUID
  * Weight of a row in a list surface. The HUD maps these to real typographic
  * hierarchy; plugins never pick sizes or colours themselves.
  */
+@Deprecated("Use PageBody.SelectableList with PageRow for launcher page navigation instead of card rows.")
 enum class NexusRowTone(val wireValue: String) {
     /** Needs the wearer's attention: brightest treatment on the surface. */
     ALERT("alert"),
@@ -47,6 +48,7 @@ enum class NexusRowTone(val wireValue: String) {
     BODY("body"),
 }
 
+@Deprecated("Use PageRow in PageBody.SelectableList for lists, menus and pickers in launcher pages.")
 data class NexusCardLine(
     val text: String,
     val badge: String? = null,
@@ -83,6 +85,7 @@ data class NexusCardLine(
     }
 }
 
+@Deprecated("Use NexusPage.Content with PageBody and NexusPageActionSpec for launcher pages, menus and confirmations.")
 data class NexusCard(
     val title: String,
     val lines: List<String>,
@@ -371,6 +374,7 @@ data class NexusMedia(
         }
 }
 
+@Deprecated("Use LauncherArtwork in PageBody.Image for launcher image previews; check supportsImagePages().")
 data class NexusImage(
     val contentKey: String,
     val mimeType: String,
@@ -524,14 +528,18 @@ class NexusSurfaceSession internal constructor(
      */
     var onRejected: ((code: String) -> Unit)? = null
 
+    @Deprecated("Return NexusPage.Content from onNexusPageRequest/onNexusPageAction; use publishPage for live page updates.")
     fun showCard(card: NexusCard): NexusSdkResult = sendSurface(BusPaths.SURFACE_SHOW, card.toPayload(localSurfaceId))
+    @Deprecated("Use publishPage or NexusPageResult.done(replacement = ...) to update a launcher page.")
     fun updateCard(card: NexusCard): NexusSdkResult = sendSurface(BusPaths.SURFACE_UPDATE, card.toPayload(localSurfaceId))
     fun showReader(reader: NexusReader): NexusSdkResult =
         sendSurface(BusPaths.SURFACE_SHOW, reader.toPayload(localSurfaceId))
     fun updateReader(reader: NexusReader): NexusSdkResult =
         sendSurface(BusPaths.SURFACE_UPDATE, reader.toPayload(localSurfaceId))
+    @Deprecated("Use NexusPage.Content with PageBody.Image and page actions for image previews; check supportsImagePages().")
     fun showImage(image: NexusImage, bytes: ByteArray): NexusSdkResult =
         sendImage(BusPaths.SURFACE_SHOW, image, bytes)
+    @Deprecated("Use publishPage with PageBody.Image or a page action replacement for image previews.")
     fun updateImage(image: NexusImage, bytes: ByteArray): NexusSdkResult =
         sendImage(BusPaths.SURFACE_UPDATE, image, bytes)
     fun showTimedLines(lines: NexusTimedLines): NexusSdkResult =

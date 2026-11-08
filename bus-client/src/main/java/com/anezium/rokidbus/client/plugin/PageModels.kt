@@ -74,7 +74,8 @@ sealed class NexusPage {
     /**
      * [body] is one of the four base templates, or, once [NexusPluginClient.supportsLauncherInteractive]
      * is true, a `Conversation`, `Media` or `Route` body; otherwise those answer as invalid, so fall
-     * back to the base four. [live] promises revisions while the page is visible under its lease,
+     * back to the base four. `Image` requires [NexusPluginClient.supportsImagePages]; older pairs
+     * receive an inert summary without image bytes or photo actions. [live] promises revisions while the page is visible under its lease,
      * published through [NexusPluginClient.publishPage].
      */
     data class Content(
@@ -513,6 +514,10 @@ internal class NexusPageChannel(
                 .put("title", content.title)
                 .put("body", PageTemplateContract.encode(content.body).apply {
                     com.anezium.rokidbus.shared.LauncherArtwork.stripUnsupported(this, launcherInteractiveVersion)
+                    // A pair below bundle v5 draws the default composer bar and text-only bubbles.
+                    PageTemplateContract.stripConversationExtras(this, launcherInteractiveVersion)
+                    // A pair below bundle v7 draws rows without their own mark.
+                    PageTemplateContract.stripRowIcons(this, launcherInteractiveVersion)
                     if (launcherInteractiveVersion < LauncherInteractiveContract.ARTWORK_VERSION) {
                         remove("artwork")
                         remove("positionMs")
@@ -540,11 +545,18 @@ internal class NexusPageChannel(
                 .put("live", content.live)
         }.getOrNull() ?: return null
         val launcherFields = content.actions.any { it.typed != null } || content.body.items.any { it.checked != null }
-        val payload = if (extended || !launcherFields) built else PageSurfaceContract.stripLauncherFields(built)
+        if (content.body is PageBody.Image) {
+            val original = (PageSurfaceContract.validateResponse(built) as? PageSurfaceValidationResult.Valid)
+                ?.value as? PageSurfaceResponse.Page ?: return null
+            if (PageTemplateContract.decode(original, pluginId, LauncherInteractiveContract.IMAGE_PAGES_VERSION)
+                !is PageSurfaceValidationResult.Valid) return null
+        }
+        val compatible = PageSurfaceContract.stripImagePages(built, launcherInteractiveVersion)
+        val payload = if (extended || !launcherFields) compatible else PageSurfaceContract.stripLauncherFields(compatible)
         val pending = PageSurfaceRequest(correlation, NexusPageRequestReason.OPEN.wireValue)
         val page = (PageSurfaceContract.validateResponse(payload, pending) as? PageSurfaceValidationResult.Valid)
             ?.value as? PageSurfaceResponse.Page ?: return null
-        if (PageTemplateContract.decode(page, pluginId, extended) !is PageSurfaceValidationResult.Valid) return null
+        if (PageTemplateContract.decode(page, pluginId, launcherInteractiveVersion) !is PageSurfaceValidationResult.Valid) return null
         return payload
     }
 
@@ -555,8 +567,7 @@ internal class NexusPageChannel(
     private fun recordShown(context: FrameContext, payload: JSONObject) {
         val page = (PageSurfaceContract.validateResponse(payload) as? PageSurfaceValidationResult.Valid)?.value as? PageSurfaceResponse.Page
         context.shownActions = page?.actions?.associate { it.id to it.typed }.orEmpty()
-        val extended = LauncherInteractiveContract.isActive(launcherInteractiveVersion)
-        val body = page?.let { (PageTemplateContract.decode(it, pluginId, extended) as? PageSurfaceValidationResult.Valid)?.value }
+        val body = page?.let { (PageTemplateContract.decode(it, pluginId, launcherInteractiveVersion) as? PageSurfaceValidationResult.Valid)?.value }
         context.shownComposer = (body as? PageBody.Conversation)?.composer
     }
 

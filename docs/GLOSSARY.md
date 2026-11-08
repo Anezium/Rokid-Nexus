@@ -118,7 +118,7 @@ and [User choice: Keep in activities](PLUGIN_SDK.md#user-choice-keep-in-activiti
 
 A page is typed content the glasses hub draws inside the launcher, over
 whatever was on screen, from data the plugin sends: a summary, a list, a
-document, a conversation, a media player or a route. It never replaces the
+document, a conversation, a media player, a route or a full image preview. It never replaces the
 screen underneath; BACK returns exactly where the wearer was. A card's tap or
 an Applications row opens it. `NexusPage` (`PageBody` templates,
 `NexusPageActionSpec`); plans 027 and 028. Shown today by Media Deck, Navigation,
@@ -138,17 +138,47 @@ Relay and Hello Nexus. See [Pages](PLUGIN_SDK.md#pages) and
 *Reused: the Navigation card opening its route page, cropped from the Nexus
 2.0 demo (simulated position).*
 
+**Composer and composer tools**
+
+On a conversation page the hub draws the **composer**: a bar under the bubbles
+with **Dictate**, **Type** and, once a draft exists, **Send**. Send is the
+hub's and only ever sends text the wearer has seen. A page may add its own
+buttons to the bar, the **composer tools** (a **Photo** button, say), hide or
+rename Dictate and Type, and order the bar; a tool either runs one of the
+page's actions or opens the plugin's immersion with the thread it came from.
+A message may carry a **thumbnail**, drawn in its bubble. `ConversationComposer`,
+`ComposerTool`, `ComposerSlot`, `ConversationMessage.image`; launcher bundle v5.
+See [Composer tools](PLUGIN_SDK.md#composer-tools-launcher-bundle-v5).
+
+**Image page and photo capture (launcher bundle v6)**
+
+An image page is one large JPEG or MONO1 image with an optional caption and
+ordinary actions such as Send, Retake and Cancel, inside the launcher. A
+conversation's Photo tool invokes a plugin page action; the camera-granted
+plugin captures a snapshot without opening an immersion, returns a Capturing
+page, then publishes the image preview. Sending requires another deliberate
+action. `PageBody.Image`, `LauncherArtwork`, `supportsImagePages()` and
+`nexusSnapshotSession`; see [Image pages and camera capture](PLUGIN_SDK.md#image-pages-and-camera-capture-launcher-bundle-v6).
+
 ## Immersion (Open app)
 
 An immersion is the plugin's own full-screen interaction on the glasses: its
 cards, reader, media, image or Ink surfaces, driven by the plugin while it is
 open. The wearer reaches it through **Open app**, on a page or in
 Applications. In the protocol it is the `IMMERSION` action kind; a
-"surface card" is a `NexusCard` shown in it. `NexusSurfaceSession`,
+"surface card" is a `NexusCard` shown in it. Immersions are for the engaged
+step a page cannot host; menus and pickers built from surface cards are the
+retired pre-2.0 pattern and belong on pages instead. `NexusSurfaceSession`,
 `NexusCard`, `NexusInkSurfaceSession`. Every plugin with a surface has one;
 Hello Nexus's Ink page is below. See
 [Choosing a HUD kind](PLUGIN_SDK.md#choosing-a-hud-kind) and
 [Actions](PLUGIN_SDK.md#actions).
+
+**Deprecated: card immersions.** `NexusCard`, its row models, card show/update
+calls and `NexusImage` image-surface preview calls remain for compatibility.
+Never create new card menus, pickers or confirmations. New glasses UI uses
+launcher pages, including photo previews; Ink immersions, notices, pins,
+activities, editable notice fields and audio/speech sessions remain supported.
 
 ![Hello Nexus's page, then Open app launching its Ink immersion](assets/glossary/immersion-open-app.gif)
 

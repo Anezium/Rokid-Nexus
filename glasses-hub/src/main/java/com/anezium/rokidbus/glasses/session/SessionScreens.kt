@@ -1,8 +1,10 @@
 package com.anezium.rokidbus.glasses.session
 
+import com.anezium.rokidbus.client.ui.NexusGlyphs
 import com.anezium.rokidbus.shared.ConversationMessage
 import com.anezium.rokidbus.shared.ConversationMessageStatus
 import com.anezium.rokidbus.shared.ConversationRole
+import com.anezium.rokidbus.shared.LauncherArtwork
 import com.anezium.rokidbus.shared.MediaPlaybackState
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PageBody
@@ -32,6 +34,9 @@ internal sealed interface IconRef {
 
     /** A glyph from the shared glyph set (or a plugin glyph by its qualified name). */
     data class Glyph(val name: String) : IconRef
+
+    /** A row's own `mono1` mark (launcher bundle v7), drawn in the row's tone like a glyph. */
+    data class Artwork(val artwork: com.anezium.rokidbus.shared.LauncherArtwork) : IconRef
 }
 
 internal enum class IconPlace { BELL, GRID }
@@ -137,9 +142,10 @@ internal sealed interface ScreenBlock {
 
     /**
      * A conversation page's bubbles, oldest first; [caption] is its one capture time. A live one
-     * is read page by page like a document: the renderer reports where its pages start (anchors
-     * naming bubble keys) through [SessionEvent.DocumentPaged] for [frame], [pageId] and
-     * [revision], and keeps [anchor] on screen. A retained (dimmed) one names no frame.
+     * is scrolled as one column through stops the renderer measures and reports (anchors naming
+     * bubble keys) through [SessionEvent.DocumentPaged] for [frame], [pageId] and [revision];
+     * it keeps [anchor]'s stop on screen, or the column's end for a null anchor. A retained
+     * (dimmed) one names no frame.
      */
     data class Conversation(
         override val key: String,
@@ -169,6 +175,18 @@ internal sealed interface ScreenBlock {
         val receivedAtMs: Long = 0,
         val playbackSpeed: Float = 1f,
         val advancing: Boolean? = null,
+    ) : ScreenBlock
+
+    /**
+     * An image page's picture: drawn as large as the column leaves, aspect kept, with its caption
+     * under it. The page's actions are ordinary rows after it. [dimmed] is a retained image of an
+     * unavailable page, drawn as inert.
+     */
+    data class Image(
+        override val key: String,
+        val image: com.anezium.rokidbus.shared.LauncherArtwork,
+        val caption: String? = null,
+        val dimmed: Boolean = false,
     ) : ScreenBlock
 
     /** The next manoeuvre; [approximate] prefixes the distance with "~" for a degraded position. */
@@ -236,6 +254,8 @@ internal data class Bubble(
     val meta: String? = null,
     /** Who sent a received message, as its provider names it in a group thread; never guessed. */
     val sender: String? = null,
+    /** The message's thumbnail, drawn in the bubble above its text (launcher bundle v5). */
+    val image: LauncherArtwork? = null,
 )
 
 internal enum class MapSize { COMPACT, PANEL, FULL }
@@ -379,7 +399,7 @@ internal class SessionScreens(
                 RootStopKind.NOTICE_PREVIEW -> noticeCard(stop, selected, facts)
                 RootStopKind.ACTIVITIES, RootStopKind.NOTIFICATIONS ->
                     ScreenBlock.Row(stop.id, stop.text, trail = (stop.count ?: 0).toString(), selected = selected, icon = stop.icon)
-                RootStopKind.APPLICATIONS -> ScreenBlock.Row(stop.id, stop.text, selected = selected, icon = stop.icon)
+                RootStopKind.FAVOURITE, RootStopKind.APPLICATIONS -> ScreenBlock.Row(stop.id, stop.text, selected = selected, icon = stop.icon)
             }
         }
         val selectedStop = state.stops.getOrNull(state.selected)
@@ -575,7 +595,7 @@ internal class SessionScreens(
                 ScreenHeader(title.uppercase(), if (pages > 0) "${frame.page + 1}/$pages" else "back: $parent", pageIcon(frame.pageId)),
                 failure + reading,
                 // The tap only reaches Retry and Back; a second one runs the selected row.
-                ScreenHint(listOfNotNull("swipe page".takeIf { pages > 1 }, TAP_RETRY_BACK).joinToString(" · "), back),
+                ScreenHint(listOfNotNull((if (body is PageBody.Conversation) "swipe scroll" else "swipe page").takeIf { pages > 1 }, TAP_RETRY_BACK).joinToString(" · "), back),
                 statusText,
                 reading.key,
             )
@@ -598,6 +618,8 @@ internal class SessionScreens(
 
     /** Retained content that fits beside the failure: what the page showed, dimmed, its actions left out. */
     private fun retainedBlocks(snapshot: Snapshot): List<ScreenBlock> = when (val body = items.retainedBody(snapshot)) {
+        // The picture as it was, dimmed; its actions are left out like every retained page's.
+        is PageBody.Image -> listOf(ScreenBlock.Image("last:image", body.image, body.caption, dimmed = true))
         is PageBody.Summary -> listOfNotNull(
             body.primary?.let { ScreenBlock.Text("last:primary", it, TextRole.FIGURE, dimmed = true) },
             body.secondary?.let { ScreenBlock.Text("last:secondary", it, TextRole.BODY, dimmed = true) },
@@ -624,6 +646,7 @@ internal class SessionScreens(
 
     /** What is read page by page: a document's own segments, or a body's text laid out as prose. */
     private fun readingSegments(body: PageBody?): List<PageSegment> = when (body) {
+        is PageBody.Image -> listOfNotNull(body.caption?.let { PageSegment("caption", PageSegmentKind.PROSE, it) })
         is PageBody.Document -> body.segments
         is PageBody.Summary -> listOfNotNull(
             body.primary?.let { PageSegment("primary", PageSegmentKind.PROSE, it) },
@@ -700,6 +723,8 @@ internal class SessionScreens(
                 body.facts.forEach { blocks += ScreenBlock.Fact("fact:${it.id}", it.label, it.value) }
             }
             body is PageBody.Commands -> body.text?.let { blocks += ScreenBlock.Text("text", it, TextRole.BODY) }
+            // The picture fills what its rows leave; it is never an entry, so the rows keep the selection.
+            body is PageBody.Image -> blocks += ScreenBlock.Image("image", body.image, body.caption)
             body is PageBody.Media ->
                 blocks += ScreenBlock.Media("media", body.title, body.artist, body.album, body.source, body.state, body.status,
                     body.artwork, body.positionMs, body.durationMs, status.snapshot.receivedAtMs, body.playbackSpeed, body.advancing)
@@ -739,7 +764,7 @@ internal class SessionScreens(
                     "row:${row.key}", row.label, row.sub,
                     enabled = row.enabled && row.item != PageItem.Inert,
                     selected = selected,
-                    icon = localIcon(frame.pageId, row.key),
+                    icon = localIcon(frame.pageId, row.key) ?: row.icon?.let { IconRef.Artwork(it) },
                     checked = row.checked,
                     pending = pendingAction != null && row.actionId == pendingAction,
                 )
@@ -864,6 +889,7 @@ internal class SessionScreens(
             "row:${row.key}", row.label, sub,
             enabled = row.enabled && row.item != PageItem.Inert,
             selected = frame.tombstone == null && index == frame.selected,
+            icon = row.icon?.let { IconRef.Artwork(it) },
             checked = (row.item as? PageItem.RouteView)?.let { it.view == view } ?: row.checked,
             pending = pendingAction != null && row.actionId == pendingAction,
         )
@@ -1025,7 +1051,10 @@ internal class SessionScreens(
             focus == null && facts.micUnavailable -> InlineFooter.StatusLine(MIC_UNAVAILABLE, USE_TYPE, glyph = GLYPH_MIC, style = StatusLineStyle.OFF)
             else -> InlineFooter.Buttons(
                 view.buttons.map { key ->
-                    FooterButton(key, buttonLabel(key), buttonGlyph(key), selected = focus?.key == key, enabled = !sending)
+                    FooterButton(
+                        key, ComposerRules.label(key, composer), ComposerRules.glyph(key, composer, NexusGlyphs::isBuiltIn),
+                        selected = focus?.key == key, enabled = !sending,
+                    )
                 },
             )
         }
@@ -1036,11 +1065,13 @@ internal class SessionScreens(
             capture?.kind == CaptureKind.TYPE -> ScreenHint(TAP_FINISH, BACK_CANCEL_TYPING)
             focus != null && focus.key == ComposerRules.SEND && composer != null ->
                 ScreenHint("swipe choose · tap send to ${composer.recipient}", BACK_READING)
+            focus != null && ComposerRules.toolId(focus.key) != null ->
+                ScreenHint("swipe choose · tap ${ComposerRules.label(focus.key, composer).lowercase()}", BACK_READING)
             focus != null && focus.key != ComposerRules.SEND && replacing != null ->
                 ScreenHint("tap start · $REPLACES_DRAFT ${replacing.recipient}", BACK_READING)
             focus != null -> ScreenHint(FOCUS_START, BACK_READING)
-            view?.available == true && !sending -> ScreenHint(if (pages > 1) "swipe page · tap reply" else "tap reply", backText)
-            else -> ScreenHint(if (pages > 1) "swipe page" else null, backText)
+            view?.available == true && !sending -> ScreenHint(if (pages > 1) "swipe scroll · tap reply" else "tap reply", backText)
+            else -> ScreenHint(if (pages > 1) "swipe scroll" else null, backText)
         }
         val block = ScreenBlock.Conversation(
             CONVERSATION_BLOCK, body.caption, drawn, dimmed = false,
@@ -1076,19 +1107,8 @@ internal class SessionScreens(
                 ConversationMessageStatus.UNCONFIRMED -> UNCONFIRMED_CHECK_PHONE
                 null -> null
             },
+            image = message.image,
         )
-    }
-
-    private fun buttonLabel(key: String): String = when (key) {
-        ComposerRules.SEND -> SEND
-        ComposerRules.TYPE -> TYPE
-        else -> DICTATE
-    }
-
-    private fun buttonGlyph(key: String): String = when (key) {
-        ComposerRules.SEND -> GLYPH_SEND
-        ComposerRules.TYPE -> GLYPH_KEYBOARD
-        else -> GLYPH_MIC
     }
 
     /** A notification's age on the Notifications page: minutes within the hour, then hours. */
@@ -1143,6 +1163,7 @@ internal class SessionScreens(
     private fun summaryOf(snapshot: Snapshot, frame: Frame, readable: Boolean): List<ScreenBlock> {
         val body = items.retainedBody(snapshot) ?: return listOf(ScreenBlock.Text("retained", snapshot.page.title, TextRole.BODY))
         val first = when (body) {
+            is PageBody.Image -> body.caption
             is PageBody.Summary -> body.primary ?: body.secondary ?: body.text
             is PageBody.Document -> body.segments.firstOrNull()?.text
             is PageBody.Commands -> body.text ?: body.items.firstOrNull()?.label
@@ -1248,9 +1269,9 @@ internal class SessionScreens(
                 "${NoticeSurfaceContract.MAX_HISTORY_ENTRIES} entries, ${NoticeSurfaceContract.MAX_HISTORY_AGE_MS / 3_600_000} h."
 
         // The composer (plan 028a §9).
-        const val DICTATE = "Dictate"
-        const val TYPE = "Type"
-        const val SEND = "Send"
+        const val DICTATE = ComposerRules.DICTATE_LABEL
+        const val TYPE = ComposerRules.TYPE_LABEL
+        const val SEND = ComposerRules.SEND_LABEL
         const val HANDED_TO_APP = "handed to the app"
         const val DRAFT_NOT_SENT = "draft · not sent yet"
         const val DRAFT_KEPT = "draft kept"
@@ -1268,9 +1289,9 @@ internal class SessionScreens(
         const val FOCUS_START = "swipe choose · tap start"
         const val REPLACES_DRAFT = "replaces the draft for"
         const val BACK_READING = "back reading"
-        const val GLYPH_MIC = "mic"
-        const val GLYPH_KEYBOARD = "keyboard"
-        const val GLYPH_SEND = "send"
+        const val GLYPH_MIC = ComposerRules.GLYPH_MIC
+        const val GLYPH_KEYBOARD = ComposerRules.GLYPH_KEYBOARD
+        const val GLYPH_SEND = ComposerRules.GLYPH_SEND
         const val CONVERSATION_BLOCK = "conversation"
         const val DRAFT_BUBBLE = "draft"
         const val LIVE_BUBBLE = "live"

@@ -17,6 +17,7 @@ import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.ComposeDictateStart
 import com.anezium.rokidbus.shared.ComposeDictationReason
 import com.anezium.rokidbus.shared.ComposeTypeStart
+import com.anezium.rokidbus.shared.ComposerToolContext
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PageBody
 import com.anezium.rokidbus.shared.PageCorrelation
@@ -65,6 +66,8 @@ internal class SessionReducer(
      */
     private val ownerApp: (String) -> OpenApp? = { null },
     private val sessionClock: (() -> Long)? = null,
+    /** The owner's pinned applications, resolved against the catalog when a session opens. */
+    private val favourites: () -> List<FavouriteStop> = { emptyList() },
 ) {
     fun reduce(model: SessionModel, event: SessionEvent): SessionTransition {
         val reduced = when (event) {
@@ -294,7 +297,7 @@ internal class SessionReducer(
         if (event !is SessionEvent.TripleTap || model.noticeArmed || model.editableFocused || model.capture != null) return keep(model)
         val now = wallClock()
         val root = SessionState.Root(
-            RootStops.build(model.activities, model.history.rootPreview(now), model.history.visible(now).size),
+            RootStops.build(model.activities, model.history.rootPreview(now), model.history.visible(now).size, favourites()),
         )
         return SessionTransition(
             model.copy(
@@ -354,6 +357,7 @@ internal class SessionReducer(
                         stop.kind == RootStopKind.ACTIVITY && activity != null ->
                             activate(model, rootSite(state), activity, state, emptyList(), stop.pageId, event.nowMs)
                         stop.kind == RootStopKind.NOTICE_PREVIEW -> openNoticeStop(model, state, stop, event.nowMs)
+                        stop.favourite != null -> openFavourite(model, state, stop.favourite, event)
                         else -> openFrame(model, state, emptyList(), stop.pageId, null, event.nowMs)
                     }
                 } ?: keep(model)
@@ -445,7 +449,13 @@ internal class SessionReducer(
             else -> keep(model)
         }
 
-    private fun launch(model: SessionModel, state: SessionState, pluginId: String, nowMs: Long): SessionTransition {
+    private fun launch(
+        model: SessionModel,
+        state: SessionState,
+        pluginId: String,
+        nowMs: Long,
+        context: ComposerToolContext? = null,
+    ): SessionTransition {
         val token = model.nextId
         val deadline = nowMs + OPEN_TIMEOUT_MS
         return SessionTransition(
@@ -455,7 +465,7 @@ internal class SessionReducer(
                 // Opening the plugin again makes its next surface this open's answer, not a late one.
                 cancelledOpen = model.cancelledOpen - pluginId,
             ),
-            listOf(SessionEffect.SendLauncherOpen(pluginId, token), SessionEffect.ScheduleDeadline(deadline)),
+            listOf(SessionEffect.SendLauncherOpen(pluginId, token, context), SessionEffect.ScheduleDeadline(deadline)),
         )
     }
 
@@ -1156,7 +1166,9 @@ internal class SessionReducer(
             itemResolver.accepts(replacement)
         ) {
             val currentState = current.state as? SessionState.InPage ?: state
-            return replaceTopSnapshot(current, currentState, settled, status, replacement, nowMs)
+            // The replacement is the feedback: a bare "Done" would outlive the page it was about.
+            val replaced = settled.copy(outcome = outcome?.takeIf { it.message != null })
+            return replaceTopSnapshot(current, currentState, replaced, status, replacement, nowMs)
         }
         // A rejected or stale action keeps the page exactly as the wearer saw it.
         val currentState = current.state as? SessionState.InPage ?: state
@@ -1223,6 +1235,11 @@ internal class SessionReducer(
         if (!itemResolver.hasStableKeys()) {
             return withLayout.copy(selected = next.selected.coerceIn(0, entries.lastIndex.coerceAtLeast(0)))
         }
+        // Another template is another screen: a selection or tombstone carried over would resurface
+        // on rows the wearer never chose, such as a photo's Cancel over the next "Taking photo…".
+        if (before.retained()?.page?.template != page.template) {
+            return withLayout.copy(selected = 0, selectedKey = entries.firstOrNull()?.key, tombstone = null)
+        }
         val key = before.selectedKey
         if (before.tombstone != null) {
             return withLayout.copy(selected = before.selected.coerceIn(0, entries.size))
@@ -1250,11 +1267,12 @@ internal class SessionReducer(
         event: SessionEvent.DocumentPaged,
     ): SessionTransition {
         val top = state.frames.last()
-        // A conversation is read from its newest page, then where the wearer paged it to.
+        // A conversation opens at its end and follows it (a null anchor) until the wearer scrolls
+        // up, so a new message or a growing capture stays in view; scrolled up, it keeps its place.
         if (top.shownConversation() != null) {
             if (!describesTop(model, state, event.frame, event.pageId, event.revision) || event.pageStarts.isEmpty()) return keep(model)
             val page = if (top.anchor == null) event.pageStarts.lastIndex else event.anchorPage.coerceIn(0, event.pageStarts.lastIndex)
-            val frame = top.copy(pageStarts = event.pageStarts, page = page, anchor = top.anchor ?: event.pageStarts.last())
+            val frame = top.copy(pageStarts = event.pageStarts, page = page)
             return if (frame == top) keep(model) else SessionTransition(model.copy(state = state.withTop(frame)), listOf(ShowFrame))
         }
         // A report posted before the wearer went to the rows still describes what BACK returns to.
@@ -1510,6 +1528,18 @@ internal class SessionReducer(
      * The fresh-contact rule (plan 028a §5.3), for an Enter that would cause an effect. A v1 pair
      * keeps its behaviour; over the bundle the press must have begun after the target was drawn.
      */
+    /** A pinned application opens as its Applications row would: a page, a launch, or a local launch. */
+    private fun openFavourite(model: SessionModel, state: SessionState.Root, open: FavouriteOpen, event: SessionEvent.Enter): SessionTransition =
+        when (open) {
+            is FavouriteOpen.Page -> openFrame(
+                model, state, emptyList(), open.pageId, null, event.nowMs,
+                openApp = PageTemplateContract.namespaceOf(open.pageId)?.let(ownerApp),
+            )
+            is FavouriteOpen.Launch -> if (fresh(model, event)) launch(model, state, open.pluginId, event.nowMs) else keep(model)
+            is FavouriteOpen.Local ->
+                if (fresh(model, event)) SessionTransition(model, listOf(SessionEffect.LaunchLocal(open.key, open.label))) else keep(model)
+        }
+
     private fun fresh(model: SessionModel, event: SessionEvent.Enter): Boolean =
         !launcherActive() || SessionFocus.isFresh(model, event.pressStartMs)
 
@@ -1594,7 +1624,9 @@ internal class SessionReducer(
         if (top.pageStarts.isEmpty()) return keep(model)
         val target = (top.page + delta).coerceIn(0, top.pageStarts.lastIndex)
         if (target == top.page) return keep(model)
-        return SessionTransition(model.copy(state = state.withTop(top.copy(page = target, anchor = top.pageStarts[target]))), listOf(ShowFrame))
+        // Scrolled back to the end, the conversation follows it again.
+        val anchor = if (target == top.pageStarts.lastIndex) null else top.pageStarts[target]
+        return SessionTransition(model.copy(state = state.withTop(top.copy(page = target, anchor = anchor))), listOf(ShowFrame))
     }
 
     /**
@@ -1630,6 +1662,35 @@ internal class SessionReducer(
             ComposerRules.SEND -> send(model, state, top, status, body, view, event.nowMs)
             ComposerRules.DICTATE -> startCapture(model, state, top, body, view, CaptureKind.DICTATE)
             ComposerRules.TYPE -> startCapture(model, state, top, body, view, CaptureKind.TYPE)
+            else -> toolTap(model, state, top, status, body, focus.key, event.nowMs)
+        }
+    }
+
+    /**
+     * A plugin's composer tool (launcher bundle v5): its `plugin` action runs as any confirmed page
+     * action, bound to the shown revision; its `immersion` action opens the provider's immersion
+     * with the page, thread and tool it came from. Both leave the composer's focus.
+     */
+    private fun toolTap(
+        model: SessionModel,
+        state: SessionState.InPage,
+        top: Frame,
+        status: FrameStatus.Shown,
+        body: PageBody.Conversation,
+        key: String,
+        nowMs: Long,
+    ): SessionTransition {
+        val composer = body.composer ?: return keep(model)
+        val tool = ComposerRules.tool(key, composer) ?: return keep(model)
+        val action = status.snapshot.page.actions.firstOrNull { it.id == tool.actionId } ?: return keep(model)
+        val owner = PageTemplateContract.namespaceOf(top.pageId) ?: return keep(model)
+        val cleared = state.withTop(top.copy(composerFocus = null))
+        return when (action.kind) {
+            PageSurfaceContract.KIND_PLUGIN -> invoke(model.copy(state = cleared), cleared, status, action.id, nowMs)
+            PageSurfaceContract.KIND_IMMERSION -> launch(
+                model.copy(state = cleared), cleared, owner, nowMs,
+                ComposerToolContext(top.pageId, top.paramsJson, body.threadKey, tool.id, action.id),
+            )
             else -> keep(model)
         }
     }
@@ -1735,8 +1796,9 @@ internal class SessionReducer(
         if (model.generation != capture.generation || state.frames.size != capture.frameIndex || top.pageId != capture.pageId) return model
         val (_, body) = top.shownConversation() ?: return model
         val view = composerView(model, top, body)?.takeIf { it.available } ?: return model
-        val index = view.buttons.indexOf(ComposerRules.TYPE)
-        return model.copy(state = state.withTop(top.copy(composerFocus = ComposerFocus(ComposerRules.TYPE, index))))
+        // A page that hides Type falls back to whatever capture button it shows, else its first tool.
+        val key = listOf(ComposerRules.TYPE, ComposerRules.DICTATE).firstOrNull { it in view.buttons } ?: view.buttons.firstOrNull() ?: return model
+        return model.copy(state = state.withTop(top.copy(composerFocus = ComposerFocus(key, view.buttons.indexOf(key)))))
     }
 
     /**

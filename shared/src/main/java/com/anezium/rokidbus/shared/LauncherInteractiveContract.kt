@@ -12,10 +12,22 @@ package com.anezium.rokidbus.shared
  * superset of the one before it. Nothing in the bundle is active unless [negotiated] is at least 1.
  */
 object LauncherInteractiveContract {
-    const val VERSION = 4
+    const val VERSION = 8
     const val ACTIVITY_EVENTS_VERSION = 4
     const val ARTWORK_VERSION = 2
     const val IMAGE_ARTWORK_VERSION = 3
+
+    /** Composer tools, configurable built-in buttons and message thumbnails on conversation pages. */
+    const val COMPOSER_TOOLS_VERSION = 5
+
+    /** Full-page image previews, with ordinary page actions and no immersion. */
+    const val IMAGE_PAGES_VERSION = 6
+
+    /** A row's own `icon` (a small `mono1` mark) and pages-only Applications entries. */
+    const val ROW_ICONS_VERSION = 7
+
+    /** Launcher favourites: the owner's pinned applications on the root, set on the phone. */
+    const val FAVOURITES_VERSION = 8
 
     /** The version field in both hubs' capability payloads and in a page provider's `/system/hub/capabilities`. */
     const val CAPABILITY_FIELD_VERSION = "launcherInteractiveVersion"

@@ -129,6 +129,16 @@ class PluginRoutePolicyTest {
     }
 
     @Test
+    fun `no external caller sends launcher favourites, debug callers included`() {
+        listOf(PluginRouteCaller.DebugLegacy, plugin(), plugin(PluginCapability.SURFACES)).forEach { caller ->
+            assertEquals(
+                PluginRouteDecision.Denied("SYSTEM_ROUTE_DENIED"),
+                PluginRoutePolicy.authorize(caller, "/core/launcher/favourites"),
+            )
+        }
+    }
+
+    @Test
     fun `pending revoked ambiguous and unregistered callers fail closed`() {
         listOf(
             PluginRouteCaller.Pending,

@@ -140,6 +140,72 @@ class PhonePageBrokerLauncherTest {
     private fun invocations() = host.delivered.filter { it.second == BusPaths.PAGE_ACTION }.map { it.third }
     private fun capabilities() = host.delivered.filter { it.second == BusPaths.HUB_CAPABILITIES }.map { it.third }
 
+    private fun imagePage(revision: Long = 1): JSONObject = page(revision, "image",
+        com.anezium.rokidbus.shared.PageTemplateContract.encode(com.anezium.rokidbus.shared.PageBody.Image(
+            com.anezium.rokidbus.shared.LauncherArtwork(512, 512, java.util.Base64.getEncoder().encodeToString(ByteArray(32_768))), "Ready")),
+        JSONArray().put(action("send-photo")).put(action("retake")).put(action("cancel")))
+
+    @Test fun `v6 image pages validate and keep ordinary actions while malformed previews are rejected`() {
+        val registration = open(6)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, imagePage(), registration))
+        assertEquals("image", responses().last().getString("template"))
+        visible()
+        invoke("i1", "retake", mode = "confirmed")
+        assertEquals("retake", invocations().single().getString("actionId"))
+        val invalid = imagePage(2).apply { getJSONObject("body").getJSONObject("image").put("width", 513) }
+        assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, broker.onProvider(BusPaths.PAGE_RESPONSE, invalid, registration))
+        assertEquals(1, responses().size)
+    }
+
+    @Test fun `v5 glasses receive an inert summary for initial and replacement image pages`() {
+        val registration = open(5)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(), registration))
+        visible()
+        invoke("i1", "read", mode = "confirmed")
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, JSONObject().put("invocationId", "i1").put("status", "done")
+            .put("replacement", imagePage(2)), registration))
+        val replacement = host.glasses.last { it.first == BusPaths.PAGE_RESULT }.second.getJSONObject("replacement")
+        assertEquals("summary", replacement.getString("template"))
+        assertEquals(0, replacement.getJSONArray("actions").length())
+        assertFalse(replacement.getJSONObject("body").has("image"))
+        invoke("i2", "send-photo", mode = "confirmed", revision = 2)
+        assertEquals(1, invocations().size)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, imagePage(3), registration))
+        assertEquals("summary", responses().last().getString("template"))
+        assertEquals(0, responses().last().getJSONArray("actions").length())
+    }
+
+    @Test fun `page-only photo action may finish immediately and publish a leased preview after the action deadline`() {
+        val registration = open(6)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(actions = JSONArray().put(action("capture"))), registration))
+        visible()
+        invoke("i1", "capture", mode = "confirmed")
+        assertTrue(broker.holdsProviderBinding("relay"))
+        assertEquals(PluginRouteDecision.Allowed, PluginRoutePolicy.authorize(
+            PluginRouteCaller.Plugin("relay", setOf(PluginCapability.SURFACES, PluginCapability.CAMERA)), BusPaths.CAMERA_SNAPSHOT_REQUEST))
+        assertTrue(PluginRoutePolicy.authorize(PluginRouteCaller.Plugin("relay", setOf(PluginCapability.SURFACES)),
+            BusPaths.CAMERA_SNAPSHOT_REQUEST) is PluginRouteDecision.Denied)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESULT, JSONObject().put("invocationId", "i1").put("status", "done")
+            .put("replacement", page(2, "summary", JSONObject().put("primary", "Capturing…"), JSONArray())), registration))
+        host.now += PageSurfaceContract.PAGE_TIMEOUT_MS + 1
+        broker.onTick()
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, imagePage(3), registration))
+        assertEquals("image", responses().last().getString("template"))
+        host.now += PageSurfaceContract.LEASE_MS
+        broker.onTick()
+        assertEquals(PhonePageBroker.ERROR_PAGE_NOT_REQUESTED, broker.onProvider(BusPaths.PAGE_RESPONSE, imagePage(4), registration))
+        assertFalse(host.delivered.any { it.second == BusPaths.PLUGIN_OPEN })
+    }
+
+    @Test fun `full image preview fails closed when only the control link remains`() {
+        val registration = open(6)
+        host.controlOnly = true
+        broker.onProvider(BusPaths.PAGE_RESPONSE, imagePage(), registration)
+        assertTrue(host.artworkRejections > 0)
+        assertFalse(responses().any { it.optString("template") == "image" })
+        assertFalse(broker.holdsProviderBinding("relay"))
+    }
+
     @Test
     fun `render feedback needs the accepted route revision request frame lease and registration`() {
         val registration = open()
@@ -495,4 +561,117 @@ class PhonePageBrokerLauncherTest {
         assertTrue(host.delivered.none { it.second == BusPaths.PAGE_CLOSED })
     }
 
+
+    // ---- launcher bundle v5: composer tools and message thumbnails -------------------------
+
+    private fun toolsConversation() = JSONObject()
+        .put("threadKey", "thread-1")
+        .put(
+            "messages",
+            JSONArray()
+                .put(JSONObject().put("id", "m1").put("role", "received").put("text", "Look").put("image", thumb().toJson()))
+                .put(JSONObject().put("id", "m2").put("role", "ours").put("text", "Nice")),
+        )
+        .put(
+            "composer",
+            JSONObject().put("recipient", "Mika").put("sendActionId", "send").put("maxChars", 200).put("replyable", true)
+                .put("tools", JSONArray().put(JSONObject().put("id", "photo").put("label", "Photo").put("actionId", "camera").put("glyph", "camera"))
+                    .put(JSONObject().put("id", "like").put("label", "Like").put("actionId", "like")))
+                .put("layout", JSONArray().put("photo").put("dictate").put("send").put("like"))
+                .put("typeLabel", "Write"),
+        )
+
+    private fun toolsActions() = JSONArray()
+        .put(action("send", typed = "compose.send"))
+        .put(JSONObject().put("id", "camera").put("label", "Camera").put("kind", PageSurfaceContract.KIND_IMMERSION).put("confirm", false))
+        .put(action("like"))
+
+    private fun thumb() = com.anezium.rokidbus.shared.LauncherArtwork(8, 8, java.util.Base64.getEncoder().encodeToString(ByteArray(8) { 0x55 }))
+
+    @Test
+    fun `v5 glasses get the composer tools and thumbnails as the provider sent them`() {
+        val registration = open(launcher = 5)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(template = PageSurfaceContract.TEMPLATE_CONVERSATION, body = toolsConversation(), actions = toolsActions()), registration))
+        val body = responses().single().getJSONObject("body")
+        val composer = body.getJSONObject("composer")
+        assertEquals(2, composer.getJSONArray("tools").length())
+        assertEquals("photo", composer.getJSONArray("layout").getString(0))
+        assertEquals("Write", composer.getString("typeLabel"))
+        assertEquals("mono1", body.getJSONArray("messages").getJSONObject(0).getJSONObject("image").getString("encoding"))
+        visible()
+        // A plugin tool is an ordinary confirmed plugin action; the send still needs the composer.
+        invoke("i1", "like")
+        assertEquals(PageSurfaceContract.MODE_CONFIRMED, invocations().single().optString("mode", PageSurfaceContract.MODE_CONFIRMED))
+        invoke("i2", "send")
+        assertEquals(1, invocations().size)
+    }
+
+    private val rowMark = JSONObject().put("encoding", "mono1").put("width", 16).put("height", 16)
+        .put("data", java.util.Base64.getEncoder().encodeToString(ByteArray(32) { 0x3C }))
+
+    private fun iconList() = JSONObject().put("items", JSONArray().put(JSONObject().put("id", "wa").put("label", "WhatsApp").put("icon", rowMark)))
+
+    @Test
+    fun `v7 glasses get a row's icon as the provider sent it`() {
+        val registration = open(launcher = 7)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(body = iconList(), actions = JSONArray()), registration))
+        assertEquals("mono1", responses().single().getJSONObject("body").getJSONArray("items").getJSONObject(0).getJSONObject("icon").getString("encoding"))
+    }
+
+    @Test
+    fun `a malformed row icon is an invalid page where the icon is read`() {
+        val registration = open(launcher = 7)
+        val broken = iconList().apply { getJSONArray("items").getJSONObject(0).put("icon", "nope") }
+        assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, broker.onProvider(BusPaths.PAGE_RESPONSE, page(body = broken, actions = JSONArray()), registration))
+        assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, responses().single().getString("error"))
+    }
+
+    @Test
+    fun `glasses below v7 get the plain row`() {
+        val registration = open(launcher = 6)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(body = iconList(), actions = JSONArray()), registration))
+        val row = responses().single().getJSONObject("body").getJSONArray("items").getJSONObject(0)
+        assertFalse(row.has("icon"))
+        assertEquals("WhatsApp", row.getString("label"))
+    }
+
+    @Test
+    fun `glasses below v5 get the default bar and text-only bubbles`() {
+        val registration = open(launcher = 4)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(template = PageSurfaceContract.TEMPLATE_CONVERSATION, body = toolsConversation(), actions = toolsActions()), registration))
+        val body = responses().single().getJSONObject("body")
+        val composer = body.getJSONObject("composer")
+        listOf("tools", "layout", "typeLabel").forEach { assertFalse(it, composer.has(it)) }
+        assertEquals("Mika", composer.getString("recipient"))
+        assertFalse(body.getJSONArray("messages").getJSONObject(0).has("image"))
+        assertEquals("Look", body.getJSONArray("messages").getJSONObject(0).getString("text"))
+    }
+
+    @Test
+    fun `a tool naming the send makes the page invalid`() {
+        val registration = open(launcher = 5)
+        val sendTool = toolsConversation().apply {
+            getJSONObject("composer").put("tools", JSONArray().put(JSONObject().put("id", "again").put("label", "Again").put("actionId", "send"))).remove("layout")
+        }
+        assertEquals(
+            PageSurfaceContract.ERROR_INVALID_PAGE,
+            broker.onProvider(BusPaths.PAGE_RESPONSE, page(template = PageSurfaceContract.TEMPLATE_CONVERSATION, body = sendTool, actions = toolsActions()), registration),
+        )
+        assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, responses().single().getString("error"))
+    }
+
+    @Test
+    fun `a tool naming a hub action makes the page invalid`() {
+        val registration = open(launcher = 5)
+        val hubTool = toolsConversation().apply {
+            getJSONObject("composer").put("tools", JSONArray().put(JSONObject().put("id", "h").put("label", "Hub").put("actionId", "hub"))).remove("layout")
+        }
+        val withHub = JSONArray().put(action("send", typed = "compose.send"))
+            .put(JSONObject().put("id", "hub").put("label", "Hub").put("kind", PageSurfaceContract.KIND_HUB).put("confirm", false))
+        assertEquals(
+            PageSurfaceContract.ERROR_INVALID_PAGE,
+            broker.onProvider(BusPaths.PAGE_RESPONSE, page(template = PageSurfaceContract.TEMPLATE_CONVERSATION, body = hubTool, actions = withHub), registration),
+        )
+        assertEquals(PageSurfaceContract.ERROR_INVALID_PAGE, responses().single().getString("error"))
+    }
 }

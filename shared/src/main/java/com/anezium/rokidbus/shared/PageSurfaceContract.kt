@@ -151,6 +151,7 @@ object PageSurfaceContract {
     const val TEMPLATE_MEDIA = "media"
     const val TEMPLATE_ROUTE = "route"
     const val TEMPLATE_INK = "ink"
+    const val TEMPLATE_IMAGE = "image"
 
     const val ERROR_INVALID_PAGE_REQUEST = "INVALID_PAGE_REQUEST"
     const val ERROR_INVALID_PAGE = "INVALID_PAGE"
@@ -177,7 +178,7 @@ object PageSurfaceContract {
 
     val templates: Set<String> = setOf(
         TEMPLATE_SUMMARY, TEMPLATE_SELECTABLE_LIST, TEMPLATE_DOCUMENT, TEMPLATE_COMMANDS,
-        TEMPLATE_CONVERSATION, TEMPLATE_MEDIA, TEMPLATE_ROUTE, TEMPLATE_INK,
+        TEMPLATE_CONVERSATION, TEMPLATE_MEDIA, TEMPLATE_ROUTE, TEMPLATE_INK, TEMPLATE_IMAGE,
     )
     val errors: Set<String> = setOf(
         ERROR_INVALID_PAGE_REQUEST, ERROR_INVALID_PAGE, ERROR_PAGE_TOO_LARGE, ERROR_PAGE_TIMEOUT,
@@ -388,6 +389,22 @@ object PageSurfaceContract {
             }
         },
     )
+
+    /** Older pairs receive no image bytes or actions that could send an unseen photo. */
+    fun stripImagePages(payload: JSONObject, negotiatedVersion: Int): JSONObject {
+        if (negotiatedVersion >= LauncherInteractiveContract.IMAGE_PAGES_VERSION) return payload
+        return rewrite(payload, editAction = {}, editPage = { page ->
+            if (page.optString("template") == TEMPLATE_IMAGE) {
+                val caption = page.optJSONObject("body")?.opt("caption") as? String
+                page.put("template", TEMPLATE_SUMMARY)
+                page.put("body", JSONObject().put("primary", "Image preview unavailable")
+                    .put("text", "Update both Nexus hubs to preview this image.").apply {
+                        caption?.let { put("secondary", it) }
+                    })
+                page.put("actions", JSONArray())
+            }
+        })
+    }
 
     /** Edits a copy: every action and the page itself, and the same in a result's replacement. */
     private fun rewrite(

@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.ComposerToolContract
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.plugin.PluginCloseTypes
 import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
@@ -26,9 +27,14 @@ data class ExternalPluginOpenFollowUp(
     val extra: () -> JSONObject = { JSONObject() },
 )
 
+/**
+ * [context] rides on the open as `context`: the encoded [com.anezium.rokidbus.shared.ComposerToolContext]
+ * of a [PluginOpenTypes.COMPOSER_TOOL] open, already checked against the plugin's own pages.
+ */
 data class ExternalPluginOpenRequest(
     val type: String = PluginOpenTypes.OPEN,
     val followUp: ExternalPluginOpenFollowUp? = null,
+    val context: JSONObject? = null,
 )
 
 class ExternalPluginController(
@@ -363,7 +369,8 @@ class ExternalPluginController(
         request: ExternalPluginOpenRequest,
         generation: Long,
     ): Boolean {
-        if (!deliver(principal, BusPaths.PLUGIN_OPEN, request.type)) return false
+        val extra = request.context?.let { JSONObject().put(ComposerToolContract.FIELD_CONTEXT, JSONObject(it.toString())) } ?: JSONObject()
+        if (!deliver(principal, BusPaths.PLUGIN_OPEN, request.type, extra)) return false
         request.followUp?.let { followUp ->
             if (!deliver(principal, followUp.path, followUp.type, followUp.extra())) return false
         }

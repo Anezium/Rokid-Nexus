@@ -285,7 +285,7 @@ internal class SessionScreenView(
 
     private fun paramsFor(block: ScreenBlock): SessionViewport.Params = when (block) {
         is ScreenBlock.Document -> SessionViewport.Params(fill = true, side = PageStyle.TEXT_SIDE_PX)
-        is ScreenBlock.Conversation -> SessionViewport.Params(fill = true)
+        is ScreenBlock.Conversation, is ScreenBlock.Image -> SessionViewport.Params(fill = true)
         is ScreenBlock.Text, is ScreenBlock.Fact, is ScreenBlock.Maneuver -> SessionViewport.Params(side = PageStyle.TEXT_SIDE_PX)
         is ScreenBlock.Progress -> SessionViewport.Params(side = 140)
         is ScreenBlock.Map -> if (block.size == MapSize.FULL) SessionViewport.Params(fill = true, side = 0) else SessionViewport.Params()
@@ -301,6 +301,7 @@ internal class SessionScreenView(
         is ScreenBlock.Document -> documentView(block)
         is ScreenBlock.Conversation -> conversationView(block)
         is ScreenBlock.Media -> LauncherBlocks.media(context, icons, block)
+        is ScreenBlock.Image -> ImageBlockView(context, block)
         is ScreenBlock.Controls -> CommandStripView(context, icons).apply { bind(block.strip) }
         is ScreenBlock.Maneuver -> LauncherBlocks.maneuver(context, icons, block, if (chromeless) ManeuverScale.FULL else ManeuverScale.PAGE)
         is ScreenBlock.Map -> LauncherBlocks.map(context, block)

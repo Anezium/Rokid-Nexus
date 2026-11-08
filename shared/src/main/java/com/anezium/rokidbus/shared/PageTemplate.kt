@@ -13,7 +13,9 @@ sealed interface PageTarget {
 
 /**
  * A row. Without a [target] it is readable but inert; a disabled row is inert too. [checked] draws
- * a checkbox mark and is meant for a row whose target is an action typed `setChecked`.
+ * a checkbox mark and is meant for a row whose target is an action typed `setChecked`. [icon]
+ * (launcher bundle v7) is a small `mono1` mark drawn left of the label in the row's tone, at most
+ * [PageTemplateContract.MAX_ROW_ICON_EDGE] pixels on each side; older pairs draw the row without it.
  */
 data class PageRow(
     val id: String,
@@ -22,6 +24,7 @@ data class PageRow(
     val enabled: Boolean = true,
     val target: PageTarget? = null,
     val checked: Boolean? = null,
+    val icon: LauncherArtwork? = null,
 )
 
 data class PageFact(val id: String, val label: String, val value: String)
@@ -53,18 +56,63 @@ enum class ConversationMessageStatus(val wire: String) {
     UNCONFIRMED("unconfirmed"),
 }
 
+/**
+ * [image] is a bounded thumbnail drawn in the bubble above the text (launcher bundle v5); the
+ * text may then be empty. See [PageTemplateContract.MAX_MESSAGE_IMAGES] for the page budget.
+ */
 data class ConversationMessage(
     val id: String,
     val role: ConversationRole,
     val text: String,
     val sender: String? = null,
     val status: ConversationMessageStatus? = null,
+    val image: LauncherArtwork? = null,
 )
+
+/**
+ * A plugin button in the composer bar (launcher bundle v5). [actionId] names one of the page's
+ * actions: a `plugin` one is invoked in confirmed mode on a fresh tap; an `immersion` one opens
+ * the provider's immersion with a [ComposerToolContext] naming this page, thread and tool.
+ * [glyph] is an optional shared glyph name; a hub that does not know it draws the label alone.
+ */
+data class ComposerTool(
+    val id: String,
+    val label: String,
+    val actionId: String,
+    val glyph: String? = null,
+)
+
+/** One place in the composer bar, left to right. */
+sealed interface ComposerSlot {
+    val wire: String
+
+    data object Dictate : ComposerSlot {
+        override val wire: String get() = PageTemplateContract.SLOT_DICTATE
+    }
+
+    data object Type : ComposerSlot {
+        override val wire: String get() = PageTemplateContract.SLOT_TYPE
+    }
+
+    data object Send : ComposerSlot {
+        override val wire: String get() = PageTemplateContract.SLOT_SEND
+    }
+
+    data class Tool(val toolId: String) : ComposerSlot {
+        override val wire: String get() = toolId
+    }
+}
 
 /**
  * The hub composer a conversation page offers. [sendActionId] names the page action typed
  * `compose.send`; [replyable] false keeps the text but withholds Send, with the optional
  * [unavailableText] and [unavailableSub] in the hub's own line.
+ *
+ * Launcher bundle v5 adds plugin [tools] in the bar, an optional [layout] ordering the bar's
+ * slots (a built-in Dictate or Type left out of it is hidden; Send is always drawn, first when
+ * left out), and bounded labels for the built-in buttons. Send stays the hub's: it exists only
+ * once the wearer has seen a draft, and a replyable composer keeps at least one of Dictate and
+ * Type so a draft can be made. Older pairs ignore all of these and draw the default bar.
  */
 data class ConversationComposer(
     val recipient: String,
@@ -73,7 +121,23 @@ data class ConversationComposer(
     val replyable: Boolean,
     val unavailableText: String? = null,
     val unavailableSub: String? = null,
-)
+    val tools: List<ComposerTool> = emptyList(),
+    val layout: List<ComposerSlot>? = null,
+    val dictateLabel: String? = null,
+    val typeLabel: String? = null,
+    val sendLabel: String? = null,
+) {
+    /** The bar in order: [layout] with Send first when it left Send out, else Send, Dictate, Type, then the tools. */
+    fun slots(): List<ComposerSlot> {
+        val declared = layout ?: return listOf(ComposerSlot.Send, ComposerSlot.Dictate, ComposerSlot.Type) + tools.map { ComposerSlot.Tool(it.id) }
+        return if (ComposerSlot.Send in declared) declared else listOf(ComposerSlot.Send) + declared
+    }
+
+    val showsDictate: Boolean get() = ComposerSlot.Dictate in slots()
+    val showsType: Boolean get() = ComposerSlot.Type in slots()
+
+    fun tool(toolId: String): ComposerTool? = tools.firstOrNull { it.id == toolId }
+}
 
 enum class MediaPlaybackState(val wire: String) {
     PLAYING("playing"),
@@ -112,6 +176,12 @@ data class RouteRibbon(
 sealed interface PageBody {
     val template: String
     val items: List<PageRow>
+
+    /** Launcher v6: one image, the envelope's title/actions, and an optional caption. */
+    data class Image(val image: LauncherArtwork, val caption: String? = null) : PageBody {
+        override val template: String get() = PageSurfaceContract.TEMPLATE_IMAGE
+        override val items: List<PageRow> get() = emptyList()
+    }
 
     data class Summary(
         val primary: String? = null,
@@ -204,7 +274,8 @@ sealed interface PageBody {
  * keeps treating `body` as opaque; this decoder is the second check, run before a body is drawn
  * or a row is acted on. The base four templates are always decoded. `conversation`, `media` and
  * `route` are decoded only between hubs that negotiated the launcher bundle (`extended`); without
- * it they, and `ink` always, are valid envelopes this decoder reports as unsupported. Lengths count
+ * it they, and `ink` always, are valid envelopes this decoder reports as unsupported. `image`
+ * requires launcher v6. Lengths count
  * UTF-16 code units, as the envelope's own title and label limits do.
  */
 object PageTemplateContract {
@@ -220,6 +291,11 @@ object PageTemplateContract {
 
     const val FIELD_CHECKED = "checked"
 
+    // Rows, launcher bundle v7: a row's own mark.
+    const val FIELD_ICON = "icon"
+    /** A row icon is `mono1` only, so it takes the row's tone like a glyph; at most 32 px a side. */
+    const val MAX_ROW_ICON_EDGE = 32
+
     // Conversation.
     const val MAX_CAPTION_CHARS = 64
     const val MAX_MESSAGES = 64
@@ -227,6 +303,22 @@ object PageTemplateContract {
     const val MAX_MESSAGE_TEXT_CHARS = 2_000
     const val MAX_RECIPIENT_CHARS = 48
     const val MAX_UNAVAILABLE_CHARS = 64
+
+    // Conversation, launcher bundle v5: composer tools and message thumbnails.
+    const val MAX_COMPOSER_TOOLS = 3
+    /** A tool's label and the built-in buttons' labels: the bar holds up to six buttons on 480 px. */
+    const val MAX_COMPOSER_LABEL_CHARS = 12
+    const val MAX_TOOL_GLYPH_CHARS = 32
+    /** Thumbnails per page, each at most [MAX_MESSAGE_IMAGE_EDGE] px and [MAX_MESSAGE_IMAGE_BYTES] bytes. */
+    const val MAX_MESSAGE_IMAGES = 4
+    const val MAX_MESSAGE_IMAGE_EDGE = 160
+    const val MAX_MESSAGE_IMAGE_BYTES = 12_288
+    /** All of a page's thumbnails decoded together, so half the 64 KiB page stays for its text. */
+    const val MAX_MESSAGE_IMAGES_TOTAL_BYTES = 32_768
+    const val SLOT_DICTATE = "dictate"
+    const val SLOT_TYPE = "type"
+    const val SLOT_SEND = "send"
+    val reservedSlots: Set<String> = setOf(SLOT_DICTATE, SLOT_TYPE, SLOT_SEND)
 
     // Media.
     const val MAX_MEDIA_TEXT_CHARS = 120
@@ -257,17 +349,22 @@ object PageTemplateContract {
         PageSurfaceContract.TEMPLATE_COMMANDS,
     )
 
-    /** The base templates plus the launcher bundle's bodies. `ink` stays reserved either way. */
+    /** The base templates plus this build's whole launcher bundle. `ink` stays reserved. */
     val extendedTemplates: Set<String> = supportedTemplates + setOf(
         PageSurfaceContract.TEMPLATE_CONVERSATION,
         PageSurfaceContract.TEMPLATE_MEDIA,
         PageSurfaceContract.TEMPLATE_ROUTE,
+        PageSurfaceContract.TEMPLATE_IMAGE,
     )
 
     /** What a pair draws: [extendedTemplates] once it negotiated the launcher bundle. */
     fun supportedTemplates(extended: Boolean): Set<String> = if (extended) extendedTemplates else supportedTemplates
 
-    fun isSupported(template: String, extended: Boolean = false): Boolean = template in supportedTemplates(extended)
+    fun isSupported(template: String, extended: Boolean = false): Boolean = isSupported(template, versionOf(extended))
+
+    fun isSupported(template: String, launcherVersion: Int): Boolean =
+        if (template == PageSurfaceContract.TEMPLATE_IMAGE) launcherVersion >= LauncherInteractiveContract.IMAGE_PAGES_VERSION
+        else template in supportedTemplates(launcherVersion >= 1)
 
     /** A provider's conventional entry page. */
     fun mainPageId(pluginId: String): String = "$pluginId:$MAIN_PAGE"
@@ -330,7 +427,19 @@ object PageTemplateContract {
         namespace: String?,
         extended: Boolean = false,
     ): PageSurfaceValidationResult<PageBody> =
-        decode(page.template, page.bodyJson, page.actions, namespace, extended)
+        decode(page, namespace, versionOf(extended))
+
+    /**
+     * [decode] over a pair running launcher bundle [launcherVersion]: 0 draws the base four
+     * templates only; a version below [LauncherInteractiveContract.COMPOSER_TOOLS_VERSION]
+     * ignores the composer tools, labels, layout and message images, as an older hub would.
+     */
+    fun decode(
+        page: PageSurfaceResponse.Page,
+        namespace: String?,
+        launcherVersion: Int,
+    ): PageSurfaceValidationResult<PageBody> =
+        decodeTyped(page.template, page.bodyJson, page.actions.associate { it.id to ActionFacts(it.kind, it.typed) }, namespace, launcherVersion)
 
     /**
      * A decode that only knows the action ids. Bodies whose rules depend on action types (the
@@ -343,7 +452,7 @@ object PageTemplateContract {
         namespace: String?,
         extended: Boolean = false,
     ): PageSurfaceValidationResult<PageBody> =
-        decodeTyped(template, bodyJson, actionIds.associateWith<String, PageActionType?> { null }, namespace, extended)
+        decodeTyped(template, bodyJson, actionIds.associateWith { ActionFacts(null, null) }, namespace, versionOf(extended))
 
     fun decode(
         template: String,
@@ -352,20 +461,43 @@ object PageTemplateContract {
         namespace: String?,
         extended: Boolean = false,
     ): PageSurfaceValidationResult<PageBody> =
-        decodeTyped(template, bodyJson, actions.associate { it.id to it.typed }, namespace, extended)
+        decode(template, bodyJson, actions, namespace, versionOf(extended))
+
+    fun decode(
+        template: String,
+        bodyJson: String,
+        actions: List<PageSurfaceAction>,
+        namespace: String?,
+        launcherVersion: Int,
+    ): PageSurfaceValidationResult<PageBody> =
+        decodeTyped(template, bodyJson, actions.associate { it.id to ActionFacts(it.kind, it.typed) }, namespace, launcherVersion)
+
+    /** The boolean form means this build's whole bundle; callers that know the pair's version pass it. */
+    private fun versionOf(extended: Boolean): Int = if (extended) LauncherInteractiveContract.VERSION else 0
+
+    /** What the decoder knows of an envelope action: its kind when the caller had it, and its type. */
+    private data class ActionFacts(val kind: String?, val typed: PageActionType?)
 
     private fun decodeTyped(
         template: String,
         bodyJson: String,
-        actionTypes: Map<String, PageActionType?>,
+        actions: Map<String, ActionFacts>,
         namespace: String?,
-        extended: Boolean,
+        launcherVersion: Int,
     ): PageSurfaceValidationResult<PageBody> = try {
-        if (!isSupported(template, extended)) fail("template $template is not available on this hub")
+        if (!isSupported(template, launcherVersion)) fail("template $template is not available on this hub")
         val body = JSONObject(bodyJson)
-        val reader = Reader(actionTypes, namespace)
+        val reader = Reader(
+            actions, namespace,
+            composerTools = launcherVersion >= LauncherInteractiveContract.COMPOSER_TOOLS_VERSION,
+            rowIcons = launcherVersion >= LauncherInteractiveContract.ROW_ICONS_VERSION,
+        )
         PageSurfaceValidationResult.Valid(
             when (template) {
+                PageSurfaceContract.TEMPLATE_IMAGE -> PageBody.Image(
+                    image = LauncherArtwork.parse(body.opt("image"), fullPage = true) ?: fail("image is required"),
+                    caption = reader.optionalText(body, "caption", MAX_DETAIL_CHARS),
+                )
                 PageSurfaceContract.TEMPLATE_SUMMARY -> PageBody.Summary(
                     primary = reader.optionalText(body, "primary", MAX_PRIMARY_CHARS),
                     secondary = reader.optionalText(body, "secondary", MAX_DETAIL_CHARS),
@@ -402,6 +534,10 @@ object PageTemplateContract {
     /** The wire form of [body]; [decode] of it, with the same actions and namespace, gives [body] back. */
     fun encode(body: PageBody): JSONObject = JSONObject().apply {
         when (body) {
+            is PageBody.Image -> {
+                put("image", body.image.toJson())
+                body.caption?.let { put("caption", it) }
+            }
             is PageBody.Summary -> {
                 body.primary?.let { put("primary", it) }
                 body.secondary?.let { put("secondary", it) }
@@ -438,6 +574,7 @@ object PageTemplateContract {
                                 JSONObject().put("id", message.id).put("role", message.role.wire).put("text", message.text).apply {
                                     message.sender?.let { put("sender", it) }
                                     message.status?.let { put("status", it.wire) }
+                                    message.image?.let { put("image", it.toJson()) }
                                 },
                             )
                         }
@@ -454,6 +591,24 @@ object PageTemplateContract {
                             .apply {
                                 composer.unavailableText?.let { put("unavailableText", it) }
                                 composer.unavailableSub?.let { put("unavailableSub", it) }
+                                if (composer.tools.isNotEmpty()) {
+                                    put(
+                                        "tools",
+                                        JSONArray().apply {
+                                            composer.tools.forEach { tool ->
+                                                put(
+                                                    JSONObject().put("id", tool.id).put("label", tool.label).put("actionId", tool.actionId).apply {
+                                                        tool.glyph?.let { put("glyph", it) }
+                                                    },
+                                                )
+                                            }
+                                        },
+                                    )
+                                }
+                                composer.layout?.let { layout -> put("layout", JSONArray().apply { layout.forEach { put(it.wire) } }) }
+                                composer.dictateLabel?.let { put("dictateLabel", it) }
+                                composer.typeLabel?.let { put("typeLabel", it) }
+                                composer.sendLabel?.let { put("sendLabel", it) }
                             },
                     )
                 }
@@ -514,6 +669,40 @@ object PageTemplateContract {
         }
     }
 
+    /**
+     * Removes from a conversation [body] what a pair below
+     * [LauncherInteractiveContract.COMPOSER_TOOLS_VERSION] has no words for: the composer's
+     * tools, layout and labels, and each message's image. The phone runs it before forwarding to
+     * older glasses and the SDK before sending to an older pair; a body of any other template is
+     * left alone.
+     */
+    /**
+     * Removes each row's `icon` from [body] for a pair below
+     * [LauncherInteractiveContract.ROW_ICONS_VERSION], which draws rows without a mark. The
+     * phone runs it before forwarding to older glasses and the SDK before sending to an older
+     * pair; a body without rows is left alone.
+     */
+    fun stripRowIcons(body: JSONObject, negotiatedVersion: Int) {
+        if (negotiatedVersion >= LauncherInteractiveContract.ROW_ICONS_VERSION) return
+        body.optJSONArray("items")?.let { items ->
+            for (index in 0 until items.length()) items.optJSONObject(index)?.remove(FIELD_ICON)
+        }
+    }
+
+    fun stripConversationExtras(body: JSONObject, negotiatedVersion: Int) {
+        if (negotiatedVersion >= LauncherInteractiveContract.COMPOSER_TOOLS_VERSION) return
+        body.optJSONObject("composer")?.let { composer ->
+            composer.remove("tools")
+            composer.remove("layout")
+            composer.remove("dictateLabel")
+            composer.remove("typeLabel")
+            composer.remove("sendLabel")
+        }
+        body.optJSONArray("messages")?.let { messages ->
+            for (index in 0 until messages.length()) messages.optJSONObject(index)?.remove("image")
+        }
+    }
+
     private fun encodeFacts(facts: List<PageFact>): JSONArray = JSONArray().apply {
         facts.forEach { put(JSONObject().put("id", it.id).put("label", it.label).put("value", it.value)) }
     }
@@ -535,12 +724,22 @@ object PageTemplateContract {
                         null -> Unit
                     }
                     row.checked?.let { put(FIELD_CHECKED, it) }
+                    row.icon?.let { put(FIELD_ICON, it.toJson()) }
                 },
             )
         }
     }
 
-    private class Reader(private val actionTypes: Map<String, PageActionType?>, private val namespace: String?) {
+    private class Reader(
+        private val actions: Map<String, ActionFacts>,
+        private val namespace: String?,
+        /** Whether the pair negotiated composer tools; without them their fields are ignored, as an older hub would. */
+        private val composerTools: Boolean,
+        /** Whether the pair negotiated row icons (v7); below it a row's `icon` is ignored, as an older hub would. */
+        private val rowIcons: Boolean = false,
+    ) {
+        private val actionTypes: Map<String, PageActionType?> = actions.mapValues { it.value.typed }
+
         fun items(body: JSONObject, required: Boolean): List<PageRow> {
             val array = array(body, "items", required) ?: return emptyList()
             check(array.length() <= MAX_ITEMS, "more than $MAX_ITEMS items")
@@ -553,10 +752,20 @@ object PageTemplateContract {
                     enabled = if (entry.has("enabled")) entry.opt("enabled") as? Boolean ?: fail("enabled must be a boolean") else true,
                     target = if (entry.has("target")) target(entry.opt("target")) else null,
                     checked = if (entry.has(FIELD_CHECKED)) entry.opt(FIELD_CHECKED) as? Boolean ?: fail("checked must be a boolean") else null,
+                    icon = rowIcon(entry, index),
                 )
             }
             unique(rows.map(PageRow::id), "item")
             return rows
+        }
+
+        /** A v7 row icon: a well-formed `mono1` artwork within [MAX_ROW_ICON_EDGE]; anything else is an invalid page. */
+        private fun rowIcon(entry: JSONObject, index: Int): LauncherArtwork? {
+            if (!rowIcons || !entry.has(FIELD_ICON) || entry.isNull(FIELD_ICON)) return null
+            val parsed = runCatching { LauncherArtwork.parse(entry.opt(FIELD_ICON)) }.getOrNull() ?: fail("items[$index] icon is malformed")
+            check(parsed.encoding == LauncherArtwork.MONO1, "items[$index] icon must be mono1")
+            check(parsed.width <= MAX_ROW_ICON_EDGE && parsed.height <= MAX_ROW_ICON_EDGE, "items[$index] icon exceeds $MAX_ROW_ICON_EDGE px")
+            return parsed
         }
 
         fun facts(body: JSONObject, limit: Int): List<PageFact> {
@@ -589,11 +798,26 @@ object PageTemplateContract {
         fun conversation(body: JSONObject): PageBody.Conversation {
             val array = array(body, "messages", required = true) ?: fail("messages is required")
             check(array.length() <= MAX_MESSAGES, "more than $MAX_MESSAGES messages")
+            var images = 0
+            var imageBytes = 0
             val messages = (0 until array.length()).map { index ->
                 val entry = array.opt(index) as? JSONObject ?: fail("messages[$index] must be an object")
                 val role = entry.opt("role") as? String ?: fail("message role must be a string")
                 val status = optionalText(entry, "status", MAX_ID_LIKE)?.let { wire ->
                     ConversationMessageStatus.entries.firstOrNull { it.wire == wire } ?: fail("message status $wire is unknown")
+                }
+                val image = if (composerTools && entry.has("image") && !entry.isNull("image")) {
+                    val parsed = runCatching { LauncherArtwork.parse(entry.opt("image")) }.getOrNull() ?: fail("messages[$index] image is malformed")
+                    check(parsed.width <= MAX_MESSAGE_IMAGE_EDGE && parsed.height <= MAX_MESSAGE_IMAGE_EDGE, "messages[$index] image exceeds $MAX_MESSAGE_IMAGE_EDGE px")
+                    val bytes = parsed.bytes().size
+                    check(bytes <= MAX_MESSAGE_IMAGE_BYTES, "messages[$index] image exceeds $MAX_MESSAGE_IMAGE_BYTES bytes")
+                    images += 1
+                    imageBytes += bytes
+                    check(images <= MAX_MESSAGE_IMAGES, "more than $MAX_MESSAGE_IMAGES message images")
+                    check(imageBytes <= MAX_MESSAGE_IMAGES_TOTAL_BYTES, "message images exceed $MAX_MESSAGE_IMAGES_TOTAL_BYTES bytes together")
+                    parsed
+                } else {
+                    null
                 }
                 ConversationMessage(
                     id = id(entry, "id"),
@@ -601,6 +825,7 @@ object PageTemplateContract {
                     text = text(entry, "text", MAX_MESSAGE_TEXT_CHARS),
                     sender = optionalText(entry, "sender", MAX_SENDER_CHARS),
                     status = status,
+                    image = image,
                 )
             }
             unique(messages.map(ConversationMessage::id), "message")
@@ -610,14 +835,25 @@ object PageTemplateContract {
                 check(actionTypes[sendActionId] is PageActionType.ComposeSend, "composer send action must be typed compose.send")
                 val maxChars = integer(entry, "maxChars")
                 check(maxChars in 1..PageSurfaceContract.MAX_COMPOSE_TEXT_CHARS, "composer maxChars must be 1..${PageSurfaceContract.MAX_COMPOSE_TEXT_CHARS}")
-                ConversationComposer(
+                val replyable = entry.opt("replyable") as? Boolean ?: fail("composer replyable must be a boolean")
+                val tools = if (composerTools) composerTools(entry) else emptyList()
+                val layout = if (composerTools) composerLayout(entry, tools) else null
+                val composer = ConversationComposer(
                     recipient = nonBlank(entry, "recipient", MAX_RECIPIENT_CHARS),
                     sendActionId = sendActionId,
                     maxChars = maxChars,
-                    replyable = entry.opt("replyable") as? Boolean ?: fail("composer replyable must be a boolean"),
+                    replyable = replyable,
                     unavailableText = optionalText(entry, "unavailableText", MAX_UNAVAILABLE_CHARS),
                     unavailableSub = optionalText(entry, "unavailableSub", MAX_UNAVAILABLE_CHARS),
+                    tools = tools,
+                    layout = layout,
+                    dictateLabel = if (composerTools) optionalLabel(entry, "dictateLabel") else null,
+                    typeLabel = if (composerTools) optionalLabel(entry, "typeLabel") else null,
+                    sendLabel = if (composerTools) optionalLabel(entry, "sendLabel") else null,
                 )
+                // Send only ever sends a draft the wearer has seen: a replyable bar keeps a way to make one.
+                check(!replyable || composer.showsDictate || composer.showsType, "a replyable composer keeps Dictate or Type")
+                composer
             }
             return PageBody.Conversation(
                 threadKey = id(body, "threadKey"),
@@ -626,6 +862,54 @@ object PageTemplateContract {
                 composer = composer,
             )
         }
+
+        /**
+         * The composer's tools: ids unique and never a built-in slot's name, labels bounded, each
+         * naming an envelope action that is a `plugin` one not typed `compose.send`, or an
+         * `immersion` one. An action whose kind the caller did not know passes as a plugin action.
+         */
+        private fun composerTools(composer: JSONObject): List<ComposerTool> {
+            val array = array(composer, "tools", required = false) ?: return emptyList()
+            check(array.length() <= MAX_COMPOSER_TOOLS, "more than $MAX_COMPOSER_TOOLS composer tools")
+            val tools = (0 until array.length()).map { index ->
+                val entry = array.opt(index) as? JSONObject ?: fail("tools[$index] must be an object")
+                val toolId = id(entry, "id")
+                check(toolId !in reservedSlots, "tool id $toolId is a built-in slot")
+                val actionId = id(entry, "actionId")
+                val action = actions[actionId] ?: fail("tool action $actionId is not one of the page's actions")
+                check(action.typed !is PageActionType.ComposeSend, "a tool cannot name a compose.send action")
+                check(
+                    action.kind == null || action.kind == PageSurfaceContract.KIND_PLUGIN || action.kind == PageSurfaceContract.KIND_IMMERSION,
+                    "tool action $actionId must be a plugin or immersion action",
+                )
+                val glyph = optionalText(entry, "glyph", MAX_TOOL_GLYPH_CHARS)?.also { glyph ->
+                    check(glyph.isNotEmpty() && glyph.all { it in 'a'..'z' || it in '0'..'9' || it == '-' }, "tool glyph must be a glyph name")
+                }
+                ComposerTool(toolId, nonBlank(entry, "label", MAX_COMPOSER_LABEL_CHARS), actionId, glyph)
+            }
+            unique(tools.map(ComposerTool::id), "tool")
+            return tools
+        }
+
+        /** The bar's order: built-in slot names and declared tool ids, each at most once, every tool present. */
+        private fun composerLayout(composer: JSONObject, tools: List<ComposerTool>): List<ComposerSlot>? {
+            val array = array(composer, "layout", required = false) ?: return null
+            val slots = (0 until array.length()).map { index ->
+                val wire = array.opt(index) as? String ?: fail("layout[$index] must be a string")
+                when (wire) {
+                    SLOT_DICTATE -> ComposerSlot.Dictate
+                    SLOT_TYPE -> ComposerSlot.Type
+                    SLOT_SEND -> ComposerSlot.Send
+                    else -> ComposerSlot.Tool(tools.firstOrNull { it.id == wire }?.id ?: fail("layout names unknown slot $wire"))
+                }
+            }
+            check(slots.toSet().size == slots.size, "layout repeats a slot")
+            check(tools.all { ComposerSlot.Tool(it.id) in slots }, "layout leaves out a declared tool")
+            return slots
+        }
+
+        private fun optionalLabel(composer: JSONObject, key: String): String? =
+            optionalText(composer, key, MAX_COMPOSER_LABEL_CHARS)?.also { check(it.isNotBlank(), "$key must contain text") }
 
         private fun mediaTime(body: JSONObject, key: String): Long? {
             if (!body.has(key) || body.isNull(key)) return null

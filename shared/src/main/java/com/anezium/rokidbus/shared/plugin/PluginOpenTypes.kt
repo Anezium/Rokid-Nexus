@@ -22,4 +22,11 @@ object PluginOpenTypes {
 
     /** The camera session opened for this plugin's frozen view. */
     const val CAMERA_SESSION = "camera_session_open"
+
+    /**
+     * A composer tool on one of this plugin's conversation pages opened its immersion. The
+     * message carries a `context` naming the page, its params, the thread and the tool
+     * (`ComposerToolContract`); a receiver that does not know this type opens as [OPEN].
+     */
+    const val COMPOSER_TOOL = "composer_tool"
 }

@@ -18,6 +18,7 @@ import com.anezium.rokidbus.client.HubTarget
 import com.anezium.rokidbus.client.PluginRegistrationResult
 import com.anezium.rokidbus.client.R
 import com.anezium.rokidbus.shared.BusConstants
+import com.anezium.rokidbus.shared.ComposerToolContext
 import com.anezium.rokidbus.shared.PageSurfaceContract
 import com.anezium.rokidbus.shared.QuickActionPolicyContract
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
@@ -155,10 +156,12 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
 
     final override fun onOpen() = onOpen(PluginOpenTypes.OPEN)
 
-    final override fun onOpen(openType: String) {
+    final override fun onOpen(openType: String) = onOpen(openType, null)
+
+    final override fun onOpen(openType: String, context: ComposerToolContext?) {
         sessionOpen = true
         promoteNexusSessionForeground()
-        onNexusOpen(openType)
+        onNexusOpen(openType, context)
     }
 
     final override fun onClose() {
@@ -249,6 +252,14 @@ abstract class NexusPluginService : Service(), NexusPluginCallbacks {
      * override this one instead to tell them apart.
      */
     protected open fun onNexusOpen(openType: String) = onNexusOpen()
+
+    /**
+     * [onNexusOpen] with the [context] of a [PluginOpenTypes.COMPOSER_TOOL] open: which
+     * conversation page, thread and tool launched this immersion (the Photo button of one chat,
+     * say), so it can come back to that thread. Null for every other open type. The default
+     * forwards to [onNexusOpen] with the type alone.
+     */
+    protected open fun onNexusOpen(openType: String, context: ComposerToolContext?) = onNexusOpen(openType)
 
     /** The last surface detached while this service's active microphone lease remains alive. */
     protected open fun onNexusBackground() = Unit

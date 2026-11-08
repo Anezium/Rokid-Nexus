@@ -247,6 +247,7 @@ object BusPaths {
 
     /** Phone to glasses: the user's quick-action approvals; see [QuickActionPolicyContract]. */
     const val CORE_POLICY_QUICK_ACTIONS = "/core/policy/quick-actions"
+    const val CORE_LAUNCHER_FAVOURITES = "/core/launcher/favourites"
 
     /** Composer capture engines; see [ComposeContract] for direction and payloads. */
     const val CORE_COMPOSE_DICTATE_START = "/core/compose/dictate/start"

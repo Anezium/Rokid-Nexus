@@ -76,7 +76,7 @@ class MainActivity : Activity() {
             // thread throws (swallowed by the hub's runCatching), so a launcher list that arrives
             // while this activity is already up would silently never render. Marshal to the UI.
             runOnUiThread {
-                launcherEntries = entries
+                launcherEntries = entries.filter { it.launchable }
                 selectedIndex = selectedIndex.coerceIn(0, (entries.size - 1).coerceAtLeast(0))
                 renderLauncher()
             }

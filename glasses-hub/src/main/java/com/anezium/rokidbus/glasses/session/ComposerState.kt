@@ -1,6 +1,9 @@
 package com.anezium.rokidbus.glasses.session
 
 import com.anezium.rokidbus.shared.ComposeContract
+import com.anezium.rokidbus.shared.ComposerSlot
+import com.anezium.rokidbus.shared.ComposerTool
+import com.anezium.rokidbus.shared.ConversationComposer
 import com.anezium.rokidbus.shared.ConversationMessage
 import com.anezium.rokidbus.shared.ConversationRole
 import com.anezium.rokidbus.shared.PageBody
@@ -61,15 +64,51 @@ internal data class ComposerFacts(
 
 /**
  * The composer's rules, shared by the reducer that acts and the screens that draw (plan 028a §7.2):
- * Send exists, first and focused first, only for a ready draft of this exact thread with no send
- * in flight; Type is focused first after an unconfirmed send, a lost draft reopened by a new
- * notice, or an unavailable microphone; Dictate otherwise.
+ * Send exists, and is focused first, only for a ready draft of this exact thread with no send in
+ * flight; Type is focused first after an unconfirmed send, a lost draft reopened by a new notice,
+ * or an unavailable microphone; Dictate otherwise. The bar's order, which built-ins it shows and
+ * the plugin's own tools come from the page's composer (launcher bundle v5); the default is Send,
+ * Dictate, Type.
  */
 internal object ComposerRules {
     /** Spaces keep the hub's keys out of every wire id. */
     const val DICTATE = "compose dictate"
     const val TYPE = "compose type"
     const val SEND = "compose send"
+
+    /** A plugin tool's key: the prefix, then its wire id. */
+    const val TOOL_PREFIX = "compose tool "
+
+    fun toolKey(toolId: String): String = TOOL_PREFIX + toolId
+
+    /** The tool id of a tool key, or null for a built-in button. */
+    fun toolId(key: String): String? = key.takeIf { it.startsWith(TOOL_PREFIX) }?.removePrefix(TOOL_PREFIX)
+
+    /** The tool a focused [key] stands for on [composer], or null. */
+    fun tool(key: String, composer: ConversationComposer): ComposerTool? = toolId(key)?.let(composer::tool)
+
+    /** What the button [key] reads: the page's label for it, else the hub's. */
+    fun label(key: String, composer: ConversationComposer?): String = when (key) {
+        SEND -> composer?.sendLabel ?: SEND_LABEL
+        TYPE -> composer?.typeLabel ?: TYPE_LABEL
+        DICTATE -> composer?.dictateLabel ?: DICTATE_LABEL
+        else -> composer?.let { tool(key, it) }?.label ?: key.removePrefix(TOOL_PREFIX)
+    }
+
+    /** The button's glyph: the hub's for its own, a tool's only when this build draws that name. */
+    fun glyph(key: String, composer: ConversationComposer?, known: (String) -> Boolean): String? = when (key) {
+        SEND -> GLYPH_SEND
+        TYPE -> GLYPH_KEYBOARD
+        DICTATE -> GLYPH_MIC
+        else -> composer?.let { tool(key, it) }?.glyph?.takeIf(known)
+    }
+
+    const val DICTATE_LABEL = "Dictate"
+    const val TYPE_LABEL = "Type"
+    const val SEND_LABEL = "Send"
+    const val GLYPH_MIC = "mic"
+    const val GLYPH_KEYBOARD = "keyboard"
+    const val GLYPH_SEND = "send"
 
     /** How long the final text of a finished capture is awaited before it is given up. */
     const val FINISH_TIMEOUT_MS = 8_000L
@@ -93,13 +132,23 @@ internal object ComposerRules {
             else -> null
         }
         val sendable = threadDraft?.state == DraftState.READY && pendingSend == null && unavailable == null
-        val buttons = listOfNotNull(SEND.takeIf { sendable }, DICTATE, TYPE)
+        val buttons = composer.slots().mapNotNull { slot ->
+            when (slot) {
+                ComposerSlot.Send -> SEND.takeIf { sendable }
+                ComposerSlot.Dictate -> DICTATE
+                ComposerSlot.Type -> TYPE
+                is ComposerSlot.Tool -> toolKey(slot.toolId)
+            }
+        }
         val typeFirst = threadDraft?.state == DraftState.UNCONFIRMED ||
             (threadDraft?.state == DraftState.AUTHORITY_LOST && threadDraft.reopened) || micUnavailable
+        // A hidden built-in hands its place to the other; with neither shown the bar starts on its first tool.
         val initial = when {
             sendable -> buttons.indexOf(SEND)
-            typeFirst -> buttons.indexOf(TYPE)
-            else -> buttons.indexOf(DICTATE)
+            typeFirst && TYPE in buttons -> buttons.indexOf(TYPE)
+            DICTATE in buttons -> buttons.indexOf(DICTATE)
+            TYPE in buttons -> buttons.indexOf(TYPE)
+            else -> 0
         }
         return ComposerView(buttons, initial, unavailable, threadDraft)
     }

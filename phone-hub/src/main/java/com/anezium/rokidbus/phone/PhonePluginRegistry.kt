@@ -5,6 +5,8 @@ import android.view.KeyEvent
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusEnvelope
 import com.anezium.rokidbus.shared.BusPaths
+import com.anezium.rokidbus.shared.ComposerToolContext
+import com.anezium.rokidbus.shared.ComposerToolContract
 import com.anezium.rokidbus.shared.EditableSurfaceContract
 import com.anezium.rokidbus.shared.GlyphContract
 import com.anezium.rokidbus.shared.PageSurfaceContract
@@ -14,6 +16,7 @@ import com.anezium.rokidbus.shared.plugin.NexusPlugin
 import com.anezium.rokidbus.shared.plugin.NexusPluginHost
 import com.anezium.rokidbus.shared.plugin.NexusSubscription
 import com.anezium.rokidbus.shared.plugin.PathRules
+import com.anezium.rokidbus.shared.plugin.PluginOpenTypes
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
@@ -33,6 +36,11 @@ class PhonePluginRegistry(
     glyphReader: ((PhonePluginPrincipal) -> List<GlyphContract.CustomGlyph>)? = null,
     /** The page version an approved entry provides; 0 for built-ins and plugins without pages. */
     private val pageVersion: (PluginCatalogEntry) -> Int = { it.principal?.descriptor?.pageSessionVersion ?: 0 },
+    /**
+     * Whether the glasses list a page provider that declares no full app (bundle v7). Older
+     * glasses read every entry as launchable, so such an entry is withheld from them.
+     */
+    private val pagesOnlyEntries: () -> Boolean = { false },
 ) : NexusPluginHost {
     private data class Subscription(
         val pathPrefix: String,
@@ -114,13 +122,24 @@ class PhonePluginRegistry(
             BusPaths.LAUNCHER_OPEN -> {
                 val pluginId = envelope.payload.optString("pluginId")
                     .ifBlank { envelope.payload.optString("id") }
-                val opened = open(pluginId)
+                // A composer tool's open names the page it came from; a context that is malformed or
+                // names another provider's page refuses the whole open rather than opening blind.
+                val hasContext = envelope.payload.has(ComposerToolContract.FIELD_CONTEXT)
+                val context = ComposerToolContract.parse(envelope.payload.opt(ComposerToolContract.FIELD_CONTEXT))
+                    ?.takeIf { pluginId.isNotBlank() && it.isOwnedBy(pluginId) }
+                val badContext = hasContext && context == null
+                val opened = !badContext && open(pluginId, context)
                 recordRemote(
                     pluginId = pluginId.ifBlank { null },
                     category = PluginBusJournal.Category.LAUNCHER,
                     path = envelope.path,
                     verdict = if (opened) PluginBusJournal.Verdict.OK else PluginBusJournal.Verdict.REJECTED,
-                    reason = if (opened) null else if (pluginId.isBlank()) "MISSING_PLUGIN_ID" else "OPEN_FAILED",
+                    reason = when {
+                        opened -> null
+                        pluginId.isBlank() -> "MISSING_PLUGIN_ID"
+                        badContext -> "BAD_CONTEXT"
+                        else -> "OPEN_FAILED"
+                    },
                 )
                 return opened
             }
@@ -163,6 +182,29 @@ class PhonePluginRegistry(
         return controller.adopt(principal)
     }
 
+    /**
+     * The Applications rows the glasses list: approved plugins that launch, plus page providers
+     * without a full app when [includePagesOnly]. The launcher list and the favourites picker
+     * both read this, so the owner can only pin what the glasses can show.
+     */
+    fun launcherApplications(includePagesOnly: Boolean = pagesOnlyEntries()): List<PhoneLauncherApplication> =
+        catalog().entries.mapNotNull { entry ->
+            if (entry.state != PluginCatalogState.BUILT_IN && entry.state != PluginCatalogState.ENABLED) return@mapNotNull null
+            val id = entry.id ?: return@mapNotNull null
+            val pages = pageVersion(entry)
+            // An enabled provider with `LAUNCHABLE=false` is an Applications entry whose row opens its pages.
+            if (!entry.launchable && !(includePagesOnly && pages > 0)) return@mapNotNull null
+            PhoneLauncherApplication(
+                id = id,
+                displayName = entry.displayName,
+                launchable = entry.launchable,
+                pageVersion = pages,
+                iconKey = entry.iconKey,
+                packageName = entry.principal?.packageName,
+                iconDrawableResId = entry.iconDrawableResId,
+            )
+        }
+
     fun syncLauncherList() {
         val catalog = catalog()
         send(
@@ -170,7 +212,7 @@ class PhonePluginRegistry(
             JSONObject().put(
                 "plugins",
                 JSONArray().also { array ->
-                    catalog.launchableEntries.forEach { entry ->
+                    launcherApplications().forEach { entry ->
                         array.put(
                             JSONObject()
                                 .put("id", entry.id)
@@ -178,9 +220,10 @@ class PhonePluginRegistry(
                                 .apply { entry.iconKey?.let { put("iconKey", it) } }
                                 .apply {
                                     // Absent means no pages, which is what an old glasses hub assumes anyway.
-                                    pageVersion(entry).takeIf { it > 0 }?.let {
+                                    entry.pageVersion.takeIf { it > 0 }?.let {
                                         put(PageSurfaceContract.CAPABILITY_FIELD_PAGE_SESSION_VERSION, it)
                                     }
+                                    if (!entry.launchable) put(FIELD_LAUNCHABLE, false)
                                 },
                         )
                     }
@@ -236,7 +279,8 @@ class PhonePluginRegistry(
         logger("plugin registered id=${plugin.id} display=${plugin.displayName}")
     }
 
-    private fun open(pluginId: String): Boolean {
+    /** [context] is a composer tool's, for an external plugin; a built-in plugin has no composer pages and ignores it. */
+    private fun open(pluginId: String, context: ComposerToolContext? = null): Boolean {
         val entry = catalog().entry(pluginId)?.takeIf { it.launchable } ?: return false
         val external = entry.principal
         if (external != null) {
@@ -246,7 +290,12 @@ class PhonePluginRegistry(
                 }
             }
             activePluginId = null
-            return externalController?.open(external) == true
+            val request = if (context != null) {
+                ExternalPluginOpenRequest(type = PluginOpenTypes.COMPOSER_TOOL, context = ComposerToolContract.encode(context))
+            } else {
+                ExternalPluginOpenRequest()
+            }
+            return externalController?.open(external, request) == true
         }
         externalController?.closeActive("built_in_opened")
         val plugin = entry.builtIn ?: pluginsById[pluginId]?.takeIf { it.launchable } ?: return false
@@ -398,5 +447,10 @@ class PhonePluginRegistry(
         if (!plugin.handlesBack) return outgoing
         if (outgoing === this) outgoing = JSONObject(toString())
         return outgoing.put("handlesBack", true)
+    }
+
+    companion object {
+        /** Absent means launchable; false marks a pages-only Applications entry (bundle v7). */
+        const val FIELD_LAUNCHABLE = "launchable"
     }
 }

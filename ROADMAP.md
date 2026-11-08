@@ -328,10 +328,26 @@ on its *Keep in activities* setting. The camera, an open Nexus launcher and
 an app set to hide all activities still take precedence. Plugins link to
 these settings through the SDK; they never choose visibility or duration.
 
-### Thirteen plugins, none of them built in
+### Glasses sound in your earbuds
+
+With earbuds or headphones on the phone, everything the glasses play, Hi
+Rokid's voice included, can play in them instead (2.2). The glasses capture
+their own output through the command bridge and stream it over a dedicated
+Bluetooth channel; they take their speaker back within seconds when the
+earbuds, the switch, the link or either hub goes away.
+
+### Favourites on the glasses home
+
+Up to four applications the wearer pins and orders on the phone sit under the
+activity cards (2.2): plugins, the camera or apps installed on the glasses, each
+opening exactly as it does from Applications. The list is a hub-to-hub setting
+no plugin can read or change.
+
+### Fourteen plugins, none of them built in
 
 Relay · Assistant · Navigation · Lens · Feeds · Transit · Lyrics · Media Deck
-· Photos Sync (deprecated) · Patcher · Wireless ADB · Tasker · Sample
+· Meta Messages · Photos Sync (deprecated) · Patcher · Wireless ADB · Tasker
+· Sample
 
 ---
 
@@ -389,9 +405,6 @@ Committed, not started, in this order.
 Directions for future updates, not commitments. Scope and timing are still
 open, and nothing here is shipped.
 
-- **Favourites under the activities.** Shortcuts to the plugins and apps used
-  most, pinned directly below the activity cards in the launcher, so they are
-  reached without going through Applications every time.
 - **Public-transport journeys in Navigation.** Which bus, metro or train to
   take, departure times, transfers and stops, planned by Navigation itself and
   shown through the same native route pages, maps and guidance island as a

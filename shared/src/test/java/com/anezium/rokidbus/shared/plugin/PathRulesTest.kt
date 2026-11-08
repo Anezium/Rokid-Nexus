@@ -45,6 +45,8 @@ class PathRulesTest {
         assertTrue(PathRules.isReserved("/core/navigation/request"))
         assertTrue(PathRules.isReserved("/core/pointer/command"))
         assertTrue(PathRules.isHubOnly("/tts/cancel"))
+        assertTrue(PathRules.isHubOnly("/core/launcher/favourites"))
+        assertTrue(PathRules.isReserved("/core/launcher/favourites"))
         assertTrue(PathRules.isReserved("/tts/cancel"))
         assertFalse(PathRules.isReserved("/launcherish"))
     }
