@@ -1338,13 +1338,10 @@ class BusHubService : Service() {
         skillsCoordinator = SkillsCoordinator(skillsHost, skillGrantStore)
         pluginRegistry = PhonePluginRegistry(
             context = applicationContext,
-            plugins = emptyList(),
             sendEnvelope = ::sendBuiltInPluginEnvelope,
-            capabilitiesProvider = ::capabilities,
             logger = { message -> log(message) },
             catalogProvider = {
                 PluginCatalog.build(
-                    builtIns = emptyList(),
                     candidates = pluginDiscovery.discover(),
                     registryFeed = registryClient.cachedSnapshot()?.feed
                         ?: RegistryFeed(RegistryClient.SUPPORTED_VERSION, emptyList()),
@@ -6291,7 +6288,7 @@ class BusHubService : Service() {
         fun launcherApplications(context: android.content.Context): List<PhoneLauncherApplication> =
             activeInstance?.pluginRegistry?.launcherApplications(includePagesOnly = true)
                 ?: pluginCatalog(context).entries.mapNotNull { entry ->
-                    if (entry.state != PluginCatalogState.BUILT_IN && entry.state != PluginCatalogState.ENABLED) return@mapNotNull null
+                    if (entry.state != PluginCatalogState.ENABLED) return@mapNotNull null
                     val id = entry.id ?: return@mapNotNull null
                     val pages = entry.principal?.descriptor?.pageSessionVersion ?: 0
                     if (!entry.launchable && pages == 0) return@mapNotNull null
@@ -6370,7 +6367,6 @@ class BusHubService : Service() {
             activeInstance?.pluginRegistry?.catalog()
                 ?: context.applicationContext.let { appContext ->
                     PluginCatalog.build(
-                        builtIns = emptyList(),
                         candidates = PhonePluginDiscovery(appContext.packageManager).discover(),
                         registryFeed = RegistryClient.create(appContext).cachedSnapshot()?.feed
                             ?: RegistryFeed(RegistryClient.SUPPORTED_VERSION, emptyList()),

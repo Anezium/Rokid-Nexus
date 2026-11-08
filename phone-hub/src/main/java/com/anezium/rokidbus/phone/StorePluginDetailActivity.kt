@@ -595,7 +595,6 @@ class StorePluginDetailActivity : Activity() {
     }
 
     private fun uninstallTarget(entry: StoreEntry): String? {
-        if (entry.localGrantState == PluginCatalogState.BUILT_IN) return null
         if (entry.state != StoreEntryState.INSTALLED &&
             entry.state != StoreEntryState.SIDELOADED &&
             entry.state != StoreEntryState.UPDATE_AVAILABLE

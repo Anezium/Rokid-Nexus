@@ -1,25 +1,13 @@
 package com.anezium.rokidbus.phone
 
 import android.content.ComponentName
-import com.anezium.rokidbus.shared.plugin.NexusInputEvent
-import com.anezium.rokidbus.shared.plugin.NexusPlugin
-import com.anezium.rokidbus.shared.plugin.NexusPluginHost
 import com.anezium.rokidbus.shared.plugin.PluginCapability
 import com.anezium.rokidbus.shared.plugin.PluginDescriptor
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PluginCatalogTest {
-    private class BuiltIn(override val id: String) : NexusPlugin {
-        override val displayName: String = id
-        override fun onRegister(host: NexusPluginHost) = Unit
-        override fun onOpen() = Unit
-        override fun onClose() = Unit
-        override fun onInput(event: NexusInputEvent) = Unit
-    }
-
     private fun principal(
         id: String = "hello",
         iconKey: String? = null,
@@ -43,11 +31,10 @@ class PluginCatalogTest {
     )
 
     @Test
-    fun `catalog merges built-in and approved external deterministically`() {
+    fun `catalog lists approved external plugins deterministically`() {
         val external = principal(iconKey = "star", iconDrawableResId = 2131230890)
         val catalog = PluginCatalog.build(
-            listOf(BuiltIn("lyrics")),
-            listOf(PhonePluginCandidate.Valid(external)),
+            listOf(PhonePluginCandidate.Valid(principal("lyrics")), PhonePluginCandidate.Valid(external)),
         ) { PluginGrantState.Approved(setOf(PluginCapability.SURFACES)) }
         assertEquals(listOf("hello", "lyrics"), catalog.launchableEntries.mapNotNull { it.id })
         assertEquals("dev.example.hello.hello.SettingsActivity", catalog.entry("hello")?.settingsComponent?.className)
@@ -63,41 +50,29 @@ class PluginCatalogTest {
             PluginGrantState.Disabled,
             PluginGrantState.Approved(emptySet()),
         ).forEach { state ->
-            assertTrue(PluginCatalog.build(emptyList(), listOf(candidate)) { state }.launchableEntries.isEmpty())
+            assertTrue(PluginCatalog.build(listOf(candidate)) { state }.launchableEntries.isEmpty())
         }
     }
 
     @Test
-    fun `built-in wins over stale external plugin with the same ID`() {
+    fun `external plugins with duplicate IDs are invalid and not launchable`() {
+        val first = principal("hello")
+        val second = first.copy(packageName = "dev.example.other")
         val catalog = PluginCatalog.build(
-            listOf(BuiltIn("hello")),
-            listOf(PhonePluginCandidate.Valid(principal("hello"))),
+            listOf(PhonePluginCandidate.Valid(first), PhonePluginCandidate.Valid(second)),
         ) { PluginGrantState.Approved(setOf(PluginCapability.SURFACES)) }
-        assertEquals(listOf("hello"), catalog.launchableEntries.mapNotNull { it.id })
-        assertEquals(1, catalog.entries.size)
-        assertEquals(PluginCatalogState.BUILT_IN, catalog.entry("hello")?.state)
+
+        assertEquals(2, catalog.entries.size)
+        assertTrue(catalog.entries.all { it.state == PluginCatalogState.INVALID && it.detail == "DUPLICATE_PLUGIN_ID" })
+        assertTrue(catalog.launchableEntries.isEmpty())
+        assertEquals(null, catalog.entry("hello"))
     }
 
     @Test
-    fun `transit remains built in when stale APK is installed`() {
-        val withoutTransitApk = PluginCatalog.build(listOf(BuiltIn("lyrics"), BuiltIn("transit")), emptyList()) {
-            PluginGrantState.Pending
-        }
-        assertTrue(withoutTransitApk.launchableEntries.any { it.id == "transit" })
-
-        val transit = PhonePluginCandidate.Valid(principal("transit"))
-        val installed = PluginCatalog.build(listOf(BuiltIn("lyrics"), BuiltIn("transit")), listOf(transit)) {
-            PluginGrantState.Approved(setOf(PluginCapability.SURFACES))
-        }
-        assertEquals(1, installed.entries.count { it.id == "transit" })
-        assertEquals(PluginCatalogState.BUILT_IN, installed.entry("transit")?.state)
-    }
-
-    @Test
-    fun `empty built-in catalog contains only discovered external plugins`() {
+    fun `catalog contains only discovered external plugins`() {
         val lens = PhonePluginCandidate.Valid(principal("lens"))
 
-        val catalog = PluginCatalog.build(emptyList(), listOf(lens)) { PluginGrantState.Pending }
+        val catalog = PluginCatalog.build(listOf(lens)) { PluginGrantState.Pending }
 
         assertEquals(listOf("lens"), catalog.entries.mapNotNull { it.id })
         assertEquals(PluginCatalogState.PENDING, catalog.entry("lens")?.state)
@@ -109,7 +84,6 @@ class PluginCatalogTest {
         val approved = PluginGrantState.Approved(setOf(PluginCapability.SURFACES))
 
         val registry = PluginCatalog.build(
-            builtIns = emptyList(),
             candidates = listOf(PhonePluginCandidate.Valid(installed)),
             registryFeed = RegistryFeed(1, listOf(registryPlugin(packageName = installed.packageName))),
             grantState = { approved },
@@ -118,7 +92,6 @@ class PluginCatalogTest {
         assertEquals("Registry Author", registry?.registryAuthor)
 
         val local = PluginCatalog.build(
-            builtIns = emptyList(),
             candidates = listOf(PhonePluginCandidate.Valid(installed)),
             grantState = { approved },
         ).entry("hello")
@@ -126,7 +99,6 @@ class PluginCatalogTest {
         assertEquals(null, local?.registryAuthor)
 
         val mismatchedRegistryId = PluginCatalog.build(
-            builtIns = emptyList(),
             candidates = listOf(PhonePluginCandidate.Valid(installed)),
             registryFeed = RegistryFeed(
                 1,
@@ -137,7 +109,6 @@ class PluginCatalogTest {
         assertEquals(PluginProvenance.LOCAL, mismatchedRegistryId?.provenance)
 
         val mismatchedPackage = PluginCatalog.build(
-            builtIns = emptyList(),
             candidates = listOf(PhonePluginCandidate.Valid(installed)),
             registryFeed = RegistryFeed(1, listOf(registryPlugin(packageName = "dev.example.other"))),
             grantState = { approved },
