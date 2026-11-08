@@ -16,6 +16,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +26,8 @@ import (
 )
 
 const maxMediaBytes = 4 * 1024 * 1024
+const maxThumbnailOriginalBytes = 2 * 1024 * 1024
+const maxMediaDownloads = 3
 
 // Download locators and sealing keys stay native, outside snapshots and page ids.
 type mediaSource struct {
@@ -32,6 +36,8 @@ type mediaSource struct {
 	options                             lineapi.OBSDownloadOptions
 	keys                                []string
 	encrypted                           bool
+	size                                int64
+	failure                             error // Guarded by Engine.mu; discarded with the loaded message.
 }
 
 func decodeMedia(row *lineapi.Message, plain string) (string, string, *mediaSource) {
@@ -40,6 +46,18 @@ func decodeMedia(row *lineapi.Message, plain string) (string, string, *mediaSour
 		source := &mediaSource{oid: row.ContentMetadata["OID"], messageID: row.ID,
 			publicPath: row.ContentMetadata["DOWNLOAD_URL"],
 			options:    lineapi.OBSDownloadOptions{OBSPop: row.ContentMetadata["OBS_POP"]}}
+		source.size, _ = strconv.ParseInt(row.ContentMetadata["FILE_SIZE"], 10, 64)
+		var info struct {
+			FileSize json.Number `json:"fileSize"`
+		}
+		if json.Unmarshal([]byte(row.ContentMetadata["MEDIA_CONTENT_INFO"]), &info) == nil {
+			if size, err := info.FileSize.Int64(); err == nil {
+				source.size = max(source.size, size)
+			}
+		}
+		if _, present := row.ContentMetadata["MEDIA_THUMB_INFO"]; present && source.oid != "" {
+			source.previewOID = source.oid + "__ud-preview"
+		}
 		var body map[string]json.RawMessage
 		if plain != "" && json.Unmarshal([]byte(plain), &body) != nil {
 			return "[Unable to decrypt photo]", "", nil
@@ -83,8 +101,8 @@ func decodeMedia(row *lineapi.Message, plain string) (string, string, *mediaSour
 // Kotlin requests the newest visible candidates off the page callback thread.
 func (e *Engine) Media(chatID, messageID string) ([]byte, error) {
 	e.op.Lock()
-	defer e.op.Unlock()
 	if e.client == nil || e.ctx.Err() != nil {
+		e.op.Unlock()
 		return nil, errors.New("media unavailable")
 	}
 	var source *mediaSource
@@ -100,37 +118,77 @@ func (e *Engine) Media(chatID, messageID string) ([]byte, error) {
 			}
 		}
 	}
-	e.mu.Unlock()
-	if source == nil {
+	if source == nil || e.closed {
+		e.mu.Unlock()
+		e.op.Unlock()
 		return nil, errors.New("media unavailable")
+	}
+	if source.failure != nil {
+		err := source.failure
+		e.mu.Unlock()
+		e.op.Unlock()
+		return nil, err
+	}
+	// History/SSE can replace or enrich the source while the download is running.
+	resolved := *source
+	resolved.keys = slices.Clone(source.keys)
+	client := e.client
+	// Close sets closed under mu before waiting, so no admission can race its Wait.
+	e.mediaWG.Add(1)
+	e.mu.Unlock()
+	e.op.Unlock()
+	defer e.mediaWG.Done()
+	select {
+	case e.mediaSlots <- struct{}{}:
+		defer func() { <-e.mediaSlots }()
+	case <-e.ctx.Done():
+		return nil, errors.New("media unavailable")
+	}
+	e.mu.Lock()
+	cached := source.failure
+	e.mu.Unlock()
+	if cached != nil {
+		return nil, cached
 	}
 	ctx, cancel := context.WithTimeout(e.ctx, 12*time.Second)
 	defer cancel()
-	data, err := e.downloadMedia(ctx, source)
+	data, err := downloadMedia(ctx, client, &resolved)
 	if err != nil {
-		return nil, errors.New("media unavailable")
-	}
-	if !source.encrypted {
-		return data, nil
-	}
-	for _, key := range source.keys {
-		if plain, err := decryptPhoto(data, key); err == nil {
-			return plain, nil
+		err = errors.New("media unavailable")
+	} else if resolved.encrypted {
+		err = errors.New("photo authentication failed")
+		for _, key := range resolved.keys {
+			if plain, decryptErr := decryptPhoto(data, key); decryptErr == nil {
+				data, err = plain, nil
+				break
+			}
 		}
 	}
-	return nil, errors.New("photo authentication failed")
+	if e.ctx.Err() != nil {
+		return nil, errors.New("media unavailable")
+	}
+	if err != nil {
+		e.mu.Lock()
+		if source.failure == nil {
+			source.failure = err
+		}
+		err = source.failure
+		e.mu.Unlock()
+		return nil, err
+	}
+	return data, nil
 }
 
-func (e *Engine) downloadMedia(ctx context.Context, source *mediaSource) ([]byte, error) {
+func downloadMedia(ctx context.Context, client *lineapi.Client, source *mediaSource) ([]byte, error) {
 	if source.sticker != "" {
-		client := mediaHTTPClient(e.ctx)
+		stickerClient := mediaHTTPClient(ctx)
 		for _, name := range []string{"sticker.png", "sticker_animation.png"} {
 			request, err := http.NewRequestWithContext(ctx, http.MethodGet,
 				"https://stickershop.line-scdn.net/stickershop/v1/sticker/"+source.sticker+"/android/"+name, nil)
 			if err != nil {
 				return nil, err
 			}
-			response, err := client.Do(request)
+			response, err := stickerClient.Do(request)
 			if err != nil {
 				return nil, err
 			}
@@ -145,6 +203,17 @@ func (e *Engine) downloadMedia(ctx context.Context, source *mediaSource) ([]byte
 		}
 		return nil, errors.New("sticker unavailable")
 	}
+	if source.previewOID != "" {
+		if preview, err := client.DownloadOBSWithOptions(ctx, source.previewOID, source.messageID, source.options); err == nil {
+			return preview, nil
+		}
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if source.size > maxThumbnailOriginalBytes {
+		return nil, errors.New("original exceeds thumbnail size limit")
+	}
 	if source.publicPath != "" {
 		if !safePublicMedia(source.publicPath) {
 			return nil, errors.New("unsupported media host")
@@ -152,18 +221,13 @@ func (e *Engine) downloadMedia(ctx context.Context, source *mediaSource) ([]byte
 		// Keep absolute OBS URLs on our bounded, owner-cancelled OBS transport.
 		// Upstream otherwise creates a separate public HTTP client for absolute URLs.
 		resource, _ := url.Parse(source.publicPath)
-		return e.client.DownloadOBSPublicResource(ctx, resource.RequestURI())
+		return client.DownloadOBSPublicResource(ctx, resource.RequestURI())
 	}
 	if source.oid != "" {
-		if source.previewOID != "" {
-			if preview, err := e.client.DownloadOBSWithOptions(ctx, source.previewOID, source.messageID, source.options); err == nil {
-				return preview, nil
-			}
-		}
-		return e.client.DownloadOBSWithOptions(ctx, source.oid, source.messageID, source.options)
+		return client.DownloadOBSWithOptions(ctx, source.oid, source.messageID, source.options)
 	}
 	// Unsealed photos use the plain message endpoint and no talk-meta message id.
-	return e.client.DownloadOBSWithSIDOptions(ctx, source.messageID, "", "m", source.options)
+	return client.DownloadOBSWithSIDOptions(ctx, source.messageID, "", "m", source.options)
 }
 
 func safePublicMedia(raw string) bool {

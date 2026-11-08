@@ -13,8 +13,11 @@ import java.util.concurrent.Executors
 
 /** One native session shared by the phone screen and visible launcher pages. */
 internal object LineSession {
+    /** Downloads the engine runs side by side; the same bound as its own media semaphore. */
+    const val MEDIA_PARALLELISM = 3
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
+    private val media = Executors.newFixedThreadPool(MEDIA_PARALLELISM)
     private val cancellation = Executors.newSingleThreadExecutor()
     private val lock = Any()
     private val owners = mutableMapOf<Any, () -> Unit>()
@@ -74,6 +77,28 @@ internal object LineSession {
                 check(SystemClock.elapsedRealtime() < deadline)
                 work(current).also { refresh(current) }
             }.recoverCatching { throw IllegalStateException("LINE unavailable; check sign-in on the phone") }
+            main.post {
+                if (synchronized(lock) { owners[owner] === callback }) done(result)
+            }
+        }
+    }
+
+    /**
+     * A media download on the media pool rather than the session worker: the engine lets up to
+     * [MEDIA_PARALLELISM] downloads past its lock at once, so several thumbnails arrive together
+     * instead of one every couple of seconds. Only for a session [call] has already opened; it
+     * refreshes no snapshot, since a download changes nothing the pages read.
+     */
+    fun <T> media(owner: Any, work: (Engine) -> T, done: (Result<T>) -> Unit) {
+        val callback = synchronized(lock) { owners[owner] } ?: return
+        val current = synchronized(lock) { engine }
+        if (current == null) {
+            main.post { if (synchronized(lock) { owners[owner] === callback }) done(Result.failure(IllegalStateException("LINE not open"))) }
+            return
+        }
+        media.execute {
+            if (synchronized(lock) { owners[owner] !== callback || engine !== current }) return@execute
+            val result = runCatching { work(current) }
             main.post {
                 if (synchronized(lock) { owners[owner] === callback }) done(result)
             }

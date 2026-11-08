@@ -67,7 +67,8 @@ Acknowledged photos enter snapshots like received photos: server message ID,
 `media="photo"`, `mine=true`, text fallback `[Photo]`. Replays reuse the server ID
 to avoid duplicates. When its preview upload succeeded, `Media(chatID, messageID)`
 reads/decrypts that preview, falling back to the original on preview download
-failure. The normal 4 MiB download/thumbnail-input bound still applies. A failed
+failure unless metadata declares an original larger than 2 MiB. The normal 4 MiB
+download/thumbnail-input bound still applies to unknown sizes. A failed
 readback keeps the history entry with its text fallback.
 Native readback is covered by synthetic OBS tests. The device team also confirmed
 our sent-photo thumbnail and official-app full-screen rendering in the measured flow.

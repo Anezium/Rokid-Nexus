@@ -40,7 +40,7 @@ class LinePluginService : NexusPluginService() {
     private var connectRequested = false
     private val thumbnails = linkedMapOf<Pair<String, String>, LauncherArtwork>()
     private val mediaAsked = linkedSetOf<Pair<String, String>>()
-    private var mediaRunning = false
+    private var mediaInFlight = 0
     private var historyPrefetching = false
 
     /**
@@ -158,18 +158,18 @@ class LinePluginService : NexusPluginService() {
 
     private fun loadMedia() {
         val lease = owner ?: return
-        if (mediaRunning || nexusClient?.supportsComposerTools() != true || LineSession.snapshot.state != "ready") return
-        val candidate = LinePages.mediaCandidates(visible, LineSession.snapshot)
-            .firstOrNull { (chat, message) -> (chat.id to message.id) !in mediaAsked } ?: return
-        val (chat, message) = candidate
-        val key = chat.id to message.id
-        mediaAsked += key
-        while (mediaAsked.size > 256) mediaAsked.remove(mediaAsked.first())
-        mediaRunning = true
-        // One download at a time keeps work bounded and avoids expiring queued native calls.
-        LineSession.call(this, lease, { LineThumbnailEncoder.encode(it.media(chat.id, message.id)) }) { result ->
-            if (owner === lease) {
-                mediaRunning = false
+        if (nexusClient?.supportsComposerTools() != true || LineSession.snapshot.state != "ready") return
+        val candidates = LinePages.mediaCandidates(visible, LineSession.snapshot).asSequence()
+            .filter { (chat, message) -> (chat.id to message.id) !in mediaAsked }
+        // Up to the engine's own bound in flight; the rest wait for a slot, newest and open conversations first.
+        for ((chat, message) in candidates.take(LineSession.MEDIA_PARALLELISM - mediaInFlight)) {
+            val key = chat.id to message.id
+            mediaAsked += key
+            while (mediaAsked.size > 256) mediaAsked.remove(mediaAsked.first())
+            mediaInFlight++
+            LineSession.media(lease, { LineThumbnailEncoder.encode(it.media(chat.id, message.id)) }) { result ->
+                if (owner !== lease) return@media
+                mediaInFlight--
                 result.getOrNull()?.let { thumbnails[key] = it }
                 while (thumbnails.size > 64) {
                     val oldest = thumbnails.keys.first()
@@ -365,7 +365,7 @@ class LinePluginService : NexusPluginService() {
         thumbnails.clear()
         mediaAsked.clear()
         historyPrefetching = false
-        mediaRunning = false
+        mediaInFlight = 0
     }
 
     override fun onDestroy() { end(); main.removeCallbacksAndMessages(null); super.onDestroy() }
