@@ -34,6 +34,18 @@ creating group keys and automatic token refresh are outside this first prototype
 An expired/revoked session must be forgotten and linked again. A server-accepted
 send is reported as handed off, never as delivered or read.
 
+## What the LINE server can see
+
+For a sent photo, LINE's server sees the thumbnail dimensions, encrypted file
+size, extension/category, OID/SID and ciphertext. The media key material is only
+in the Letter Sealing body; we do not add `ENC_KM` to outgoing metadata. The
+encrypted preview reuses the full image's AES-CTR key and nonce: this keystream
+reuse is a cryptographic limitation inherited from the LINE media protocol as
+implemented by the Beeper library. This preview format is required for the
+official app to render our photos in the measured flow. See the
+[protocol research](native/MEDIA_PROTOCOL_RESEARCH.md) for the measurements and
+their limits; an official-client-origin photo has not been measured.
+
 ## Link an account
 
 1. Install the plugin on the phone and approve it in Nexus. Open its settings.

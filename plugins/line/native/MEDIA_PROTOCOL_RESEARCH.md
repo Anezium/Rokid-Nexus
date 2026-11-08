@@ -1,24 +1,68 @@
-# LINE media metadata: evidence for diagnostic variant A
+# LINE photo wire format and interoperability evidence
 
 Reference: `github.com/beeper/line` at
 `ae616894a66b99e2c09d4e39761f4a60b48c4329` (`v0.0.0-20261106152813-ae616894a66b`).
-All file/line references below refer to that pinned source, not the current branch.
+Source file/line references below refer to that pinned dependency, not the current branch.
 
 ## Conclusion
 
-The inspected reference proves that **Beeper's sender** puts the raw base64 media
-key in `ENC_KM` as well as in the sealed body, and its receiver accepts either.
-It does **not** establish that official LINE clients always do that, encrypt that
-metadata field, or omit it. No official-client message capture containing these
-fields was found in the inspected fixtures/docs. Nor does the reference establish
-that the official app requires an uploaded preview: the bridge deliberately
-continues when preview generation/encryption/upload fails.
+The shipping sender uploads an encrypted original and preview, sets
+`MEDIA_THUMB_INFO`, and carries `keyMaterial` only in the Letter Sealing body
+and private journal. It does **not** add `ENC_KM` to outgoing metadata. The
+official app rendered and opened this shape in the device team's controlled test;
+the metadata key is not required for that interoperability. Omitting the preview
+produced an unopenable placeholder even with `ENC_KM` restored.
 
-Consequently, there is no evidence here establishing that official clients seal
-the key and *never* send raw `ENC_KM`. The owner's stop condition for variant A
-was not met. Variant A is an explicitly authorized diagnostic, not a finding that
-raw metadata is a required or secure LINE protocol property. If A fails, it does
-not prove raw metadata is needed; the next experiment must be separately chosen.
+The preview uses the original's key material and thus the same HKDF output,
+AES-CTR key, nonce and counter start. This is keystream reuse, inherited from
+the LINE media protocol as implemented by the pinned Beeper library. The tested
+compatible preview format retains this cryptographic limitation: XOR of the two
+ciphertexts reveals XOR of the plaintexts. We do not add a raw metadata key or
+invent a different preview counter convention.
+
+**Official client not measured:** no official-client-origin photo reached the
+tested group during this session. These measurements establish what the official
+app can receive/render, not what official senders emit. They do not establish
+whether an official sender includes raw, wrapped or absent `ENC_KM`, or whether
+all official clients always upload previews. The pinned sender does include raw
+`ENC_KM`, and its receiver accepts keys from either body or metadata; that is
+library behavior rather than official-client provenance.
+
+## What the LINE server can see
+
+Outgoing metadata exposes the thumbnail dimensions (`width`, `height`), encrypted
+file size, extension/category, file name/type, OID/SID and sealing version. LINE's
+server also holds the original and preview ciphertext, including their MACs.
+The media key is only in the sealed Letter Sealing body on the wire, never an
+outbound `ENC_KM` field. Keeping the key out of metadata does not remove the
+CTR keystream-reuse limitation above.
+
+## Device measurements, 2026-11-08
+
+Reported by the Opus device tester using the Samsung, glasses and official LINE
+app, group `yoyo`, with `d3d59c56`'s read-only instrumentation available. Times
+below are the relayed local message times. Both measured photos were glasses
+sends from our engine, not photos emitted by the official app.
+
+| Message | ENC_KM | MEDIA_THUMB_INFO | Preview probe | Official app |
+| --- | --- | --- | --- | --- |
+| 19:20, variant A | Present, decoded 32 B | Absent | `no_preview_metadata` | Green placeholder; cannot open |
+| 21:39, variant B | Absent | Present: `height`, `width` | `previewDecryptsWithBodyKey=true`, `verified_jpeg` | Real image; opens full screen |
+
+At 21:41, the tester checked server history: six messages, with only our 21:39
+send newly present. The owner's attempted official-app photo never appeared in
+this group, so **official client not measured** remains the provenance limit.
+The positive probe authenticates/decrypts our own preview with the sealed-body
+key and the existing file HKDF/counter convention; it confirms reuse for our
+sample, not for an unobserved official sender.
+
+The failed build before A removed both `ENC_KM` and the preview together. A
+(`b28c78f5`) restored only the metadata key and still failed. B (`d3d59c56`)
+restored the preview with no metadata key and succeeded. The shipping path is B;
+the `diagnosticImageKeyInMetadata` selector and alternate A branch are removed.
+The preview download/decrypt probe and its JSON fields are also removed from
+production code. The metadata-only describer remains opt-in instrumentation;
+normal plugin pages/settings never invoke it.
 
 ## Receive-side evidence: support is not provenance
 
@@ -57,7 +101,7 @@ not prove raw metadata is needed; the next experiment must be separately chosen.
   not proof that every official receiver tolerates the omission.
 - `pkg/connector/media.go:314-344`: the preview encryptor derives the same key
   and nonce as the original from the same material and starts at the same counter.
-  Variant A does not restore this code or upload a second ciphertext.
+  This is the compatible preview convention retained by the shipping sender.
 
 ## Sync, documentation and missing capture evidence
 
@@ -86,31 +130,3 @@ The whitepaper linked there returned HTTP 403 during this research and was not
 used as evidence. [Beeper issue 54](https://github.com/beeper/line/issues/54), linked
 from the pinned note, discusses sealed/unsealed interoperability but its fetched
 text contains none of `ENC_KM`, `keyMaterial` or `thumbnail`.
-
-## Controlled device question
-
-The failed security build changed two factors together. Variant A restores only
-raw `ENC_KM`, keeps exactly one original-file upload and no `MEDIA_THUMB_INFO`, and
-leaves invocation tombstones, rollback and own-photo history unchanged. Its result
-can test whether restoring the metadata key alone fixes this official-client
-rendering failure. Success would establish that compatibility observation, not
-that every official client emits raw metadata keys or that they are confidential.
-
-## Variant B follow-up
-
-The owner reported that A (`b28c78f5`: raw `ENC_KM`, no preview) still produced an
-unopenable placeholder in the official app. Restoring that field alone therefore
-did not repair this failure. B keeps `ENC_KM` absent and restores the preview,
-matching `5241f577`'s format and its known CTR key/nonce reuse. The single selector
-is now `diagnosticImageKeyInMetadata=false` by default. Tombstones, rollback and
-the sealed media-key body remain unchanged.
-
-The redacted diagnostic now attempts authenticated preview decryption with only
-the sealed-body key, using the same HKDF/counter as the file decryptor, followed
-by JPEG/PNG header parsing. `previewDecryptsWithBodyKey=true` establishes that
-compatibility fact for the inspected sample. Combined with successful original
-decryption on a controlled official-app send, it is evidence of protocol-level
-key/nonce reuse for that sample, to be documented as a limitation rather than
-silently changed. Missing keys/objects or a failed fetch remain inconclusive and
-are distinguished by a fixed status. No official-client probe result has been
-assumed here before the device session reports it.

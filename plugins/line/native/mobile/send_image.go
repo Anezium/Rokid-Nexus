@@ -15,10 +15,6 @@ import (
 
 const maxImageBytes = 6 * 1024 * 1024
 
-// Diagnostic selector: true = A (raw ENC_KM, no preview), false = B (preview,
-// sealed-body key only). B deliberately reproduces the reference's CTR reuse.
-const diagnosticImageKeyInMetadata = false
-
 // Retain only the encrypted upload's locator/key, never the captured JPEG.
 // This also ties a late own-message echo to an ambiguous invocation after reopening.
 type sentImage struct {
@@ -81,8 +77,6 @@ func (e *Engine) sendPreparedImage(invocation, chatID, digest string, jpeg []byt
 		return "not_sent"
 	}
 
-	// Variant B reproduces the pinned reference's encrypted preview without
-	// exposing ENC_KM. Its key/nonce reuse is an explicit diagnostic limitation.
 	upload, keyMaterial, err := encryptFileData(jpeg)
 	if err != nil {
 		return "not_sent"
@@ -96,17 +90,12 @@ func (e *Engine) sendPreparedImage(invocation, chatID, digest string, jpeg []byt
 		"contentType": "1", "FILE_NAME": "image.jpg",
 		"MEDIA_CONTENT_INFO": encode(map[string]any{"category": "original", "fileSize": len(upload), "extension": "jpg"}),
 	}
-	if diagnosticImageKeyInMetadata {
-		metadata["ENC_KM"] = keyMaterial
-	}
 	previewUploaded := false
-	if !diagnosticImageKeyInMetadata {
-		if preview, width, height, err := generateThumbnail(jpeg); err == nil {
-			if encrypted, err := encryptThumbnail(preview, keyMaterial); err == nil {
-				if e.client.UploadOBSWithOID(encrypted, oid+"__ud-preview") == nil {
-					previewUploaded = true
-					metadata["MEDIA_THUMB_INFO"] = encode(map[string]int{"width": width, "height": height})
-				}
+	if preview, width, height, err := generateThumbnail(jpeg); err == nil {
+		if encrypted, err := encryptThumbnail(preview, keyMaterial); err == nil {
+			if e.client.UploadOBSWithOID(encrypted, oid+"__ud-preview") == nil {
+				previewUploaded = true
+				metadata["MEDIA_THUMB_INFO"] = encode(map[string]int{"width": width, "height": height})
 			}
 		}
 	}

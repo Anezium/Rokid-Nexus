@@ -9,7 +9,7 @@ title, ready session and Letter Sealing keys, and uses the same operation mutex
 and durable invocation journal as text. Empty, oversized or invalid JPEG inputs
 are rejected. Decoding is additionally bounded to 32 million pixels and 16,384
 pixels per edge. The original JPEG, including trailing metadata, is encrypted
-without re-encoding or stripping. Diagnostic B separately generates an encrypted preview.
+without re-encoding or stripping. A separate encrypted preview is generated.
 
 ## Wire contract
 
@@ -22,10 +22,11 @@ The encrypted image flow uses the pinned protocol library with these security co
    AES-256-CTR uses that nonce followed by a zero counter. HMAC-SHA256 of the
    ciphertext is appended, matching the existing authenticated decryptor.
 3. `UploadOBS` uploads ciphertext to SID `emi`, before sending a message.
-4. In variant B, generate a JPEG quality-60 preview with at most a 1280-pixel long
+4. Generate a JPEG quality-60 preview with at most a 1280-pixel long
    edge, encrypt it with the same key material and counter convention, and upload
    it to `OID + "__ud-preview"`. `MEDIA_THUMB_INFO` is emitted only after success.
-   Preview failure remains optional, matching `5241f577`.
+   Preview failure does not block dispatch, but the official app may then show
+   an unopenable placeholder.
 5. Seal the raw JSON `{"keyMaterial":"..."}` using content type 1 through
    `EncryptMessageV2Raw` or `EncryptGroupMessageRaw`. These raw APIs are required:
    the text helpers would incorrectly wrap the JSON as text.
@@ -38,23 +39,16 @@ The IMAGE message has `contentType=1`, `hasContent=true`, sealed chunks and:
 - `FILE_SIZE`: ciphertext length including its 32-byte MAC;
 - `FILE_NAME=image.jpg`, metadata `contentType=1`;
 - `MEDIA_CONTENT_INFO`: `category=original`, encrypted `fileSize`, `extension=jpg`;
-- diagnostic B's `MEDIA_THUMB_INFO`: uploaded preview `width` and `height`.
+- `MEDIA_THUMB_INFO`: uploaded preview `width` and `height`.
 
-One constant selects the owner-requested compatibility experiment:
-
-| `diagnosticImageKeyInMetadata` | Variant | Raw `ENC_KM` | Preview upload |
-| --- | --- | --- | --- |
-| `true` | A | Present | Absent |
-| `false` (current default) | B | Absent | Present |
-
-Variant A did not restore rendering in the official app, per the owner's device
-result. Variant B now tests the preview independently while the key stays only
-in sealed chunks and the private journal. It reproduces `5241f577`'s preview
-encryption exactly: the original and preview reuse the same AES-CTR key/nonce.
-That is a known cryptographic limitation, not an independent nonce or a security
-fix. Do not claim it is official-client behavior without controlled evidence.
-The [preview diagnostic](DESCRIBE_MEDIA.md) can measure that behavior on an
-official-app sample. No connector package or dependency is introduced.
+There is one send path: no outbound `ENC_KM`; the key stays only in sealed chunks
+and the private journal. The original and preview reuse the same AES-CTR key and
+nonce, matching the pinned library's LINE media implementation. This is a known
+cryptographic limitation: XORing the ciphertexts reveals the XOR of their
+plaintexts. The preview format is needed for official-app rendering in the
+measured flow. [MEDIA_PROTOCOL_RESEARCH.md](MEDIA_PROTOCOL_RESEARCH.md) records
+the interoperability evidence and its limits; official-client emission has not
+been measured. No connector package or dependency is introduced.
 
 ## Outcomes and history
 
@@ -75,8 +69,8 @@ to avoid duplicates. When its preview upload succeeded, `Media(chatID, messageID
 reads/decrypts that preview, falling back to the original on preview download
 failure. The normal 4 MiB download/thumbnail-input bound still applies. A failed
 readback keeps the history entry with its text fallback.
-Native readback is covered by synthetic OBS tests; live owner-upload readback
-must be checked by the device team.
+Native readback is covered by synthetic OBS tests. The device team also confirmed
+our sent-photo thumbnail and official-app full-screen rendering in the measured flow.
 
 The private journal retains the chat, encrypted object locator, key material,
 preview availability and confirmed message ID, alongside its digest/outcome.
@@ -104,13 +98,13 @@ memory. A later save cannot accidentally persist a send that never dispatched.
 ## Verification scope
 
 Tests exercise real file encryption against the existing decryptor,
-unchanged original bytes, B's absent metadata key, original/preview upload order,
+unchanged original bytes, absent metadata key, original/preview upload order,
 the reference's counter convention, input/authority/key failure, optional preview
 failure, failed dispatch, durable
 replay and exact-echo/history confirmation. Message sealing is supplied at the
 prepared-upload unit boundary in positive dispatch tests; missing-key tests use
 the public method. Account provisioning, actual group/direct message sealing and
-official-app interoperability remain device acceptance work. No test reads an
+official-app interoperability require device acceptance beyond these unit tests. No test reads an
 owner session, sends a network message or installs an APK on a device. Journal
 tests exceed 64 full records, reopen tombstoned text/photo invocations, fill the
 tombstone bound and retry text after a failed pre-dispatch save.

@@ -192,13 +192,13 @@ func TestImageEncryptionRoundTrip(t *testing.T) {
 	}
 	decodedPreview, err := decryptPhoto(encryptedPreview, key)
 	if err != nil || !bytes.Equal(decodedPreview, preview) {
-		t.Fatal("preview format differs from 5241f577")
+		t.Fatal("preview encryption failed to round trip")
 	}
-	// Lock down the requested compatibility experiment; this is the known risk,
+	// Lock down the required compatibility format; this is the known risk,
 	// not a claim that using the same CTR keystream for two plaintexts is safe.
 	for i := range min(len(original), len(preview)) {
 		if encrypted[i]^encryptedPreview[i] != original[i]^preview[i] {
-			t.Fatal("variant B no longer reproduces the reference counter convention")
+			t.Fatal("preview no longer reproduces the reference counter convention")
 		}
 	}
 	_, otherKey, err := encryptFileData(original)
@@ -207,7 +207,7 @@ func TestImageEncryptionRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSendImageVariantBHasNoMetadataKeyAndUploadsPreviewForDirectAndGroup(t *testing.T) {
+func TestSendImageSealsKeyAndUploadsPreviewForDirectAndGroup(t *testing.T) {
 	for _, group := range []bool{false, true} {
 		t.Run(fmt.Sprint("group=", group), func(t *testing.T) {
 			f := newImageFixture(t, group)
@@ -223,11 +223,11 @@ func TestSendImageVariantBHasNoMetadataKeyAndUploadsPreviewForDirectAndGroup(t *
 				t.Fatal("sealed payload and private journal disagree")
 			}
 			metadata := msg.ContentMetadata
-			if _, present := metadata["ENC_KM"]; present || diagnosticImageKeyInMetadata || strings.Contains(encode(metadata), body["keyMaterial"]) {
-				t.Fatal("variant B must carry the key only in the sealed body")
+			if _, present := metadata["ENC_KM"]; present || strings.Contains(encode(metadata), body["keyMaterial"]) {
+				t.Fatal("image must carry the key only in the sealed body")
 			}
 			if _, advertised := metadata["MEDIA_THUMB_INFO"]; !advertised {
-				t.Fatal("variant B is missing its uploaded preview metadata")
+				t.Fatal("image is missing its uploaded preview metadata")
 			}
 			if metadata["OID"] != "object" || metadata["SID"] != "emi" || metadata["contentType"] != "1" || metadata["FILE_NAME"] != "image.jpg" || metadata["e2eeVersion"] == "" {
 				t.Fatal("required image metadata missing")

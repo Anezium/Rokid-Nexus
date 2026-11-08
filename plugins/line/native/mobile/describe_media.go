@@ -28,25 +28,24 @@ type sealedBodyDescription struct {
 }
 
 type mediaDescription struct {
-	Found                      bool                   `json:"found"`
-	MetadataKeys               []string               `json:"metadataKeys"`
-	ENCKM                      mediaKeyDescription    `json:"ENC_KM"`
-	SealedBody                 sealedBodyDescription  `json:"sealedBody"`
-	ThumbInfo                  mediaObjectDescription `json:"MEDIA_THUMB_INFO"`
-	ContentInfo                mediaObjectDescription `json:"MEDIA_CONTENT_INFO"`
-	E2EEVersion                string                 `json:"e2eeVersion"`
-	ContentType                int                    `json:"contentType"`
-	MetadataContentType        string                 `json:"metadataContentType"`
-	SID                        string                 `json:"SID"`
-	SenderIsSelf               bool                   `json:"senderIsSelf"`
-	Timestamp                  int64                  `json:"timestamp"`
-	TimestampValid             bool                   `json:"timestampValid"`
-	PreviewDecryptsWithBodyKey bool                   `json:"previewDecryptsWithBodyKey"`
-	PreviewProbeStatus         string                 `json:"previewProbeStatus"`
+	Found               bool                   `json:"found"`
+	MetadataKeys        []string               `json:"metadataKeys"`
+	ENCKM               mediaKeyDescription    `json:"ENC_KM"`
+	SealedBody          sealedBodyDescription  `json:"sealedBody"`
+	ThumbInfo           mediaObjectDescription `json:"MEDIA_THUMB_INFO"`
+	ContentInfo         mediaObjectDescription `json:"MEDIA_CONTENT_INFO"`
+	E2EEVersion         string                 `json:"e2eeVersion"`
+	ContentType         int                    `json:"contentType"`
+	MetadataContentType string                 `json:"metadataContentType"`
+	SID                 string                 `json:"SID"`
+	SenderIsSelf        bool                   `json:"senderIsSelf"`
+	Timestamp           int64                  `json:"timestamp"`
+	TimestampValid      bool                   `json:"timestampValid"`
 }
 
 // DescribeLatestMedia inspects the newest IMAGE in the chat's recent server history.
 // Only field names, structural indicators and explicit non-content scalars escape.
+// Called only by opt-in instrumentation, never by the plugin's normal pages/settings.
 func (e *Engine) DescribeLatestMedia(chatID string) string {
 	e.op.Lock()
 	defer e.op.Unlock()
@@ -81,9 +80,7 @@ func (e *Engine) DescribeLatestMedia(chatID string) string {
 		plain, err = e.decrypt(latest)
 		decrypted = err == nil
 	}
-	description := describeMedia(latest, plain, decrypted, e.stored.Mid)
-	description.PreviewDecryptsWithBodyKey, description.PreviewProbeStatus = e.probeMediaPreview(latest, plain, decrypted)
-	return encode(description)
+	return encode(describeMedia(latest, plain, decrypted, e.stored.Mid))
 }
 
 func describeMedia(row *lineapi.Message, plain string, decrypted bool, ownMID string) mediaDescription {
@@ -120,7 +117,6 @@ func describeMedia(row *lineapi.Message, plain string, decrypted bool, ownMID st
 		E2EEVersion: diagnosticNumber(row.ContentMetadata["e2eeVersion"]), ContentType: row.ContentType,
 		MetadataContentType: diagnosticNumber(row.ContentMetadata["contentType"]), SID: sid,
 		SenderIsSelf: ownMID != "" && row.From == ownMID, Timestamp: timestamp, TimestampValid: timestampValid,
-		PreviewProbeStatus: "not_probed",
 	}
 }
 

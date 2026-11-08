@@ -254,8 +254,8 @@ func validImageJPEG(data []byte) bool {
 		config.Width <= 16_384 && config.Height <= 16_384 && int64(config.Width)*int64(config.Height) <= 32_000_000
 }
 
-// Diagnostic B matches 5241f577: the parent's FileEncryption key and counter
-// encrypt the preview too. This is CTR keystream reuse, not an independent nonce.
+// Official-client rendering requires the reference's preview format, which reuses
+// the original's CTR key and nonce. See MEDIA_PROTOCOL_RESEARCH.md for the limitation.
 func encryptThumbnail(plain []byte, key string) ([]byte, error) {
 	material, err := base64.StdEncoding.DecodeString(key)
 	if err != nil || len(material) != 32 {

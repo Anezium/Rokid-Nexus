@@ -140,9 +140,6 @@ func TestDescribeLatestMediaSelectsNewestImageFromServerForEitherSender(t *testi
 			if calls != 1 || !description.SealedBody.Present || description.SealedBody.Decrypted || description.SealedBody.KeyMaterialPresent {
 				t.Fatal("diagnostic must report unknown sealed content when no crypto manager is available")
 			}
-			if description.PreviewDecryptsWithBodyKey || description.PreviewProbeStatus != "body_not_decrypted" {
-				t.Fatal("unknown body decryption was misreported as a preview result")
-			}
 			if encode(e.stored) != before || e.Snapshot() != beforeSnapshot {
 				t.Fatal("diagnostic mutated the journal or public snapshot")
 			}
