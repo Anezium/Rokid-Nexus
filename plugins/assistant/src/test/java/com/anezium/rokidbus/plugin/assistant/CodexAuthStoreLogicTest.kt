@@ -464,6 +464,33 @@ class CodexAuthStoreLogicTest {
         assertEquals("minimax-key", store.providerApiKey(ProviderCatalog.minimax.id))
     }
 
+    @Test
+    fun signInLedgerOnlyCompletesTheAttemptThatStoredTokens() {
+        val store = testStore(FakeSharedPreferences())
+
+        assertEquals(null, store.startedChatGptSignInState())
+        assertFalse(store.isChatGptSignInCompleted(null))
+
+        store.markChatGptSignInStarted("state-a")
+        assertEquals("state-a", store.startedChatGptSignInState())
+        // Started is not finished: a return after a process death must not claim success.
+        assertFalse(store.isChatGptSignInCompleted("state-a"))
+
+        store.markChatGptSignInCompleted("state-a")
+        assertTrue(store.isChatGptSignInCompleted("state-a"))
+
+        // A later attempt stays open until its own exchange lands, even though
+        // older tokens are still stored.
+        store.markChatGptSignInStarted("state-b")
+        assertEquals("state-b", store.startedChatGptSignInState())
+        assertFalse(store.isChatGptSignInCompleted("state-b"))
+        assertTrue(store.isChatGptSignInCompleted("state-a"))
+
+        store.clearChatGptAuth()
+        assertEquals(null, store.startedChatGptSignInState())
+        assertFalse(store.isChatGptSignInCompleted("state-a"))
+    }
+
     private fun testStore(prefs: FakeSharedPreferences): CodexAuthStore = CodexAuthStore(
         prefs = prefs,
         encryptSecret = { value -> "encrypted:$value" },

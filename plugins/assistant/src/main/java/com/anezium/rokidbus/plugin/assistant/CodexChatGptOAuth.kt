@@ -108,11 +108,13 @@ object CodexChatGptOAuth {
         )
         val tokens = exchangeToken(body)
         val apiKeyResult = runCatching { obtainApiKey(tokens.idToken) }
-        CodexAuthStore(context).saveOAuth(
+        val store = CodexAuthStore(context)
+        store.saveOAuth(
             tokens = tokens,
             apiKey = apiKeyResult.getOrNull(),
             apiKeyExchangeError = apiKeyResult.exceptionOrNull()?.message,
         )
+        store.markChatGptSignInCompleted(attempt.state)
         return tokens
     }
 

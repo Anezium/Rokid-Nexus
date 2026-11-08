@@ -50,6 +50,16 @@ internal object CodexChatGptAppReturnSignal {
     fun snapshot(): Long = generation.get()
 }
 
+/**
+ * The attempt the live process is waiting on. It survives a configuration
+ * change, where the browser is still open on that very attempt, but not a
+ * process death, after which the authorization code is gone for good.
+ */
+internal object CodexChatGptSignInSession {
+    @Volatile
+    var liveAttemptState: String? = null
+}
+
 class CodexChatGptRedirectActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -141,20 +151,43 @@ class CodexChatGptSignInActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        attempt = savedInstanceState?.let(::restoreAttempt)
-            ?: CodexChatGptOAuth.createLoginAttempt()
+        val restored = savedInstanceState?.let(::restoreAttempt)
+        attempt = restored ?: CodexChatGptOAuth.createLoginAttempt()
         appReturnGeneration = CodexChatGptAppReturnSignal.snapshot()
         buildUi()
-        if (intent?.action == ACTION_BROWSER_RETURN && savedInstanceState == null) {
-            // Cold start straight from the browser return: the process that ran
-            // the callback server is gone, and the authorization code with it.
-            showStatus(
-                NexusUi.AMBER,
-                "The sign-in was interrupted before it could finish. Try again.",
-            )
-            browserButton.text = "Try again"
-        } else {
-            beginSignIn()
+        val store = CodexAuthStore(this)
+        val coldBrowserReturn = intent?.action == ACTION_BROWSER_RETURN && savedInstanceState == null
+        // A cold browser return carries no saved attempt; the one the dead
+        // process started is the only candidate for having finished.
+        val interruptedState = if (coldBrowserReturn) store.startedChatGptSignInState() else restored?.state
+        when {
+            savedInstanceState == null && !coldBrowserReturn -> beginSignIn(openBrowser = true)
+            store.isChatGptSignInCompleted(interruptedState) && store.oauthTokens() != null -> {
+                // The exchange landed before the process went away; only the
+                // screen that would have said so is new.
+                showStatus(NexusUi.GREEN, "Signed in. Returning to Assistant...")
+                didReceiveBrowserReturn = true
+                setResult(RESULT_OK)
+                finish()
+            }
+            restored != null && restored.state == CodexChatGptSignInSession.liveAttemptState ->
+                // Recreated in the same process (a configuration change): the
+                // browser is already open on this attempt, so only the callback
+                // server has to come back. Opening the browser again here would
+                // send the wearer into a second, doomed attempt.
+                beginSignIn(openBrowser = false)
+            else -> {
+                // The process that ran the callback server is gone, and the
+                // authorization code with it. Reopening the browser on the same
+                // attempt would only show a spent sign-in.
+                showStatus(
+                    NexusUi.AMBER,
+                    "The sign-in was interrupted: the system closed Assistant while the " +
+                        "browser was open. Try again; on phones that stop background " +
+                        "apps, lock Assistant in recent apps first.",
+                )
+                browserButton.text = "Try again"
+            }
         }
     }
 
@@ -190,7 +223,10 @@ class CodexChatGptSignInActivity : Activity() {
     }
 
     override fun onDestroy() {
-        CodexChatGptSignInHoldService.stop(this)
+        if (!isChangingConfigurations) {
+            CodexChatGptSignInHoldService.stop(this)
+            CodexChatGptSignInSession.liveAttemptState = null
+        }
         loopbackServer?.close()
         activityScope.cancel()
         super.onDestroy()
@@ -288,11 +324,13 @@ class CodexChatGptSignInActivity : Activity() {
         // A finished attempt already spent its authorization round: start the
         // next one from a fresh state and verifier.
         attempt = CodexChatGptOAuth.createLoginAttempt()
-        beginSignIn()
+        beginSignIn(openBrowser = true)
     }
 
-    private fun beginSignIn() {
+    private fun beginSignIn(openBrowser: Boolean) {
         if (signInJob != null) return
+        CodexChatGptSignInSession.liveAttemptState = attempt.state
+        CodexAuthStore(this).markChatGptSignInStarted(attempt.state)
         signInJob = activityScope.launch {
             try {
                 showStatus(NexusUi.INK3, "Starting secure callback server...")
@@ -304,8 +342,12 @@ class CodexChatGptSignInActivity : Activity() {
                 }
                 loopbackServer = server
                 CodexChatGptSignInHoldService.start(this@CodexChatGptSignInActivity)
-                showStatus(NexusUi.INK3, "Opening browser...")
-                if (!launchBrowser()) return@launch
+                if (openBrowser) {
+                    showStatus(NexusUi.INK3, "Opening browser...")
+                    if (!launchBrowser()) return@launch
+                } else {
+                    browserButton.text = "Open browser again"
+                }
                 showStatus(NexusUi.GREEN, "Waiting for the browser...")
                 val callbackUri = withContext(Dispatchers.IO) { server.awaitCallback() }
                 showStatus(NexusUi.GREEN, "Completing sign-in...")
@@ -328,8 +370,12 @@ class CodexChatGptSignInActivity : Activity() {
                     RESULT_CANCELED,
                     Intent().putExtra(EXTRA_ERROR, message),
                 )
-            } finally {
+                CodexChatGptSignInSession.liveAttemptState = null
                 CodexChatGptSignInHoldService.stop(this@CodexChatGptSignInActivity)
+            } finally {
+                // The hold stays up after a successful exchange: the wearer is
+                // still in the browser, and a backgrounded process without it
+                // is exactly what OEM reapers kill before the return arrives.
                 loopbackServer?.close()
                 loopbackServer = null
                 signInJob = null

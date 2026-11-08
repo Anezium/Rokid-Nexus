@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.3
+
+- Fix the ChatGPT sign-in loop on phones that stop background apps (#102).
+  When the system closed Assistant while the browser was open, coming back
+  reopened the browser on the spent sign-in, which only showed an ended
+  session. The screen now reports the interruption and offers a fresh attempt,
+  the process stays held in the foreground until the browser actually brings
+  you back, and a sign-in whose tokens were already stored is reported as
+  signed in instead of interrupted.
+
 ## 1.5.2
 
 - Draft replies through Relay and send only after the wearer taps Send on the
