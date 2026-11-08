@@ -205,9 +205,33 @@ evidence is `E:/Tools/Rokid/_research/line-device-2026-11-08/line-stickers.png`;
 the test output is ignored `scratchpad/line-media-device.log`. No message was sent.
 This is live sticker acceptance, not live acceptance of encrypted photos.
 
+## Owner-sent photo acceptance
+
+The owner then sent a photo from the official LINE app to the conversation named
+LINE. The same read-only check, selecting that conversation with `requireText=false`
+and `requireMedia=true`, reconnected the saved account and reported:
+
+```text
+decodedPhotoPreviews=1
+decodedStickerPreviews=0
+historyMessages=1
+mediaMessages=1
+readableTextMessages=0
+OK (1 test)
+```
+
+Opening that conversation on the glasses initially showed `[Photo]`, then the
+actual image after the asynchronous download. The settled screenshot is private
+`E:/Tools/Rokid/_research/line-device-2026-11-08/line-photo.png`; the count-only
+instrumentation output is ignored `scratchpad/line-photo-device.log`. No message
+was sent by the test or agent, and no hub was changed. Nexus was closed afterwards.
+This verifies live photo retrieval, decoding and rendering. It does not establish
+whether this particular photo used Letter Sealing; authenticated photo decryption
+is separately covered by the native cryptographic fixture and tamper tests.
+
 ## Not verified
 
-Live text/photo decryption, outgoing messages, group decrypt/send, incoming live
+Live Letter Sealing decryption of text/photos, outgoing messages, group decrypt/send, incoming live
 updates, notification behavior and token expiry remain unverified.
 The successful direct-chat lookup/history fetch is not evidence of text decryption,
 delivery or sending.
