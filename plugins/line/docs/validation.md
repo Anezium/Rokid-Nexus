@@ -34,7 +34,9 @@ BUILD SUCCESSFUL in 8s
 Installed the debug APK on the connected Samsung phone (Android API 36).
 `adb install -r` returned `Success`; starting `LineSettingsActivity` returned
 `Status: ok`. After the owner unlocked the phone, UI inspection confirmed the
-LINE settings title, signed-out status and the email/password form. The final
+LINE settings title, signed-out status and the email/password form. UI inspection
+of the final installed APK found two credential fields, `password=true` on the
+password field, and no QR image. The final
 method uses LINE on the same phone for PIN approval; no QR, browser login or LINE
 app on the glasses is involved. The credential/PIN window includes `FLAG_SECURE`
 (bit `0x2000`). Empty form submission is rejected locally without starting the
