@@ -148,6 +148,7 @@ class CodexChatGptSignInActivity : Activity() {
     private var pendingTokens: CodexChatGptOAuthTokenBundle? = null
     private var didReceiveBrowserReturn = false
     private var appReturnGeneration = 0L
+    private var recoveringInterruptedAttempt = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -159,10 +160,13 @@ class CodexChatGptSignInActivity : Activity() {
         val coldBrowserReturn = intent?.action == ACTION_BROWSER_RETURN && savedInstanceState == null
         // A cold browser return carries no saved attempt; the one the dead
         // process started is the only candidate for having finished.
-        val interruptedState = if (coldBrowserReturn) store.startedChatGptSignInState() else restored?.state
+        val interrupted = when {
+            coldBrowserReturn -> store.pendingChatGptSignIn()
+            else -> restored
+        }
         when {
             savedInstanceState == null && !coldBrowserReturn -> beginSignIn(openBrowser = true)
-            store.isChatGptSignInCompleted(interruptedState) && store.oauthTokens() != null -> {
+            store.isChatGptSignInCompleted(interrupted?.state) && store.oauthTokens() != null -> {
                 // The exchange landed before the process went away; only the
                 // screen that would have said so is new.
                 showStatus(NexusUi.GREEN, "Signed in. Returning to Assistant...")
@@ -176,16 +180,18 @@ class CodexChatGptSignInActivity : Activity() {
                 // server has to come back. Opening the browser again here would
                 // send the wearer into a second, doomed attempt.
                 beginSignIn(openBrowser = false)
+            interrupted != null -> {
+                // The process that ran the callback server is gone, but the
+                // browser still sits on the callback URL (served or refused), and
+                // the code in it is spent only by the exchange. Bring the server
+                // back on the same attempt and let a reload deliver the code;
+                // reopening the browser would only show a spent sign-in.
+                attempt = interrupted
+                didReceiveBrowserReturn = coldBrowserReturn
+                beginSignIn(openBrowser = false, recoverInterrupted = true)
+            }
             else -> {
-                // The process that ran the callback server is gone, and the
-                // authorization code with it. Reopening the browser on the same
-                // attempt would only show a spent sign-in.
-                showStatus(
-                    NexusUi.AMBER,
-                    "The sign-in was interrupted: the system closed Assistant while the " +
-                        "browser was open. Try again; on phones that stop background " +
-                        "apps, lock Assistant in recent apps first.",
-                )
+                showStatus(NexusUi.AMBER, INTERRUPTED_MESSAGE)
                 browserButton.text = "Try again"
             }
         }
@@ -317,39 +323,62 @@ class CodexChatGptSignInActivity : Activity() {
     }
 
     private fun retryOrReopen() {
-        if (signInJob != null) {
+        if (signInJob != null && !recoveringInterruptedAttempt) {
             launchBrowser()
             return
         }
-        // A finished attempt already spent its authorization round: start the
-        // next one from a fresh state and verifier.
+        // A recovered attempt the wearer gives up on, or a finished one that
+        // already spent its authorization round: start the next one from a
+        // fresh state and verifier.
+        abandonCurrentAttempt()
         attempt = CodexChatGptOAuth.createLoginAttempt()
         beginSignIn(openBrowser = true)
     }
 
-    private fun beginSignIn(openBrowser: Boolean) {
+    private fun abandonCurrentAttempt() {
+        signInJob?.cancel()
+        signInJob = null
+        loopbackServer?.close()
+        loopbackServer = null
+        recoveringInterruptedAttempt = false
+    }
+
+    private fun beginSignIn(openBrowser: Boolean, recoverInterrupted: Boolean = false) {
         if (signInJob != null) return
+        recoveringInterruptedAttempt = recoverInterrupted
         CodexChatGptSignInSession.liveAttemptState = attempt.state
-        CodexAuthStore(this).markChatGptSignInStarted(attempt.state)
+        CodexAuthStore(this).savePendingChatGptSignIn(attempt)
+        var server: CodexOAuthLoopbackServer? = null
         signInJob = activityScope.launch {
+            val job = coroutineContext[Job]
             try {
                 showStatus(NexusUi.INK3, "Starting secure callback server...")
-                val server = withContext(Dispatchers.IO) {
+                val bound = withContext(Dispatchers.IO) {
                     CodexOAuthLoopbackServer.create(
                         redirectUri = attempt.redirectUri,
                         appReturnUri = APP_RETURN_URI,
                     )
                 }
-                loopbackServer = server
+                server = bound
+                loopbackServer = bound
                 CodexChatGptSignInHoldService.start(this@CodexChatGptSignInActivity)
-                if (openBrowser) {
-                    showStatus(NexusUi.INK3, "Opening browser...")
-                    if (!launchBrowser()) return@launch
-                } else {
-                    browserButton.text = "Open browser again"
+                when {
+                    openBrowser -> {
+                        showStatus(NexusUi.INK3, "Opening browser...")
+                        if (!launchBrowser()) return@launch
+                        showStatus(NexusUi.GREEN, "Waiting for the browser...")
+                    }
+                    recoverInterrupted -> {
+                        browserButton.text = "Start over"
+                        showStatus(NexusUi.AMBER, RECOVER_MESSAGE)
+                    }
+                    else -> {
+                        browserButton.text = "Open browser again"
+                        showStatus(NexusUi.GREEN, "Waiting for the browser...")
+                    }
                 }
-                showStatus(NexusUi.GREEN, "Waiting for the browser...")
-                val callbackUri = withContext(Dispatchers.IO) { server.awaitCallback() }
+                val callbackUri = withContext(Dispatchers.IO) { bound.awaitCallback() }
+                recoveringInterruptedAttempt = false
                 showStatus(NexusUi.GREEN, "Completing sign-in...")
                 browserButton.isEnabled = false
                 pendingTokens = CodexChatGptOAuth.completeAuthorization(
@@ -376,9 +405,12 @@ class CodexChatGptSignInActivity : Activity() {
                 // The hold stays up after a successful exchange: the wearer is
                 // still in the browser, and a backgrounded process without it
                 // is exactly what OEM reapers kill before the return arrives.
-                loopbackServer?.close()
-                loopbackServer = null
-                signInJob = null
+                // An abandoned attempt is cancelled while its accept loop is
+                // still unwinding, so only this attempt's own server and job
+                // are released here, never the ones a fresh attempt owns.
+                server?.close()
+                if (loopbackServer === server) loopbackServer = null
+                if (signInJob === job) signInJob = null
             }
         }
     }
@@ -430,6 +462,13 @@ class CodexChatGptSignInActivity : Activity() {
             .authority(APP_RETURN_HOST)
             .build()
         private const val TAG = "AssistantSignIn"
+        private const val INTERRUPTED_MESSAGE =
+            "The sign-in was interrupted: the system closed Assistant while the " +
+                "browser was open. Try again; on phones that stop background apps, " +
+                "lock Assistant in recent apps first."
+        private const val RECOVER_MESSAGE =
+            "The system closed Assistant while the browser was open. Go back to " +
+                "the browser and reload the page to finish signing in, or start over."
         private const val EXTRA_ACCOUNT_ID = "assistant_chatgpt_account_id"
         private const val EXTRA_PLAN_TYPE = "assistant_chatgpt_plan_type"
         private const val EXTRA_EMAIL = "assistant_chatgpt_email"

@@ -466,13 +466,23 @@ class CodexAuthStoreLogicTest {
 
     @Test
     fun signInLedgerOnlyCompletesTheAttemptThatStoredTokens() {
-        val store = testStore(FakeSharedPreferences())
+        val prefs = FakeSharedPreferences()
+        val store = testStore(prefs)
+        val first = CodexChatGptOAuth.AuthAttempt(
+            state = "state-a",
+            codeVerifier = "verifier-a",
+            redirectUri = "http://localhost:1455/auth/callback",
+            authorizeUrl = "https://auth.openai.com/oauth/authorize?state=state-a",
+        )
 
-        assertEquals(null, store.startedChatGptSignInState())
+        assertEquals(null, store.pendingChatGptSignIn())
         assertFalse(store.isChatGptSignInCompleted(null))
 
-        store.markChatGptSignInStarted("state-a")
-        assertEquals("state-a", store.startedChatGptSignInState())
+        store.savePendingChatGptSignIn(first)
+        // The whole attempt comes back so a restarted process can rebind the
+        // callback server; the verifier never sits in the clear.
+        assertEquals(first, store.pendingChatGptSignIn())
+        assertEquals("encrypted:verifier-a", prefs.getString("chatgpt_sign_in_verifier", null))
         // Started is not finished: a return after a process death must not claim success.
         assertFalse(store.isChatGptSignInCompleted("state-a"))
 
@@ -481,13 +491,14 @@ class CodexAuthStoreLogicTest {
 
         // A later attempt stays open until its own exchange lands, even though
         // older tokens are still stored.
-        store.markChatGptSignInStarted("state-b")
-        assertEquals("state-b", store.startedChatGptSignInState())
+        store.savePendingChatGptSignIn(first.copy(state = "state-b", codeVerifier = "verifier-b"))
+        assertEquals("state-b", store.pendingChatGptSignIn()?.state)
+        assertEquals("verifier-b", store.pendingChatGptSignIn()?.codeVerifier)
         assertFalse(store.isChatGptSignInCompleted("state-b"))
         assertTrue(store.isChatGptSignInCompleted("state-a"))
 
         store.clearChatGptAuth()
-        assertEquals(null, store.startedChatGptSignInState())
+        assertEquals(null, store.pendingChatGptSignIn())
         assertFalse(store.isChatGptSignInCompleted("state-a"))
     }
 

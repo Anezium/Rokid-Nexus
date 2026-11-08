@@ -110,21 +110,42 @@ class CodexAuthStore internal constructor(
      * tokens, the exchanged key, the synced memories — but never another provider's key.
      */
     /**
-     * Remembers which login attempt is in flight and which one last stored
-     * tokens, by OAuth state. The sign-in screen cannot tell a configuration
-     * change from a process death on its own, and a browser return that
-     * outlives the process must still report whether the exchange landed.
+     * Keeps the login attempt in flight, and the OAuth state of the one that
+     * last stored tokens. The sign-in screen cannot tell a configuration change
+     * from a process death on its own; after a process death the callback
+     * server can come back on this very attempt, because the authorization
+     * code the browser still holds is only spent by the token exchange.
      */
-    fun markChatGptSignInStarted(state: String) {
-        prefs.edit().putString(KEY_SIGN_IN_STARTED_STATE, state).apply()
+    fun savePendingChatGptSignIn(attempt: CodexChatGptOAuth.AuthAttempt) {
+        prefs.edit()
+            .putString(KEY_SIGN_IN_STARTED_STATE, attempt.state)
+            .putString(KEY_SIGN_IN_VERIFIER, encryptSecret(attempt.codeVerifier))
+            .putString(KEY_SIGN_IN_REDIRECT, attempt.redirectUri)
+            .putString(KEY_SIGN_IN_AUTHORIZE, attempt.authorizeUrl)
+            .apply()
+    }
+
+    fun pendingChatGptSignIn(): CodexChatGptOAuth.AuthAttempt? {
+        val state = prefs.getString(KEY_SIGN_IN_STARTED_STATE, null)
+            ?.takeIf(String::isNotBlank) ?: return null
+        val verifier = prefs.getString(KEY_SIGN_IN_VERIFIER, null)
+            ?.let { encrypted -> runCatching { decryptSecret(encrypted) }.getOrNull() }
+            ?.takeIf(String::isNotBlank) ?: return null
+        val redirect = prefs.getString(KEY_SIGN_IN_REDIRECT, null)
+            ?.takeIf(String::isNotBlank) ?: return null
+        val authorize = prefs.getString(KEY_SIGN_IN_AUTHORIZE, null)
+            ?.takeIf(String::isNotBlank) ?: return null
+        return CodexChatGptOAuth.AuthAttempt(
+            state = state,
+            codeVerifier = verifier,
+            redirectUri = redirect,
+            authorizeUrl = authorize,
+        )
     }
 
     fun markChatGptSignInCompleted(state: String) {
         prefs.edit().putString(KEY_SIGN_IN_COMPLETED_STATE, state).apply()
     }
-
-    fun startedChatGptSignInState(): String? =
-        prefs.getString(KEY_SIGN_IN_STARTED_STATE, null)?.takeIf(String::isNotBlank)
 
     fun isChatGptSignInCompleted(state: String?): Boolean =
         state != null && prefs.getString(KEY_SIGN_IN_COMPLETED_STATE, null) == state
@@ -141,6 +162,9 @@ class CodexAuthStore internal constructor(
             .remove(KEY_SYNCED_ACCOUNT_CONTEXT)
             .remove(KEY_ACCOUNT_CONTEXT_SYNCED_AT)
             .remove(KEY_SIGN_IN_STARTED_STATE)
+            .remove(KEY_SIGN_IN_VERIFIER)
+            .remove(KEY_SIGN_IN_REDIRECT)
+            .remove(KEY_SIGN_IN_AUTHORIZE)
             .remove(KEY_SIGN_IN_COMPLETED_STATE)
         if (prefs.getString(KEY_SELECTED_PROVIDER_ID, null) == CHATGPT_PROVIDER_ID) {
             editor.remove(KEY_SELECTED_PROVIDER_ID)
@@ -596,6 +620,9 @@ class CodexAuthStore internal constructor(
         private const val KEY_API_KEY_EXCHANGE_ERROR = "api_key_exchange_error"
         private const val KEY_CONSUMER_ACCOUNT_NO_API_ORG = "consumer_account_no_api_org"
         private const val KEY_SIGN_IN_STARTED_STATE = "chatgpt_sign_in_started_state"
+        private const val KEY_SIGN_IN_VERIFIER = "chatgpt_sign_in_verifier"
+        private const val KEY_SIGN_IN_REDIRECT = "chatgpt_sign_in_redirect"
+        private const val KEY_SIGN_IN_AUTHORIZE = "chatgpt_sign_in_authorize"
         private const val KEY_SIGN_IN_COMPLETED_STATE = "chatgpt_sign_in_completed_state"
 
         private fun supportedIdleWindowMinutes(minutes: Int): Int =
