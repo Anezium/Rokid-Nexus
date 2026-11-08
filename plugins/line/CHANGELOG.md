@@ -1,12 +1,37 @@
 # Changelog
 
-## 0.1.0 — unreleased prototype
+## 0.1.0
 
-- Add an embedded Go LINE engine, email/password/PIN sign-in and secure phone settings.
-- Browse conversations and compose text through Nexus launcher pages.
-- Require Letter Sealing for sending; persist ambiguous sends without auto retry.
-- Accept modern uppercase conversation IDs and verify saved-session history reads
-  with a read-only device test.
-- Distinguish an account on standby from an interrupted LINE connection in settings.
-- Display bounded photo and sticker thumbnails in conversations, with authenticated
-  decryption for sealed photos and a static frame for animated stickers.
+First release. Needs **both hubs at Nexus 2.4.0**: older hubs still read and
+send, but a refused send shows as unconfirmed instead of staying editable.
+
+- **LINE on the glasses.** Your conversations, groups included, as launcher
+  pages: open one and read its latest messages in one scrolling column. Photo
+  and sticker thumbnails show in their bubbles; sealed photos are decrypted and
+  authenticated on the phone.
+- **Reply from the glasses.** Dictate or type in the conversation's composer.
+  Nothing is sent before you tap Send, and the result says the message was
+  handed to LINE, never that it was read. A send LINE refuses keeps your draft.
+- **Photos.** Take a picture from a conversation with the **Photo** button,
+  check it on a full-page preview, then Send, Retake or Cancel. The photo and
+  its preview leave the phone sealed with Letter Sealing; the key travels only
+  inside the sealed message, never beside it.
+- **Sign in on the phone.** Email and password, then the PIN LINE shows: a
+  **Copy PIN** button puts it on the clipboard, marked sensitive, and clears it
+  once the sign-in is over. Credentials are masked and never leave the phone.
+- **Letter Sealing required.** Conversations without an encryption key cannot be
+  written to from the glasses; the plugin says so instead of sending plaintext.
+  An ambiguous send is kept, never retried on its own.
+- **Nothing in the background.** LINE connects only while its glasses page is
+  open, and again when you come back.
+- **Unofficial client.** LINE Messages is not made or endorsed by LY
+  Corporation. LINE may sign the device out or restrict an account that uses
+  third-party clients; the plugin says so before you sign in.
+
+Not covered by this version: direct chats were verified for reading only, the
+sealed send was exercised in a group; Keep Memo is not listed; unsend and
+token expiry were not tested.
+
+LINE Messages is licensed under the Apache License 2.0, like the rest of Rokid
+Nexus; the embedded engine's MIT-licensed dependencies are listed in the
+plugin's Open-source licenses screen.
