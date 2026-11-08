@@ -40,13 +40,16 @@ type sendRecord struct {
 }
 
 type storedSession struct {
-	Token    string                `json:"token"`
-	Mid      string                `json:"mid"`
-	Keys     map[string]string     `json:"keys,omitempty"`
-	Sequence int64                 `json:"sequence"`
-	Sends    map[string]sendRecord `json:"sends"`
-	Order    []string              `json:"order"`
+	Token      string                `json:"token"`
+	Mid        string                `json:"mid"`
+	Keys       map[string]string     `json:"keys,omitempty"`
+	Sequence   int64                 `json:"sequence"`
+	Sends      map[string]sendRecord `json:"sends"`
+	Order      []string              `json:"order"`
+	Tombstones []sendTombstone       `json:"tombstones,omitempty"`
 }
+
+const maxSessionBytes = 512 * 1024
 
 type loginStatus struct {
 	Phase string `json:"phase"`
@@ -98,7 +101,7 @@ func Open(dir string) (*Engine, error) {
 	e := &Engine{ctx: ctx, cancel: cancel, file: file, dir: dir, state: "signed_out", chats: []chat{}, login: loginStatus{Phase: "idle"}}
 	data, err := os.ReadFile(filepath.Join(dir, "session.json"))
 	if err == nil {
-		if len(data) > 256*1024 || json.Unmarshal(data, &e.stored) != nil || e.stored.Token == "" || e.stored.Mid == "" {
+		if len(data) > maxSessionBytes || json.Unmarshal(data, &e.stored) != nil || e.stored.Token == "" || e.stored.Mid == "" || len(e.stored.Tombstones) > maxSendTombstones {
 			cancel()
 			file.Close()
 			return nil, errors.New("saved session invalid; forget it on the phone")
@@ -183,6 +186,9 @@ func (e *Engine) save() error {
 	data, err := json.Marshal(e.stored)
 	if err != nil {
 		return err
+	}
+	if len(data) > maxSessionBytes {
+		return errors.New("saved session exceeds size limit")
 	}
 	path := filepath.Join(e.dir, "session.json")
 	f, err := os.OpenFile(path+".tmp", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)

@@ -22,7 +22,6 @@ type sentImage struct {
 	OID         string `json:"oid"`
 	KeyMaterial string `json:"keyMaterial"`
 	MessageID   string `json:"messageId,omitempty"`
-	Preview     bool   `json:"preview,omitempty"`
 }
 
 func imageDigest(chatID string, jpeg []byte) string {
@@ -41,14 +40,11 @@ func (e *Engine) SendImage(invocation, chatID, chatTitle string, jpeg []byte) st
 		return "not_sent"
 	}
 	digest := imageDigest(chatID, jpeg)
-	if record, ok := e.stored.Sends[invocation]; ok {
-		if record.Digest != digest {
-			return "recipient_changed"
-		}
-		if record.State == "sent" && record.Image != nil {
+	if outcome, known := e.replaySend(invocation, digest); known {
+		if record := e.stored.Sends[invocation]; outcome == "sent" && record.Image != nil {
 			e.appendOwnImage(record.Image)
 		}
-		return record.State
+		return outcome
 	}
 	if e.ctx.Err() != nil || e.client == nil || e.crypto == nil {
 		return "not_sent"
@@ -80,8 +76,8 @@ func (e *Engine) sendPreparedImage(invocation, chatID, digest string, jpeg []byt
 		return "not_sent"
 	}
 
-	// Encrypted image flow: upload ciphertext, upload its encrypted preview,
-	// seal the media key, persist the invocation, then dispatch the IMAGE message.
+	// Upload exactly one ciphertext. The media key travels only in sealed chunks;
+	// publishing a preview with this key would reuse the file's CTR keystream.
 	upload, keyMaterial, err := encryptFileData(jpeg)
 	if err != nil {
 		return "not_sent"
@@ -92,17 +88,8 @@ func (e *Engine) sendPreparedImage(invocation, chatID, digest string, jpeg []byt
 	}
 	metadata := map[string]string{
 		"OID": oid, "SID": "emi", "FILE_SIZE": strconv.Itoa(len(upload)),
-		"contentType": "1", "ENC_KM": keyMaterial, "FILE_NAME": "image.jpg",
+		"contentType": "1", "FILE_NAME": "image.jpg",
 		"MEDIA_CONTENT_INFO": encode(map[string]any{"category": "original", "fileSize": len(upload), "extension": "jpg"}),
-	}
-	previewUploaded := false
-	if preview, width, height, err := generateThumbnail(jpeg); err == nil {
-		if encrypted, err := encryptThumbnail(preview, keyMaterial); err == nil {
-			if e.client.UploadOBSWithOID(encrypted, oid+"__ud-preview") == nil {
-				previewUploaded = true
-				metadata["MEDIA_THUMB_INFO"] = encode(map[string]int{"width": width, "height": height})
-			}
-		}
 	}
 	payload, _ := json.Marshal(map[string]string{"keyMaterial": keyMaterial})
 	chunks, err := seal(payload)
@@ -118,15 +105,9 @@ func (e *Engine) sendPreparedImage(invocation, chatID, digest string, jpeg []byt
 	} else if strings.HasPrefix(strings.ToLower(chatID), "r") {
 		msg.ToType = 1
 	}
-	image := &sentImage{ChatID: chatID, OID: oid, KeyMaterial: keyMaterial, Preview: previewUploaded}
-	e.stored.Sequence++
+	image := &sentImage{ChatID: chatID, OID: oid, KeyMaterial: keyMaterial}
 	record := sendRecord{Digest: digest, State: "unconfirmed", Image: image}
-	e.stored.Sends[invocation] = record
-	e.stored.Order = append(e.stored.Order, invocation)
-	if e.save() != nil {
-		// No message was dispatched, so the current lease may safely try again.
-		delete(e.stored.Sends, invocation)
-		e.stored.Order = e.stored.Order[:len(e.stored.Order)-1]
+	if !e.journalSend(invocation, record) {
 		return "not_sent"
 	}
 	response, err := e.client.SendMessage(e.stored.Sequence, msg)
@@ -179,9 +160,6 @@ func (e *Engine) appendOwnImage(image *sentImage) {
 		return
 	}
 	source := &mediaSource{oid: image.OID, messageID: image.MessageID, keys: []string{image.KeyMaterial}, encrypted: true}
-	if image.Preview {
-		source.previewOID = image.OID + "__ud-preview"
-	}
 	e.addMessage(image.ChatID, message{ID: image.MessageID, Text: "[Photo]", Mine: true, Media: "photo", source: source})
 }
 
@@ -194,9 +172,6 @@ func (e *Engine) confirmOwnImage(chatID string, row message) {
 		image := record.Image
 		if image == nil || image.ChatID != chatID || image.OID != row.source.oid {
 			continue
-		}
-		if image.Preview {
-			row.source.previewOID = image.OID + "__ud-preview"
 		}
 		if record.State != "sent" || image.MessageID != row.ID {
 			record.State, image.MessageID = "sent", row.ID

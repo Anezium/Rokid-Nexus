@@ -36,14 +36,15 @@ func testImageJPEG(t *testing.T, width, height int) []byte {
 }
 
 type imageFixture struct {
-	e       *Engine
-	chatID  string
-	input   []byte
-	failure string
-	steps   []string
-	message *lineapi.Message
-	objects map[string][]byte
-	payload []byte
+	e              *Engine
+	chatID         string
+	input          []byte
+	failure        string
+	steps          []string
+	message        *lineapi.Message
+	historyMessage *lineapi.Message
+	objects        map[string][]byte
+	payload        []byte
 }
 
 func newImageFixture(t *testing.T, group bool) *imageFixture {
@@ -110,7 +111,7 @@ func newImageFixture(t *testing.T, group bool) *imageFixture {
 			}
 			data = f.message
 		case "getRecentMessagesV2":
-			data = []*lineapi.Message{f.message}
+			data = []*lineapi.Message{f.historyMessage}
 		default:
 			t.Fatalf("unexpected RPC %s", method)
 		}
@@ -124,16 +125,12 @@ func newImageFixture(t *testing.T, group bool) *imageFixture {
 			if strings.HasSuffix(req.URL.Path, "/object_info.obs") {
 				return imageRPC(`{"status":"exist"}`), nil
 			}
-			object := "object"
-			if strings.HasSuffix(req.URL.Path, "object__ud-preview") {
-				object = "preview"
-			}
-			return imageRPC(string(f.objects[object])), nil
+			return imageRPC(string(f.objects["object"])), nil
 		}
 		step := "upload"
 		key := "object"
-		if strings.HasSuffix(req.URL.Path, "object__ud-preview") {
-			step, key = "preview", "preview"
+		if !strings.Contains(req.URL.Path, "/reqid-") {
+			t.Fatal("unexpected second OBS upload or preview endpoint")
 		}
 		f.steps = append(f.steps, step)
 		if f.failure == step {
@@ -169,7 +166,7 @@ func (f *imageFixture) send() string {
 	})
 }
 
-func TestImageEncryptionAndPreviewRoundTrip(t *testing.T) {
+func TestImageEncryptionRoundTrip(t *testing.T) {
 	original := append(testImageJPEG(t, 1600, 800), []byte("untouched trailing metadata")...)
 	encrypted, key, err := encryptFileData(original)
 	if err != nil {
@@ -178,18 +175,6 @@ func TestImageEncryptionAndPreviewRoundTrip(t *testing.T) {
 	plain, err := decryptPhoto(encrypted, key)
 	if err != nil || !bytes.Equal(plain, original) || len(encrypted) != len(original)+32 {
 		t.Fatal("original JPEG changed or encryption failed")
-	}
-	preview, width, height, err := generateThumbnail(original)
-	if err != nil || width != 1280 || height != 640 {
-		t.Fatalf("preview bounds %dx%d: %v", width, height, err)
-	}
-	sealedPreview, err := encryptThumbnail(preview, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err := decryptPhoto(sealedPreview, key)
-	if err != nil || !bytes.Equal(decoded, preview) {
-		t.Fatal("preview does not use the parent's key and file format")
 	}
 	_, otherKey, err := encryptFileData(original)
 	if err != nil || otherKey == key {
@@ -209,11 +194,17 @@ func TestSendImageDirectAndGroupWireContract(t *testing.T) {
 				t.Fatal("IMAGE envelope is not sealed")
 			}
 			var body map[string]string
-			if json.Unmarshal(f.payload, &body) != nil || len(body) != 1 || body["keyMaterial"] != msg.ContentMetadata["ENC_KM"] {
-				t.Fatal("sealed payload and metadata disagree")
+			if json.Unmarshal(f.payload, &body) != nil || len(body) != 1 || body["keyMaterial"] == "" || body["keyMaterial"] != f.e.stored.Sends["photo"].Image.KeyMaterial {
+				t.Fatal("sealed payload and private journal disagree")
 			}
 			metadata := msg.ContentMetadata
-			if metadata["OID"] != "object" || metadata["SID"] != "emi" || metadata["contentType"] != "1" || metadata["FILE_NAME"] != "image.jpg" || metadata["e2eeVersion"] == "" || metadata["MEDIA_THUMB_INFO"] == "" {
+			if _, leaked := metadata["ENC_KM"]; leaked || strings.Contains(encode(metadata), body["keyMaterial"]) {
+				t.Fatal("outbound metadata exposes media key material")
+			}
+			if _, advertised := metadata["MEDIA_THUMB_INFO"]; advertised {
+				t.Fatal("outbound message advertises an encrypted thumbnail")
+			}
+			if metadata["OID"] != "object" || metadata["SID"] != "emi" || metadata["contentType"] != "1" || metadata["FILE_NAME"] != "image.jpg" || metadata["e2eeVersion"] == "" {
 				t.Fatal("required image metadata missing")
 			}
 			if metadata["FILE_SIZE"] != fmt.Sprint(len(f.input)+32) {
@@ -223,11 +214,8 @@ func TestSendImageDirectAndGroupWireContract(t *testing.T) {
 			if err != nil || !bytes.Equal(plain, f.input) {
 				t.Fatal("recipient could not recover original JPEG")
 			}
-			if _, err := decryptPhoto(f.objects["preview"], body["keyMaterial"]); err != nil {
-				t.Fatal("recipient could not recover preview")
-			}
 			steps := f.steps
-			if !reflect.DeepEqual(steps[len(steps)-3:], []string{"upload", "preview", "sendMessage"}) {
+			if !reflect.DeepEqual(steps[len(steps)-2:], []string{"upload", "sendMessage"}) || len(f.objects) != 1 || strings.Count(strings.Join(steps, ","), "upload") != 1 {
 				t.Fatalf("upload/send order: %v", steps)
 			}
 			history := f.e.findChat(f.chatID).History
@@ -235,8 +223,7 @@ func TestSendImageDirectAndGroupWireContract(t *testing.T) {
 				t.Fatal("sent photo absent from snapshot history")
 			}
 			media, err := f.e.Media(f.chatID, history[0].ID)
-			preview, previewErr := decryptPhoto(f.objects["preview"], body["keyMaterial"])
-			if err != nil || previewErr != nil || !bytes.Equal(media, preview) {
+			if err != nil || !bytes.Equal(media, f.input) {
 				t.Fatalf("own uploaded photo cannot be read through Media: %v", err)
 			}
 		})
@@ -246,7 +233,7 @@ func TestSendImageDirectAndGroupWireContract(t *testing.T) {
 func TestSendImageFailureMapping(t *testing.T) {
 	for _, test := range []struct{ failure, outcome string }{
 		{"determineMediaMessageFlow", "not_sent"}, {"plain-flow", "not_sent"}, {"sealing", "not_sent"}, {"cancel-before-send", "not_sent"},
-		{"acquireEncryptedAccessToken", "not_sent"}, {"upload", "not_sent"}, {"preview", "sent"},
+		{"acquireEncryptedAccessToken", "not_sent"}, {"upload", "not_sent"},
 		{"send-failure", "unconfirmed"}, {"sendMessage", "unconfirmed"}, {"missing-ack", "unconfirmed"},
 	} {
 		t.Run(test.failure, func(t *testing.T) {
@@ -260,9 +247,6 @@ func TestSendImageFailureMapping(t *testing.T) {
 			}
 			if test.outcome == "unconfirmed" && f.e.stored.Sends["photo"].State != "unconfirmed" {
 				t.Fatal("ambiguous result not journaled")
-			}
-			if test.failure == "preview" && f.message.ContentMetadata["MEDIA_THUMB_INFO"] != "" {
-				t.Fatal("failed optional preview advertised as uploaded")
 			}
 		})
 	}
@@ -406,8 +390,17 @@ func TestSendImageHistoryFetchConfirmsAnAmbiguousUpload(t *testing.T) {
 		t.Fatal(got)
 	}
 	// Exercise the history observation boundary independently of message sealing.
-	f.message.Chunks = nil
-	f.message.ID = "history-photo"
+	row := *f.message
+	row.Chunks = nil
+	row.ID = "history-photo"
+	// The read side still accepts legacy incoming ENC_KM messages. The original
+	// outbound envelope remains key-free; sealing is mocked at this unit boundary.
+	row.ContentMetadata = make(map[string]string)
+	for key, value := range f.message.ContentMetadata {
+		row.ContentMetadata[key] = value
+	}
+	row.ContentMetadata["ENC_KM"] = f.e.stored.Sends["photo"].Image.KeyMaterial
+	f.historyMessage = &row
 	if err := f.e.LoadHistory(f.chatID); err != nil {
 		t.Fatal(err)
 	}

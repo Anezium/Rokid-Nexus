@@ -11,8 +11,6 @@ import (
 	lineapi "github.com/beeper/line/pkg/line"
 )
 
-const maxSends = 64
-
 func sendDigest(chatID, text string) string {
 	sum := sha256.Sum256([]byte(chatID + "\x00" + text))
 	return hex.EncodeToString(sum[:])
@@ -27,11 +25,8 @@ func (e *Engine) Send(invocation, id, title, text string) string {
 		return "not_sent"
 	}
 	digest := sendDigest(id, text)
-	if record, ok := e.stored.Sends[invocation]; ok {
-		if record.Digest != digest {
-			return "recipient_changed"
-		}
-		return record.State
+	if outcome, known := e.replaySend(invocation, digest); known {
+		return outcome
 	}
 	if e.ctx.Err() != nil || e.client == nil {
 		return "not_sent"
@@ -90,10 +85,11 @@ func (e *Engine) Send(invocation, id, title, text string) string {
 	}
 	msg.Chunks = chunks
 	msg.ContentMetadata["e2eeVersion"] = strconv.Itoa(e2ee.ChunksVersion(chunks))
-	e.stored.Sequence++
-	e.stored.Sends[invocation] = sendRecord{Digest: digest, State: "unconfirmed"}
-	e.stored.Order = append(e.stored.Order, invocation)
-	if e.save() != nil {
+	return e.sendPreparedText(invocation, id, text, digest, msg)
+}
+
+func (e *Engine) sendPreparedText(invocation, id, text, digest string, msg *lineapi.Message) string {
+	if !e.journalSend(invocation, sendRecord{Digest: digest, State: "unconfirmed"}) {
 		return "not_sent"
 	}
 	response, err := e.client.SendMessage(e.stored.Sequence, msg)
@@ -106,18 +102,4 @@ func (e *Engine) Send(invocation, id, title, text string) string {
 	_ = e.save()
 	e.addMessage(id, message{ID: response.ID, Text: text, Mine: true})
 	return "sent"
-}
-
-func (e *Engine) makeSendRoom() bool {
-	if len(e.stored.Sends) < maxSends {
-		return true
-	}
-	for i, key := range e.stored.Order {
-		if e.stored.Sends[key].State == "sent" {
-			delete(e.stored.Sends, key)
-			e.stored.Order = append(e.stored.Order[:i], e.stored.Order[i+1:]...)
-			return true
-		}
-	}
-	return false
 }
