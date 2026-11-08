@@ -146,9 +146,68 @@ The complete output is in ignored `scratchpad/line-gradle-2026-11-08.log`.
 The earlier successful suite above remains a previous observation; this attempt
 does not constitute another passing build. No build configuration was changed.
 
+## Media and standby follow-up
+
+The settings screen's "LINE is not reachable right now" text was shown for
+`offline`, which was also the state of an unopened saved session. A dormant
+account now has an explicit `standby` state; `offline` is reserved for an
+interrupted active connection. Phone UI inspection of the installed APK found
+`Linked · on standby`. This status does not claim that a network request failed.
+
+The media implementation follows Meta Messages' asynchronous conversation
+thumbnails: the page returns immediately, downloads run one at a time for the
+newest visible messages, and page revisions replace placeholders when ready.
+Each image is bounded to 160 pixels and 12 KiB, with at most four images and
+32 KiB of decoded images per page. Text and base64 images share a conservative
+48 KiB serialization budget. Downloads have a 4 MiB ceiling, including chunked
+responses, and use the session's cancellation context. Media keys and locators
+stay native; only the media kind enters the snapshot. The cache is bounded and
+cleared at session end. Stickers use a static frame, without animation or sound.
+
+Encrypted photos authenticate their HMAC-SHA256 before AES-CTR plaintext is
+returned. Native tests include a fixed ciphertext generated independently with
+.NET cryptography, corrupted ciphertext/tag rejection, missing-key fail-closed
+behavior, snapshot privacy, loaded-message scoping, download size limits and
+redirect policy. Observed checks after the media change:
+
+- 20 native Go tests passed; `go vet ./mobile` passed.
+- The arm64 AAR was rebuilt using the existing provisioned toolchains.
+- 12 Kotlin unit tests passed, including newest-image selection, oversized-image
+  fallback and the combined escaped-text/image page budget.
+- The APK and read-only instrumentation APK assembled successfully. The earlier
+  network-denied Gradle attempt did not recur in the normal-cache elevated run.
+
+Final Gradle output for this implementation:
+
+```text
+> Task :plugin-line:packageDebug
+> Task :plugin-line:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :plugin-line:assembleDebug
+BUILD SUCCESSFUL in 5s
+114 actionable tasks: 10 executed, 104 up-to-date
+```
+
+Only the LINE plugin and its test APK were installed with `adb install -r`;
+both returned `Success`. The owner's saved account reconnected, and the read-only
+history check with `requireText=false` and `requireMedia=true` reported:
+
+```text
+decodedPhotoPreviews=0
+decodedStickerPreviews=2
+historyMessages=2
+mediaMessages=2
+readableTextMessages=0
+OK (1 test)
+```
+
+Both stickers then rendered in the actual glasses conversation page. Private
+evidence is `E:/Tools/Rokid/_research/line-device-2026-11-08/line-stickers.png`;
+the test output is ignored `scratchpad/line-media-device.log`. No message was sent.
+This is live sticker acceptance, not live acceptance of encrypted photos.
+
 ## Not verified
 
-Text and media decryption, outgoing messages, group decrypt/send, incoming live
+Live text/photo decryption, outgoing messages, group decrypt/send, incoming live
 updates, notification behavior and token expiry remain unverified.
 The successful direct-chat lookup/history fetch is not evidence of text decryption,
 delivery or sending.
