@@ -109,6 +109,12 @@ jobs:
               changelog_path="plugins/wireless-adb/CHANGELOG.md"
               release_name="Wireless ADB"
               ;;
+            meta-messages)
+              module_dir="plugins/meta"
+              module_name="plugin-meta"
+              changelog_path="plugins/meta/CHANGELOG.md"
+              release_name="Meta Messages"
+              ;;
             patcher)
               module_dir="plugins/patcher"
               changelog_path="plugins/patcher/CHANGELOG.md"
@@ -146,6 +152,32 @@ jobs:
             echo "::error::$PLUGIN_MODULE versionName is '${version_names[0]}', but tag '$GITHUB_REF_NAME' requests '$PLUGIN_VERSION'."
             exit 1
           fi
+
+      - name: Read Meta Messages' Go toolchain
+        if: env.PLUGIN_ID == 'meta-messages'
+        id: meta-go
+        shell: bash
+        run: |
+          set -euo pipefail
+          toolchain=$(sed -nE 's/^toolchain[[:space:]]+go([0-9.]+)\r?$/\1/p' plugins/meta/native/go.mod)
+          if [[ -z "$toolchain" ]]; then
+            echo "::error::plugins/meta/native/go.mod names no toolchain."
+            exit 1
+          fi
+          echo "version=$toolchain" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go for Meta Messages' native engine
+        if: env.PLUGIN_ID == 'meta-messages'
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.meta-go.outputs.version }}
+          cache-dependency-path: plugins/meta/native/go.sum
+
+      # The engine AAR is built from the tagged sources, never committed.
+      - name: Build Meta Messages' native engine
+        if: env.PLUGIN_ID == 'meta-messages'
+        shell: bash
+        run: plugins/meta/native/build-android.sh
 
       - name: Require Patcher package-read credentials
         if: env.PLUGIN_ID == 'patcher'
