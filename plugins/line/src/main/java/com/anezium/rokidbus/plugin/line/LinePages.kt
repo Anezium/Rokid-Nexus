@@ -57,7 +57,8 @@ internal object LinePages {
             PageBody.Conversation(
                 threadKey = pageId.removePrefix(PREFIX),
                 messages = history(chat, thumbnail),
-                caption = if (ready) "Letter Sealing required to send" else status(state.state),
+                // No caption while ready: whether a conversation can be sealed is only known at send time.
+                caption = if (ready) null else status(state.state),
                 composer = ConversationComposer(
                     recipient = clip(chat.title, PageTemplateContract.MAX_RECIPIENT_CHARS),
                     sendActionId = SEND,
