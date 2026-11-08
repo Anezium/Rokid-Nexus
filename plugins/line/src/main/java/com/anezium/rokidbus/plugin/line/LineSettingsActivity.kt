@@ -47,7 +47,6 @@ class LineSettingsActivity : Activity() {
     private lateinit var openLine: Button
     private lateinit var cancel: Button
     private lateinit var forget: View
-    /** The PIN last placed on the clipboard by the owner's tap, so it can be taken back off. */
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
