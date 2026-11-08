@@ -290,6 +290,19 @@ internal class SessionReducer(
     }
 
     private fun onClosed(model: SessionModel, event: SessionEvent): SessionTransition {
+        if (event is SessionEvent.HeadTilt) {
+            if (model.noticeArmed || model.editableFocused || model.capture != null) return keep(model)
+            val now = wallClock()
+            val root = SessionState.Root(RootStops.build(model.activities, model.history.rootPreview(now), model.history.visible(now).size))
+            val opened = model.copy(state = root, generation = model.generation + 1, linkLost = false,
+                underneath = event.underneath, gateContacts = emptyList(), commandOutcomes = emptyMap(), shownFocus = null)
+            val transition = when {
+                event.pluginId == null -> SessionTransition(opened, listOf(ShowRoot))
+                event.pageId != null -> openFrame(opened, root, emptyList(), event.pageId, null, event.nowMs)
+                else -> launch(opened, root, event.pluginId, event.nowMs)
+            }
+            return transition.copy(effects = listOf(ShowRoot) + transition.effects.filterNot { it == ShowRoot })
+        }
         // The session never opens over a composer capture (plan 028a §5.4).
         if (event !is SessionEvent.TripleTap || model.noticeArmed || model.editableFocused || model.capture != null) return keep(model)
         val now = wallClock()

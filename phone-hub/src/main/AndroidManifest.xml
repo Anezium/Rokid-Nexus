@@ -134,6 +134,11 @@
             android:parentActivityName=".SettingsActivity" />
 
         <activity
+            android:name=".HeadTiltSettingsActivity"
+            android:exported="false"
+            android:parentActivityName=".GlassesDisplaySettingsActivity" />
+
+        <activity
             android:name=".ActivityDisplaySettingsActivity"
             android:exported="true"
             android:parentActivityName=".GlassesDisplaySettingsActivity" />

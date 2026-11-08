@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rokid Nexus — Display › Head tilt</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=Chivo+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --green:#4dff8c; --green-dim:#2f9d5c; --amber:#ffb84d; --danger:#ff8a8a;
+    --bg:#070a08; --panel:#0d150f; --panel2:#0e150f;
+    --line:#182619; --line2:#16241a;
+    --ink:#dcf3e4; --ink2:#8ba896; --ink3:#5f7a68; --ink4:#42574a;
+    --on-accent:#04180d;
+    --mono:'Chivo Mono',monospace; --sans:'Sora',sans-serif;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ background:#050706; color:var(--ink); font-family:var(--sans); padding:56px 32px 96px; -webkit-font-smoothing:antialiased; }
+  .page-head{ max-width:2200px; margin:0 auto 48px; }
+  .page-head .k{ font:500 12px/1 var(--mono); letter-spacing:.34em; text-transform:uppercase; color:var(--green); }
+  .page-head h1{ font:300 38px/1.05 var(--sans); margin:16px 0 10px; letter-spacing:-.02em; }
+  .page-head h1 b{ font-weight:500; color:var(--green); }
+  .page-head p{ color:var(--ink2); max-width:720px; font-size:15px; line-height:1.6; }
+  .page-head p b{ color:var(--ink); font-weight:500; }
+  .legend{ display:flex; gap:22px; margin-top:18px; font:400 11px/1 var(--mono); letter-spacing:.08em; color:var(--ink3); text-transform:uppercase; }
+  .legend i{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; vertical-align:middle; }
+  .gallery{ max-width:2200px; margin:0 auto; display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:52px 36px; align-items:start; }
+  .cell{ display:flex; flex-direction:column; gap:18px; }
+  .cap .n{ display:flex; align-items:baseline; gap:10px; }
+  .cap .num{ font:500 12px/1 var(--mono); color:var(--green); }
+  .cap h2{ font:600 17px/1.1 var(--sans); letter-spacing:-.01em; }
+  .cap p{ margin-top:7px; color:var(--ink2); font-size:13px; line-height:1.55; }
+  .cap p b{ color:var(--ink); font-weight:500; }
+
+  /* ---------- phone shell (same scale as nexus-phone-v2) ---------- */
+  .phone{ width:330px; max-width:100%; height:712px; border-radius:36px; overflow:hidden; position:relative; background:var(--bg);
+    box-shadow:0 40px 80px -40px #000, 0 0 0 1px #ffffff08, 0 0 0 8px #12151380; }
+  .sb{ position:absolute; top:0; left:0; right:0; height:30px; z-index:30; display:flex; align-items:center; justify-content:space-between;
+    padding:0 24px 0 28px; font:500 12px/1 var(--sans); color:var(--ink); }
+  .sb .dots{ display:flex; gap:5px; } .sb .dots span{ width:14px; height:8px; border-radius:2px; background:currentColor; opacity:.5; }
+  .scr{ position:absolute; inset:30px 0 0; overflow:hidden; display:flex; flex-direction:column; }
+
+  .sthead{ padding:12px 20px 0; display:flex; flex-direction:column; }
+  .sthead .back{ font:500 9.5px/1 var(--mono); letter-spacing:.2em; text-transform:uppercase; color:var(--ink3); }
+  .sthead .ttl{ display:flex; align-items:baseline; justify-content:space-between; margin:10px 0 12px; }
+  .sthead h1{ font:300 25px/1 var(--sans); letter-spacing:-.02em; }
+  .sthead h1 b{ color:var(--green); font-weight:500; }
+  .sthead .state{ font:500 9.5px/1 var(--mono); letter-spacing:.16em; text-transform:uppercase; padding:5px 8px; border-radius:6px; border:1px solid var(--line2); color:var(--ink3); }
+  .sthead .state.on{ color:var(--green); border-color:#4dff8c38; background:#4dff8c0a; }
+  .sthead .state.warn{ color:var(--amber); border-color:#ffb84d38; background:#ffb84d0a; }
+
+  .content{ flex:1; overflow-y:auto; padding:0 20px 28px; border-top:1px solid var(--line); scroll-behavior:smooth; }
+  .content::-webkit-scrollbar{ display:none; }
+
+  .intro{ font:400 12px/1.55 var(--sans); color:var(--ink2); padding:14px 0 4px; }
+
+  .lbl{ display:flex; align-items:center; justify-content:space-between; font:500 9.5px/1 var(--mono); letter-spacing:.22em; text-transform:uppercase; color:var(--ink4); margin:18px 2px 10px; }
+  .lbl .idx{ color:var(--green-dim); margin-right:8px; }
+  .lbl .c{ color:var(--green-dim); letter-spacing:.12em; }
+  .lbl .c.warn{ color:var(--amber); }
+  .lbl .c.ok::before{ content:"✓ "; }
+
+  /* ---- 01 prepare ---- */
+  .prep{ border-radius:14px; border:1px solid #ffb84d33; background:linear-gradient(160deg,#ffb84d0d,#0d150f 60%); padding:14px 13px 6px; }
+  .prep .t{ font:500 14px/1.25 var(--sans); }
+  .prep .s{ margin-top:7px; font:400 11.5px/1.5 var(--sans); color:var(--ink2); }
+  .prep .s b{ color:var(--ink); font-weight:500; }
+  .prep .act{ margin:12px 0 6px; }
+  .btn-out{ display:inline-flex; align-items:center; gap:8px; font:600 10.5px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase; padding:10px 16px; border-radius:20px; border:1px solid #2c4a37; color:var(--green); }
+  .btn-out.amber{ color:var(--amber); border-color:#ffb84d44; }
+  .btn-out svg{ width:13px; height:13px; }
+  .btn-fill{ display:flex; align-items:center; justify-content:center; gap:9px; font:600 10.5px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase; padding:13px 16px; border-radius:20px; background:var(--green); color:var(--on-accent); }
+  .btn-fill.dis{ background:#1c2b21; color:var(--ink3); }
+  .btn-fill svg{ width:14px; height:14px; }
+  .swrow{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0 10px; border-top:1px solid var(--line2); }
+  .swrow .t{ font:400 12.5px/1.3 var(--sans); }
+  .swrow .s{ display:block; margin-top:3px; font:400 10px/1.3 var(--mono); color:var(--ink3); }
+  .done{ display:grid; grid-template-columns:22px 1fr auto; align-items:center; gap:10px; padding:11px 13px; border-radius:13px; background:var(--panel); border:1px solid var(--line2); }
+  .done .ck{ width:22px; height:22px; border-radius:50%; display:grid; place-items:center; background:#4dff8c14; color:var(--green); }
+  .done .ck svg{ width:12px; height:12px; }
+  .done .t{ font:400 13px/1 var(--sans); }
+  .done .s{ display:block; margin-top:4px; font:400 10px/1 var(--mono); color:var(--ink3); }
+  .done .go{ font:500 9.5px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--ink3); }
+
+  /* ---- 02 hero ---- */
+  .hero{ position:relative; border-radius:16px; background:
+      radial-gradient(120% 90% at 70% 30%, #4dff8c0a, transparent 60%),
+      linear-gradient(180deg,#0e1710,#0b120d); border:1px solid var(--line2); overflow:hidden; }
+  .hero svg.fig{ display:block; width:100%; height:auto; }
+  .hero .read{ position:absolute; bottom:12px; right:14px; text-align:right; }
+  .hero .read .v{ font:300 34px/1 var(--mono); letter-spacing:-.04em; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .hero .read .v.hot{ color:var(--green); text-shadow:0 0 18px #4dff8c55; }
+  .hero .read .v.dim{ color:var(--ink4); }
+  .hero .read .u{ display:block; margin-top:5px; font:400 9.5px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--ink3); }
+  .hero .tag{ position:absolute; top:12px; left:14px; font:500 9px/1 var(--mono); letter-spacing:.2em; text-transform:uppercase; color:var(--ink4); }
+  .hero .det{ position:absolute; left:106px; top:7px; display:inline-flex; align-items:center; gap:7px; padding:6px 9px; border-radius:8px;
+    background:#4dff8c14; border:1px solid #4dff8c33; color:var(--green); font:500 9.5px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase; transition:opacity .25s; }
+  .hero .det i{ width:6px; height:6px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green); }
+  .hero .det.flash{ animation:flash .5s ease-out; }
+  @keyframes flash{ 0%{ background:#4dff8c66; } 100%{ background:#4dff8c14; } }
+  .hero .prog{ position:absolute; left:0; right:0; bottom:0; height:3px; background:#4dff8c1a; }
+  .hero .prog b{ position:absolute; left:0; top:0; bottom:0; width:0; background:var(--green); animation:fill 1s linear infinite; }
+  @keyframes fill{ to{ width:100%; } }
+  .hero .veil{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#070a08b0; }
+  .hero .veil .pill{ display:inline-flex; align-items:center; gap:8px; padding:9px 13px; border-radius:20px; border:1px solid #ffb84d3a; background:#0d150f; color:var(--amber);
+    font:500 9.5px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; }
+  .hero .veil .pill svg{ width:13px; height:13px; }
+
+  .status{ display:flex; align-items:flex-start; gap:9px; padding:12px 2px 0; font:400 12px/1.45 var(--sans); color:var(--ink2); }
+  .status i{ flex:none; width:7px; height:7px; border-radius:50%; margin-top:5px; background:var(--ink4); }
+  .status.ok i{ background:var(--green); box-shadow:0 0 8px #4dff8c88; }
+  .status.busy i{ background:var(--green); animation:pulse 1s ease-in-out infinite; }
+  .status.warn i{ background:var(--amber); box-shadow:0 0 8px #ffb84d66; }
+  .status.warn{ color:var(--amber); }
+  .status b{ color:var(--ink); font-weight:500; }
+  @keyframes pulse{ 0%,100%{ opacity:1; transform:scale(1);} 50%{ opacity:.35; transform:scale(.7);} }
+  .calbtn{ margin-top:12px; }
+  .hint{ font:400 11px/1.5 var(--sans); color:var(--ink3); padding:10px 2px 0; }
+
+  /* ---- setting rows ---- */
+  .row{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:13px 2px; border-bottom:1px solid var(--line2); }
+  .row:last-child{ border-bottom:none; }
+  .row .t{ font:400 13.5px/1 var(--sans); }
+  .row .s{ display:block; margin-top:5px; font:400 10px/1.35 var(--mono); color:var(--ink3); }
+  .row .s.warn{ color:var(--amber); }
+  .row .v{ display:inline-flex; align-items:center; gap:7px; font:400 12px/1 var(--mono); color:var(--ink); white-space:nowrap; }
+  .row .v small{ font-size:10px; color:var(--ink3); letter-spacing:.06em; text-transform:uppercase; }
+  .row .v .chev{ color:var(--ink4); font-size:15px; }
+  .row.dim .t, .row.dim .v{ color:var(--ink3); }
+
+  .angle{ padding:13px 2px 6px; border-bottom:1px solid var(--line2); }
+  .angle .h{ display:flex; align-items:baseline; justify-content:space-between; }
+  .angle .t{ font:400 13.5px/1 var(--sans); }
+  .angle .v{ font:300 22px/1 var(--mono); letter-spacing:-.03em; color:var(--green); font-variant-numeric:tabular-nums; }
+  .angle .v small{ font-size:10px; color:var(--ink3); letter-spacing:.1em; margin-left:4px; }
+  .slider{ margin:14px 0 2px; position:relative; height:28px; }
+  .slider .track{ position:absolute; left:0; right:0; top:13px; height:2px; background:var(--line); }
+  .slider .fillb{ position:absolute; left:0; top:13px; height:2px; background:var(--green); }
+  .slider .ticks{ position:absolute; left:0; right:0; top:9px; height:10px; }
+  .slider .ticks i{ position:absolute; top:0; width:1px; height:10px; background:var(--ink4); transform:translateX(-.5px); }
+  .slider .knob{ position:absolute; top:4px; width:20px; height:20px; border-radius:50%; background:var(--bg); border:2px solid var(--green); transform:translateX(-10px); box-shadow:0 0 0 4px #4dff8c14; }
+  .slider input{ position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; margin:0; }
+  .slider.off .fillb{ background:var(--ink3); } .slider.off .knob{ border-color:var(--ink3); box-shadow:none; }
+  .scale{ display:flex; justify-content:space-between; font:400 9px/1 var(--mono); letter-spacing:.1em; color:var(--ink4); padding:0 1px; }
+
+  .dest{ display:grid; grid-template-columns:36px 1fr auto; gap:12px; align-items:center; padding:12px 13px; border-radius:13px; background:var(--panel); border:1px solid var(--line2); }
+  .dest .ic{ width:36px; height:36px; border-radius:10px; display:grid; place-items:center; background:#4dff8c12; color:var(--green); }
+  .dest .ic svg{ width:17px; height:17px; }
+  .dest .k{ font:500 9px/1 var(--mono); letter-spacing:.2em; text-transform:uppercase; color:var(--ink4); }
+  .dest .t{ margin-top:4px; font:500 14.5px/1.1 var(--sans); }
+  .dest .s{ display:block; margin-top:4px; font:400 10px/1.3 var(--mono); color:var(--ink3); }
+  .dest .go{ color:var(--ink4); font-size:17px; }
+  .dest.unav .ic{ background:#ffb84d10; color:var(--amber); border:1px dashed #ffb84d55; }
+  .dest.unav .t{ color:var(--ink2); text-decoration:line-through; text-decoration-color:#ffb84d88; text-decoration-thickness:1px; }
+  .dest.unav .s{ color:var(--amber); }
+
+  .toggle{ flex:none; width:40px; height:23px; border-radius:13px; background:var(--green); position:relative; transition:background .2s; }
+  .toggle::after{ content:""; position:absolute; top:3px; right:3px; width:17px; height:17px; border-radius:50%; background:var(--on-accent); }
+  .toggle.off{ background:#1c2b21; } .toggle.off::after{ left:3px; right:auto; background:#5f7a68; }
+  .toggle.lock{ background:#121b15; } .toggle.lock::after{ left:3px; right:auto; background:#2a3a2f; }
+
+  .gate{ margin-top:10px; display:flex; gap:7px; flex-wrap:wrap; }
+  .gate span{ display:inline-flex; align-items:center; gap:6px; font:500 9px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase; padding:6px 9px; border-radius:7px; border:1px solid var(--line2); color:var(--ink4); }
+  .gate span.ok{ color:var(--green-dim); border-color:#2f9d5c44; }
+  .gate span.ok::before{ content:"✓"; } .gate span.no::before{ content:"·"; }
+  .gate span.warn{ color:var(--amber); border-color:#ffb84d44; }
+  .gate span.warn::before{ content:"!"; }
+
+  .foot{ margin-top:18px; padding-top:12px; border-top:1px solid var(--line); font:400 10.5px/1.55 var(--sans); color:var(--ink3); }
+
+  /* ---- bottom sheet ---- */
+  .scrim{ position:absolute; inset:0; background:#030504c4; z-index:20; }
+  .sheet{ position:absolute; left:0; right:0; bottom:0; z-index:21; background:#0b120d; border-radius:22px 22px 0 0; border-top:1px solid #1f3326;
+    padding:10px 16px 20px; box-shadow:0 -30px 60px -20px #000; }
+  .sheet .grip{ width:36px; height:4px; border-radius:2px; background:#233327; margin:0 auto 14px; }
+  .sheet .h{ display:flex; align-items:baseline; justify-content:space-between; padding:0 4px 12px; }
+  .sheet h3{ font:500 17px/1 var(--sans); letter-spacing:-.01em; }
+  .sheet .k{ font:500 9px/1 var(--mono); letter-spacing:.2em; text-transform:uppercase; color:var(--ink4); }
+  .sheet .lead{ font:400 11.5px/1.5 var(--sans); color:var(--ink2); padding:0 4px 12px; }
+  .opt{ display:grid; grid-template-columns:34px 1fr 22px; gap:12px; align-items:center; padding:11px 11px; border-radius:13px; border:1px solid transparent; margin-bottom:6px; cursor:pointer; }
+  .opt:hover{ background:#0f1a12; }
+  .opt .ic{ width:34px; height:34px; border-radius:9px; display:grid; place-items:center; background:#4dff8c12; color:var(--green); }
+  .opt .ic svg{ width:16px; height:16px; }
+  .opt .t{ font:400 14px/1.1 var(--sans); }
+  .opt .s{ display:block; margin-top:4px; font:400 10px/1.3 var(--mono); color:var(--ink3); }
+  .opt .mk{ width:22px; height:22px; border-radius:50%; border:1.5px solid #2a3b30; display:grid; place-items:center; color:var(--on-accent); }
+  .opt .mk svg{ width:12px; height:12px; opacity:0; }
+  .opt.sel{ border-color:#4dff8c3a; background:#4dff8c0a; }
+  .opt.sel .mk{ background:var(--green); border-color:var(--green); } .opt.sel .mk svg{ opacity:1; }
+  .opt.unav{ cursor:default; }
+  .opt.unav .ic{ background:#ffb84d10; color:var(--amber); border:1px dashed #ffb84d55; }
+  .opt.unav .t{ color:var(--ink2); } .opt.unav .s{ color:var(--amber); }
+  .opt.unav.sel{ border-color:#ffb84d3a; background:#ffb84d0a; }
+  .opt.unav.sel .mk{ background:var(--amber); border-color:var(--amber); }
+  .opt.home .ic{ background:var(--green); color:var(--on-accent); }
+  .sheet .div{ display:flex; align-items:center; gap:10px; margin:8px 4px 10px; font:500 9px/1 var(--mono); letter-spacing:.2em; text-transform:uppercase; color:var(--ink4); }
+  .sheet .div::after{ content:""; flex:1; height:1px; background:var(--line2); }
+  .sheet .fine{ margin-top:8px; padding:0 4px; font:400 10px/1.5 var(--sans); color:var(--ink4); }
+
+  /* hold options */
+  .hopt{ grid-template-columns:1fr 22px; }
+  .hopt .dur{ display:flex; align-items:baseline; gap:10px; }
+  .hopt .ms{ font:300 22px/1 var(--mono); letter-spacing:-.03em; font-variant-numeric:tabular-nums; }
+  .hopt .ms small{ font-size:10px; letter-spacing:.1em; color:var(--ink3); margin-left:2px; }
+  .hopt .nm{ font:500 12.5px/1 var(--sans); color:var(--ink); }
+  .hopt .rec{ font:500 8.5px/1 var(--mono); letter-spacing:.16em; text-transform:uppercase; color:var(--on-accent); background:var(--green); padding:3px 6px; border-radius:5px; margin-left:4px; }
+  .hopt .bar{ margin-top:8px; height:4px; border-radius:2px; background:#132019; position:relative; overflow:hidden; }
+  .hopt .bar b{ position:absolute; left:0; top:0; bottom:0; border-radius:2px; background:var(--ink4); }
+  .hopt.sel .bar b{ background:var(--green); }
+  .hopt .s{ margin-top:7px; }
+  .hopt .stepper{ display:flex; align-items:center; gap:0; margin-top:4px; }
+
+  svg.pic{ fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <div class="k">Rokid Nexus · Display › Head tilt</div>
+    <h1>Look up to open<b>.</b></h1>
+    <p>One settings screen, six states. The side-profile figure is the hero: it carries the <b>neutral position</b>,
+      the <b>entry sector</b> (threshold) and the <b>live gaze ray</b> at once — Hi Rokid's "drag the sector boundary" idea,
+      re-drawn in phosphor. Every control below it is a plain Android View: SeekBar, rows, switches, two bottom sheets.
+      Scroll inside each phone; the slider and the pickers are live.</p>
+    <div class="legend"><span><i style="background:var(--green)"></i>Phosphor · live / selected</span><span><i style="background:var(--amber)"></i>Amber · needs you</span><span><i style="background:var(--ink4)"></i>Dim · not yet</span></div>
+  </div>
+
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <g id="i-nexus"><path d="M10 12l8.4-6.6M10 12H4.8M10 12l8.4 6.6"/><circle cx="10" cy="12" r="2.6" fill="currentColor" stroke="none"/><circle cx="18.6" cy="5.4" r="1.8" fill="currentColor" stroke="none"/><circle cx="4.8" cy="12" r="1.8" fill="currentColor" stroke="none"/><circle cx="18.6" cy="18.6" r="1.8" fill="currentColor" stroke="none"/></g>
+      <g id="i-bus"><rect x="4.5" y="3.5" width="15" height="13" rx="2.5"/><path d="M4.5 9.5h15"/><path d="M8.2 13.5h.01M15.8 13.5h.01"/><circle cx="8" cy="19.6" r="1.4"/><circle cx="16" cy="19.6" r="1.4"/></g>
+      <g id="i-send"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></g>
+      <g id="i-disc"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/></g>
+      <g id="i-eye"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></g>
+      <g id="i-news"><path d="M4 5h13v14H6a2 2 0 0 1-2-2z"/><path d="M17 9h3v8a2 2 0 0 1-2 2"/><path d="M7 9h6M7 12.5h6M7 16h4"/></g>
+      <g id="i-check"><path d="M5 12.5l4.5 4.5L19 7.5" stroke-width="2.6"/></g>
+      <g id="i-ext"><path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></g>
+      <g id="i-target"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></g>
+      <g id="i-glasses"><path d="M2 12.5c0-2 1.3-3.5 3.5-3.5h2.3c2 0 3.2 1.5 3.2 3.5S9.8 16 7.8 16H5.5C3.3 16 2 14.5 2 12.5z"/><path d="M13 12.5c0-2 1.3-3.5 3.5-3.5h2.3c2 0 3.2 1.5 3.2 3.5s-1.3 3.5-3.2 3.5h-2.3c-2.2 0-3.5-1.5-3.5-3.5z"/><path d="M11 12.5h2M2 12l1.5-4M22 12l-1.5-4"/></g>
+      <g id="i-moon"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></g>
+      <g id="i-link-off"><path d="M9 15l6-6"/><path d="M11 6l1.5-1.5a4 4 0 0 1 5.7 5.7L17 11.5"/><path d="M13 18l-1.5 1.5a4 4 0 0 1-5.7-5.7L7 12.5"/><path d="M3 3l18 18"/></g>
+    </defs>
+  </svg>
+
+  <div class="gallery" id="gallery"></div>
+
+<script>
+// ------------------------------------------------------------------
+// Data shared by every frame
+// ------------------------------------------------------------------
+const PLUGINS = [
+  { id:'',            name:'Nexus launcher', sub:'Every plugin, one page', icon:'i-nexus', home:true, available:true },
+  { id:'transit',     name:'Transit',        sub:'Nearby departures',       icon:'i-bus',   available:true },
+  { id:'relay',       name:'Relay',          sub:'Phone notifications',     icon:'i-send',  available:true },
+  { id:'mediadeck',   name:'Media Deck',     sub:'Universal now playing',   icon:'i-disc',  available:true },
+  { id:'news',        name:'News',           sub:'Removed from the glasses', icon:'i-news', available:false },
+];
+const HOLDS = [
+  { ms:300,  name:'Quick',      desc:'Reacts as soon as you look up. Glances at a sign may count.' },
+  { ms:500,  name:'Balanced',   desc:'A short, held look. Good for most people.', rec:true },
+  { ms:800,  name:'Deliberate', desc:'Ignores quick glances. Needs a clear pause.' },
+  { ms:1000, name:'Slow',       desc:'For busy days: only a long, steady look opens anything.' },
+];
+const MIN_A = 10, MAX_A = 40;
+const svgUse = (id, extra='') => `<svg class="pic" viewBox="0 0 24 24" ${extra}><use href="#${id}"/></svg>`;
+const plugin = id => PLUGINS.find(p => p.id === id) || PLUGINS[0];
+
+// ------------------------------------------------------------------
+// Hero figure: side profile + entry sector + live gaze ray.
+// Everything here maps to Canvas calls (drawPath, drawArc, drawLine, rotate).
+// ------------------------------------------------------------------
+function figure(up, thr, mode) {
+  const C = { x: 112, y: 86 }, R = 118;
+  const rad = d => d * Math.PI / 180;
+  const pt = (d, r = R) => ({ x: C.x + r * Math.cos(rad(d)), y: C.y - r * Math.sin(rad(d)) });
+  const live = mode === 'live' && up != null;
+  const hot = live && up >= thr;
+  const headInk = mode === 'dim' ? '#42574a' : (hot ? '#4dff8c' : '#dcf3e4');
+  const lensFill = hot ? '#4dff8c' : (mode === 'dim' ? 'transparent' : '#4dff8c22');
+  const t = pt(thr), b = pt(0);
+  let ticks = '';
+  for (let d = MIN_A; d <= MAX_A; d += 10) {
+    const a = pt(d, R - 1), z = pt(d, R + (d % 20 === 0 ? 7 : 4));
+    ticks += `<line x1="${a.x}" y1="${a.y}" x2="${z.x}" y2="${z.y}" stroke="#42574a" stroke-width="1"/>`;
+  }
+  const ray = live ? (() => { const e = pt(up, R + 12); return `<line x1="${C.x}" y1="${C.y}" x2="${e.x}" y2="${e.y}" stroke="${hot ? '#4dff8c' : '#8ba896'}" stroke-width="${hot ? 2 : 1.4}" stroke-dasharray="${hot ? '0' : '3 4'}" ${hot ? 'filter="url(#glow)"' : ''}/>`; })() : '';
+  const rot = live ? -Math.max(-15, Math.min(55, up)) : 0;
+  const calib = mode === 'calib' ? `<circle cx="${C.x}" cy="${C.y}" r="62" fill="none" stroke="#4dff8c" stroke-width="1" stroke-dasharray="4 6" opacity=".7"><animateTransform attributeName="transform" type="rotate" from="0 ${C.x} ${C.y}" to="360 ${C.x} ${C.y}" dur="6s" repeatCount="indefinite"/></circle>
+    <circle cx="${C.x}" cy="${C.y}" r="62" fill="none" stroke="#4dff8c" stroke-width="6" opacity=".12"><animate attributeName="r" values="56;70;56" dur="1.6s" repeatCount="indefinite"/><animate attributeName="opacity" values=".18;.03;.18" dur="1.6s" repeatCount="indefinite"/></circle>` : '';
+  const thrLabel = pt(thr, R + 18);
+  return `<svg class="fig" viewBox="0 0 300 196" xmlns="http://www.w3.org/2000/svg">
+    <defs><filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+    <!-- entry sector -->
+    <path d="M${C.x} ${C.y} L${b.x} ${b.y} A${R} ${R} 0 0 0 ${t.x} ${t.y} Z" fill="${mode === 'dim' ? '#ffffff05' : '#4dff8c0d'}"/>
+    <line x1="${C.x}" y1="${C.y}" x2="${b.x + 22}" y2="${b.y}" stroke="#182619" stroke-width="1.2"/>
+    <path d="M${b.x} ${b.y} A${R} ${R} 0 0 0 ${pt(MAX_A + 6).x} ${pt(MAX_A + 6).y}" fill="none" stroke="#182619" stroke-width="1.2"/>
+    ${ticks}
+    <line x1="${C.x}" y1="${C.y}" x2="${t.x}" y2="${t.y}" stroke="${mode === 'dim' ? '#42574a' : '#4dff8c'}" stroke-width="1.2" stroke-dasharray="2 3" opacity=".9"/>
+    <circle cx="${t.x}" cy="${t.y}" r="5" fill="#070a08" stroke="${mode === 'dim' ? '#42574a' : '#4dff8c'}" stroke-width="1.6"/>
+    <text x="${thrLabel.x}" y="${thrLabel.y + 4}" font-family="Chivo Mono,monospace" font-size="10" fill="${mode === 'dim' ? '#42574a' : '#4dff8c'}" text-anchor="middle">${thr}°</text>
+    <text x="${b.x + 26}" y="${b.y + 4}" font-family="Chivo Mono,monospace" font-size="9" fill="#42574a">0°</text>
+    ${ray}
+    ${calib}
+    <!-- neck + shoulder, fixed -->
+    <path d="M100 132 L96 160 M134 130 L138 160" stroke="#5f7a68" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <path d="M60 176 C84 160, 150 160, 182 172" stroke="#5f7a68" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <!-- head rotates about C -->
+    <g transform="rotate(${rot} ${C.x} ${C.y})" style="transition:transform .18s linear">
+      <path d="M148 58 C148 44 134 36 114 36 C90 36 76 54 76 80 C76 104 88 120 106 125 C122 129 138 125 146 116 C150 111 152 106 150 101 C154 99 156 96 152 93 C158 91 164 88 160 84 C154 79 150 75 150 70 C150 65 149 61 148 58 Z"
+        fill="#0b120d" stroke="${headInk}" stroke-width="2.4" stroke-linejoin="round"/>
+      <path d="M96 84 c-4 0 -6 3 -6 6 s3 6 6 4" fill="none" stroke="${headInk}" stroke-width="1.6"/>
+      <line x1="98" y1="86" x2="134" y2="80" stroke="${headInk}" stroke-width="1.8"/>
+      <rect x="132" y="72" width="26" height="15" rx="4" fill="${lensFill}" stroke="${headInk}" stroke-width="2"/>
+      <circle cx="141" cy="79" r="1.8" fill="${hot ? '#04180d' : headInk}"/>
+    </g>
+  </svg>`;
+}
+
+// ------------------------------------------------------------------
+// Screen renderer
+// ------------------------------------------------------------------
+function render(s) {
+  const dest = plugin(s.dest);
+  const effective = dest.available ? dest : PLUGINS[0];
+  const hold = HOLDS.find(h => h.ms === s.hold);
+  const calibrated = s.state === 'ready';
+  const canEnable = s.stockOff && calibrated;
+  const on = s.enabled;
+
+  // top-right state pill
+  const pill = on ? ['on', 'On'] : (s.state === 'disconnected' || s.state === 'screen_off') ? ['warn', 'Paused'] : ['', 'Off'];
+
+  // status line
+  let status, cls, mode;
+  switch (s.state) {
+    case 'needs_calibration': status = 'No neutral position yet. Calibrate once, then try the gesture.'; cls = ''; mode = 'dim'; break;
+    case 'calibrating': status = '<b>Look straight ahead and hold still…</b> About one second.'; cls = 'busy'; mode = 'calib'; break;
+    case 'ready': status = s.tries ? `Calibrated. <b>${s.tries} successful ${s.tries === 1 ? 'try' : 'tries'}.</b> Return to neutral between tries.` : 'Calibrated. Raise your head and hold to try it.'; cls = 'ok'; mode = 'live'; break;
+    case 'screen_off': status = 'The glasses display is off. Wake it to see your angle.'; cls = 'warn'; mode = 'dim'; break;
+    case 'disconnected': status = 'Glasses not connected. Open Nexus on both devices.'; cls = 'warn'; mode = 'dim'; break;
+  }
+  const live = mode === 'live';
+  const readV = live ? `${Math.round(s.up)}°` : '—°';
+  const readCls = live ? (s.up >= s.thr ? 'hot' : '') : 'dim';
+
+  const prepare = s.stockOff
+    ? `<div class="done"><div class="ck">${svgUse('i-check')}</div><div><div class="t">Hi Rokid head-up display is off</div><span class="s">You confirmed this · both apps no longer compete</span></div><span class="go">Change</span></div>`
+    : `<div class="prep">
+        <div class="t">Turn off Head-up display in Hi Rokid</div>
+        <div class="s">Both apps would react to the same movement. In Hi Rokid, open the glasses settings, switch <b>Head-up display</b> off, then confirm here.</div>
+        <div class="act"><span class="btn-out amber">${svgUse('i-ext')} Open Hi Rokid</span></div>
+        <div class="swrow"><div><div class="t">Head-up display is off in Hi Rokid</div><span class="s">Required before head tilt can turn on</span></div><div class="toggle off"></div></div>
+      </div>`;
+
+  const calBtn = s.state === 'calibrating'
+    ? `<div class="btn-fill dis calbtn">Calibrating…</div>`
+    : calibrated
+      ? `<div class="calbtn"><span class="btn-out">${svgUse('i-target')} Recalibrate 0°</span></div>`
+      : `<div class="btn-fill calbtn ${(s.state === 'disconnected' || s.state === 'screen_off') ? 'dis' : ''}">${svgUse('i-target')} Calibrate neutral position</div>`;
+
+  const veil = s.state === 'disconnected'
+    ? `<div class="veil"><span class="pill">${svgUse('i-link-off')} Glasses not connected</span></div>`
+    : s.state === 'screen_off' ? `<div class="veil"><span class="pill">${svgUse('i-moon')} Display is off · wake the glasses</span></div>` : '';
+
+  const pct = (s.thr - MIN_A) / (MAX_A - MIN_A) * 100;
+  const ticks = [10, 20, 30, 40].map(d => `<i style="left:${(d - MIN_A) / (MAX_A - MIN_A) * 100}%"></i>`).join('');
+
+  const gate = on ? '' : `<div class="gate">
+      <span class="${s.stockOff ? 'ok' : 'warn'}">Hi Rokid off</span>
+      <span class="${calibrated ? 'ok' : (s.state === 'disconnected' || s.state === 'screen_off') ? 'warn' : 'no'}">Calibrated</span>
+    </div>`;
+  const enableSub = on
+    ? (s.state === 'disconnected' || s.state === 'screen_off') ? `Paused · resumes when the display is on` : `On · opens ${effective.name} from the home screen`
+    : canEnable ? 'Ready to turn on' : 'Finish steps 01 and 02 first';
+
+  return `
+  <div class="sb"><span>9:41</span><div class="dots"><span></span><span></span><span></span></div></div>
+  <div class="scr">
+    <div class="sthead">
+      <div class="back">‹ Display</div>
+      <div class="ttl"><h1>Head tilt<b>.</b></h1><span class="state ${pill[0]}">${pill[1]}</span></div>
+    </div>
+    <div class="content">
+      <div class="intro">Look up to open Nexus or a plugin, straight from the Rokid or Nexus home screen. Works while the glasses display is on.</div>
+
+      <div class="lbl"><span><span class="idx">01</span>Prepare</span>${s.stockOff ? '<span class="c ok">Done</span>' : '<span class="c warn">Required</span>'}</div>
+      ${prepare}
+
+      <div class="lbl"><span><span class="idx">02</span>Neutral position</span>${calibrated ? '<span class="c ok">Calibrated</span>' : s.state === 'calibrating' ? '<span class="c">Hold still</span>' : ''}</div>
+      <div class="hero">
+        ${figure(s.up, s.thr, mode)}
+        <div class="tag">${live ? 'Live · 5 Hz' : s.state === 'calibrating' ? 'Measuring' : 'Side view'}</div>
+        <div class="read"><div class="v ${readCls}">${readV}</div><span class="u">${live ? `of ${s.thr}° to open` : 'looking up'}</span></div>
+        ${live && s.tries ? `<div class="det" data-det><i></i>Detected · ${s.tries}</div>` : ''}
+        ${s.state === 'calibrating' ? '<div class="prog"><b></b></div>' : ''}
+        ${veil}
+      </div>
+      <div class="status ${cls}"><i></i><span>${status}</span></div>
+      ${calBtn}
+      ${calibrated ? '' : '<div class="hint">Wear the glasses, wake their display and look straight ahead the way you naturally do. Keep still for one second after tapping.</div>'}
+
+      <div class="lbl"><span><span class="idx">03</span>Gesture</span>${live && s.tries ? `<span class="c">${s.tries} ${s.tries === 1 ? 'try' : 'tries'}</span>` : ''}</div>
+      <div class="angle">
+        <div class="h"><div class="t">Raise your head by</div><div class="v" data-thr>${s.thr}°<small>${s.thr <= 15 ? 'SENSITIVE' : s.thr >= 30 ? 'DELIBERATE' : 'NATURAL'}</small></div></div>
+        <div class="slider ${mode === 'dim' ? 'off' : ''}">
+          <div class="track"></div><div class="fillb" data-fill style="width:${pct}%"></div>
+          <div class="ticks">${ticks}</div>
+          <div class="knob" data-knob style="left:${pct}%"></div>
+          <input type="range" min="${MIN_A}" max="${MAX_A}" step="1" value="${s.thr}" data-range aria-label="Entry angle">
+        </div>
+        <div class="scale"><span>10° · a glance</span><span>40° · the ceiling</span></div>
+      </div>
+      <div class="row" data-open="hold"><div><div class="t">Hold for</div><span class="s">How long you keep your head up before it counts</span></div><div class="v">${hold.ms} ms <small>${hold.name}</small><span class="chev">›</span></div></div>
+      <div class="hint">Try it now: return to neutral, raise your head and hold. Nothing opens from this screen.</div>
+
+      <div class="lbl"><span><span class="idx">04</span>What opens</span></div>
+      <div class="dest ${dest.available ? '' : 'unav'}" data-open="dest">
+        <div class="ic">${svgUse(dest.icon)}</div>
+        <div><div class="k">${dest.home ? 'Nexus' : 'Plugin'}</div><div class="t">${dest.name}</div>
+          <span class="s">${dest.available ? (dest.home ? 'Default · lists every plugin' : 'Approved to open from the launcher') : 'Unavailable · Nexus launcher opens instead'}</span></div>
+        <span class="go">›</span>
+      </div>
+
+      <div class="row" style="margin-top:6px; border-bottom:none">
+        <div><div class="t">Head tilt</div><span class="s ${(!on && !canEnable) ? '' : ''}">${enableSub}</span>${gate}</div>
+        <div class="toggle ${on ? '' : canEnable ? 'off' : 'lock'}"></div>
+      </div>
+      <div class="foot">Pauses while you use another app, read a Nexus surface or notification, or run setup. Triple tap and Back keep working as usual.</div>
+    </div>
+    ${s.sheet ? sheet(s) : ''}
+  </div>`;
+}
+
+function sheet(s) {
+  if (s.sheet === 'dest') {
+    const rows = PLUGINS.map(p => `
+      <div class="opt ${p.home ? 'home' : ''} ${p.available ? '' : 'unav'} ${s.dest === p.id ? 'sel' : ''}" data-pick="${p.id}">
+        <div class="ic">${svgUse(p.icon)}</div>
+        <div><div class="t">${p.name}</div><span class="s">${p.available ? p.sub : 'Unavailable · ' + p.sub.toLowerCase() + '. Nexus launcher opens instead.'}</span></div>
+        <div class="mk">${svgUse('i-check')}</div>
+      </div>`);
+    return `<div class="scrim" data-close></div>
+    <div class="sheet">
+      <div class="grip"></div>
+      <div class="h"><h3>Open with head tilt</h3><span class="k">One destination</span></div>
+      <div class="lead">Nexus checks the plugin is still approved every time. If it stops being available, the launcher opens instead.</div>
+      ${rows[0]}
+      <div class="div">Plugins that can open from the launcher</div>
+      ${rows.slice(1).join('')}
+      <div class="fine">Plugins never see the motion sensor and cannot pick a destination for you.</div>
+    </div>`;
+  }
+  if (s.sheet === 'hold') {
+    const rows = HOLDS.map(h => `
+      <div class="opt hopt ${s.hold === h.ms ? 'sel' : ''}" data-hold="${h.ms}">
+        <div>
+          <div class="dur"><span class="ms">${h.ms}<small>MS</small></span><span class="nm">${h.name}</span>${h.rec ? '<span class="rec">Recommended</span>' : ''}</div>
+          <div class="bar"><b style="width:${h.ms / 10}%"></b></div>
+          <span class="s">${h.desc}</span>
+        </div>
+        <div class="mk">${svgUse('i-check')}</div>
+      </div>`).join('');
+    return `<div class="scrim" data-close></div>
+    <div class="sheet">
+      <div class="grip"></div>
+      <div class="h"><h3>Hold the gesture</h3><span class="k">300 – 1000 ms</span></div>
+      <div class="lead">How long your head stays up before Nexus reacts. Longer means fewer accidental opens; shorter feels snappier.</div>
+      ${rows}
+    </div>`;
+  }
+  return '';
+}
+
+// ------------------------------------------------------------------
+// Frames
+// ------------------------------------------------------------------
+const FRAMES = [
+  { n:'01', title:'First run · needs calibration', state:'needs_calibration', up:null, thr:20, hold:500, dest:'', stockOff:false, enabled:false, tries:0, scroll:0,
+    cap:'Amber card says what to do in Hi Rokid and asks for a confirmation switch. The figure is dim: no neutral yet, no ray. The Enable switch is locked and lists its two gates.' },
+  { n:'02', title:'Calibrating', state:'calibrating', up:null, thr:20, hold:500, dest:'', stockOff:true, enabled:false, tries:0, scroll:150,
+    cap:'Step 01 collapses to a checked row. A dashed ring orbits the head and a one-second bar fills under the figure — the only moment the user must keep still.' },
+  { n:'03', title:'Ready · live angle, successful test', state:'ready', up:23, thr:20, hold:500, dest:'transit', stockOff:true, enabled:true, tries:2, animate:true, scroll:170,
+    cap:'The head rises on a loop. Past the threshold the lens lights up, the gaze ray goes solid and the readout turns phosphor; a <b>Detected</b> chip counts tries. Drag the slider: the sector boundary follows, Hi Rokid-style.' },
+  { n:'04', title:'Destination picker', state:'ready', up:4, thr:20, hold:500, dest:'news', stockOff:true, enabled:true, tries:0, sheet:'dest', scroll:900,
+    cap:'Bottom sheet, one choice. The launcher sits first and filled; approved plugins follow under a hairline. <b>News</b> was removed from the glasses: it stays selected in amber so the user sees why the launcher opens, and the sheet says so in words.' },
+  { n:'05', title:'Hold-duration picker', state:'ready', up:4, thr:20, hold:500, dest:'transit', stockOff:true, enabled:true, tries:0, sheet:'hold', scroll:900,
+    cap:'Four durations, each with a name, a proportional bar and one sentence on what it changes. The recommended one is tagged. No free-form ms entry: the contract allows 300–1000 and these four cover it.' },
+  { n:'06', title:'Glasses disconnected / display off', state:'disconnected', up:null, thr:25, hold:800, dest:'transit', stockOff:true, enabled:true, tries:0, scroll:150,
+    cap:'Saved settings stay readable and editable; only the live figure is veiled and the calibrate button sleeps. The header pill says <b>Paused</b> rather than flipping the switch off — the feature is still on, the glasses are just away.' },
+];
+
+const gallery = document.getElementById('gallery');
+FRAMES.forEach(f => {
+  const cell = document.createElement('div'); cell.className = 'cell';
+  const phone = document.createElement('div'); phone.className = 'phone';
+  cell.appendChild(phone);
+  const cap = document.createElement('div'); cap.className = 'cap';
+  cap.innerHTML = `<div class="n"><span class="num">${f.n}</span><h2>${f.title}</h2></div><p>${f.cap}</p>`;
+  cell.appendChild(cap);
+  gallery.appendChild(cell);
+  mount(phone, f);
+});
+
+function mount(phone, s) {
+  const draw = () => {
+    phone.innerHTML = render(s);
+    const content = phone.querySelector('.content');
+    content.scrollTop = location.hash === '#bottom' ? 1e6 : (s.scroll || 0);
+    wire(phone, s, draw);
+  };
+  draw();
+  if (s.animate) {
+    // Simulated gesture loop: neutral → rise → hold past threshold → detected → back to neutral.
+    let t = 0;
+    setInterval(() => {
+      t = (t + 1) % 40;
+      const prev = s.up;
+      if (t < 8) s.up = 2 + Math.sin(t) * 1.5;
+      else if (t < 16) s.up = 2 + (t - 8) / 8 * (s.thr + 5);
+      else if (t < 28) s.up = s.thr + 4 + Math.sin(t) * .8;
+      else if (t < 34) s.up = (s.thr + 4) * (1 - (t - 28) / 6);
+      else s.up = 1.5;
+      if (t === 24) s.tries++;
+      updateLive(phone, s, t === 24);
+    }, 200);
+  }
+}
+
+function updateLive(phone, s, detected) {
+  const hero = phone.querySelector('.hero');
+  if (!hero) return;
+  const fig = hero.querySelector('svg.fig');
+  fig.outerHTML = figure(s.up, s.thr, 'live');
+  const v = hero.querySelector('.read .v');
+  v.textContent = `${Math.round(s.up)}°`;
+  v.className = 'v ' + (s.up >= s.thr ? 'hot' : '');
+  hero.querySelector('.read .u').textContent = `of ${s.thr}° to open`;
+  const content = phone.querySelector('.content');
+  const lbl = content.querySelectorAll('.lbl')[2].querySelector('.c');
+  if (detected) {
+    let det = hero.querySelector('[data-det]');
+    if (!det) { det = document.createElement('div'); det.className = 'det'; det.setAttribute('data-det', ''); hero.insertBefore(det, hero.querySelector('.read')); }
+    det.innerHTML = `<i></i>Detected · ${s.tries}`;
+    det.classList.remove('flash'); void det.offsetWidth; det.classList.add('flash');
+    const st = content.querySelector('.status span');
+    st.innerHTML = `Calibrated. <b>${s.tries} successful ${s.tries === 1 ? 'try' : 'tries'}.</b> Return to neutral between tries.`;
+    if (lbl) lbl.textContent = `${s.tries} ${s.tries === 1 ? 'try' : 'tries'}`;
+  }
+}
+
+function wire(phone, s, redraw) {
+  const content = phone.querySelector('.content');
+  const range = phone.querySelector('[data-range]');
+  if (range) range.addEventListener('input', e => {
+    s.thr = +e.target.value;
+    const pct = (s.thr - MIN_A) / (MAX_A - MIN_A) * 100;
+    phone.querySelector('[data-fill]').style.width = pct + '%';
+    phone.querySelector('[data-knob]').style.left = pct + '%';
+    phone.querySelector('[data-thr]').innerHTML = `${s.thr}°<small>${s.thr <= 15 ? 'SENSITIVE' : s.thr >= 30 ? 'DELIBERATE' : 'NATURAL'}</small>`;
+    const mode = s.state === 'ready' ? 'live' : s.state === 'calibrating' ? 'calib' : 'dim';
+    phone.querySelector('svg.fig').outerHTML = figure(s.up, s.thr, mode);
+    const u = phone.querySelector('.read .u'); if (mode === 'live') u.textContent = `of ${s.thr}° to open`;
+  });
+  phone.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', () => { s.scroll = content.scrollTop; s.sheet = el.dataset.open; redraw(); }));
+  phone.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', () => { s.sheet = null; redraw(); }));
+  phone.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => { if (el.classList.contains('unav')) return; s.dest = el.dataset.pick; s.sheet = null; redraw(); }));
+  phone.querySelectorAll('[data-hold]').forEach(el => el.addEventListener('click', () => { s.hold = +el.dataset.hold; s.sheet = null; redraw(); }));
+  const sw = phone.querySelector('.swrow .toggle');
+  if (sw) sw.addEventListener('click', () => { s.stockOff = true; redraw(); });
+  const dn = phone.querySelector('.done');
+  if (dn) dn.addEventListener('click', () => { s.stockOff = false; s.enabled = false; s.scroll = 0; redraw(); });
+  const enable = content.querySelector('.row:last-of-type .toggle, .row .toggle');
+  const toggles = content.querySelectorAll('.row .toggle');
+  const last = toggles[toggles.length - 1];
+  if (last) last.addEventListener('click', () => {
+    if (last.classList.contains('lock')) return;
+    s.enabled = !s.enabled; s.scroll = content.scrollTop; redraw();
+  });
+}
+</script>
+</body>
+</html>

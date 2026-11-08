@@ -5,6 +5,8 @@ import org.json.JSONObject
 
 /** Facts fed by the host. Gestures are already classified; time is the host clock. */
 internal sealed interface SessionEvent {
+    /** A calibrated, hub-owned gesture; the host resolves the approved target immediately before dispatch. */
+    data class HeadTilt(val nowMs: Long, val pluginId: String?, val pageId: String?, val underneath: Underneath) : SessionEvent
     /** [underneath] is what the triple tap was made over; a session records it when it opens. */
     data class TripleTap(val nowMs: Long, val underneath: Underneath = Underneath.Unknown) : SessionEvent
     data class Contact(val nowMs: Long) : SessionEvent

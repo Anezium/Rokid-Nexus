@@ -45,6 +45,7 @@ import com.anezium.rokidbus.shared.GlassesFilesContract
 import com.anezium.rokidbus.shared.NativeAppContract
 import com.anezium.rokidbus.shared.PhoneHubCapabilities
 import com.anezium.rokidbus.shared.PhoneHubCapabilitiesContract
+import com.anezium.rokidbus.shared.HeadTiltContract
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.RemoteInputContract
@@ -269,6 +270,7 @@ object GlassesHub {
             RouteLive.clear()
         }
         if (!phoneConnected) {
+            HeadTiltController.onLinkLost()
             clearRemotePhoneCapabilities()
             AssistantDisplayEpisode.end(DisplayHoldReleaseReason.LINK_LOSS)
             RemotePointerHubBridge.onLinkLost()
@@ -291,6 +293,7 @@ object GlassesHub {
         NexusSession.onPhoneLink(phoneConnected)
         ActivityController.onPhoneLink(phoneConnected)
         if (!phoneConnected) {
+            HeadTiltController.onLinkLost()
             clearRemotePhoneCapabilities()
             AssistantDisplayEpisode.end(DisplayHoldReleaseReason.LINK_LOSS)
             RemotePointerHubBridge.onLinkLost()
@@ -309,6 +312,15 @@ object GlassesHub {
 
     fun onRemoteEnvelope(envelope: BusEnvelope) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
+        if (PathRules.matchesPrefix(envelope.path, HeadTiltContract.ROOT)) {
+            if (envelope.binary == null) when (envelope.path) {
+                HeadTiltContract.CONFIG_PATH -> appContext?.let {
+                    HeadTiltController.configure(it, envelope.payload)
+                }
+                HeadTiltContract.REQUEST_PATH -> HeadTiltController.request(envelope.payload)
+            }
+            return
+        }
         // File chunks arrive dozens per second; the SPP reader already logs each frame.
         if (envelope.path != GlassesFilesContract.DATA_PATH) log("remote RX ${envelope.path} id=${envelope.id}")
         if (GlassesFilesContract.isFilesPath(envelope.path)) {
@@ -851,6 +863,7 @@ object GlassesHub {
 
     private fun routeLocal(envelope: BusEnvelope, senderUid: Int) {
         if (SppKeyProvisioning.isReserved(envelope.path)) return
+        if (PathRules.matchesPrefix(envelope.path, HeadTiltContract.ROOT)) return
         if (GlassesFilesContract.isFilesPath(envelope.path)) {
             // Explorer traffic only ever comes from the phone hub over the transport.
             log("blocked local file explorer send uid=$senderUid")

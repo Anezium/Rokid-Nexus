@@ -60,6 +60,7 @@ import com.anezium.rokidbus.glasses.session.SessionModel
 import com.anezium.rokidbus.glasses.session.SessionReducer
 import com.anezium.rokidbus.glasses.session.SessionRunner
 import com.anezium.rokidbus.glasses.session.SessionState
+import com.anezium.rokidbus.glasses.session.Underneath
 import com.anezium.rokidbus.glasses.session.SessionStatus
 import com.anezium.rokidbus.glasses.session.SessionTimer
 import com.anezium.rokidbus.glasses.session.SessionWindow
@@ -149,6 +150,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         NoticeOverlayRenderer.onServiceConnected(this)
         LauncherOverlayRenderer.onServiceConnected(this)
         NexusInput.onServiceConnected(this)
+        HeadTiltController.start(this)
         StatusBadgeOverlayRenderer.onServiceConnected(this)
         GlassesHub.start(applicationContext)
         displayStandbyWatchdog.start()
@@ -203,6 +205,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         if (event != null && (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                 event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED)) {
             AmbientForeground.onWindowsChanged(this)
+            HeadTiltController.onWindowsChanged()
         }
         if (event != null && isNativeAssistantDismissArmed()) {
             val packageName = event.packageName?.toString().orEmpty()
@@ -257,6 +260,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
         log("AccessibilityService destroyed")
         AssistantDisplayEpisode.end(DisplayHoldReleaseReason.SERVICE_DESTROYED)
         displayStandbyWatchdog.stop()
+        HeadTiltController.stop()
         NexusSession.onServiceDestroyed()
         NexusInput.onServiceDestroyed()
         wirelessDebuggingAutomator?.stop(SetupDisplayHoldEnd.SERVICE_DESTROYED)
@@ -1725,6 +1729,13 @@ internal object NexusSession {
     private fun providerPagesReady(pluginId: String): Boolean =
         pagesNegotiated() && launcherEntries.any { it.id == pluginId && it.pageSessionVersion == PageSurfaceContract.VERSION }
 
+    fun openFromHeadTilt(pluginId: String?) {
+        val id = pluginId?.takeIf { target -> launcherEntries.any { it.id == target } }
+        dispatch(SessionEvent.HeadTilt(SystemClock.uptimeMillis(), id,
+            id?.takeIf(::providerPagesReady)?.let(PageTemplateContract::mainPageId),
+            Underneath.NativeApp))
+    }
+
     private fun pluginLabel(pluginId: String): String? = launcherEntries.firstOrNull { it.id == pluginId }?.displayName
 
     /** A plugin's mark as the launcher catalog draws it: its own icon key, else its default mark. */
@@ -2272,6 +2283,41 @@ internal object NexusInput {
         val context = service ?: return false
         if (!LauncherOverlayRenderer.isShown()) LauncherOverlayRenderer.show(context)
         return true
+    }
+
+    fun canOpenFromHeadTilt(): Boolean {
+        val context = service ?: return false
+        if (context.getSystemService(android.os.PowerManager::class.java)?.isInteractive != true) return false
+        if (SurfaceController.activeSurface() != null || NoticeController.ownsRingInput() ||
+            NexusSession.state != SessionState.Closed || LauncherOverlayRenderer.isShown() ||
+            GlassesHub.isCameraSessionActive() || AssistantDisplayEpisode.isActive() ||
+            RokidBusAccessibilityService.isSetupAutomationActive() ||
+            SelfArmController.isOperationRunning() || SelfArmBootRepairCoordinator.isRepairRunning() ||
+            SelfArmOnboardingStore.currentActiveSessionId(context).isNotBlank()
+        ) return false
+        val top = StatusBadgeOverlayRenderer.readLauncher(context)
+        return top.topWindowReadable && ((top.launcherOnTop && top.weatherVisible) ||
+            (top.topPackageName == context.packageName && MainActivity.isResumed()))
+    }
+
+    fun openFromHeadTilt(pluginId: String): Boolean {
+        val context = service ?: return false
+        if (!canOpenFromHeadTilt()) return false
+        val target = pluginId.takeIf { it.isNotBlank() && GlassesHub.isPhoneConnected() &&
+            GlassesHub.launcherDisplayName(it) != null && GlassesHub.launcherEntryOpensSurface(it) }
+        if (backend == LauncherBackend.SESSION) {
+            NexusSession.openFromHeadTilt(target)
+            return true
+        }
+        if (target != null) {
+            launcherReturnCoordinator.recordLauncherOpen(target)
+            if (GlassesHub.openLauncherEntry(target).startsWith("launcherOpen=true")) {
+                RingFocusBroadcastCoordinator.beginSurfaceHandoff(context)
+                return true
+            }
+            launcherReturnCoordinator.clearPendingLauncherOpen()
+        }
+        return openLegacyLauncher()
     }
 
     /**

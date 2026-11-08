@@ -3542,6 +3542,47 @@ Hub manifests use `<queries><intent><action android:name="com.anezium.rokidbus.a
   after connection and consumed by the phone hub.
 - `ProbeBroadcastReceiver` remains a debug entry point for component-targeted broadcasts.
 
+## Head tilt v1 (trusted hubs only)
+
+The phone's Display > Head tilt screen configures a glasses-owned look-up gesture.
+It is off by default. The owner first disables Hi Rokid's Head-up display manually;
+Nexus does not modify vendor settings or register as a vendor AssistServer client.
+`HeadTiltContract` owns the following private routes, all without binary bodies:
+
+- Phone -> glasses `/core/head-tilt/config`: `v:1`, `enabled:boolean`,
+  `angleDegrees:10..40` (integer), `holdMillis:300..1000` (integer),
+  `pluginId:string` (empty means launcher; at most 128 characters, no whitespace/control characters).
+  The phone persists and republishes this complete preference on connection/settings changes.
+  Invalid configurations turn the glasses detector off. Calibration stays local to the glasses.
+- Phone -> glasses `/core/head-tilt/request`: `v:1`, `sessionId:string` (1..64 characters),
+  `action:preview|calibrate|stop`. Preview leases last 30 seconds, renewed by the visible
+  phone activity every 15 seconds; calibrate and stop must match the active preview session.
+  Calibration accepts a stable neutral pose for one continuous second. While preview is active,
+  gestures report a test result and never open a destination.
+- Glasses -> phone `/core/head-tilt/status`: `v:1`, matching `sessionId`, `state`,
+  `detected:boolean`, optional `upDegrees:number`. States: `ready`, `calibrating`,
+  `needs_calibration`, `waiting_for_sensor`, `sensor_unavailable`, `screen_off`,
+  `accessibility_required`. Preview readings are limited to 5 Hz plus successful gestures.
+  No motion readings leave the glasses outside this bounded setup preview.
+
+The glasses use the non-wakeup game rotation vector at 20 Hz while the display is
+interactive and either an enabled calibrated gesture or a preview needs it. They
+unregister on screen off, service destruction, or disable without a preview.
+There is no screen-off wake or permanent wake lock. A gesture requires a half-second
+neutral pose, the configured upward hold, return to neutral to rearm, and a
+three-second cooldown. Invalid/stale/discontinuous samples or excessive sideways
+tilt cancel recognition. Screen-on background sensor delivery, walking false
+positives and power consumption still require validation on the target ROM.
+
+Opening is allowed only over the readable stock home layout or resumed Nexus main
+activity, with no active Nexus surface, session, interactive notification, camera,
+assistant display episode or setup. The boundary rechecks eligibility and resolves
+the target from the current approved launcher catalog. Unavailable targets fall
+back to the Nexus launcher; the phone registry still validates each plugin open.
+Both launcher backends preserve their normal plugin handoff and Back behavior.
+All `/core/head-tilt/*` traffic is hub-owned and intercepted before subscribers;
+plugins cannot send it, subscribe to it, configure the detector, or read its IMU.
+
 ## Trusted core phone controls v1
 
 Native-app discovery, remote text input, and system navigation are hub-owned

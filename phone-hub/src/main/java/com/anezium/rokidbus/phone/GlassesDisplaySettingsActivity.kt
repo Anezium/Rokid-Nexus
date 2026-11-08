@@ -75,6 +75,11 @@ class GlassesDisplaySettingsActivity : Activity() {
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
             addView(launcherCard(), NexusUi.block())
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
+            addView(NexusUi.navCard(this@GlassesDisplaySettingsActivity, "Head tilt",
+                "Calibrate a look-up gesture to open Nexus or a plugin.") {
+                startActivity(Intent(this@GlassesDisplaySettingsActivity, HeadTiltSettingsActivity::class.java))
+            }, NexusUi.block())
+            addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
             addView(islandSizeCard(), NexusUi.block())
             addView(BusTheme.gap(this@GlassesDisplaySettingsActivity, 10))
             addView(

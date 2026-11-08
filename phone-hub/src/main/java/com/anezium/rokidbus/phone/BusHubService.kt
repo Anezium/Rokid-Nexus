@@ -63,6 +63,7 @@ import com.anezium.rokidbus.shared.PhoneHubCapabilities
 import com.anezium.rokidbus.shared.NoticeSurfaceContract
 import com.anezium.rokidbus.shared.NoticeSurfaceValidationResult
 import com.anezium.rokidbus.shared.PhoneHubCapabilitiesContract
+import com.anezium.rokidbus.shared.HeadTiltContract
 import com.anezium.rokidbus.shared.PinSurfaceContract
 import com.anezium.rokidbus.shared.RemoteInputContract
 import com.anezium.rokidbus.shared.RemoteNavigationContract
@@ -1886,6 +1887,13 @@ class BusHubService : Service() {
             // The glasses persist the boot-repair switch, but a reinstall or a toggle flipped
             // while the link was down leaves them stale; ride the same edge the consent does.
             executor.execute { pushGlassesRepairConfig() }
+            pushHeadTiltConfig()
+            return
+        }
+        if (PathRules.matchesPrefix(envelope.path, HeadTiltContract.ROOT)) {
+            if (envelope.path == HeadTiltContract.STATUS_PATH && envelope.binary == null) {
+                PhoneHeadTiltPreview.receive(envelope.payload)
+            }
             return
         }
         // Page traffic is answered by its one owner and never reaches a prefix subscriber.
@@ -5613,8 +5621,16 @@ class BusHubService : Service() {
         )
         if (sendRemote(envelope) == null) {
             lastAnnouncedPhoneCapabilities = announced
+            pushHeadTiltConfig()
             log("phone capabilities announced features=${announced.features}")
         }
+    }
+
+    private fun pushHeadTiltConfig() {
+        val store = PhoneHeadTiltStore(this)
+        val settings = store.settings().let { if (store.stockDisabled()) it else it.copy(enabled = false) }
+        sendRemote(BusEnvelope(path = HeadTiltContract.CONFIG_PATH,
+            payload = HeadTiltContract.toJson(settings)))
     }
 
     private fun errorEnvelope(id: String, code: String, pluginId: String? = null): BusEnvelope =
@@ -6134,6 +6150,14 @@ class BusHubService : Service() {
         internal fun onLauncherBackendChanged() {
             activeInstance?.announcePhoneCapabilities()
         }
+
+        internal fun onHeadTiltPreferenceChanged() { activeInstance?.pushHeadTiltConfig() }
+
+        internal fun sendHeadTiltRequest(action: String, sessionId: String): Boolean = activeInstance?.let {
+            it.sendRemote(BusEnvelope(path = HeadTiltContract.REQUEST_PATH,
+                payload = JSONObject().put("v", HeadTiltContract.VERSION)
+                    .put("action", action).put("sessionId", sessionId))) == null
+        } ?: false
 
         /** The user changed an island size on the phone; the glasses get the full map again. */
         internal fun onAmbientSizesChanged() {
