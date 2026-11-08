@@ -56,7 +56,8 @@ type loginStatus struct {
 	PIN   string `json:"pin,omitempty"`
 }
 
-// op serializes protocol and crypto calls; mu protects snapshots and callbacks.
+// op serializes session protocol and crypto calls; media downloads run separately.
+// mu protects snapshots, callbacks and media failures/admission during Close.
 // Cancel does not take op, so closing the last owner interrupts blocked network work.
 type Engine struct {
 	op                sync.Mutex
@@ -64,6 +65,8 @@ type Engine struct {
 	ctx               context.Context
 	cancel            context.CancelFunc
 	wg                sync.WaitGroup
+	mediaWG           sync.WaitGroup
+	mediaSlots        chan struct{}
 	file              *os.File
 	dir               string
 	client            *lineapi.Client
@@ -98,7 +101,8 @@ func Open(dir string) (*Engine, error) {
 		return nil, errors.New("session already owned")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	e := &Engine{ctx: ctx, cancel: cancel, file: file, dir: dir, state: "signed_out", chats: []chat{}, login: loginStatus{Phase: "idle"}}
+	e := &Engine{ctx: ctx, cancel: cancel, file: file, dir: dir, state: "signed_out", chats: []chat{}, login: loginStatus{Phase: "idle"},
+		mediaSlots: make(chan struct{}, maxMediaDownloads)}
 	data, err := os.ReadFile(filepath.Join(dir, "session.json"))
 	if err == nil {
 		if len(data) > maxSessionBytes || json.Unmarshal(data, &e.stored) != nil || e.stored.Token == "" || e.stored.Mid == "" || len(e.stored.Tombstones) > maxSendTombstones {
@@ -270,6 +274,7 @@ func (e *Engine) Close() {
 	e.mu.Unlock()
 	e.cancel()
 	e.wg.Wait()
+	e.mediaWG.Wait()
 	e.op.Lock()
 	defer e.op.Unlock()
 	if e.crypto != nil {
