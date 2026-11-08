@@ -2,7 +2,10 @@ package com.anezium.rokidbus.plugin.line
 
 import com.anezium.rokidbus.client.plugin.NexusActionType
 import com.anezium.rokidbus.client.plugin.NexusPage
+import com.anezium.rokidbus.client.plugin.NexusPageActionKind
 import com.anezium.rokidbus.client.plugin.NexusPageActionSpec
+import com.anezium.rokidbus.shared.ComposerSlot
+import com.anezium.rokidbus.shared.ComposerTool
 import com.anezium.rokidbus.shared.ConversationComposer
 import com.anezium.rokidbus.shared.ConversationMessage
 import com.anezium.rokidbus.shared.ConversationRole
@@ -22,6 +25,14 @@ internal data class LineLogin(val phase: String = "idle", val pin: String = "")
 internal object LinePages {
     const val ROOT = "line-messages:main"
     const val SEND = "send"
+    /** The composer bar's camera tool; it opens the photo flow of [PhotoFlow] on the same page. */
+    const val TAKE_PHOTO = "take-photo"
+    const val RETAKE_PHOTO = "retake-photo"
+    const val SEND_PHOTO = "send-photo"
+    const val CANCEL_PHOTO = "cancel-photo"
+    const val PHOTO_TOOL = "photo"
+    const val PHOTO_LABEL = "Photo"
+    const val PHOTO_NEEDS_UPDATE = "Photos need the Nexus launcher update on the phone and the glasses"
     private const val PREFIX = "line-messages:chat:"
 
     fun pageId(chat: LineChat): String = PREFIX + MessageDigest.getInstance("SHA-256")
@@ -29,7 +40,7 @@ internal object LinePages {
 
     fun chat(pageId: String, state: LineSnapshot): LineChat? = state.chats.firstOrNull { pageId(it) == pageId }
 
-    fun render(pageId: String, revision: Long, state: LineSnapshot, interactive: Boolean,
+    fun render(pageId: String, revision: Long, state: LineSnapshot, interactive: Boolean, photoTool: Boolean = false,
         thumbnail: (LineChat, LineMessage) -> LauncherArtwork? = { _, _ -> null }): NexusPage.Content {
         if (pageId == ROOT) return NexusPage.Content(revision, "LINE", PageBody.SelectableList(
             state.chats.take(PageTemplateContract.MAX_ITEMS).map { chat ->
@@ -41,6 +52,7 @@ internal object LinePages {
             ?: return NexusPage.Content(revision, "LINE", PageBody.Summary(text = status(state.state)), live = true)
         if (!interactive) return NexusPage.Content(revision, "LINE", PageBody.Summary(text = "Update both Nexus hubs to read and reply"))
         val ready = state.state == "ready"
+        val photo = photoTool && ready
         return NexusPage.Content(revision, clip(chat.title, PageSurfaceContract.MAX_TITLE_CHARS),
             PageBody.Conversation(
                 threadKey = pageId.removePrefix(PREFIX),
@@ -53,8 +65,14 @@ internal object LinePages {
                     replyable = ready,
                     unavailableText = "LINE disconnected".takeUnless { ready },
                     unavailableSub = "Reopen LINE Messages or check sign-in on the phone".takeUnless { ready },
+                    tools = if (photo) listOf(ComposerTool(PHOTO_TOOL, PHOTO_LABEL, TAKE_PHOTO, glyph = "camera")) else emptyList(),
+                    // Dictate and Type make the draft, the camera sits after them, Send closes the bar.
+                    layout = if (photo) listOf(ComposerSlot.Dictate, ComposerSlot.Type, ComposerSlot.Tool(PHOTO_TOOL), ComposerSlot.Send) else null,
                 ),
-            ), listOf(NexusPageActionSpec(SEND, "Send", typed = NexusActionType.ComposeSend)), live = true)
+            ), listOfNotNull(
+                NexusPageActionSpec(SEND, "Send", typed = NexusActionType.ComposeSend),
+                NexusPageActionSpec(TAKE_PHOTO, PHOTO_LABEL, NexusPageActionKind.PLUGIN, confirm = false).takeIf { photo },
+            ), live = true)
     }
 
     private fun history(chat: LineChat, thumbnail: (LineChat, LineMessage) -> LauncherArtwork?): List<ConversationMessage> {

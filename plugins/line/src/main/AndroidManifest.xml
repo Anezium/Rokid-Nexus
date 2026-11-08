@@ -20,7 +20,7 @@
             <meta-data android:name="com.anezium.rokidbus.plugin.ID" android:value="line-messages" />
             <meta-data android:name="com.anezium.rokidbus.plugin.DISPLAY_NAME" android:value="LINE Messages" />
             <meta-data android:name="com.anezium.rokidbus.plugin.API_VERSION" android:value="3" />
-            <meta-data android:name="com.anezium.rokidbus.plugin.CAPABILITIES" android:value="surfaces,stt" />
+            <meta-data android:name="com.anezium.rokidbus.plugin.CAPABILITIES" android:value="surfaces,stt,camera" />
             <meta-data android:name="com.anezium.rokidbus.plugin.RECEIVE_PREFIXES" android:value="/plugin/line-messages,/system/plugin,/stt" />
             <meta-data android:name="com.anezium.rokidbus.plugin.ICON" android:value="chat" />
             <meta-data android:name="com.anezium.rokidbus.plugin.SETTINGS_ACTIVITY" android:value="com.anezium.rokidbus.plugin.line.LineSettingsActivity" />
