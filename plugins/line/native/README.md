@@ -26,3 +26,5 @@ output is `../libs/line-engine.aar`. From the repository root, verify it with:
 
 See [SEND_IMAGE.md](SEND_IMAGE.md) for the photo wire contract, outcome semantics,
 bounded durable deduplication and the security changes requiring device revalidation.
+The current diagnostic build enables raw `ENC_KM` metadata without a preview upload;
+[MEDIA_PROTOCOL_RESEARCH.md](MEDIA_PROTOCOL_RESEARCH.md) records the evidence and limits.

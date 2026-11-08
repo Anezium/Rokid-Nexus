@@ -182,7 +182,7 @@ func TestImageEncryptionRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSendImageDirectAndGroupWireContract(t *testing.T) {
+func TestSendImageVariantAIncludesRawMetadataKeyButNoPreviewForDirectAndGroup(t *testing.T) {
 	for _, group := range []bool{false, true} {
 		t.Run(fmt.Sprint("group=", group), func(t *testing.T) {
 			f := newImageFixture(t, group)
@@ -198,8 +198,10 @@ func TestSendImageDirectAndGroupWireContract(t *testing.T) {
 				t.Fatal("sealed payload and private journal disagree")
 			}
 			metadata := msg.ContentMetadata
-			if _, leaked := metadata["ENC_KM"]; leaked || strings.Contains(encode(metadata), body["keyMaterial"]) {
-				t.Fatal("outbound metadata exposes media key material")
+			// The owner requested this diagnostic default to isolate an official-client
+			// compatibility hypothesis. It is not evidence that raw ENC_KM is required.
+			if !diagnosticImageKeyInMetadata || metadata["ENC_KM"] != body["keyMaterial"] {
+				t.Fatal("variant A must carry the same raw key in metadata and the sealed body")
 			}
 			if _, advertised := metadata["MEDIA_THUMB_INFO"]; advertised {
 				t.Fatal("outbound message advertises an encrypted thumbnail")

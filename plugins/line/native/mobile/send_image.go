@@ -15,6 +15,10 @@ import (
 
 const maxImageBytes = 6 * 1024 * 1024
 
+// Requested diagnostic variant A: test whether the official client needs ENC_KM.
+// This exposes the raw media key to LINE; the requirement remains unconfirmed.
+const diagnosticImageKeyInMetadata = true
+
 // Retain only the encrypted upload's locator/key, never the captured JPEG.
 // This also ties a late own-message echo to an ambiguous invocation after reopening.
 type sentImage struct {
@@ -76,8 +80,8 @@ func (e *Engine) sendPreparedImage(invocation, chatID, digest string, jpeg []byt
 		return "not_sent"
 	}
 
-	// Upload exactly one ciphertext. The media key travels only in sealed chunks;
-	// publishing a preview with this key would reuse the file's CTR keystream.
+	// Upload exactly one ciphertext. Never publish an encrypted preview with this
+	// key: a second plaintext would reuse the original file's CTR keystream.
 	upload, keyMaterial, err := encryptFileData(jpeg)
 	if err != nil {
 		return "not_sent"
@@ -90,6 +94,9 @@ func (e *Engine) sendPreparedImage(invocation, chatID, digest string, jpeg []byt
 		"OID": oid, "SID": "emi", "FILE_SIZE": strconv.Itoa(len(upload)),
 		"contentType": "1", "FILE_NAME": "image.jpg",
 		"MEDIA_CONTENT_INFO": encode(map[string]any{"category": "original", "fileSize": len(upload), "extension": "jpg"}),
+	}
+	if diagnosticImageKeyInMetadata {
+		metadata["ENC_KM"] = keyMaterial
 	}
 	payload, _ := json.Marshal(map[string]string{"keyMaterial": keyMaterial})
 	chunks, err := seal(payload)

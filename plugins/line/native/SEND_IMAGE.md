@@ -30,19 +30,26 @@ The encrypted image flow uses the pinned protocol library with these security co
 
 The IMAGE message has `contentType=1`, `hasContent=true`, sealed chunks and:
 
-- `OID`, `SID=emi`, `e2eeVersion`;
+- `OID`, `SID=emi`, `e2eeVersion`, and diagnostic `ENC_KM` (see below);
 - `FILE_SIZE`: ciphertext length including its 32-byte MAC;
 - `FILE_NAME=image.jpg`, metadata `contentType=1`;
 - `MEDIA_CONTENT_INFO`: `category=original`, encrypted `fileSize`, `extension=jpg`.
 
-Outbound metadata deliberately omits `ENC_KM`: the server must not receive the
-media key outside sealed chunks. It also omits `MEDIA_THUMB_INFO` and the second
-`__ud-preview` upload: encrypting another plaintext with the original's key and
-counter would reuse its CTR keystream. There is no alternative counter convention.
-Receivers obtain the key from the decrypted message body. The incoming decoder
-still accepts legacy `ENC_KM` data. Official-app interoperability must be rechecked
-on device after these changes; if removing `ENC_KM` proves incompatible, stop and
-report rather than restore it. No connector package or dependency is introduced.
+The owner-requested **diagnostic variant A** sets
+`diagnosticImageKeyInMetadata=true` by default. It adds raw base64 key material as
+`ENC_KM`, matching the pinned bridge's sender, while retaining the sealed-body key.
+This exposes the media key to LINE's server; this diagnostic must not be described
+as keeping the photo key confidential from the server. Its purpose is to isolate
+the official client's compatibility requirement after removing both metadata key
+and preview together broke rendering in the official app. Whether that client
+actually requires `ENC_KM` remains unconfirmed pending the isolated device result.
+
+`MEDIA_THUMB_INFO` and the second `__ud-preview` upload remain absent. Encrypting
+another plaintext with the original's key and counter would reuse its CTR
+keystream. There is no alternative counter convention. The receive side supports
+both sealed-body and legacy metadata keys. No connector package or dependency is
+introduced. See [the research evidence](MEDIA_PROTOCOL_RESEARCH.md): synthetic
+bridge tests do not establish how official clients populate these fields.
 
 ## Outcomes and history
 
@@ -90,7 +97,7 @@ memory. A later save cannot accidentally persist a send that never dispatched.
 ## Verification scope
 
 Tests exercise real file encryption against the existing decryptor,
-unchanged original bytes, metadata key exclusion, exactly one OBS upload,
+unchanged original bytes, the intentional variant-A metadata key, exactly one OBS upload,
 input/authority/key failure, failed dispatch, durable
 replay and exact-echo/history confirmation. Message sealing is supplied at the
 prepared-upload unit boundary in positive dispatch tests; missing-key tests use
