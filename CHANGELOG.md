@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.2.1
+
+### Phone hub
+
+- Recover from GitHub release downloads failing with HTTP 502, 503, 504 or a
+  timeout. Nexus retries the exact release and APK once through GitHub's asset
+  API, covering phone updates, glasses updates and GitHub-hosted Store plugins.
+- Cancellation remains available during the fallback. A partial download is
+  restarted, and the existing APK hash, package and signature checks still run
+  before installation.
+
+Update the phone hub to receive this fix. Glasses hub 2.2.0 remains compatible;
+the 2.2.1 glasses APK has only a version bump. Plugins and SDK are unchanged.
+
 ## 2.2.0
 
 Update both Nexus hubs together. Meta Messages 0.1.0 ships alongside and needs
