@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -259,7 +260,7 @@ func TestSendImageSealsKeyAndUploadsPreviewForDirectAndGroup(t *testing.T) {
 func TestSendImageFailureMapping(t *testing.T) {
 	for _, test := range []struct{ failure, outcome string }{
 		{"determineMediaMessageFlow", "not_sent"}, {"plain-flow", "not_sent"}, {"sealing", "not_sent"}, {"cancel-before-send", "not_sent"},
-		{"acquireEncryptedAccessToken", "not_sent"}, {"upload", "not_sent"}, {"preview", "sent"},
+		{"acquireEncryptedAccessToken", "not_sent"}, {"upload", "not_sent"}, {"preview", "not_sent"},
 		{"send-failure", "unconfirmed"}, {"sendMessage", "unconfirmed"}, {"missing-ack", "unconfirmed"},
 	} {
 		t.Run(test.failure, func(t *testing.T) {
@@ -268,16 +269,55 @@ func TestSendImageFailureMapping(t *testing.T) {
 			if outcome := f.send(); outcome != test.outcome {
 				t.Fatalf("got %s, want %s", outcome, test.outcome)
 			}
-			if test.outcome == "not_sent" && f.message != nil {
-				t.Fatal("failure dispatched a message")
+			if test.outcome == "not_sent" {
+				if f.message != nil || slices.Contains(f.steps, "sendMessage") {
+					t.Fatal("failure dispatched a message")
+				}
+				if len(f.e.stored.Sends) != 0 || len(f.e.stored.Order) != 0 {
+					t.Fatal("pre-dispatch failure journaled an invocation")
+				}
 			}
 			if test.outcome == "unconfirmed" && f.e.stored.Sends["photo"].State != "unconfirmed" {
 				t.Fatal("ambiguous result not journaled")
 			}
-			if test.failure == "preview" && f.message.ContentMetadata["MEDIA_THUMB_INFO"] != "" {
-				t.Fatal("failed preview was advertised")
-			}
 		})
+	}
+}
+
+func TestSendImagePreviewFailureDoesNotDispatchOrJournalAndAllowsRetry(t *testing.T) {
+	for _, group := range []bool{false, true} {
+		for _, failure := range []string{"generation", "upload"} {
+			t.Run(fmt.Sprintf("group=%t/%s", group, failure), func(t *testing.T) {
+				f := newImageFixture(t, group)
+				original := bytes.Clone(f.input)
+				if failure == "generation" {
+					// The header passes validation, but decoding the truncated pixels fails.
+					f.input = f.input[:len(f.input)-16]
+					if !validImageJPEG(f.input) {
+						t.Fatal("fixture must retain a valid JPEG header")
+					}
+					if _, _, _, err := generateThumbnail(f.input); err == nil {
+						t.Fatal("fixture must fail thumbnail generation")
+					}
+				} else {
+					f.failure = "preview"
+				}
+				before, snapshot := encode(f.e.stored), f.e.Snapshot()
+				if got := f.send(); got != "not_sent" {
+					t.Fatalf("preview failure returned %s", got)
+				}
+				if slices.Contains(f.steps, "sendMessage") || f.message != nil || f.payload != nil {
+					t.Fatal("preview failure reached sealing or dispatch")
+				}
+				if encode(f.e.stored) != before || f.e.Snapshot() != snapshot {
+					t.Fatal("preview failure changed the journal or snapshot")
+				}
+				f.input, f.failure, f.steps = original, "", nil
+				if got := f.send(); got != "sent" {
+					t.Fatalf("retry after preview failure returned %s", got)
+				}
+			})
+		}
 	}
 }
 

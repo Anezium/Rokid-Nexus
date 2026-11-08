@@ -25,8 +25,9 @@ The encrypted image flow uses the pinned protocol library with these security co
 4. Generate a JPEG quality-60 preview with at most a 1280-pixel long
    edge, encrypt it with the same key material and counter convention, and upload
    it to `OID + "__ud-preview"`. `MEDIA_THUMB_INFO` is emitted only after success.
-   Preview failure does not block dispatch, but the official app may then show
-   an unopenable placeholder.
+   Preview generation, encryption or upload failure returns `not_sent` before
+   journaling or dispatch: the official app cannot open our photo without it.
+   The wearer can retry the retained photo with the same invocation.
 5. Seal the raw JSON `{"keyMaterial":"..."}` using content type 1 through
    `EncryptMessageV2Raw` or `EncryptGroupMessageRaw`. These raw APIs are required:
    the text helpers would incorrectly wrap the JSON as text.
@@ -54,10 +55,9 @@ been measured. No connector package or dependency is introduced.
 
 - `sent`: LINE acknowledged a message ID, or an exact own-photo echo/history row
   confirmed a previously ambiguous upload. This is handoff, not delivery/read.
-- `not_sent`: validation, ownership/readiness, key, flow, encryption, main upload
-  or pre-dispatch journal failure. Optional preview failure alone does not block
-  the main image. Failed uploads can leave orphan encrypted objects; they
-  have not dispatched a message to the recipient.
+- `not_sent`: validation, ownership/readiness, key, flow, encryption, main upload,
+  preview preparation/upload or pre-dispatch journal failure. Failed uploads can
+  leave orphan encrypted objects without dispatching a message to the recipient.
 - `unconfirmed`: dispatch occurred but no trustworthy message ID was returned.
   Its journal survives process death and replay never dispatches it again.
 - `recipient_changed`: a fresh chat is missing/renamed, or an invocation was
@@ -99,9 +99,9 @@ memory. A later save cannot accidentally persist a send that never dispatched.
 
 Tests exercise real file encryption against the existing decryptor,
 unchanged original bytes, absent metadata key, original/preview upload order,
-the reference's counter convention, input/authority/key failure, optional preview
-failure, failed dispatch, durable
-replay and exact-echo/history confirmation. Message sealing is supplied at the
+the reference's counter convention, input/authority/key failure, required preview
+generation/upload failure without journaling or dispatch and a successful retry,
+failed dispatch, durable replay and exact-echo/history confirmation. Message sealing is supplied at the
 prepared-upload unit boundary in positive dispatch tests; missing-key tests use
 the public method. Account provisioning, actual group/direct message sealing and
 official-app interoperability require device acceptance beyond these unit tests. No test reads an

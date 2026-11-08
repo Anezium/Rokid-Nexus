@@ -90,15 +90,19 @@ func (e *Engine) sendPreparedImage(invocation, chatID, digest string, jpeg []byt
 		"contentType": "1", "FILE_NAME": "image.jpg",
 		"MEDIA_CONTENT_INFO": encode(map[string]any{"category": "original", "fileSize": len(upload), "extension": "jpg"}),
 	}
-	previewUploaded := false
-	if preview, width, height, err := generateThumbnail(jpeg); err == nil {
-		if encrypted, err := encryptThumbnail(preview, keyMaterial); err == nil {
-			if e.client.UploadOBSWithOID(encrypted, oid+"__ud-preview") == nil {
-				previewUploaded = true
-				metadata["MEDIA_THUMB_INFO"] = encode(map[string]int{"width": width, "height": height})
-			}
-		}
+	// The official app cannot open our photo without its uploaded preview.
+	preview, width, height, err := generateThumbnail(jpeg)
+	if err != nil {
+		return "not_sent"
 	}
+	encryptedPreview, err := encryptThumbnail(preview, keyMaterial)
+	if err != nil {
+		return "not_sent"
+	}
+	if err := e.client.UploadOBSWithOID(encryptedPreview, oid+"__ud-preview"); err != nil {
+		return "not_sent"
+	}
+	metadata["MEDIA_THUMB_INFO"] = encode(map[string]int{"width": width, "height": height})
 	payload, _ := json.Marshal(map[string]string{"keyMaterial": keyMaterial})
 	chunks, err := seal(payload)
 	if err != nil || len(chunks) == 0 || e.ctx.Err() != nil {
@@ -113,7 +117,7 @@ func (e *Engine) sendPreparedImage(invocation, chatID, digest string, jpeg []byt
 	} else if strings.HasPrefix(strings.ToLower(chatID), "r") {
 		msg.ToType = 1
 	}
-	image := &sentImage{ChatID: chatID, OID: oid, KeyMaterial: keyMaterial, Preview: previewUploaded}
+	image := &sentImage{ChatID: chatID, OID: oid, KeyMaterial: keyMaterial, Preview: true}
 	record := sendRecord{Digest: digest, State: "unconfirmed", Image: image}
 	if !e.journalSend(invocation, record) {
 		return "not_sent"
