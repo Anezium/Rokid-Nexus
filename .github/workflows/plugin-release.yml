@@ -177,7 +177,7 @@ jobs:
       - name: Build Meta Messages' native engine
         if: env.PLUGIN_ID == 'meta-messages'
         shell: bash
-        run: plugins/meta/native/build-android.sh
+        run: bash plugins/meta/native/build-android.sh
 
       - name: Require Patcher package-read credentials
         if: env.PLUGIN_ID == 'patcher'
