@@ -195,15 +195,20 @@ class LineSettingsActivity : Activity() {
         }
     }
 
-    /** Clears the clipboard if it still holds the PIN this screen put there; leaves anything else alone. */
+    /**
+     * Clears the clipboard if it still holds the PIN this screen put there; leaves anything else
+     * alone. Ownership is kept until the clipboard could actually be read, since Android only
+     * lets a foreground app look at it, so a later render tries again.
+     */
     private fun forgetCopiedPin() {
         val code = copiedPin ?: return
-        copiedPin = null
         val clipboard = getSystemService(ClipboardManager::class.java) ?: return
-        runCatching {
+        val cleared = runCatching {
             val current = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
             if (current == code) clipboard.clearPrimaryClip()
-        }
+            true
+        }.getOrDefault(false)
+        if (cleared) copiedPin = null
     }
 
     private fun openLine() {
@@ -254,6 +259,13 @@ class LineSettingsActivity : Activity() {
         pin.set("")
         LineSession.release(owner)
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        // A PIN LINE is still asking for stays available to paste; once the sign-in is over it
+        // must not outlive this screen.
+        if (LineSession.login.phase != "pin") forgetCopiedPin()
+        super.onDestroy()
     }
 
     private fun render() {

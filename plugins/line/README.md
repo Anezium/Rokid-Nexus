@@ -16,6 +16,11 @@ like WhatsApp's engine. No Matrix bridge, remote gateway or glasses APK is neede
   the same thumbnail limits as Meta Messages. Animated stickers show a static
   frame. Downloads run only for the newest visible media, with a 4 MiB limit;
   thumbnails stay in a bounded memory cache and are cleared on session close.
+- Photos from the glasses camera, on launcher v6 or newer: the composer bar's Photo
+  tool takes a frame, shows it for review, and Send uploads it sealed (Letter
+  Sealing media encryption, never plaintext). Adding the camera capability puts
+  the plugin back to "Pending approval" in Nexus › Plugin access after an update;
+  approve it there once.
 - Encrypted photos are decrypted and authenticated locally. Missing keys or
   invalid authentication keep a text fallback; media keys never enter page JSON.
 - Dictate or type through the hub composer; only its explicit Send dispatches text.

@@ -246,3 +246,31 @@ the native connection and foreground service end. Test revoked/expired tokens
 and peers/groups without usable sealing keys: preserve drafts and block sending.
 Verify that fields remain masked and unsaved, switching between LINE and Nexus
 preserves only the bounded approval attempt, and phone notifications keep working.
+
+## Device acceptance, 2026-11-08 (`b3147ba2`, debug APK, owner's account)
+
+Run by an Opus 5.5 agent on the shared Samsung and glasses, captures and screen
+recordings kept privately under `_research/line-device-2026-11-08/` (never in
+the repository). Owner-authorised targets only: the owner's own group "yoyo" and,
+for the refusal check, the "LINE" official account. Counts and states only.
+
+Verified:
+
+- Phone keyboard typing into the glasses composer, visible on the lens in ~1.5 s.
+- Live sync: a message sent from the official app appears on the open glasses
+  conversation in under 2 s.
+- Dictation reaches "Glasses mic · listening" and ends in `no_speech` without
+  audio; speech recognition itself was not exercised.
+- Encrypted text send to the group: one message, arrived once, 0.67 s between
+  `/page/action` and `/page/result`; the draft cleared itself.
+- Encrypted photo send to the group: capture 4.6 s, Send to conversation back
+  7.2 s (plugin 4.9 s), bubble in the official app within 10 s; the photo joins
+  the history with its thumbnail. Recorded end to end from the launcher.
+- Send to the "LINE" official account is refused (`not_sent`): no Letter Sealing
+  key, no plaintext fallback. Expected.
+- No plugin or hub error lines, no ANR, across five logcat captures.
+
+Still not verified: a sealed direct chat with another person (text and photo
+decryption on their side), reception from another account, unsend behaviour,
+token expiry, Keep Memo (not part of the Chrome client's message boxes, so never
+listed), and the group checks above with more than one member.

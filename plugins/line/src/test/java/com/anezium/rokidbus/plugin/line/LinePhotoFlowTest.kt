@@ -99,13 +99,19 @@ class LinePhotoFlowTest {
         assertTrue(sending.actions.isEmpty())
     }
 
-    @Test fun aRefusedSendWorthRetryingKeepsThePhotoUnderReview() {
+    @Test fun aRefusedSendKeepsThePhotoUnderReviewAndSaysWhy() {
         val flow = reviewed()
         assertEquals(PhotoCommand.SEND, flow.action(LinePages.SEND_PHOTO))
-        assertTrue(flow.keepForRetry())
+        assertTrue(flow.sendRefused("Not sent · the connection is unavailable"))
         assertEquals(PhotoStep.Review, flow.step)
-        assertEquals(3, flow.page(11, preview).actions.size)
-        assertFalse(flow.keepForRetry())
+        val page = flow.page(11, preview)
+        assertEquals(3, page.actions.size)
+        assertEquals("Not sent · the connection is unavailable", (page.body as PageBody.Image).caption)
+        assertFalse(flow.sendRefused("again"))
+        // The next Send or Retake starts clean.
+        assertEquals(PhotoCommand.SEND, flow.action(LinePages.SEND_PHOTO))
+        assertNull(flow.refusal)
+        assertEquals(PhotoFlow.SENDING, (flow.page(12, preview).body as PageBody.Image).caption)
     }
 
     @Test fun cancelClosesWithoutSendingFromEveryStepButTheSend() {

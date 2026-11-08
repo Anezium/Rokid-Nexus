@@ -37,12 +37,16 @@ internal class PhotoFlow(val recipient: String) {
     var step: PhotoStep = PhotoStep.Capturing
         private set
 
+    /** Why the last Send was refused, shown in place of the caption while the photo waits for another try. */
+    var refusal: String? = null
+        private set
+
     val holdsPhoto: Boolean get() = step == PhotoStep.Review
 
     fun action(actionId: String): PhotoCommand = when (actionId) {
         LinePages.TAKE_PHOTO, LinePages.RETAKE_PHOTO ->
-            if (step == PhotoStep.Sending) PhotoCommand.NONE else { step = PhotoStep.Capturing; PhotoCommand.CAPTURE }
-        LinePages.SEND_PHOTO -> if (step == PhotoStep.Review) { step = PhotoStep.Sending; PhotoCommand.SEND } else PhotoCommand.NONE
+            if (step == PhotoStep.Sending) PhotoCommand.NONE else { step = PhotoStep.Capturing; refusal = null; PhotoCommand.CAPTURE }
+        LinePages.SEND_PHOTO -> if (step == PhotoStep.Review) { step = PhotoStep.Sending; refusal = null; PhotoCommand.SEND } else PhotoCommand.NONE
         LinePages.CANCEL_PHOTO -> if (step == PhotoStep.Sending) PhotoCommand.NONE else PhotoCommand.CLOSE
         else -> PhotoCommand.NONE
     }
@@ -59,10 +63,11 @@ internal class PhotoFlow(val recipient: String) {
         return true
     }
 
-    /** The send was refused in a way worth another try: the photo is kept and reviewed again. */
-    fun keepForRetry(): Boolean {
+    /** The send was refused before anything left the phone: the photo is kept and reviewed again, with the reason. */
+    fun sendRefused(message: String): Boolean {
         if (step != PhotoStep.Sending) return false
         step = PhotoStep.Review
+        refusal = message
         return true
     }
 
@@ -86,7 +91,10 @@ internal class PhotoFlow(val recipient: String) {
             // Send is first, so one tap sends; it sends only what the wearer sees above it.
             PhotoStep.Review, PhotoStep.Sending -> NexusPage.Content(
                 revision, title,
-                PageBody.Image(checkNotNull(preview) { "a reviewed photo has its preview" }, if (current == PhotoStep.Sending) SENDING else caption),
+                PageBody.Image(
+                    checkNotNull(preview) { "a reviewed photo has its preview" },
+                    if (current == PhotoStep.Sending) SENDING else refusal?.let { clip(it, PageTemplateContract.MAX_DETAIL_CHARS) } ?: caption,
+                ),
                 if (current == PhotoStep.Review) {
                     listOf(action(LinePages.SEND_PHOTO, SEND), action(LinePages.RETAKE_PHOTO, RETAKE), action(LinePages.CANCEL_PHOTO, CANCEL))
                 } else {

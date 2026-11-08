@@ -283,9 +283,11 @@ class LinePluginService : NexusPluginService() {
     }
 
     /**
-     * Send on the image page: one dispatch, the bytes leave this service with it, and the
-     * conversation comes back. The action waits the same bounded time as the text Send; an upload
-     * still running past it is unconfirmed, and the engine lists the photo once it is through.
+     * Send on the image page: one dispatch, the bytes leave this service with it, and the page
+     * answers at once with "Sending…". An upload takes seconds and page actions run on the main
+     * thread, so the outcome is published on the live lease instead of awaited here: the
+     * conversation comes back once LINE has the photo, the photo stays for another try when the
+     * engine refused before anything left, and an ambiguous upload is the engine's to settle.
      */
     private fun sendPhoto(action: NexusPageAction): NexusPageResult {
         val session = photo?.takeIf { it.pageId == action.pageId } ?: return NexusPageResult.stale(PhotoFlow.PHOTO_GONE)
@@ -297,34 +299,23 @@ class LinePluginService : NexusPluginService() {
             discardPhoto(session)
             return authorityLost()
         }
-        val send = LineDispatch()
         LineSession.call(this, lease, { native ->
-            if (send.start()) {
-                val outcome = runCatching { native.sendImage(action.invocationId, chat.id, chat.title, bytes) }.getOrDefault("unconfirmed")
-                send.finish(outcome)
-            }
-        }) { if (owner === lease) publish() }
-        send.await()
-        return when (send.result()) {
-            "sent" -> {
-                discardPhoto(session)
-                NexusPageResult.done("Handed to LINE", replacement = render(action.pageId))
-            }
-            "recipient_changed" -> {
-                discardPhoto(session)
-                NexusPageResult.stale("Conversation changed; reopen it before sending")
-            }
-            // Refused before anything left: the photo stays on its page for another Send, a Retake or Cancel.
-            "not_sent" -> {
-                session.flow.keepForRetry()
-                NexusPageResult.rejected(NOT_SENT_TEXT, code = CODE_NOT_SENT)
-            }
-            else -> {
-                discardPhoto(session)
-                publish()
-                NexusPageResult.rejected(UNCONFIRMED_TEXT)
+            runCatching { native.sendImage(action.invocationId, chat.id, chat.title, bytes) }.getOrDefault("unconfirmed")
+        }) { result ->
+            // The page may be gone by now; the engine's history carries a sent photo regardless.
+            if (owner !== lease || photo !== session) return@call
+            when (result.getOrDefault("unconfirmed")) {
+                "not_sent" -> {
+                    session.flow.sendRefused(NOT_SENT_TEXT)
+                    publishPhoto(session)
+                }
+                else -> {
+                    discardPhoto(session)
+                    publish()
+                }
             }
         }
+        return NexusPageResult.done(replacement = render(action.pageId))
     }
 
     /** Cancel drops the photo and puts the conversation back; without a photo it is the same conversation. */
