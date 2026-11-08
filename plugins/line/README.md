@@ -10,6 +10,7 @@ like WhatsApp's engine. No Matrix bridge, remote gateway or glasses APK is neede
   phone. The password is used once and is never persisted.
 - Up to 48 recent conversations, direct or group, and 24 recent messages per chat.
   The newest messages that fit the launcher payload budget are displayed.
+  If LINE returns no recent entries, unblocked contacts are listed instead.
 - Live text updates and remote unsends while the plugin pages are held open.
 - Dictate or type through the hub composer; only its explicit Send dispatches text.
   Sends are journaled before dispatch, and ambiguous requests are not retried.

@@ -61,9 +61,9 @@ func (e *Engine) Send(invocation, id, title, text string) string {
 		}
 	}
 	msg := &lineapi.Message{From: e.stored.Mid, To: id, ContentType: 0, ContentMetadata: map[string]string{}}
-	if strings.HasPrefix(id, "c") {
+	if strings.HasPrefix(strings.ToLower(id), "c") {
 		msg.ToType = 2
-	} else if strings.HasPrefix(id, "r") {
+	} else if strings.HasPrefix(strings.ToLower(id), "r") {
 		msg.ToType = 1
 	}
 	if e.crypto == nil {

@@ -21,6 +21,7 @@ func (e *Engine) loadChats() error {
 		return err
 	}
 	inboxEntries, contactEntries, excludedEntries := len(boxes.MessageBoxes), 0, 0
+	var excludedIdLengths []int
 	// New accounts can have contacts before Chrome's recent inbox exposes a
 	// thread. Resolve those contacts without inventing ids or including blocks.
 	if len(boxes.MessageBoxes) == 0 {
@@ -38,7 +39,7 @@ func (e *Engine) loadChats() error {
 			excluded[id] = true
 		}
 		for _, id := range ids {
-			if excluded[id] || !validMid(id) || !strings.HasPrefix(id, "u") {
+			if excluded[id] || !validMid(id) || !strings.HasPrefix(strings.ToLower(id), "u") {
 				excludedEntries++
 				continue
 			}
@@ -62,9 +63,10 @@ func (e *Engine) loadChats() error {
 		}
 		if !validMid(box.ID) {
 			excludedEntries++
+			excludedIdLengths = append(excludedIdLengths, len(box.ID))
 			continue
 		}
-		item := chat{ID: box.ID, Title: "Conversation", Group: !strings.HasPrefix(box.ID, "u"), History: []message{}}
+		item := chat{ID: box.ID, Title: "Conversation", Group: !strings.HasPrefix(strings.ToLower(box.ID), "u"), History: []message{}}
 		if history, ok := previous[box.ID]; ok {
 			item.History = history
 		}
@@ -87,6 +89,7 @@ func (e *Engine) loadChats() error {
 	e.mu.Lock()
 	e.chats = chats
 	e.inboxEntries, e.contactEntries, e.excludedEntries = inboxEntries, contactEntries, excludedEntries
+	e.excludedIdLengths = excludedIdLengths
 	e.mu.Unlock()
 	return nil
 }
@@ -122,11 +125,11 @@ func (e *Engine) LoadHistory(id string) error {
 }
 
 func validMid(mid string) bool {
-	if len(mid) != 33 || !strings.ContainsRune("ucr", rune(mid[0])) {
+	if (len(mid) != 33 && len(mid) != 44) || !strings.ContainsRune("uUcCrR", rune(mid[0])) {
 		return false
 	}
 	for _, r := range mid[1:] {
-		if !strings.ContainsRune("0123456789abcdef", r) {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
 			return false
 		}
 	}

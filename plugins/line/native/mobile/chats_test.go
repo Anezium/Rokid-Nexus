@@ -15,7 +15,7 @@ func TestInboxUsesActiveConversationRequestAndResolvesContactName(t *testing.T) 
 	}
 	defer e.Close()
 	e.client = e.newClient("synthetic-token")
-	mid := "u0123456789abcdef0123456789abcdef"
+	mid := "U" + strings.Repeat("a", 43)
 	e.client.HTTPClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		response := ""
 		switch {
@@ -86,5 +86,18 @@ func TestEmptyRecentInboxFallsBackToUnblockedContacts(t *testing.T) {
 	}
 	if len(e.chats) != 1 || e.chats[0].ID != allowed || e.chats[0].Title != "Test contact" {
 		t.Fatal("contact fallback was not filtered or resolved")
+	}
+}
+
+func TestConversationIDsAreOpaqueTokensNotOnlyLegacyHex(t *testing.T) {
+	for _, id := range []string{"u" + strings.Repeat("a", 32), "U" + strings.Repeat("Z", 43), "C" + strings.Repeat("_", 43), "R" + strings.Repeat("-", 43)} {
+		if !validMid(id) {
+			t.Fatal("valid bounded conversation token rejected")
+		}
+	}
+	for _, id := range []string{"", "u" + strings.Repeat("a", 200), "u" + strings.Repeat("a", 31) + "/", "u" + strings.Repeat("a", 42) + "\n"} {
+		if validMid(id) {
+			t.Fatal("invalid conversation token accepted")
+		}
 	}
 }
