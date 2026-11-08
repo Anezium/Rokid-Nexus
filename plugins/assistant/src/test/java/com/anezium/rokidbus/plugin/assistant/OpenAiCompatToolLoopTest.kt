@@ -17,6 +17,7 @@ class OpenAiCompatToolLoopTest {
         val client = RecordingCompatClient(
             listOf(
                 StubResponse.Events(
+                    OpenAiChatSseParser.parseData("""{"choices":[{"delta":{"reasoning_content":"private reasoning"}}]}"""),
                     OpenAiChatSseEvent.Delta(
                         content = "<think>hidden first pass</think>Looking",
                     ),
@@ -81,6 +82,7 @@ class OpenAiCompatToolLoopTest {
         assertEquals(4, messages.length())
 
         val assistant = messages.getJSONObject(1)
+        assertEquals("private reasoning", assistant.getString("reasoning_content"))
         assertEquals("assistant", assistant.getString("role"))
         assertEquals("Looking", assistant.getString("content"))
         val echoedCall = assistant.getJSONArray("tool_calls").getJSONObject(0)

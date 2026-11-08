@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Discover models from all configured providers, with a searchable picker,
+  six-hour cache and manual refresh. Keep saved selections and cached lists
+  when a provider stops listing a model or its catalog is unavailable.
+- Read advertised photo and reasoning capabilities, and allow newly published
+  ChatGPT model IDs through to the request without replacing them with Luna.
+- Update offline suggestions with GPT-6.1 Terra, MiniMax M3.1 Flash,
+  DeepSeek V4.1 Flash/V4 Pro, and GLM 5.3/Flash/FlashX.
+- Preserve reasoning content when replaying compatible models' tool calls.
+  DeepSeek starts with thinking disabled until an effort is selected.
+
 ## 1.5.2
 
 - Draft replies through Relay and send only after the wearer taps Send on the

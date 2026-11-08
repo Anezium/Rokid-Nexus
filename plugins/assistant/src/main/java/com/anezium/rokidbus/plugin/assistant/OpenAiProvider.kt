@@ -22,6 +22,7 @@ internal sealed interface OpenAiChatSseEvent {
         val toolCalls: List<OpenAiChatToolCallDelta> = emptyList(),
         val finishReason: String? = null,
         val responseItem: JSONObject? = null,
+        val reasoningContent: String? = null,
     ) : OpenAiChatSseEvent
     data class Error(val message: String) : OpenAiChatSseEvent
     data object Done : OpenAiChatSseEvent
@@ -78,13 +79,15 @@ internal object OpenAiChatSseParser {
             .orEmpty()
         val finishReason = choice.optionalString("finish_reason")
             ?.takeIf(String::isNotEmpty)
-        return if (content == null && toolCalls.isEmpty() && finishReason == null) {
+        val reasoningContent = delta?.optionalString("reasoning_content")?.takeIf(String::isNotEmpty)
+        return if (content == null && toolCalls.isEmpty() && finishReason == null && reasoningContent == null) {
             OpenAiChatSseEvent.Ignored
         } else {
             OpenAiChatSseEvent.Delta(
                 content = content,
                 toolCalls = toolCalls,
                 finishReason = finishReason,
+                reasoningContent = reasoningContent,
             )
         }
     }
