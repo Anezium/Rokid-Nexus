@@ -464,7 +464,7 @@ class MainActivity : Activity() {
         renderedPluginUpdateIds = pluginUpdates.keys
         val catalog = BusHubService.pluginCatalog(this)
         val activeCount = catalog.entries.count {
-            it.state == PluginCatalogState.BUILT_IN || it.state == PluginCatalogState.ENABLED
+            it.state == PluginCatalogState.ENABLED
         }
         pluginSection.addView(
             NexusUi.sectionRow(this, "Plugins", "$activeCount Active"),
@@ -541,7 +541,6 @@ class MainActivity : Activity() {
     }
 
     private fun catalogStateLabel(entry: PluginCatalogEntry): String = when (entry.state) {
-        PluginCatalogState.BUILT_IN -> if (entry.launchable) "Built in · enabled" else "Built in · service"
         PluginCatalogState.PENDING -> "Pending approval"
         PluginCatalogState.ENABLED -> "Installed · enabled"
         PluginCatalogState.DISABLED -> "Installed · disabled"

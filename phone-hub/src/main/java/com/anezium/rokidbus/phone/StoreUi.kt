@@ -106,7 +106,6 @@ internal object StoreScreens {
     }
 
     fun grantLabel(state: PluginCatalogState?): String = when (state) {
-        PluginCatalogState.BUILT_IN -> "built in"
         PluginCatalogState.PENDING -> "pending approval"
         PluginCatalogState.ENABLED -> "enabled"
         PluginCatalogState.DISABLED -> "disabled"
