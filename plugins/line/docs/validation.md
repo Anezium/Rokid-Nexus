@@ -76,10 +76,80 @@ Observed media-history result: `OK (1 test)`. It cancels/closes its engine after
 and fails rather than selecting an ambiguous contact. It needs the debug target
 and the APK produced by `:plugin-line:assembleDebugAndroidTest` installed.
 
+## Glasses page-opening investigation
+
+The installed plugin at `eff651f6` was tested against the existing 2.2.2 hubs
+from `feat/glasses-larger-text` (`a0898426`). Neither hub was reinstalled or
+restarted, and no application data, pairing or Bluetooth settings were changed.
+
+The reported Opening-to-Rokid-home failure was not reproduced using the actual
+touchpad path: triple tap, Applications, LINE Messages, then the owner-selected
+conversation. A loading page was followed by the conversation list and a working
+conversation page. Returning through Applications to Meta Messages also opened
+its service list; returning to LINE opened its list again. No message was sent.
+
+Simultaneous phone and glasses logcat captures establish the initial sequence
+(device log clock, 2026-11-08):
+
+| Event | Time |
+| --- | --- |
+| Phone receives `/page/request` | 14:45:23.356 |
+| LINE registration approved | 14:45:23.850 |
+| Phone sends first `/page/response`, result 0 | 14:45:24.922 |
+| Glasses receive first response and send visibility | 14:45:25.188 / .193 |
+| Glasses receive loaded-list updates | 14:45:29.586–29.808 |
+| Conversation requested / first response received on glasses | 14:48:10.598 / .696 |
+
+The provider responded before its deadline, then published the loaded data.
+No plugin exception or permission rejection appeared in the captured tags.
+The existing provider already schedules engine work off the page callback and
+returns a live page immediately; no production change was supported by this run.
+
+Earlier automated attempts to inspect the glasses with `uiautomator dump`
+coincided with `AccessibilityService destroyed` (14:39:59.979 and 14:43:33.329),
+followed by reconnection roughly two seconds later. Suppression of Nexus's
+accessibility service removes its launcher overlay, explaining the return home
+seen during those attempts. This identifies a test-method fault; it does not
+establish the cause of any separate failure without hierarchy inspection.
+
+For future device checks, navigate with the physical touchpad or the established
+low-level input helper and use `adb shell screencap -p` plus `adb pull` for visual
+evidence. **Do not run `uiautomator dump` on the glasses** while validating Nexus
+launcher pages. It changes the accessibility state being tested. Phone hierarchy
+inspection is a separate operation.
+
+Private evidence remains outside Git in the owner-requested directory
+`E:/Tools/Rokid/_research/line-device-2026-11-08/`: `phone.log`, `glasses.log`,
+`line-list.png` and `line-conversation.png`. Screenshots show the list and the
+selected conversation with unsupported-media placeholders; they do not verify
+media decoding. The glasses were returned to native Rokid home with Nexus closed.
+
+The requested Gradle command was attempted again in this investigation:
+
+```text
+./gradlew.bat :plugin-line:testDebugUnitTest :plugin-line:assembleDebug -PskipCxrGlobal=true
+Fetching distribution.
+Downloading https://services.gradle.org/distributions/gradle-9.5.1-bin.zip
+
+Attempt 1/1 failed. Reason: Permission denied: getsockopt
+```
+
+The command exited 1 before compilation or tests. Its actual final stack lines:
+
+```text
+    at org.gradle.wrapper.Install.createDist(SourceFile:24)
+    at org.gradle.wrapper.GradleWrapperMain.lambda$prepareWrapper$0(SourceFile:2)
+    at org.gradle.wrapper.GradleWrapperMain.main(SourceFile:2)
+```
+
+The complete output is in ignored `scratchpad/line-gradle-2026-11-08.log`.
+The earlier successful suite above remains a previous observation; this attempt
+does not constitute another passing build. No build configuration was changed.
+
 ## Not verified
 
-Text and media decryption, outgoing messages, group decrypt/send, incoming live updates, glasses rendering
-of this conversation, notification behavior and token expiry remain unverified.
+Text and media decryption, outgoing messages, group decrypt/send, incoming live
+updates, notification behavior and token expiry remain unverified.
 The successful direct-chat lookup/history fetch is not evidence of text decryption,
 delivery or sending.
 The owner completed the email/PIN login; the read-only test verified that its
