@@ -19,8 +19,8 @@ android {
         applicationId = "com.anezium.rokidbus.phone"
         minSdk = 30
         targetSdk = 36
-        versionCode = 20202
-        versionName = "2.2.2"
+        versionCode = 20400
+        versionName = "2.4.0"
         buildConfigField("String", "GLASSES_APK_SIGNER_SHA256", "\"${glassesApkSignerSha256.lowercase()}\"")
     }
 

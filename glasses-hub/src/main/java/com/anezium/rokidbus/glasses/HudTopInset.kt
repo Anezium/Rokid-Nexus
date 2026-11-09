@@ -9,7 +9,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 internal object HudTopInset {
-    private const val PREFS = "hud_position"
+    const val PREFS = "hud_position"
     private const val KEY_AUTO = "auto"
     private const val KEY_MANUAL_INSET_DP = "top_inset_dp"
     private const val KEY_AUTO_INSET_DP = "auto_inset_dp"

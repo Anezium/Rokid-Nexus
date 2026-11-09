@@ -5,6 +5,8 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
 import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
@@ -223,6 +225,24 @@ class LauncherHostLinkLossTest {
             failures.drop(1).forEach(first::addSuppressed)
             throw first
         }
+    }
+
+    @Test
+    fun `the phone's text size redraws the open session and an older phone's silence resets it`() {
+        announce(bundlePhone())
+        openRoot()
+        val normal = textSizes(sessionRoot())
+        assertTrue(normal.isNotEmpty())
+
+        announce(bundlePhone().put("pageTextSize", "large"))
+        idle()
+        val large = textSizes(sessionRoot())
+        assertEquals(normal.size, large.size)
+        normal.zip(large).forEach { (before, after) -> assertEquals(before * PageStyle.LARGE_TEXT_SCALE, after, 0.01f) }
+
+        announce(bundlePhone().apply { remove("pageTextSize") })
+        idle()
+        assertEquals(normal, textSizes(sessionRoot()))
     }
 
     @Test
@@ -769,11 +789,21 @@ class LauncherHostLinkLossTest {
         ConversationRole.UNKNOWN -> BubbleSide.NONE
     }
 
-    /** The session window's conversation view, laid out at the HUD's size if the window has not been yet. */
-    private fun conversationView(): ConversationView {
+    private fun sessionRoot(): SessionScreenView {
         val host = staticField(NexusSession::class.java, "host").get(null) as SessionHost
         val window = SessionHost::class.java.getDeclaredField("window").apply { isAccessible = true }.get(host)
-        val root = window.javaClass.getDeclaredField("root").apply { isAccessible = true }.get(window) as SessionScreenView
+        return window.javaClass.getDeclaredField("root").apply { isAccessible = true }.get(window) as SessionScreenView
+    }
+
+    private fun textSizes(view: View): List<Float> = when (view) {
+        is TextView -> listOf(view.textSize)
+        is ViewGroup -> (0 until view.childCount).flatMap { textSizes(view.getChildAt(it)) }
+        else -> emptyList()
+    }
+
+    /** The session window's conversation view, laid out at the HUD's size if the window has not been yet. */
+    private fun conversationView(): ConversationView {
+        val root = sessionRoot()
         if (root.width == 0) {
             root.measure(
                 View.MeasureSpec.makeMeasureSpec(PageStyle.WIDTH_PX, View.MeasureSpec.EXACTLY),

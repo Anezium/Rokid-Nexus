@@ -557,14 +557,19 @@ class MainActivity : Activity() {
         ) {
             return
         }
-        if (entry.principal != null && entry.state != PluginCatalogState.ENABLED) {
-            startActivity(Intent(this, PluginPermissionsActivity::class.java))
+        val principal = entry.principal
+        if (principal != null && entry.state != PluginCatalogState.ENABLED) {
+            startActivity(PluginPermissionsActivity.intent(
+                this, PluginGrantTarget(principal.packageName, principal.descriptor.id),
+            ))
             return
         }
         val target = entry.settingsComponent
         if (target == null) {
-            if (entry.principal != null) {
-                startActivity(Intent(this, PluginPermissionsActivity::class.java))
+            if (principal != null) {
+                startActivity(PluginPermissionsActivity.intent(
+                    this, PluginGrantTarget(principal.packageName, principal.descriptor.id),
+                ))
             } else {
                 Toast.makeText(this, "No settings available", Toast.LENGTH_SHORT).show()
             }
@@ -1188,7 +1193,8 @@ class MainActivity : Activity() {
             }
             step.statusLine?.let { status ->
                 addView(BusTheme.gap(this@MainActivity, 6))
-                addView(NexusUi.rowSub(this@MainActivity, status), NexusUi.block())
+                // The failure lines name what to check; a one-line ellipsis would cut that off.
+                addView(NexusUi.rowSub(this@MainActivity, status).apply { maxLines = 3 }, NexusUi.block())
             }
             val hasPrimaryAction = step.actionLabel != null && step.onAction != null
             val hasSecondaryAction = step.secondaryActionLabel != null && step.onSecondaryAction != null

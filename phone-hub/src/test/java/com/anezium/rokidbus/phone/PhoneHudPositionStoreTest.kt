@@ -1,6 +1,7 @@
 package com.anezium.rokidbus.phone
 
 import android.content.Context
+import com.anezium.rokidbus.shared.PageTextSize
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -55,5 +56,28 @@ class PhoneHudPositionStoreTest {
         assertFalse(PhoneHudPositionStore(context).hudPositionAuto())
         store.setHudPositionAuto(true)
         assertTrue(PhoneHudPositionStore(context).hudPositionAuto())
+    }
+
+    @Test
+    fun `page text size defaults to normal and persists wearer changes`() {
+        val context = RuntimeEnvironment.getApplication()
+        val preferences = context.getSharedPreferences(NexusPhoneState.PREFS, Context.MODE_PRIVATE)
+        preferences.edit().clear().commit()
+        val store = PhoneHudPositionStore(context)
+
+        assertEquals(PageTextSize.NORMAL, store.pageTextSize())
+        preferences.edit().putInt("page_text_size", 3).commit()
+        assertEquals(PageTextSize.NORMAL, store.pageTextSize())
+        assertEquals("normal", preferences.getString("page_text_size", null))
+        preferences.edit().putString("page_text_size", "huge").commit()
+        assertEquals(PageTextSize.NORMAL, store.pageTextSize())
+        assertEquals("normal", preferences.getString("page_text_size", null))
+
+        store.setPageTextSize(PageTextSize.LARGE)
+        assertEquals(PageTextSize.LARGE, PhoneHudPositionStore(context).pageTextSize())
+        store.setPageTextSize(PageTextSize.XLARGE)
+        assertEquals(PageTextSize.XLARGE, PhoneHudPositionStore(context).pageTextSize())
+        store.setPageTextSize(PageTextSize.NORMAL)
+        assertEquals(PageTextSize.NORMAL, PhoneHudPositionStore(context).pageTextSize())
     }
 }

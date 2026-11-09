@@ -91,7 +91,10 @@ data class PageSurfaceInvocation(
         }
 }
 
-/** [code] is a machine-readable refinement; hubs act on [PageSurfaceContract.CODE_AUTHORITY_LOST] only. */
+/**
+ * [code] is a machine-readable refinement; hubs act on [PageSurfaceContract.CODE_AUTHORITY_LOST]
+ * and [PageSurfaceContract.CODE_NOT_SENT] only.
+ */
 data class PageSurfaceResult(
     val invocationId: String,
     val status: String,
@@ -171,8 +174,15 @@ object PageSurfaceContract {
     const val MAX_COMPOSE_TEXT_CHARS = 1_000
     const val MAX_RESULT_CODE_CHARS = 32
 
-    /** The one result code hubs interpret: the composer's reply authority is gone. */
+    /** The composer's reply authority is gone: the text stays and Send is withdrawn. */
     const val CODE_AUTHORITY_LOST = "authority_lost"
+
+    /**
+     * A refused `compose.send` whose provider knows nothing left the phone. The draft stays
+     * sendable; without this code a refusal is shown unconfirmed, because a provider that
+     * cannot tell may have handed the text on before refusing.
+     */
+    const val CODE_NOT_SENT = "not_sent"
 
     val invocationModes: Set<String> = setOf(MODE_CONFIRMED, MODE_QUICK, MODE_COMPOSE)
 

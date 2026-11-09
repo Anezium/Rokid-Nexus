@@ -26,12 +26,12 @@ class ProviderCatalogTest {
     }
 
     @Test
-    fun providerCatalogOpenAiSuggestsTheGpt6Trio() {
+    fun providerCatalogOpenAiSuggestsCurrentGpt6Models() {
         val openAi = ProviderCatalog.openAi
 
         assertEquals("gpt-6-luna", openAi.defaultModel)
         assertEquals(
-            listOf("gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"),
+            listOf("gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra"),
             openAi.suggestedModels.map(SuggestedModel::id),
         )
         assertTrue(openAi.suggestedModels.all(SuggestedModel::vision))

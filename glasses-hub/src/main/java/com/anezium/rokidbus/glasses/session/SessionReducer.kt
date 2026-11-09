@@ -1194,6 +1194,8 @@ internal class SessionReducer(
             }
             result.code == PageSurfaceContract.CODE_AUTHORITY_LOST ->
                 base.copy(draft = DraftStore.authorityLost(model.draft, send.ownerPluginId, send.threadKey, revision))
+            // A provider that knows nothing left the phone says so: the draft stays sendable.
+            result.status == RESULT_REJECTED && result.code == PageSurfaceContract.CODE_NOT_SENT -> base
             // Any other refusal of a send may come after the app already took the text (a provider
             // that cannot tell): it is unconfirmed, Type comes first, and it is never resent as is.
             result.status == RESULT_REJECTED -> base.copy(draft = DraftStore.unconfirmed(model.draft, send))
@@ -1769,8 +1771,9 @@ internal class SessionReducer(
                     capture.kind != CaptureKind.DICTATE -> model
                     message.result.reason == ComposeDictationReason.COMPLETED && !text.isNullOrBlank() ->
                         model.copy(capture = null, micUnavailable = false, draft = DraftStore.completed(capture, text, model.history, model.draft, threadRevision(model, capture.ownerPluginId, capture.threadKey)))
-                    // No phone microphone stands in: the wearer is offered Type, focused.
-                    else -> focusType(model.copy(capture = null, micUnavailable = true), capture)
+                    // No phone microphone stands in: the wearer is offered Type, focused. Silence or
+                    // a cancel is not a microphone failure, so Dictate stays on offer afterwards.
+                    else -> focusType(model.copy(capture = null, micUnavailable = message.result.reason.micFailed()), capture)
                 }
             }
             is ComposeInbound.Done -> {
@@ -1788,6 +1791,9 @@ internal class SessionReducer(
         if (next == model) return keep(model)
         return SessionTransition(next, listOfNotNull(showEffect(next.state)))
     }
+
+    private fun ComposeDictationReason.micFailed(): Boolean =
+        this != ComposeDictationReason.COMPLETED && this != ComposeDictationReason.NO_SPEECH && this != ComposeDictationReason.CANCELLED
 
     /** After a dictation that ended without text, its conversation frame focuses Type. */
     private fun focusType(model: SessionModel, capture: Capture): SessionModel {

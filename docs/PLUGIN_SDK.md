@@ -22,7 +22,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.25.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.26.0")
 }
 ```
 
@@ -30,7 +30,7 @@ For local development against a checkout, publish a snapshot instead:
 `.\gradlew.bat :shared:publishToMavenLocal :bus-client:publishToMavenLocal
 '-PversionName=0.1.0-SNAPSHOT'` and consume it from `mavenLocal()`.
 
-SDK `sdk-v0.25.0` includes the launcher-bundle APIs documented below: interactive
+SDK `sdk-v0.26.0` includes the launcher-bundle APIs documented below: interactive
 activity destinations, typed actions, conversation/media/route templates, artwork,
 user-owned Floating Activities settings, composer tools and message thumbnails,
 image pages and row icons. Update both hubs to Nexus 2.2.0 for the complete
@@ -2483,10 +2483,12 @@ answer, or one that could not be sent, leaves nothing of the earlier revision to
 act on. Return `NexusPageResult.done(message, replacement)`,
 `.rejected(message)` or `.stale(message)`; a message is at most 64 characters
 and a replacement is the same page at a higher revision. Each also takes an
-optional `code` (printable ASCII, at most 32); the hub acts on
-`NexusPageResult.CODE_AUTHORITY_LOST` only, for a composer whose reply authority
-is gone: it keeps the text and stops offering Send. A lost result shows as
-unconfirmed and is never resent. `IMMERSION` opens only your own immersion,
+optional `code` (printable ASCII, at most 32); the hub acts on two:
+`NexusPageResult.CODE_AUTHORITY_LOST`, for a composer whose reply authority
+is gone (it keeps the text and stops offering Send), and
+`NexusPageResult.CODE_NOT_SENT` on a rejected send, when you know nothing left
+the phone (the draft stays sendable). Any other rejected send, and a lost
+result, show as unconfirmed and are never resent. `IMMERSION` opens only your own immersion,
 directly on a fresh tap (from a composer tool, with the tool's context); `HUB`
 gives you no hub control.
 

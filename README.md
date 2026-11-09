@@ -58,9 +58,9 @@ expiring never ends the activity; its card stays in the launcher.
 
 ## Nexus 2.0
 
-Update **both hubs to 2.2.2**, plus Relay 1.4.2, Navigation 0.3.0, Media Deck
-1.0.4 and Sample 1.0.6. Plugin developers use SDK 0.25.0. See the
-[2.2.2 release](https://github.com/Anezium/Rokid-Nexus/releases/tag/v2.2.2)
+Update **both hubs to 2.4.0**, plus Relay 1.4.2, Navigation 0.3.0, Media Deck
+1.0.4 and Sample 1.0.6. Plugin developers use SDK 0.26.0. See the
+[2.4.0 release](https://github.com/Anezium/Rokid-Nexus/releases/tag/v2.4.0)
 and [changelog](CHANGELOG.md) for downloads and compatibility details. The
 **Classic launcher** stays available on the phone and the glasses, and older
 hubs keep it automatically.
@@ -87,6 +87,7 @@ operation allowed by the wearer on its own.
 | **[Assistant](plugins/assistant/)** | Hold the touchpad and ask out loud: your words appear as you speak them, then the answer arrives on the band, in your ear, or as a native Ink page with charts and interactive controls — and it can look through the glasses camera to tell you what you are seeing. Ask it to remind you, set a timer, or take a note, and it does: the phone rings at the hour and the glasses raise it. It can also add, read, and safely delete phone-calendar events, answer from a folder of documents on the phone — PDFs and images included, cited by file and page — and ask other plugins, such as Transit's departures or Media Deck's pause, through operations you approve. Runs on your own ChatGPT plan, or any AI provider you bring a key for — OpenAI, OpenRouter, MiniMax, DeepSeek, GLM, Hermes, or your own server |
 | **[Relay](plugins/relay/)** | Phone messages as a band over whatever you were looking at; a message opens as a conversation page, answered by voice on the glasses or typed on the phone, and Send stays a separate tap — plus an inbox for the ones you let go |
 | **[Meta Messages](plugins/meta/)** | WhatsApp, Instagram and Messenger conversations on the glasses: read them in one scrolling column, answer by voice or the phone keyboard, and take a photo and send it from the chat. An unofficial client, licensed AGPL-3.0 |
+| **[LINE Messages](plugins/line/)** | LINE conversations and groups on the glasses: read them in one scrolling column, answer by voice or the phone keyboard, and take a photo and send it from the chat, all sealed end to end with Letter Sealing. An unofficial client, Apache 2.0 |
 | **[Navigation](plugins/nav/)** | The route Google Maps, Citymapper, OsmAnd, Organic Maps or Yandex Maps is guiding you on, kept on the glasses as one live activity: the next turn and its distance, or the walk to the stop, the line to board and the stops left. Walks Nexus plans itself add a minimap island, a route page with its map, and a full-screen map |
 | **[Lens](plugins/lens/)** | Google-Lens-style live translation: the glasses camera streams to the phone, ML Kit OCR + translation run there (offline), translated overlays come back in real time — plus a freeze mode for full-resolution stills |
 | **[Feeds](plugin-feeds/)** | Bluesky and X timelines — browse posts, open threads, and view the actual photos full-screen |
@@ -268,7 +269,7 @@ A plugin is a headless phone APK against the published SDK:
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.25.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.26.0")
 }
 ```
 

@@ -28,7 +28,7 @@ internal class RibbonView(context: Context) : View(context) {
     private val name = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { typeface = PageStyle.sans }
     private val time = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = PageStyle.mono
-        textSize = TIME_PX
+        textSize = PageStyle.scaledPx(context, TIME_PX)
         textAlign = Paint.Align.RIGHT
     }
     private val rect = RectF()
@@ -101,7 +101,7 @@ internal class RibbonView(context: Context) : View(context) {
                 canvas.drawText(value, right, y + 5f, time)
                 nameRight = right - time.measureText(value) - TIME_GAP_PX
             }
-            name.textSize = if (alight) ALIGHT_PX else NAME_PX
+            name.textSize = PageStyle.scaledPx(context, if (alight) ALIGHT_PX else NAME_PX)
             name.typeface = if (alight) PageStyle.sansBold else PageStyle.sans
             name.color = when {
                 alight -> PageStyle.phosphor

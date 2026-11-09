@@ -3,6 +3,7 @@ package com.anezium.rokidbus.glasses.page
 import android.content.Context
 import com.anezium.rokidbus.glasses.drawable
 import android.graphics.Canvas
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.ImageView
@@ -15,6 +16,7 @@ import com.anezium.rokidbus.glasses.session.ScreenBlock
 import com.anezium.rokidbus.glasses.session.SessionEvent
 import com.anezium.rokidbus.glasses.session.SessionScreen
 import com.anezium.rokidbus.glasses.session.TextRole
+import com.anezium.rokidbus.shared.PageTextSize
 
 /**
  * Draws a [SessionScreen] on the 480x640 HUD: a fixed header, the viewport that follows the
@@ -24,10 +26,12 @@ import com.anezium.rokidbus.glasses.session.TextRole
  * hint then floating over it without their rules.
  */
 internal class SessionScreenView(
-    context: Context,
+    base: Context,
     private val icons: SessionIconSource = HubIconSource,
     private val leaseFactory: (View) -> RenderedMapLease = { RenderedMapLease(it) },
-) : LinearLayout(context) {
+) : LinearLayout(PageTextContext(base)) {
+    private val textContext = context as PageTextContext
+
     /** The document's or conversation's measured pages, reported back to the session's pure state. */
     var onDocumentPaged: ((SessionEvent.DocumentPaged) -> Unit)? = null
 
@@ -38,7 +42,7 @@ internal class SessionScreenView(
         scaleType = ImageView.ScaleType.FIT_CENTER
         visibility = View.GONE
     }
-    private val headerTitle = PageStyle.text(context, "", 13f, PageStyle.phosphor, PageStyle.mono, maxLines = 1, letterSpacing = 0.1f)
+    private val headerTitle = PageStyle.text(context, "", HEADER_TITLE_PX, PageStyle.phosphor, PageStyle.mono, maxLines = 1, letterSpacing = 0.1f)
     private val headerTrail = PageStyle.text(context, "", PageStyle.CAPTION_PX, PageStyle.muted, PageStyle.mono, maxLines = 1)
     private val header = LinearLayout(context).apply {
         orientation = HORIZONTAL
@@ -66,6 +70,7 @@ internal class SessionScreenView(
     private var document: DocumentPageView? = null
     private var conversation: ConversationView? = null
     private var shownTitle: String? = null
+    private var shownScreen: SessionScreen? = null
     private val fullMapPainter = RouteMapPainter()
     private val renderedLease = leaseFactory(this)
     private var fullMapPlan: MapPlan? = null
@@ -116,7 +121,24 @@ internal class SessionScreenView(
         setPadding(0, px.coerceAtLeast(0), 0, 0)
     }
 
+    /** Draws the text at [size]: every view that measured it is dropped and the screen is shown again. */
+    fun setTextSize(size: PageTextSize) {
+        val scale = PageStyle.scaleOf(size)
+        if (textContext.scale == scale) return
+        textContext.scale = scale
+        fun resize(view: TextView, sizePx: Float) = view.setTextSize(TypedValue.COMPLEX_UNIT_PX, PageStyle.scaledPx(context, sizePx))
+        resize(headerTitle, HEADER_TITLE_PX)
+        listOf(headerTrail, hintAction, hintBack).forEach { resize(it, PageStyle.CAPTION_PX) }
+        viewport.removeAllViews()
+        blockViews.clear()
+        document = null
+        conversation = null
+        overflowMemory.clear()
+        shownScreen?.let(::show)
+    }
+
     fun show(screen: SessionScreen) {
+        shownScreen = screen
         val chromeless = screen.chromeless
         val title = screen.header?.title
         header.visibility = if (screen.header == null) View.GONE else View.VISIBLE
@@ -275,6 +297,7 @@ internal class SessionScreenView(
     }
 
     private companion object {
+        const val HEADER_TITLE_PX = 13f
         /** The cover on a media card: a mark, not a poster; the title stays the card's figure. */
         const val ARTWORK_PX = 48
         /** About 30 frames a second while the full map moves, and none once it rests. */

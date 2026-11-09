@@ -162,6 +162,7 @@ class AssistantPluginService : NexusPluginService() {
                 baseUrlProvider = { authStore.providerBaseUrl(preset.id) },
                 effortProvider = { authStore.providerEffort(preset.id) },
                 backendProvider = { authStore.providerBackend(preset.id) },
+                modelInfoProvider = { model -> authStore.availableModels(preset.id).firstOrNull { it.id == model } },
             )
         }
     }
@@ -184,6 +185,7 @@ class AssistantPluginService : NexusPluginService() {
             refreshTokens = {
                 CodexChatGptOAuth.refreshStoredTokens(applicationContext)
             },
+            modelsProvider = { authStore.cachedModelCatalog(CodexAuthStore.CHATGPT_PROVIDER_ID)?.models.orEmpty() },
         )
     }
     private val chatGptCodexProvider by lazy {
@@ -1569,7 +1571,9 @@ class AssistantPluginService : NexusPluginService() {
         )
 
     private fun providerSupportsPhotos(providerId: String): Boolean =
-        providerId == ChatGptCodexProvider.ID || authStore.providerModelSupportsPhotos(providerId)
+        if (providerId == ChatGptCodexProvider.ID) {
+            authStore.availableModels(providerId).firstOrNull { it.id == authStore.chatGptModel() }?.vision ?: true
+        } else authStore.providerModelSupportsPhotos(providerId)
 
     private suspend fun ensureProviderBackendDetected(providerId: String) {
         if (

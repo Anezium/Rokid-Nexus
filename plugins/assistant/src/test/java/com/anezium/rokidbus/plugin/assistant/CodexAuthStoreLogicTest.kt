@@ -1,6 +1,8 @@
 package com.anezium.rokidbus.plugin.assistant
 
 import android.content.SharedPreferences
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -419,7 +421,7 @@ class CodexAuthStoreLogicTest {
             "gpt-5.6-terra" to "gpt-6.1-sol",
             "gpt-5.6-sol" to "gpt-6-astra",
             "gpt-6-sol" to "gpt-6.1-sol",
-            "retired-model" to "gpt-6-luna",
+            "retired-model" to "retired-model",
         ).forEach { (saved, expected) ->
             val store = CodexAuthStore(FakeSharedPreferences(mapOf("chatgpt_model" to saved)))
 
@@ -501,6 +503,141 @@ class CodexAuthStoreLogicTest {
         assertEquals(null, store.pendingChatGptSignIn())
         assertFalse(store.isChatGptSignInCompleted("state-a"))
     }
+
+    @Test
+    fun catalogsRefreshByAgeAndManualRefreshPreservesTheSelectedModel() = runTest {
+        val store = testStore(FakeSharedPreferences())
+        store.saveProviderApiKey("deepseek", "test-key")
+        store.setProviderModel("deepseek", "my-saved-model")
+        var now = 1_000L
+        var requests = 0
+        val repository = ModelCatalogRepository(store, ModelCatalogTransport {
+            requests++
+            assertEquals("https://api.deepseek.com/v1/models", it.url)
+            assertEquals("Bearer test-key", it.headers["Authorization"])
+            ModelCatalogResponse(200, """{"data":[{"id":"new-model","input_modalities":["text","image"]}]}""")
+        }, clock = { now })
+        assertEquals(ModelCatalogRefresh.UPDATED, repository.refresh("deepseek"))
+        assertEquals(ModelCatalogRefresh.CURRENT, repository.refresh("deepseek"))
+        assertEquals(1, requests)
+        assertEquals("my-saved-model", store.providerModel("deepseek"))
+        assertEquals(ModelCatalogRefresh.UPDATED, repository.refresh("deepseek", force = true))
+        now += ModelCatalogRepository.REFRESH_INTERVAL_MS
+        assertEquals(ModelCatalogRefresh.UPDATED, repository.refresh("deepseek"))
+        assertEquals(3, requests)
+    }
+
+    @Test
+    fun failedOrEmptyCatalogRefreshKeepsTheLastSuccessfulListAndBacksOff() = runTest {
+        val store = testStore(FakeSharedPreferences())
+        store.saveProviderApiKey("openai", "test-key")
+        val request = store.modelCatalogRequest("openai")!!
+        store.saveModelCatalog(request, ModelCatalogSnapshot(listOf(AvailableModel("cached-model")), 1L))
+        var status = 404
+        var requests = 0
+        val repository = ModelCatalogRepository(store, ModelCatalogTransport {
+            requests++
+            ModelCatalogResponse(status, """{"data":[]}""")
+        }, clock = { ModelCatalogRepository.REFRESH_INTERVAL_MS + 100L })
+        assertEquals(ModelCatalogRefresh.UNAVAILABLE, repository.refresh("openai"))
+        assertEquals(ModelCatalogRefresh.UNAVAILABLE, repository.refresh("openai"))
+        assertEquals(1, requests)
+        status = 200
+        assertEquals(ModelCatalogRefresh.UNAVAILABLE, repository.refresh("openai", force = true))
+        assertEquals(listOf("cached-model"), store.availableModels("openai").map { it.id })
+    }
+
+    @Test
+    fun modelCatalogIsIsolatedByProviderEndpointAndCredential() {
+        val prefs = FakeSharedPreferences()
+        val store = testStore(prefs)
+        store.saveProviderApiKey("custom", "first-key")
+        store.setProviderBaseUrl("custom", "https://first.test/v1")
+        val first = store.modelCatalogRequest("custom")!!
+        assertTrue(store.saveModelCatalog(first, ModelCatalogSnapshot(listOf(AvailableModel("private-model")), 1L)))
+        assertFalse(prefs.getString("model_catalog.custom", "")!!.contains("first-key"))
+        assertEquals(listOf("private-model"), testStore(prefs).availableModels("custom").map { it.id })
+        assertEquals(null, store.cachedModelCatalog("openai"))
+        store.setProviderBaseUrl("custom", "https://second.test/v1")
+        assertEquals(null, store.cachedModelCatalog("custom"))
+        assertFalse(store.saveModelCatalog(first, ModelCatalogSnapshot(listOf(AvailableModel("late-result")), 2L)))
+        store.setProviderBaseUrl("custom", "https://first.test/v1")
+        store.saveProviderApiKey("custom", "second-key")
+        assertEquals(null, store.cachedModelCatalog("custom"))
+    }
+
+    @Test
+    fun discoveredVisionAndEffortsReachProviderSettingsAndRespectOverrides() {
+        val store = testStore(FakeSharedPreferences())
+        store.saveProviderApiKey("deepseek", "test-key")
+        store.setProviderModel("deepseek", "future-model")
+        val model = AvailableModel("future-model", vision = true, efforts = listOf("high", "max"))
+        store.saveModelCatalog(store.modelCatalogRequest("deepseek")!!, ModelCatalogSnapshot(listOf(model), 1L))
+        assertTrue(store.providerModelSupportsPhotos("deepseek"))
+        store.setProviderEffort("deepseek", "max")
+        assertEquals("max", store.providerEffort("deepseek"))
+        store.setProviderModelSupportsPhotos("deepseek", false)
+        assertFalse(store.providerModelSupportsPhotos("deepseek"))
+    }
+
+    @Test
+    fun newChatGptModelAndEffortSurviveCatalogChangesWithoutSwitchingModels() {
+        val store = testStore(FakeSharedPreferences())
+        store.saveOAuth(catalogTokens(), apiKey = null)
+        val model = AvailableModel("future-model", vision = false, efforts = listOf("high", "max"), defaultEffort = "max")
+        val request = store.modelCatalogRequest(CodexAuthStore.CHATGPT_PROVIDER_ID)!!
+        store.saveModelCatalog(request, ModelCatalogSnapshot(listOf(model), 1L))
+        store.setChatGptModel(model.id)
+        assertEquals(model.id, store.chatGptModel())
+        assertEquals("max", store.chatGptReasoningEffort())
+        store.setChatGptReasoningEffort("high")
+        assertEquals("high", store.chatGptReasoningEffort())
+        store.saveModelCatalog(request, ModelCatalogSnapshot(listOf(AvailableModel("another-model")), 2L))
+        assertEquals(model.id, store.chatGptModel())
+    }
+
+    @Test
+    fun chatGptCatalogRetriesOnceWithRefreshedTokensAndScopesByAccount() = runTest {
+        val store = testStore(FakeSharedPreferences())
+        store.saveOAuth(catalogTokens(), apiKey = null)
+        var requests = 0
+        var refreshes = 0
+        val repository = ModelCatalogRepository(store, ModelCatalogTransport {
+            requests++
+            assertTrue(it.url.startsWith("https://chatgpt.com/backend-api/codex/models?client_version="))
+            assertEquals("account-a", it.headers["ChatGPT-Account-Id"])
+            if (requests == 1) ModelCatalogResponse(401) else {
+                assertEquals("Bearer renewed", it.headers["Authorization"])
+                ModelCatalogResponse(200, """{"models":[{"slug":"future-model","visibility":"list"}]}""")
+            }
+        }, refreshChatGpt = {
+            refreshes++
+            store.saveOAuth(catalogTokens(access = "renewed"), apiKey = null)
+        })
+        assertEquals(ModelCatalogRefresh.UPDATED, repository.refresh(CodexAuthStore.CHATGPT_PROVIDER_ID))
+        assertEquals(2, requests)
+        assertEquals(1, refreshes)
+        store.saveOAuth(catalogTokens(account = "account-b"), apiKey = null)
+        assertEquals(null, store.cachedModelCatalog(CodexAuthStore.CHATGPT_PROVIDER_ID))
+    }
+
+    @Test
+    fun catalogDiscoveryDoesNotRunWithoutCredentialsAndDoesNotSwallowCancellation() = runTest {
+        val store = testStore(FakeSharedPreferences())
+        val repository = ModelCatalogRepository(store, ModelCatalogTransport { throw CancellationException("Cancelled") })
+        assertEquals(ModelCatalogRefresh.UNAVAILABLE, repository.refresh("openai"))
+        store.saveProviderApiKey("openai", "test-key")
+        var cancelled = false
+        try {
+            repository.refresh("openai")
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+        assertTrue(cancelled)
+    }
+
+    private fun catalogTokens(access: String = "access", account: String = "account-a") =
+        CodexChatGptOAuthTokenBundle(access, "id", "refresh", account, "free", null)
 
     private fun testStore(prefs: FakeSharedPreferences): CodexAuthStore = CodexAuthStore(
         prefs = prefs,
