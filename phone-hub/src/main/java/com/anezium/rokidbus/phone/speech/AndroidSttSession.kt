@@ -775,7 +775,7 @@ internal fun androidRecognizerError(
             if (errorCode == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
                 "Microphone permission is not granted"
             } else {
-                "Injected glasses audio source failed"
+                "Android speech recognizer could not read the glasses audio (code $errorCode)"
             }
         SttErrorKind.NO_SPEECH ->
             if (inputWasClosed) {
