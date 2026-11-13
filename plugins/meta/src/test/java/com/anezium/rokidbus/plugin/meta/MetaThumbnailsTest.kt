@@ -147,13 +147,18 @@ class MetaThumbnailsTest {
         assertTrue(body.messages.all { it.image == null })
     }
 
-    @Test fun chatPageWithholdsThePhotoToolForAWhatsAppGroupAnEncryptedChatOrWhileNotReady() {
+    @Test fun chatPageOffersThePhotoToolInAWhatsAppGroup() {
         val state = MetaPagesState()
         state.set(MessagingService.WHATSAPP, ServiceState.Ready(listOf(crew)))
+        val page = content(MetaPages.page(MetaPages.chatPageId(MessagingService.WHATSAPP, crew), 2, state, composerSupport()))
+        assertTrue(page.actions.any { it.id == MetaPages.TAKE_PHOTO_ACTION_ID })
+    }
+
+    @Test fun chatPageWithholdsThePhotoToolForAnEncryptedChatOrWhileNotReady() {
+        val state = MetaPagesState()
         state.set(MessagingService.MESSENGER, ServiceState.Ready(listOf(locked)))
         state.set(MessagingService.INSTAGRAM, ServiceState.Connecting)
         for (pageId in listOf(
-            MetaPages.chatPageId(MessagingService.WHATSAPP, crew),
             MetaPages.chatPageId(MessagingService.MESSENGER, locked),
             MetaPages.chatPageId(MessagingService.INSTAGRAM, alice),
         )) {
