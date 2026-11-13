@@ -8,6 +8,7 @@ import (
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -62,7 +63,45 @@ func TestOwnSendsAreStoredAndContactNamesWin(t *testing.T) {
 	group := types.NewJID("12345", types.GroupServer)
 	h.Record(info(group, "g1", false, 6), &waE2E.Message{Conversation: proto.String("team")}, "Team")
 	chats, _ = h.Chats(context.Background(), 10, func(types.JID) string { return "" })
-	if chats[0].JID != group.String() || !chats[0].IsGroup || chats[0].Supported {
-		t.Fatalf("group chats must be listed but not sendable: %+v", chats[0])
+	if chats[0].JID != group.String() || !chats[0].IsGroup || !chats[0].Supported || chats[0].Name != "Team" {
+		t.Fatalf("group chats must be listed and sendable: %+v", chats[0])
+	}
+}
+
+func TestGroupsSeenLiveAreNamedLater(t *testing.T) {
+	h, err := OpenHistory(filepath.Join(t.TempDir(), "messages.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	group := types.NewJID("12345", types.GroupServer)
+	h.Record(info(group, "g1", false, 6), &waE2E.Message{Conversation: proto.String("hi")}, "")
+	chats, _ := h.Chats(context.Background(), 10, func(types.JID) string { return "" })
+	if h.Named(group) || chats[0].Name != "WhatsApp group" {
+		t.Fatalf("an unnamed group must not show its bare id: %+v", chats[0])
+	}
+	h.recordEvent(nil, &events.GroupInfo{JID: group, Name: &types.GroupName{Name: "Family"}})
+	chats, _ = h.Chats(context.Background(), 10, func(types.JID) string { return "" })
+	if !h.Named(group) || chats[0].Name != "Family" {
+		t.Fatalf("a group rename must reach the list: %+v", chats[0])
+	}
+	h.Record(info(group, "g2", false, 7), &waE2E.Message{Conversation: proto.String("again")}, "")
+	if chats, _ = h.Chats(context.Background(), 10, func(types.JID) string { return "" }); chats[0].Name != "Family" {
+		t.Fatalf("a later unnamed message must keep the group name: %+v", chats[0])
+	}
+}
+
+func TestOnlyPlainUserAndGroupAddressesAreSendable(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"33600000001@s.whatsapp.net":   true,
+		"120363000000000001@g.us":      true,
+		"120363000000000001@lid":       true,
+		"status@broadcast":             false,
+		"33600000001:3@s.whatsapp.net": false,
+		"@g.us":                        false,
+	} {
+		if got := validRecipient(raw) || validGroup(raw); got != want {
+			t.Errorf("%s: sendable=%v, want %v", raw, got, want)
+		}
 	}
 }

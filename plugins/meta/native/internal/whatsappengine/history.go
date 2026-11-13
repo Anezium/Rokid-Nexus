@@ -165,9 +165,10 @@ func (h *History) Record(info types.MessageInfo, m *waE2E.Message, chatName stri
 	at := info.Timestamp.UnixMilli()
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	// A message seen again (a later history sync) keeps its row and only gains a missing thumbnail.
+	// A message seen again (a later history sync) keeps its row and only gains a missing thumbnail or sender.
 	if _, err := h.db.Exec(`INSERT INTO messages (chat, id, from_me, sender, text, at, thumb) VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(chat, id) DO UPDATE SET thumb = COALESCE(messages.thumb, excluded.thumb)`,
+		ON CONFLICT(chat, id) DO UPDATE SET thumb = COALESCE(messages.thumb, excluded.thumb),
+		sender = CASE WHEN messages.sender = '' THEN excluded.sender ELSE messages.sender END`,
 		chat, info.ID, info.IsFromMe, sender, *text, at, messageThumbnail(m)); err != nil {
 		return
 	}
@@ -176,6 +177,24 @@ func (h *History) Record(info types.MessageInfo, m *waE2E.Message, chatName stri
 		chat, chatName, at)
 	h.db.Exec(`DELETE FROM messages WHERE chat = ? AND id NOT IN (SELECT id FROM messages WHERE chat = ? ORDER BY at DESC LIMIT ?)`,
 		chat, chat, keptPerChat)
+}
+
+// Named reports whether a stored conversation already has a name of its own.
+func (h *History) Named(chat types.JID) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var name string
+	return h.db.QueryRow(`SELECT name FROM chats WHERE chat = ?`, chat.ToNonAD().String()).Scan(&name) == nil && name != ""
+}
+
+// Rename names a stored conversation; one not stored yet gains its name with its first message.
+func (h *History) Rename(chat types.JID, name string) {
+	if name = strings.TrimSpace(name); name == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.db.Exec(`UPDATE chats SET name = ? WHERE chat = ?`, name, chat.ToNonAD().String())
 }
 
 // RecordOwn stores a message this device just sent, so the conversation shows it.
@@ -214,7 +233,9 @@ func (h *History) Chats(ctx context.Context, perChat int, name func(types.JID) s
 		if title == "" {
 			title = e.name
 		}
-		if title == "" {
+		if title == "" && jid.Server == types.GroupServer {
+			title = "WhatsApp group"
+		} else if title == "" {
 			title = "+" + jid.User
 		}
 		messages, err := h.latest(ctx, e.chat, perChat)
@@ -222,7 +243,7 @@ func (h *History) Chats(ctx context.Context, perChat int, name func(types.JID) s
 			return nil, err
 		}
 		chats = append(chats, Chat{JID: e.chat, Name: title, IsGroup: jid.Server == types.GroupServer,
-			Supported: validRecipient(e.chat), Messages: messages})
+			Supported: validRecipient(e.chat) || validGroup(e.chat), Messages: messages})
 	}
 	return chats, nil
 }
@@ -299,11 +320,34 @@ func (h *History) Oldest(ctx context.Context, chat types.JID) (*types.MessageInf
 	return &types.MessageInfo{MessageSource: types.MessageSource{Chat: chat, IsFromMe: mine}, ID: id, Timestamp: time.UnixMilli(at)}, nil
 }
 
+// withSenderName names a group message's sender from the contacts when the message
+// carries no push name, as history-synced messages usually do not.
+func withSenderName(client *whatsmeow.Client, info types.MessageInfo) types.MessageInfo {
+	if info.IsFromMe || !info.IsGroup || info.PushName != "" {
+		return info
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	for _, sender := range []types.JID{info.Sender, info.SenderAlt} {
+		if name := storedName(ctx, client, sender.ToNonAD()); name != "" {
+			info.PushName = name
+			break
+		}
+	}
+	return info
+}
+
 // recordEvent stores chat messages from live and history-sync events.
 func (h *History) recordEvent(client *whatsmeow.Client, event any) {
 	switch event := event.(type) {
 	case *events.Message:
-		h.Record(event.Info, event.Message, "")
+		h.Record(withSenderName(client, event.Info), event.Message, "")
+	case *events.GroupInfo:
+		if event.Name != nil {
+			h.Rename(event.JID, event.Name.Name)
+		}
+	case *events.JoinedGroup:
+		h.Rename(event.JID, event.Name)
 	case *events.HistorySync:
 		for _, conversation := range event.Data.GetConversations() {
 			chat, err := types.ParseJID(conversation.GetID())
@@ -317,7 +361,7 @@ func (h *History) recordEvent(client *whatsmeow.Client, event any) {
 			for _, item := range conversation.GetMessages() {
 				parsed, err := client.ParseWebMessage(chat, item.GetMessage())
 				if err == nil && parsed != nil {
-					h.Record(parsed.Info, parsed.Message, name)
+					h.Record(withSenderName(client, parsed.Info), parsed.Message, name)
 				}
 			}
 		}

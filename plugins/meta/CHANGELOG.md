@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+- **WhatsApp groups open on the glasses.** They were listed dimmed as
+  "Encrypted · reply from the phone", although WhatsApp's group encryption was
+  never the problem. You can now read a group, with each sender's name, and
+  answer it with text. Photos to groups stay off. A group first seen after
+  pairing shows its real name instead of a number.
+
 ## 0.1.1
 
 - **Meta's own mark.** The plugin now shows the Meta infinity instead of the
