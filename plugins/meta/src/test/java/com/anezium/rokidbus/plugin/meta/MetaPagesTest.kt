@@ -53,7 +53,7 @@ class MetaPagesTest {
         assertEquals(MessagingService.INSTAGRAM to alice, state.chatFor(pageId))
         assertEquals(MessagingService.INSTAGRAM to MetaPages.chatKey(MessagingService.INSTAGRAM, alice), MetaPages.chatKeyOf(pageId))
         assertNull(MetaPages.chatKeyOf("meta-messages:photo:instagram:0000"))
-        assertFalse(MetaPages.photoOffered(MessagingService.WHATSAPP, team))
+        assertTrue(MetaPages.photoOffered(MessagingService.WHATSAPP, team))
         assertTrue(MetaPages.photoOffered(MessagingService.MESSENGER, team))
         assertFalse(MetaPages.photoOffered(MessagingService.MESSENGER, locked))
     }

@@ -191,9 +191,8 @@ internal object MetaPages {
         return service to rest.substringAfter(':')
     }
 
-    /** Whether a photo from the glasses can go to this conversation; WhatsApp groups take none. */
-    fun photoOffered(service: MessagingService, chat: MetaChat): Boolean =
-        chat.supported && !(service == MessagingService.WHATSAPP && chat.group)
+    /** Whether a photo from the glasses can go to this conversation: any one it can answer. */
+    fun photoOffered(service: MessagingService, chat: MetaChat): Boolean = chat.supported
 
     fun page(pageId: String, revision: Long, state: MetaPagesState, interactive: Boolean): NexusPage =
         page(pageId, revision, state, PageSupport(interactive))

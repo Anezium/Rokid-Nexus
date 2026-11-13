@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+
+- **Photos to WhatsApp groups.** The Photo tool now shows in WhatsApp group
+  conversations too, as it already did in one-to-one chats and Messenger groups.
+
 ## 0.1.2
 
 - **WhatsApp groups open on the glasses.** They were listed dimmed as
