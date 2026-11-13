@@ -374,7 +374,15 @@ func (w *WhatsApp) Logout(ctx context.Context) error {
 }
 
 func (w *WhatsApp) contactName(ctx context.Context, jid types.JID) string {
-	c, err := w.client.Store.Contacts.GetContact(ctx, jid)
+	return storedName(ctx, w.client, jid)
+}
+
+// storedName is the name the synced contacts and push names give jid, or "".
+func storedName(ctx context.Context, client *whatsmeow.Client, jid types.JID) string {
+	if client == nil || client.Store == nil || client.Store.Contacts == nil || jid.IsEmpty() {
+		return ""
+	}
+	c, err := client.Store.Contacts.GetContact(ctx, jid)
 	if err != nil || !c.Found {
 		return ""
 	}

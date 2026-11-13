@@ -165,9 +165,10 @@ func (h *History) Record(info types.MessageInfo, m *waE2E.Message, chatName stri
 	at := info.Timestamp.UnixMilli()
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	// A message seen again (a later history sync) keeps its row and only gains a missing thumbnail.
+	// A message seen again (a later history sync) keeps its row and only gains a missing thumbnail or sender.
 	if _, err := h.db.Exec(`INSERT INTO messages (chat, id, from_me, sender, text, at, thumb) VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(chat, id) DO UPDATE SET thumb = COALESCE(messages.thumb, excluded.thumb)`,
+		ON CONFLICT(chat, id) DO UPDATE SET thumb = COALESCE(messages.thumb, excluded.thumb),
+		sender = CASE WHEN messages.sender = '' THEN excluded.sender ELSE messages.sender END`,
 		chat, info.ID, info.IsFromMe, sender, *text, at, messageThumbnail(m)); err != nil {
 		return
 	}
@@ -319,11 +320,28 @@ func (h *History) Oldest(ctx context.Context, chat types.JID) (*types.MessageInf
 	return &types.MessageInfo{MessageSource: types.MessageSource{Chat: chat, IsFromMe: mine}, ID: id, Timestamp: time.UnixMilli(at)}, nil
 }
 
+// withSenderName names a group message's sender from the contacts when the message
+// carries no push name, as history-synced messages usually do not.
+func withSenderName(client *whatsmeow.Client, info types.MessageInfo) types.MessageInfo {
+	if info.IsFromMe || !info.IsGroup || info.PushName != "" {
+		return info
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	for _, sender := range []types.JID{info.Sender, info.SenderAlt} {
+		if name := storedName(ctx, client, sender.ToNonAD()); name != "" {
+			info.PushName = name
+			break
+		}
+	}
+	return info
+}
+
 // recordEvent stores chat messages from live and history-sync events.
 func (h *History) recordEvent(client *whatsmeow.Client, event any) {
 	switch event := event.(type) {
 	case *events.Message:
-		h.Record(event.Info, event.Message, "")
+		h.Record(withSenderName(client, event.Info), event.Message, "")
 	case *events.GroupInfo:
 		if event.Name != nil {
 			h.Rename(event.JID, event.Name.Name)
@@ -343,7 +361,7 @@ func (h *History) recordEvent(client *whatsmeow.Client, event any) {
 			for _, item := range conversation.GetMessages() {
 				parsed, err := client.ParseWebMessage(chat, item.GetMessage())
 				if err == nil && parsed != nil {
-					h.Record(parsed.Info, parsed.Message, name)
+					h.Record(withSenderName(client, parsed.Info), parsed.Message, name)
 				}
 			}
 		}
