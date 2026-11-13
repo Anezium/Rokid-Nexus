@@ -178,6 +178,24 @@ func (h *History) Record(info types.MessageInfo, m *waE2E.Message, chatName stri
 		chat, chat, keptPerChat)
 }
 
+// Named reports whether a stored conversation already has a name of its own.
+func (h *History) Named(chat types.JID) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var name string
+	return h.db.QueryRow(`SELECT name FROM chats WHERE chat = ?`, chat.ToNonAD().String()).Scan(&name) == nil && name != ""
+}
+
+// Rename names a stored conversation; one not stored yet gains its name with its first message.
+func (h *History) Rename(chat types.JID, name string) {
+	if name = strings.TrimSpace(name); name == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.db.Exec(`UPDATE chats SET name = ? WHERE chat = ?`, name, chat.ToNonAD().String())
+}
+
 // RecordOwn stores a message this device just sent, so the conversation shows it.
 func (h *History) RecordOwn(chat types.JID, id, text string, at time.Time) {
 	h.Record(types.MessageInfo{MessageSource: types.MessageSource{Chat: chat, IsFromMe: true}, ID: id, Timestamp: at},
@@ -214,7 +232,9 @@ func (h *History) Chats(ctx context.Context, perChat int, name func(types.JID) s
 		if title == "" {
 			title = e.name
 		}
-		if title == "" {
+		if title == "" && jid.Server == types.GroupServer {
+			title = "WhatsApp group"
+		} else if title == "" {
 			title = "+" + jid.User
 		}
 		messages, err := h.latest(ctx, e.chat, perChat)
@@ -222,7 +242,7 @@ func (h *History) Chats(ctx context.Context, perChat int, name func(types.JID) s
 			return nil, err
 		}
 		chats = append(chats, Chat{JID: e.chat, Name: title, IsGroup: jid.Server == types.GroupServer,
-			Supported: validRecipient(e.chat), Messages: messages})
+			Supported: validRecipient(e.chat) || validGroup(e.chat), Messages: messages})
 	}
 	return chats, nil
 }
@@ -304,6 +324,12 @@ func (h *History) recordEvent(client *whatsmeow.Client, event any) {
 	switch event := event.(type) {
 	case *events.Message:
 		h.Record(event.Info, event.Message, "")
+	case *events.GroupInfo:
+		if event.Name != nil {
+			h.Rename(event.JID, event.Name.Name)
+		}
+	case *events.JoinedGroup:
+		h.Rename(event.JID, event.Name)
 	case *events.HistorySync:
 		for _, conversation := range event.Data.GetConversations() {
 			chat, err := types.ParseJID(conversation.GetID())

@@ -94,6 +94,8 @@ type WhatsApp struct {
 	changed           chan struct{}
 	wrapConnection    func(*whatsmeow.Client) connection
 	connectDone       chan struct{}
+	// naming holds the groups whose name is being fetched, so one fetch serves a burst of messages.
+	naming sync.Map
 }
 
 func OpenWhatsApp(ctx context.Context, path string) (*WhatsApp, error) {
@@ -150,6 +152,9 @@ func (w *WhatsApp) installClient(device *store.Device) {
 func (w *WhatsApp) handleEvent(client *whatsmeow.Client, event any) {
 	if w.history != nil {
 		w.history.recordEvent(client, event)
+		if message, ok := event.(*events.Message); ok && message.Info.IsGroup {
+			w.nameGroup(client, message.Info.Chat.ToNonAD())
+		}
 	}
 	switch event.(type) {
 	case *events.Connected, *events.PairSuccess, *events.LoggedOut, *events.StreamReplaced, *events.TemporaryBan, *events.ClientOutdated:
@@ -323,6 +328,11 @@ func validRecipient(raw string) bool {
 	return err == nil && jid.User != "" && jid.Device == 0 && jid.String() == raw && (jid.Server == types.DefaultUserServer || jid.Server == types.HiddenUserServer)
 }
 
+func validGroup(raw string) bool {
+	jid, err := types.ParseJID(raw)
+	return err == nil && jid.User != "" && jid.Device == 0 && jid.String() == raw && jid.Server == types.GroupServer
+}
+
 func (w *WhatsApp) Contacts(ctx context.Context) ([]Contact, error) {
 	all, err := w.client.Store.Contacts.GetAllContacts(ctx)
 	if err != nil {
@@ -374,6 +384,25 @@ func (w *WhatsApp) contactName(ctx context.Context, jid types.JID) string {
 		}
 	}
 	return ""
+}
+
+// nameGroup fetches the name of a group first seen live: only a history sync or a
+// metadata change carries it otherwise, and the glasses would list the bare group id.
+func (w *WhatsApp) nameGroup(client *whatsmeow.Client, group types.JID) {
+	if w.history.Named(group) {
+		return
+	}
+	if _, busy := w.naming.LoadOrStore(group, struct{}{}); busy {
+		return
+	}
+	go func() {
+		defer w.naming.Delete(group)
+		ctx, cancel := context.WithTimeout(w.ctx, 15*time.Second)
+		defer cancel()
+		if info, err := client.GetGroupInfo(ctx, group); err == nil {
+			w.history.Rename(group, info.Name)
+		}
+	}()
 }
 
 // Chats lists stored conversations, named from the synced contacts when possible.
