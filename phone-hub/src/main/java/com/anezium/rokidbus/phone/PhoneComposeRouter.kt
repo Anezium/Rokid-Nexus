@@ -191,7 +191,15 @@ internal class PhoneComposeRouter(private val host: PhoneComposeHost) {
         host.cancelUtterance(capture)
     }
 
-    private fun onEngineEnded(capture: Dictation, reason: SpeechEndReason) {
+    private fun onEngineEnded(capture: Dictation, reason: SpeechEndReason, error: SttError?) {
+        // The glasses only learn a coarse reason; the engine's own cause is what tells a refused
+        // microphone, a speech service that takes no external audio and a dropped link apart.
+        error?.let {
+            host.log(
+                "compose dictation engine error capture=${capture.captureId} kind=${it.kind} " +
+                    "provider=${it.providerLabel.orEmpty()} detail=${it.detail.orEmpty()}",
+            )
+        }
         val (heard, finalText) = synchronized(lock) { capture.heardAudio to capture.finalText }
         val text = finalText?.let(ComposeContract::clip)?.takeIf { it.isNotBlank() }
         val outcome = when {
@@ -271,7 +279,7 @@ internal class PhoneComposeRouter(private val host: PhoneComposeHost) {
         }
 
         override fun onEnded(reason: SpeechEndReason, error: SttError?) {
-            onEngineEnded(this, reason)
+            onEngineEnded(this, reason, error)
         }
     }
 

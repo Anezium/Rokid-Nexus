@@ -3,6 +3,8 @@ package com.anezium.rokidbus.phone
 import com.anezium.rokidbus.phone.speech.SpeechEndReason
 import com.anezium.rokidbus.phone.speech.SpeechStartResult
 import com.anezium.rokidbus.phone.speech.SpeechUtteranceListener
+import com.anezium.rokidbus.phone.speech.SttError
+import com.anezium.rokidbus.phone.speech.SttErrorKind
 import com.anezium.rokidbus.phone.speech.TranscriptionLanguage
 import com.anezium.rokidbus.shared.ComposeContract
 import com.anezium.rokidbus.shared.ComposeDictateStart
@@ -176,6 +178,24 @@ class PhoneComposeRouterTest {
         host.listeners[1].onEnded(SpeechEndReason.LINK_LOST, null)
 
         assertEquals(listOf(ComposeDictationReason.LINK_LOST, ComposeDictationReason.MIC_UNAVAILABLE), finals().map { it.reason })
+    }
+
+    @Test
+    fun `the engine's own cause reaches the log behind a coarse link_lost`() {
+        startDictation(CAPTURE_A)
+        host.listeners.single().onFirstAudio()
+        host.listeners.single().onEnded(
+            SpeechEndReason.LINK_LOST,
+            SttError(SttErrorKind.SOURCE_UNAVAILABLE, "Android", "Microphone permission is not granted"),
+        )
+
+        assertEquals(ComposeDictationReason.LINK_LOST, finals().single().reason)
+        assertTrue(
+            host.logs.any {
+                it.startsWith("compose dictation engine error capture=$CAPTURE_A kind=SOURCE_UNAVAILABLE") &&
+                    it.endsWith("provider=Android detail=Microphone permission is not granted")
+            },
+        )
     }
 
     @Test
@@ -426,7 +446,11 @@ class PhoneComposeRouterTest {
             return ComposeTimer { timer.cancelled = true }
         }
 
-        override fun log(message: String) = Unit
+        val logs = mutableListOf<String>()
+
+        override fun log(message: String) {
+            logs += message
+        }
     }
 
     private companion object {
