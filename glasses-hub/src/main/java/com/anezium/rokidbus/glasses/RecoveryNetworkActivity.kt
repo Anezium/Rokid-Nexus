@@ -73,6 +73,7 @@ class RecoveryNetworkActivity : Activity() {
                 override fun onLost(network: Network) { runOnUiThread { SelfArmHotspotRecovery.abandoned(id) } }
             }
             callback = listener
+            log("Hotspot recovery requesting temporary network")
             getSystemService(ConnectivityManager::class.java).requestNetwork(request, listener, 60_000)
         }.onFailure {
             // Framework exception messages can contain network credentials.

@@ -11,6 +11,7 @@ internal object SelfArmHotspotConsent {
     private var selectionIssued = false
     private var foregroundClass = ""
     private var lastClick = 0L
+    private var diagnostic = ""
 
     fun begin(id: String, ssid: String) {
         this.id = id
@@ -19,6 +20,7 @@ internal object SelfArmHotspotConsent {
         selectionIssued = false
         foregroundClass = ""
         lastClick = 0L
+        diagnostic = ""
     }
 
     fun awaitDebugging(id: String) { if (this.id == id) debugging = true }
@@ -36,8 +38,15 @@ internal object SelfArmHotspotConsent {
             foregroundClass = event.className?.toString().orEmpty()
         }
         val expectedPackage = if (debugging) "com.android.systemui" else "com.android.settings"
-        if (!SelfArmHotspotConsentPolicy.mayHandle(debugging, foregroundClass,
-                event?.packageName?.toString().orEmpty())) return
+        val allowed = SelfArmHotspotConsentPolicy.mayHandle(debugging, foregroundClass,
+            event?.packageName?.toString().orEmpty())
+        if (!allowed) {
+            if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+                event.packageName?.toString() in setOf("com.android.settings", "com.android.systemui")) {
+                report("stage=${if (debugging) "debugging" else "network"} expectedActivity=false")
+            }
+            return
+        }
         val now = android.os.SystemClock.uptimeMillis()
         if (now - lastClick < 750L) return
         val root = AccessibilityWindowRoots.getNavigationRoot(service, expectedPackage) ?: return
@@ -45,21 +54,33 @@ internal object SelfArmHotspotConsent {
             if (root.packageName?.toString() != expectedPackage) return
             val target = root.findAccessibilityNodeInfosByText(ssid)
             try {
+                report("stage=${if (debugging) "debugging" else "network"} targetPresent=${target.isNotEmpty()}")
                 if (target.isEmpty()) return
                 val buttons = root.findAccessibilityNodeInfosByViewId("android:id/button1")
                 try {
                     val button = buttons.firstOrNull { it.isEnabled && it.isVisibleToUser && it.isClickable }
                     if (button != null && button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                         lastClick = now
+                        log("Hotspot recovery consent confirmed debugging=$debugging")
                         return
                     }
                 } finally { buttons.forEach { it.recycle() } }
                 if (!debugging && !selectionIssued) {
                     val row = target.firstOrNull { it.text?.toString() == ssid } ?: return
-                    if (clickRow(row)) { selectionIssued = true; lastClick = now }
+                    if (clickRow(row)) {
+                        selectionIssued = true
+                        lastClick = now
+                        log("Hotspot recovery network selected")
+                    }
                 }
             } finally { target.forEach { it.recycle() } }
         } finally { root.recycle() }
+    }
+
+    private fun report(value: String) {
+        if (diagnostic == value) return
+        diagnostic = value
+        log("Hotspot recovery consent $value")
     }
 
     private fun clickRow(node: AccessibilityNodeInfo): Boolean {

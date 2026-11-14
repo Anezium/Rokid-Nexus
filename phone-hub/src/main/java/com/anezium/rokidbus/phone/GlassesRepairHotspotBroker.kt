@@ -27,6 +27,11 @@ internal class GlassesRepairHotspotBroker(
             }
             if (kind != "request") return@post
             val automatic = envelope.payload.opt("automatic") as? Boolean ?: return@post
+            if (!GlassesFilesHotspotHost.permitted(context)) {
+                android.util.Log.i("RokidNexus", "Hotspot recovery unavailable reason=permission")
+                unavailable(envelope.id)
+                return@post
+            }
             if (activeId != null || (automatic && !GlassesRepairSettingsStore(context).isAutoRepairEnabled())) {
                 unavailable(envelope.id)
                 return@post
@@ -48,6 +53,7 @@ internal class GlassesRepairHotspotBroker(
                 } },
             )
             if (!accepted) {
+                android.util.Log.i("RokidNexus", "Hotspot recovery unavailable reason=busy_or_disconnected")
                 activeId = null
                 main.removeCallbacks(timeout)
                 unavailable(envelope.id)
