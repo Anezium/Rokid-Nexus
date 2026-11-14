@@ -525,6 +525,8 @@ internal class NexusPageChannel(
                     PageTemplateContract.stripConversationExtras(this, launcherInteractiveVersion)
                     // A pair below bundle v7 draws rows without their own mark.
                     PageTemplateContract.stripRowIcons(this, launcherInteractiveVersion)
+                    // A pair below bundle v9 draws the rows without their section captions.
+                    PageTemplateContract.stripRowSections(this, launcherInteractiveVersion)
                     if (launcherInteractiveVersion < LauncherInteractiveContract.ARTWORK_VERSION) {
                         remove("artwork")
                         remove("positionMs")

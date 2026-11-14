@@ -341,6 +341,14 @@ class NexusPluginClient internal constructor(
         pages.launcherInteractiveVersion >= LauncherInteractiveContract.ROW_ICONS_VERSION
 
     /**
+     * Both hubs draw a row's `section` as a caption above it, outside the selection (bundle v9).
+     * Without it the SDK strips `PageRow.section` before sending and the same rows are drawn in
+     * the same order; the page stays valid.
+     */
+    fun supportsRowSections(): Boolean = supportsLauncherInteractive() &&
+        pages.launcherInteractiveVersion >= LauncherInteractiveContract.ROW_SECTIONS_VERSION
+
+    /**
      * Whether these glasses support the platform-owned activity tier.
      *
      * This intentionally ignores the current link. Like a pin, an activity is

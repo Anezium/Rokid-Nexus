@@ -635,6 +635,28 @@ class PhonePageBrokerLauncherTest {
         assertEquals("WhatsApp", row.getString("label"))
     }
 
+    private fun sectionList() = JSONObject().put("items", JSONArray()
+        .put(JSONObject().put("id", "a").put("label", "Claire").put("section", "PINNED"))
+        .put(JSONObject().put("id", "b").put("label", "Julie").put("section", "RECENT")))
+
+    @Test
+    fun `v9 glasses get a row's section as the provider sent it`() {
+        val registration = open(launcher = 9)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(body = sectionList(), actions = JSONArray()), registration))
+        val items = responses().single().getJSONObject("body").getJSONArray("items")
+        assertEquals("PINNED", items.getJSONObject(0).getString("section"))
+        assertEquals("RECENT", items.getJSONObject(1).getString("section"))
+    }
+
+    @Test
+    fun `glasses below v9 get the same rows without sections`() {
+        val registration = open(launcher = 8)
+        assertNull(broker.onProvider(BusPaths.PAGE_RESPONSE, page(body = sectionList(), actions = JSONArray()), registration))
+        val items = responses().single().getJSONObject("body").getJSONArray("items")
+        assertFalse(items.getJSONObject(0).has("section"))
+        assertEquals("Julie", items.getJSONObject(1).getString("label"))
+    }
+
     @Test
     fun `glasses below v5 get the default bar and text-only bubbles`() {
         val registration = open(launcher = 4)
