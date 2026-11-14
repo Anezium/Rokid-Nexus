@@ -66,7 +66,7 @@ their limits; an official-client-origin photo has not been measured.
 LINE's Chrome client identity allows only one session of that type. Linking can
 replace an existing Chrome session. This is an unofficial client and LINE can
 restrict accounts; start with a test account. The plugin is not affiliated with
-LINE or LY Corporation. Credential/PIN screens use `FLAG_SECURE`; tokens and keys stay
+LINE or LY Corporation. The password field is masked; tokens and keys stay
 in this APK's `noBackupFilesDir`, with no credential logging or clipboard writes.
 **Forget this connection** removes local credentials/keys without deleting LINE
 messages; revoke the corresponding Chrome device in LINE for remote logout.
