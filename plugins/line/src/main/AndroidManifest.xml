@@ -12,6 +12,8 @@
         android:supportsRtl="true" android:theme="@style/Theme.LineMessages" android:usesCleartextTraffic="false">
         <activity android:name=".LineSettingsActivity" android:exported="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
+        <activity android:name=".LinePinnedActivity" android:exported="false" android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
         <service android:name=".LinePairingService" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="pending-pairing" />
         </service>

@@ -40,6 +40,40 @@ class LinePagesTest {
         assertTrue(messages.sumOf { it.text.length * 6 + (it.image?.data?.length ?: 0) + 800 } <= 48_000)
     }
 
+    private fun chats(vararg names: String) = names.map { LineChat("u$it", it, it.startsWith("G"), emptyList()) }
+
+    private fun root(state: LineSnapshot, pins: List<String>) =
+        (LinePages.render(LinePages.ROOT, 1, state, true, pins = pins).body as PageBody.SelectableList).items
+
+    @Test fun pinnedConversationsComeFirstInTheOwnersOrderUnderTheirSections() {
+        val rows = root(LineSnapshot("ready", chats("Julie", "Tom", "Claire", "Gfamily")), listOf("uClaire", "uGfamily"))
+        assertEquals(listOf("Claire", "Gfamily", "Julie", "Tom"), rows.map { it.label })
+        assertEquals(listOf(LinePages.PINNED, null, LinePages.RECENT, null), rows.map { it.section })
+        assertEquals("Group", rows[1].sub)
+    }
+
+    @Test fun withoutPinsTheListIsTodaysWithoutSections() {
+        val rows = root(LineSnapshot("ready", chats("Julie", "Tom")), emptyList())
+        assertEquals(listOf("Julie", "Tom"), rows.map { it.label })
+        assertTrue(rows.all { it.section == null })
+    }
+
+    @Test fun aPinLineNoLongerListsIsSkippedAndOnlyPinsMeanNoRecentSection() {
+        val rows = root(LineSnapshot("ready", chats("Julie", "Tom")), listOf("uGone", "uTom", "uJulie", "uTom"))
+        assertEquals(listOf("Tom", "Julie"), rows.map { it.label })
+        assertEquals(listOf(LinePages.PINNED, null), rows.map { it.section })
+        assertTrue(root(LineSnapshot("ready", chats("Julie")), listOf("uGone")).all { it.section == null })
+    }
+
+    @Test fun prefetchFollowsTheListOrder() {
+        val state = LineSnapshot("ready", chats("A", "B", "C", "D", "E", "F", "G", "H"))
+        assertEquals("H", LinePages.listed(state, listOf("uH")).first().title)
+        val media = state.chats.map { it.copy(history = listOf(LineMessage("m-${it.title}", "[Photo]", false, "photo"))) }
+        val candidates = LinePages.mediaCandidates(setOf(LinePages.ROOT), LineSnapshot("ready", media), listOf("uH"))
+        assertEquals("H", candidates.first().first.title)
+        assertEquals(LinePages.PREFETCH_CHATS, candidates.size)
+    }
+
     @Test fun pageIdsDoNotExposeConversationIdentity() {
         val id = LinePages.pageId(chat)
         assertFalse(id.contains(chat.id))

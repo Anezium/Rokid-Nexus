@@ -47,6 +47,7 @@ class LineSettingsActivity : Activity() {
     private lateinit var openLine: Button
     private lateinit var cancel: Button
     private lateinit var forget: View
+    private lateinit var pinnedSub: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,6 +71,17 @@ class LineSettingsActivity : Activity() {
             ),
             NexusUi.block().apply { topMargin = NexusUi.dp(this@LineSettingsActivity, 8) },
         )
+
+        LineUi.section(this, content, "On the glasses")
+        content.addView(NexusUi.card(this).apply {
+            setPadding(0, 0, 0, 0)
+            val row = LineUi.actionRow(context, "Pinned contacts", "") {
+                startActivity(Intent(this@LineSettingsActivity, LinePinnedActivity::class.java))
+            }
+            // rowText is title, gap, sub: the sub line is the one onStart rewrites.
+            pinnedSub = (row.getChildAt(0) as LinearLayout).getChildAt(2) as TextView
+            addView(row)
+        }, NexusUi.block())
 
         LineUi.section(this, content, "Plugin")
         content.addView(NexusUi.card(this).apply {
@@ -241,7 +253,12 @@ class LineSettingsActivity : Activity() {
             .setPositiveButton("Forget") { _, _ ->
                 stopService(Intent(this, LinePairingService::class.java))
                 LineSession.forget(this) { ok ->
-                    if (ok) render() else status.set("Could not forget the connection · close LINE pages and try again", LineUi.Tone.BAD)
+                    if (ok) {
+                        // Pins name conversations of the forgotten account; they go with it.
+                        LinePins.clear(this)
+                        pinnedSub.text = "Pin the conversations you want first"
+                        render()
+                    } else status.set("Could not forget the connection · close LINE pages and try again", LineUi.Tone.BAD)
                 }
             }.show()
     }
@@ -259,6 +276,8 @@ class LineSettingsActivity : Activity() {
     override fun onStart() {
         super.onStart()
         LineSession.acquire(this, owner, ::render)
+        val pins = LinePins.get(this)
+        pinnedSub.text = if (pins.isEmpty()) "Pin the conversations you want first" else pins.joinToString(" · ") { it.title }
     }
 
     override fun onStop() {
