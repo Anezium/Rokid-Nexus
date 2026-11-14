@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0
+
+Pins work with any hub; the **Pinned** and **Recent** captions need both hubs at
+Nexus 2.6.0.
+
+- **Pin contacts.** **Settings › Pinned contacts** lets you pick the
+  conversations you want first, groups included, from a searchable list. There
+  is no limit; drag to reorder, × to unpin. On the glasses they stay at the top
+  of the list, in your order, followed by your most recent conversations. A
+  change on the phone shows on an open page right away.
+- Pins stay on this phone and **Forget** clears them. A pinned conversation
+  older than the 48 most recent ones is skipped on the glasses until it is
+  recent again, and the phone screen says so.
+
 ## 0.1.0
 
 First release. Needs **both hubs at Nexus 2.4.0**: older hubs still read and

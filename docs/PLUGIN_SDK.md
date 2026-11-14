@@ -22,7 +22,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.26.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.27.0")
 }
 ```
 
@@ -30,10 +30,10 @@ For local development against a checkout, publish a snapshot instead:
 `.\gradlew.bat :shared:publishToMavenLocal :bus-client:publishToMavenLocal
 '-PversionName=0.1.0-SNAPSHOT'` and consume it from `mavenLocal()`.
 
-SDK `sdk-v0.26.0` includes the launcher-bundle APIs documented below: interactive
+SDK `sdk-v0.27.0` includes the launcher-bundle APIs documented below: interactive
 activity destinations, typed actions, conversation/media/route templates, artwork,
 user-owned Floating Activities settings, composer tools and message thumbnails,
-image pages and row icons. Update both hubs to Nexus 2.2.0 for the complete
+image pages, row icons and row sections. Update both hubs to Nexus 2.2.0 for the complete
 launcher experience; continue negotiating individual capabilities
 for older peers. Plugins built against 0.23.0 must be rebuilt against 0.24.0.
 

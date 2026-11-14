@@ -11,6 +11,10 @@ like WhatsApp's engine. No Matrix bridge, remote gateway or glasses APK is neede
 - Up to 48 recent conversations, direct or group, and 24 recent messages per chat.
   The newest messages that fit the launcher payload budget are displayed.
   If LINE returns no recent entries, unblocked contacts are listed instead.
+- Pinned contacts: conversations chosen in the plugin settings stay at the top
+  of the glasses list in the user's order, under a Pinned caption, followed by
+  the Recent ones. A pin outside the 48 recent conversations is not shown until
+  the conversation is recent again. Pins stay on the phone and Forget clears them.
 - Live text updates and remote unsends while the plugin pages are held open.
 - Photo and sticker previews in conversations on launcher v5 or newer, using
   the same thumbnail limits as Meta Messages. Animated stickers show a static
