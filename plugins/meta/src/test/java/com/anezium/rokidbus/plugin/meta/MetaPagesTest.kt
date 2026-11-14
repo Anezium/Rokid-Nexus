@@ -77,6 +77,36 @@ class MetaPagesTest {
         assertEquals(3, rows.map { it.id }.toSet().size)
     }
 
+    private fun pinnedRows(chats: List<MetaChat>, pins: List<String>): List<com.anezium.rokidbus.shared.PageRow> {
+        val state = MetaPagesState()
+        state.set(MessagingService.WHATSAPP, ServiceState.Ready(chats))
+        val support = PageSupport(interactive = true, pins = { if (it == MessagingService.WHATSAPP) pins else emptyList() })
+        val page = content(MetaPages.page(MetaPages.servicePageId(MessagingService.WHATSAPP), 1, state, support))
+        return (page.body as PageBody.SelectableList).items
+    }
+
+    @Test fun pinnedConversationsComeFirstInTheOwnersOrderUnderTheirSections() {
+        val rows = pinnedRows(listOf(alice, team, locked), listOf(team.id, locked.id))
+        assertEquals(listOf("Team", "Locked", "Alice"), rows.map { it.label })
+        assertEquals(listOf(MetaPages.PINNED, null, MetaPages.RECENT), rows.map { it.section })
+        // A pinned encrypted chat stays as inert as anywhere else.
+        assertFalse(rows[1].enabled)
+        assertNull(rows[1].target)
+    }
+
+    @Test fun withoutPinsTheServicePageIsTodaysWithoutSections() {
+        val rows = pinnedRows(listOf(alice, team), emptyList())
+        assertEquals(listOf("Alice", "Team"), rows.map { it.label })
+        assertTrue(rows.all { it.section == null })
+    }
+
+    @Test fun aPinTheServiceNoLongerListsIsSkippedAndAllPinnedMeansNoRecentSection() {
+        val rows = pinnedRows(listOf(alice, team), listOf("gone", team.id, alice.id, team.id))
+        assertEquals(listOf("Team", "Alice"), rows.map { it.label })
+        assertEquals(listOf(MetaPages.PINNED, null), rows.map { it.section })
+        assertTrue(pinnedRows(listOf(alice), listOf("gone")).all { it.section == null })
+    }
+
     @Test fun servicePageWhileConnectingThenAfterFailureOffersTryAgain() {
         val state = MetaPagesState()
         val pageId = MetaPages.servicePageId(MessagingService.WHATSAPP)

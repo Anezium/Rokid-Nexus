@@ -383,6 +383,8 @@ class AccountSettingsActivity : Activity() {
             .setMessage("Forget the saved ${account.title} session on this phone? ${account.title} will still list this login in the account's login activity until you remove it there.")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Forget") { _, _ ->
+                // Pins name conversations of the forgotten account; they go with it.
+                MessagingService.byId(account.id)?.let { MetaPins.clear(this, it) }
                 connectRequested = true
                 perform(failure = { "Forget failed." }) {
                     it.disconnect()

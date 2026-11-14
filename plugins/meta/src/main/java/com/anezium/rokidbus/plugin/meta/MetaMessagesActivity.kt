@@ -22,6 +22,14 @@ import java.io.File
  */
 class MetaMessagesActivity : Activity() {
     private var historySub: TextView? = null
+    private var pinnedSub: TextView? = null
+
+    private fun pinnedLabel(): String {
+        val counts = MessagingService.entries.mapNotNull { service ->
+            MetaPins.get(this, service).size.takeIf { it > 0 }?.let { "${service.title} $it" }
+        }
+        return if (counts.isEmpty()) "Pin the conversations you want first" else counts.joinToString(" · ")
+    }
 
     private fun historyLabel() =
         "The latest ${MetaSettings.historyLimit(this)} messages, older ones load when a conversation opens"
@@ -68,6 +76,12 @@ class MetaMessagesActivity : Activity() {
         MetaUi.section(this, content, "On the glasses")
         content.addView(NexusUi.card(this).apply {
             setPadding(0, 0, 0, 0)
+            val pinned = MetaUi.actionRow(context, "Pinned contacts", pinnedLabel()) {
+                startActivity(Intent(this@MetaMessagesActivity, MetaPinnedActivity::class.java))
+            }
+            pinnedSub = (pinned.getChildAt(0) as LinearLayout).getChildAt(2) as TextView
+            addView(pinned)
+            addView(MetaUi.rowDivider(context))
             val row = MetaUi.actionRow(context, "Messages per conversation", historyLabel()) {
                 val choices = MetaSettings.HISTORY_CHOICES
                 android.app.AlertDialog.Builder(this@MetaMessagesActivity)
@@ -109,6 +123,7 @@ class MetaMessagesActivity : Activity() {
         super.onStart()
         // A service page may have signed in or forgotten an account since this screen was last shown.
         rows.forEach { it.render() }
+        pinnedSub?.text = pinnedLabel()
     }
 
 

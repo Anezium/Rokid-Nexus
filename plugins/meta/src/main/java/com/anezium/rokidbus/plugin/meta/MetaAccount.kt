@@ -100,12 +100,14 @@ internal class AccountEngineHost {
     @Volatile var visible = false
     /** The glasses conversation flow holds the engine while it is open, like a visible page. */
     @Volatile var glasses = false
+    /** The pin picker lists this service's conversations while it is in front. */
+    @Volatile var picker = false
     @Volatile var loginInterrupted = false
     @Volatile var graceOutcome = ""
 
     /** Closes the engine unless a page or the glasses still use it; closing also cancels any login. */
     fun releaseIfHidden() = worker.execute {
-        if (!visible && !glasses) {
+        if (!visible && !glasses && !picker) {
             engine?.close()
             engine = null
         }

@@ -92,7 +92,11 @@ class WhatsAppSettingsActivity : Activity() {
             AlertDialog.Builder(this)
                 .setMessage("Unlink this phone from WhatsApp? Your glasses will stop showing WhatsApp until you link it again.")
                 .setNegativeButton("Cancel", null)
-                .setPositiveButton("Unlink") { _, _ -> session.unlink() }.show()
+                .setPositiveButton("Unlink") { _, _ ->
+                    // Pins name conversations of the unlinked account; they go with it.
+                    MetaPins.clear(this, MessagingService.WHATSAPP)
+                    session.unlink()
+                }.show()
         }
         content.addView(unlink, NexusUi.block().apply { bottomMargin = NexusUi.dp(this@WhatsAppSettingsActivity, 8) })
         content.addView(NexusUi.uninstallCard(this, "Meta Messages") {
