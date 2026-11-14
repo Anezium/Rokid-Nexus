@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The settings screen can be captured again. It blocked screenshots and screen
+  recording for its whole lifetime, long after sign-in, which hid the plugin
+  from support captures. The password stays masked and is never saved.
+
 ## 0.2.0
 
 Pins work with any hub; the **Pinned** and **Recent** captions need both hubs at

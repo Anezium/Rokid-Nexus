@@ -11,7 +11,6 @@ import android.os.Bundle
 import android.os.PersistableBundle
 import android.text.InputType
 import android.view.View
-import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -51,8 +50,6 @@ class LineSettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Credentials and the PIN are typed and shown here; nothing of it reaches a screenshot.
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         window.statusBarColor = NexusUi.BG
         window.navigationBarColor = NexusUi.BG
 
