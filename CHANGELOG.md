@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.6.0
+
+Update both hubs together for section captions on launcher pages. LINE Messages
+0.2.0 and Meta Messages 0.2.0 ship alongside with pinned contacts. Plugin
+developers get SDK 0.27.0. Hubs 2.5.0 and older remain compatible: a pair where
+one hub is older draws the same pages without the captions.
+
+### Glasses hub
+
+- **Section captions in page lists.** A plugin can title a group of rows, such
+  as **Pinned** and **Recent** in a messaging app. The caption is drawn above
+  its first row and is never selectable: the focus, the `n/m` counter and the
+  hints count only the rows.
+
+### Phone hub
+
+- Carries row sections to the glasses at launcher bundle 9 and removes them
+  for an older glasses hub.
+
+### SDK 0.27.0
+
+- `PageRow.section`: an optional caption, up to 40 characters, drawn above the
+  row. `NexusPluginClient.supportsRowSections()` says whether the pair draws
+  it; the SDK drops the field for older pairs, so the same page works
+  everywhere. Launcher bundle 9.
+
+### Plugins
+
+- **LINE Messages 0.2.0** and **Meta Messages 0.2.0**: pin contacts. Choose
+  the conversations you want first in the plugin settings, in your order; the
+  glasses list shows them under **Pinned**, then the most recent conversations
+  under **Recent**. Meta keeps one list per service. Their own changelogs are
+  in `plugins/line/CHANGELOG.md` and `plugins/meta/CHANGELOG.md`.
+
 ## 2.5.0
 
 Update both Nexus hubs together for recovery through the phone. Older hubs keep

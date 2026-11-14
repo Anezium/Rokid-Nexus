@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.0
+
+Pins work with any hub; the **Pinned** and **Recent** captions need both hubs at
+Nexus 2.6.0.
+
+- **Pin contacts.** **Pinned contacts**, in the plugin settings, has one tab per
+  service: pick the WhatsApp, Instagram or Messenger conversations you want
+  first from a searchable list. There is no limit; drag to reorder, × to unpin.
+  On the glasses each service's page lists them at the top, in your order,
+  followed by your most recent conversations. A change on the phone shows on an
+  open page right away.
+- Pins stay on this phone. Unlinking WhatsApp or forgetting an Instagram or
+  Messenger account clears that service's pins. A pinned conversation older
+  than the service's recent list is skipped on the glasses until it is recent
+  again. End-to-end encrypted chats cannot be pinned, since the
+  glasses cannot open them.
+
 ## 0.1.3
 
 - **Photos to WhatsApp groups.** The Photo tool now shows in WhatsApp group

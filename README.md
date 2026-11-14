@@ -58,9 +58,9 @@ expiring never ends the activity; its card stays in the launcher.
 
 ## Nexus 2.0
 
-Update **both hubs to 2.5.0**, plus Relay 1.4.2, Navigation 0.3.0, Media Deck
-1.0.4 and Sample 1.0.6. Plugin developers use SDK 0.26.0. See the
-[2.5.0 release](https://github.com/Anezium/Rokid-Nexus/releases/tag/v2.5.0)
+Update **both hubs to 2.6.0**, plus Relay 1.4.2, Navigation 0.3.0, Media Deck
+1.0.4 and Sample 1.0.6. Plugin developers use SDK 0.27.0. See the
+[2.6.0 release](https://github.com/Anezium/Rokid-Nexus/releases/tag/v2.6.0)
 and [changelog](CHANGELOG.md) for downloads and compatibility details. The
 **Classic launcher** stays available on the phone and the glasses, and older
 hubs keep it automatically.
@@ -275,7 +275,7 @@ A plugin is a headless phone APK against the published SDK:
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.26.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.27.0")
 }
 ```
 

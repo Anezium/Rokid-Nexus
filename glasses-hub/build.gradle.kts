@@ -12,8 +12,8 @@ android {
         applicationId = "com.anezium.rokidbus.glasses"
         minSdk = 31
         targetSdk = 32
-        versionCode = 20500
-        versionName = "2.5.0"
+        versionCode = 20600
+        versionName = "2.6.0"
     }
 
     buildTypes {
