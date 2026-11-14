@@ -68,7 +68,8 @@ internal data class SentMessage(val id: String, val text: String, val status: Co
  * [composerTools] its v5 composer tools and message thumbnails, and [imagePages] its v6 image
  * pages, which the photo flow needs. [thumbnail] is the session's cache of fetched previews by
  * message id; a message without one shows its caption alone. [rowIcon] is a service's brand
- * mark for its row (bundle v7); null draws the plain row.
+ * mark for its row (bundle v7); null draws the plain row. [pins] are a service's pinned
+ * conversation ids in the owner's order.
  */
 internal data class PageSupport(
     val interactive: Boolean,
@@ -76,6 +77,7 @@ internal data class PageSupport(
     val imagePages: Boolean = false,
     val thumbnail: (String) -> LauncherArtwork? = { null },
     val rowIcon: (MessagingService) -> LauncherArtwork? = { null },
+    val pins: (MessagingService) -> List<String> = { emptyList() },
 )
 
 /**
@@ -160,6 +162,9 @@ internal object MetaPages {
     const val SUB_SIGNED_OUT = "Not signed in · sign in on the phone"
     const val SUB_FAILED = "Can't reach · tap to try again"
     const val SUB_GROUP = "Group"
+    /** A service page's section captions; the SDK drops them for hubs that cannot draw them. */
+    const val PINNED = "PINNED"
+    const val RECENT = "RECENT"
     const val SUB_ENCRYPTED = "Encrypted · reply from the phone"
     const val EMPTY_CONNECTING = "Connecting…"
     const val EMPTY_NO_CHATS = "No conversations yet"
@@ -199,7 +204,7 @@ internal object MetaPages {
 
     fun page(pageId: String, revision: Long, state: MetaPagesState, support: PageSupport): NexusPage = when {
         pageId == MAIN -> main(revision, state, support)
-        pageId.startsWith(SERVICE_PREFIX) -> serviceOfPage(pageId)?.let { service(revision, it, state.state(it)) } ?: NexusPage.Unavailable
+        pageId.startsWith(SERVICE_PREFIX) -> serviceOfPage(pageId)?.let { service(revision, it, state.state(it), support.pins(it)) } ?: NexusPage.Unavailable
         pageId.startsWith(CHAT_PREFIX) -> chat(pageId, revision, state, support)
         else -> NexusPage.Unavailable
     }
@@ -226,13 +231,27 @@ internal object MetaPages {
     }
 
     /**
-     * One service's conversations as the engine lists them, newest first. While it connects the
-     * list is empty under "Connecting…"; after a failure its one row tries again.
+     * The list in its order: the owner's [pins] the service still lists, in the owner's order,
+     * then every other conversation newest first. A pin the service no longer lists is skipped,
+     * and a pinned conversation never shows a second time among the recent ones.
      */
-    fun service(revision: Long, service: MessagingService, state: ServiceState): NexusPage.Content {
+    fun ordered(chats: List<MetaChat>, pins: List<String>): Pair<List<MetaChat>, List<MetaChat>> {
+        val byId = chats.associateBy { it.id }
+        val pinned = pins.distinct().mapNotNull(byId::get)
+        val ids = pinned.mapTo(HashSet()) { it.id }
+        return pinned to chats.filter { it.id !in ids }
+    }
+
+    /**
+     * One service's conversations: with pins, the pinned ones under PINNED and then the others
+     * newest first under RECENT; without, the engine's list as it is. While it connects the list
+     * is empty under "Connecting…"; after a failure its one row tries again.
+     */
+    fun service(revision: Long, service: MessagingService, state: ServiceState, pins: List<String> = emptyList()): NexusPage.Content {
         val body = when (state) {
             is ServiceState.Ready -> PageBody.SelectableList(
-                state.chats.take(PageTemplateContract.MAX_ITEMS).map { chat ->
+                ordered(state.chats, pins).let { (pinned, recent) -> (pinned + recent).map { it to pinned.size } }
+                    .take(PageTemplateContract.MAX_ITEMS).mapIndexed { index, (chat, pinnedCount) ->
                     PageRow(
                         id = chatPageId(service, chat).removePrefix(CHAT_PREFIX).substringAfter(':'),
                         label = clip(chat.title, PageTemplateContract.MAX_LABEL_CHARS),
@@ -243,6 +262,12 @@ internal object MetaPages {
                         },
                         enabled = chat.supported,
                         target = PageTarget.Page(chatPageId(service, chat)).takeIf { chat.supported },
+                        section = when {
+                            pinnedCount == 0 -> null
+                            index == 0 -> PINNED
+                            index == pinnedCount -> RECENT
+                            else -> null
+                        },
                     )
                 },
                 emptyText = EMPTY_NO_CHATS,

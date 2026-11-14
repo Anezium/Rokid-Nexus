@@ -820,6 +820,8 @@ class PhonePageBroker(
             PageTemplateContract.stripConversationExtras(body, launcherVersion())
             // Glasses below bundle v7 draw rows without their own mark.
             PageTemplateContract.stripRowIcons(body, launcherVersion())
+            // Glasses below bundle v9 draw the rows without their section captions.
+            PageTemplateContract.stripRowSections(body, launcherVersion())
         }
         if (launcherVersion() < LauncherInteractiveContract.ARTWORK_VERSION) {
             for (body in listOfNotNull(compatible.optJSONObject("body"), compatible.optJSONObject("replacement")?.optJSONObject("body"))) {

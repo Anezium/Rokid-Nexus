@@ -15,7 +15,7 @@ class LauncherFavouritesContractTest {
     @Test
     fun `the bundle version announces favourites`() {
         assertEquals(8, LauncherInteractiveContract.FAVOURITES_VERSION)
-        assertEquals(LauncherInteractiveContract.FAVOURITES_VERSION, LauncherInteractiveContract.VERSION)
+        assertEquals(LauncherInteractiveContract.FAVOURITES_VERSION + 1, LauncherInteractiveContract.ROW_SECTIONS_VERSION)
         assertEquals("/core/launcher/favourites", BusPaths.CORE_LAUNCHER_FAVOURITES)
     }
 

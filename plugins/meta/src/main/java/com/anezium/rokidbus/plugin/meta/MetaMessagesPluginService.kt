@@ -21,7 +21,6 @@ import com.anezium.rokidbus.shared.ConversationMessageStatus
 import com.anezium.rokidbus.shared.LauncherArtwork
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.UUID
@@ -174,7 +173,12 @@ class MetaMessagesPluginService : NexusPluginService() {
     override fun onCreate() {
         super.onCreate()
         stopPresence = MetaPresence.observe { serviceId, presence -> main.post { onPresence(serviceId, presence) } }
+        // Pins changed on the phone reorder an open service page at once.
+        stopPins = MetaPins.observe(this) { if (active) publishVisible() }
     }
+
+    /** Stops hearing pin changes; set on create. */
+    private var stopPins: (() -> Unit)? = null
 
     /**
      * The owner signed in, paired or forgot a service on the phone while the pages are open:
@@ -207,6 +211,7 @@ class MetaMessagesPluginService : NexusPluginService() {
         imagePages = nexusClient?.supportsImagePages() == true,
         thumbnail = thumbnails::get,
         rowIcon = if (nexusClient?.supportsRowIcons() == true) { service -> ServiceMarks.mark(this, service) } else { _ -> null },
+        pins = { service -> MetaPins.ids(this, service) },
     )
 
     /** Fetches the previews a conversation page would show; a no-op on hubs that draw no thumbnails. */
@@ -259,7 +264,7 @@ class MetaMessagesPluginService : NexusPluginService() {
         for (service in loads.keys) {
             val host = accountOf(service)?.host ?: continue
             host.glasses = false
-            if (!host.visible) host.worker.execute { if (!host.visible && !host.glasses) host.engine?.disconnect() }
+            if (!host.visible && !host.picker) host.worker.execute { if (!host.visible && !host.glasses && !host.picker) host.engine?.disconnect() }
             host.releaseIfHidden()
         }
         loads.clear()
@@ -276,6 +281,8 @@ class MetaMessagesPluginService : NexusPluginService() {
         end()
         stopPresence?.invoke()
         stopPresence = null
+        stopPins?.invoke()
+        stopPins = null
         super.onDestroy()
     }
 
@@ -318,29 +325,7 @@ class MetaMessagesPluginService : NexusPluginService() {
         }, done)
     }
 
-    /** Stored conversations with their messages; the synced contacts until any message is stored. */
-    private fun whatsAppChats(engine: WhatsAppEngine): List<MetaChat> {
-        val chats = parseChats(JSONArray(engine.chats(MetaSettings.historyLimit(this).toLong())), "jid", "name", "isGroup")
-        if (chats.isNotEmpty()) return chats
-        val rows = JSONArray(engine.contacts())
-        return (0 until rows.length()).map { i ->
-            val row = rows.getJSONObject(i)
-            MetaChat(row.getString("jid"), row.getString("name"), group = row.optBoolean("isGroup"), supported = true)
-        }
-    }
-
-    private fun parseChats(rows: JSONArray, idKey: String, titleKey: String, groupKey: String): List<MetaChat> =
-        (0 until rows.length()).map { i ->
-            val row = rows.getJSONObject(i)
-            val messages = row.optJSONArray("messages") ?: JSONArray()
-            MetaChat(row.getString(idKey), row.getString(titleKey), row.optBoolean(groupKey), row.optBoolean("supported", true),
-                (0 until messages.length()).map { j ->
-                    val message = messages.getJSONObject(j)
-                    HistoryMessage(message.getString("id"), message.optBoolean("mine"), message.optString("text"),
-                        message.optString("sender").takeIf { it.isNotEmpty() },
-                        preview = message.optString("preview").takeIf(MetaThumbnails::fetchable))
-                })
-        }
+    private fun whatsAppChats(engine: WhatsAppEngine): List<MetaChat> = MetaChats.whatsApp(engine, MetaSettings.historyLimit(this).toLong())
 
     /**
      * Opening a conversation that shows fewer messages than the owner asked for fetches older
@@ -380,7 +365,7 @@ class MetaMessagesPluginService : NexusPluginService() {
         if (token != generation) return
         val host = account.host
         host.worker.execute {
-            val chats = runCatching { parseChats(JSONArray(checkNotNull(host.engine).chats()), "id", "title", "group") }
+            val chats = runCatching { MetaChats.account(checkNotNull(host.engine)) }
             main.post {
                 if (token == generation) chats.onSuccess { state.set(service, ServiceState.Ready(it)); publishVisible() }
             }
@@ -396,7 +381,7 @@ class MetaMessagesPluginService : NexusPluginService() {
                 val engine = host.engine ?: checkNotNull(account.open)(directory).also { host.engine = it }
                 if (!JSONObject(engine.status()).getBoolean("connected")) engine.connect(30_000)
                 engine.setHistoryLimit(MetaSettings.historyLimit(this).toLong())
-                parseChats(JSONArray(engine.chats()), "id", "title", "group")
+                MetaChats.account(engine)
             }
             main.post { done(result) }
         }

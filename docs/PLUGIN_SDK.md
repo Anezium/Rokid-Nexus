@@ -2380,11 +2380,12 @@ navigation.
 | `PageBody.Document` | `segments` (`PageSegment(id, kind, text)`, kind `HEADER`, `PROSE` or `ASIDE`); `items`; optional `footer` |
 | `PageBody.Commands` | `items`; optional `text` |
 
-A row is `PageRow(id, label, sub, enabled, target, checked, icon)`. Its target
+A row is `PageRow(id, label, sub, enabled, target, checked, icon, section)`. Its target
 opens another of your pages, `PageTarget.Page(pageId, paramsJson)`, or invokes
 one of the page's declared actions, `PageTarget.Action(actionId)`; a row
 without a target is readable but inert. `icon` is the row's own mark, drawn
-with bundle v7 (see [Row icons](#row-icons-launcher-bundle-v7)). Ids are unique within their list. A document keeps its text
+with bundle v7 (see [Row icons](#row-icons-launcher-bundle-v7)); `section` is a caption above the
+row, drawn with bundle v9 (see [Row sections](#row-sections-launcher-bundle-v9)). Ids are unique within their list. A document keeps its text
 order, paragraphs, explicit line breaks and Unicode, and the wearer pages
 through it with swipes; its `footer` is paginated after the text, in the caption
 style. Summary or commands text that does not fit the HUD with the page's first
@@ -2699,6 +2700,33 @@ From bundle v7 the glasses keep it in Applications as a row opening `<id>:main`
 and never append the hub's **Open app** to its pages or its activity card;
 `onNexusOpen` is then never called. Older glasses do not list it, so a plugin
 that must reach pre-v7 glasses keeps `LAUNCHABLE` true and a minimal immersion.
+
+### Row sections (launcher bundle v9)
+
+`PageRow.section` opens a group of rows: the glasses draw it as a short mono
+caption right above that row, outside the selection, so the wearer's first
+swipe still lands on a real row. Keep it to a word or two (at most 40
+characters); a longer one makes the page `INVALID_PAGE`. Both hubs must
+negotiate bundle v9: check `supportsRowSections()`. Below it the SDK sends the
+same rows in the same order without the captions, so order the list as you want
+it read and set `section` on the first row of each group; you need no fallback
+page.
+
+```kotlin
+val rows = (pinned + recent).mapIndexed { index, chat ->
+    PageRow(
+        id = chat.key,
+        label = chat.title,
+        target = PageTarget.Page("messages:chat:${chat.key}"),
+        section = when {
+            pinned.isEmpty() -> null
+            index == 0 -> "PINNED"
+            index == pinned.size -> "RECENT"
+            else -> null
+        },
+    )
+}
+```
 
 ### Visibility and live updates
 

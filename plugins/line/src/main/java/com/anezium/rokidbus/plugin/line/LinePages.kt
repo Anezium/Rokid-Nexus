@@ -34,11 +34,26 @@ internal object LinePages {
     const val PHOTO_LABEL = "Photo"
     const val PHOTO_NEEDS_UPDATE = "Photos need the Nexus launcher update on the phone and the glasses"
     private const val PREFIX = "line-messages:chat:"
+    /** The list's section captions; the SDK drops them for hubs that cannot draw them. */
+    const val PINNED = "PINNED"
+    const val RECENT = "RECENT"
 
     fun pageId(chat: LineChat): String = PREFIX + MessageDigest.getInstance("SHA-256")
         .digest(chat.id.toByteArray(Charsets.UTF_8)).take(16).joinToString("") { "%02x".format(it) }
 
     fun chat(pageId: String, state: LineSnapshot): LineChat? = state.chats.firstOrNull { pageId(it) == pageId }
+
+    /**
+     * The list in its order: the owner's [pins] LINE still lists, in the owner's order, then
+     * every other conversation newest first. A pin LINE no longer lists is skipped, never drawn
+     * as an empty row, and a pinned conversation never shows a second time among the recent ones.
+     */
+    fun ordered(chats: List<LineChat>, pins: List<String>): Pair<List<LineChat>, List<LineChat>> {
+        val byId = chats.associateBy { it.id }
+        val pinned = pins.distinct().mapNotNull(byId::get)
+        val ids = pinned.mapTo(HashSet()) { it.id }
+        return pinned to chats.filter { it.id !in ids }
+    }
 
     /** How many conversations of the list get their thumbnails fetched ahead of being opened. */
     const val PREFETCH_CHATS = 6
@@ -50,22 +65,21 @@ internal object LinePages {
      * thumbnails already cached instead of filling in one by one. Each conversation contributes
      * at most the [PageTemplateContract.MAX_MESSAGE_IMAGES] a page can show.
      */
-    fun mediaCandidates(visible: Collection<String>, state: LineSnapshot): List<Pair<LineChat, LineMessage>> {
+    fun mediaCandidates(visible: Collection<String>, state: LineSnapshot, pins: List<String> = emptyList()): List<Pair<LineChat, LineMessage>> {
         fun newest(chat: LineChat) = chat.history.asReversed().filter { it.media in setOf("photo", "sticker") }
             .take(PageTemplateContract.MAX_MESSAGE_IMAGES).map { chat to it }
         val open = visible.mapNotNull { chat(it, state) }
-        val listed = if (ROOT in visible) state.chats.take(PREFETCH_CHATS).filter { chat -> open.none { it.id == chat.id } } else emptyList()
+        val listed = if (ROOT in visible) listed(state, pins).take(PREFETCH_CHATS).filter { chat -> open.none { it.id == chat.id } } else emptyList()
         return (open + listed).flatMap(::newest)
     }
 
+    /** Every conversation in the list's order. */
+    fun listed(state: LineSnapshot, pins: List<String>): List<LineChat> = ordered(state.chats, pins).let { it.first + it.second }
+
     fun render(pageId: String, revision: Long, state: LineSnapshot, interactive: Boolean, photoTool: Boolean = false,
+        pins: List<String> = emptyList(),
         thumbnail: (LineChat, LineMessage) -> LauncherArtwork? = { _, _ -> null }): NexusPage.Content {
-        if (pageId == ROOT) return NexusPage.Content(revision, "LINE", PageBody.SelectableList(
-            state.chats.take(PageTemplateContract.MAX_ITEMS).map { chat ->
-                PageRow(pageId(chat).removePrefix(PREFIX), clip(chat.title, PageTemplateContract.MAX_LABEL_CHARS),
-                    sub = if (chat.group) "Group" else null, target = PageTarget.Page(pageId(chat)))
-            }, emptyText = status(state.state),
-        ), live = true)
+        if (pageId == ROOT) return NexusPage.Content(revision, "LINE", PageBody.SelectableList(list(state, pins), emptyText = status(state.state)), live = true)
         val chat = chat(pageId, state)
             ?: return NexusPage.Content(revision, "LINE", PageBody.Summary(text = status(state.state)), live = true)
         if (!interactive) return NexusPage.Content(revision, "LINE", PageBody.Summary(text = "Update both Nexus hubs to read and reply"))
@@ -92,6 +106,21 @@ internal object LinePages {
                 NexusPageActionSpec(SEND, "Send", typed = NexusActionType.ComposeSend),
                 NexusPageActionSpec(TAKE_PHOTO, PHOTO_LABEL, NexusPageActionKind.PLUGIN, confirm = false).takeIf { photo },
             ), live = true)
+    }
+
+    /** The conversation rows; with pins, PINNED opens the pinned ones and RECENT the others. */
+    private fun list(state: LineSnapshot, pins: List<String>): List<PageRow> {
+        val (pinned, recent) = ordered(state.chats, pins)
+        return (pinned + recent).take(PageTemplateContract.MAX_ITEMS).mapIndexed { index, chat ->
+            PageRow(pageId(chat).removePrefix(PREFIX), clip(chat.title, PageTemplateContract.MAX_LABEL_CHARS),
+                sub = if (chat.group) "Group" else null, target = PageTarget.Page(pageId(chat)),
+                section = when {
+                    pinned.isEmpty() -> null
+                    index == 0 -> PINNED
+                    index == pinned.size -> RECENT
+                    else -> null
+                })
+        }
     }
 
     private fun history(chat: LineChat, thumbnail: (LineChat, LineMessage) -> LauncherArtwork?): List<ConversationMessage> {

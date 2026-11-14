@@ -786,7 +786,7 @@ internal class SessionScreens(
                 CommandSlot(row.key, row.label, glyph, row.enabled, row.key == ActivityCommands.OPEN_APP_KEY)
             }, if (showsSelection) frame.selected else -1))
         } else null
-        if (mediaStrip != null) blocks += mediaStrip else if (body !is PageBody.Media) blocks += rowBlocks
+        if (mediaStrip != null) blocks += mediaStrip else if (body !is PageBody.Media) blocks += withSections(rowBlocks, rows)
         if (rows.isEmpty() && body is PageBody.SelectableList) {
             blocks += ScreenBlock.Text("empty", body.emptyText ?: "Nothing here", TextRole.CAPTION, centered = true)
         }
@@ -1115,6 +1115,18 @@ internal class SessionScreens(
     private fun ageText(atWallMs: Long): String {
         val minutes = ((wallClock() - atWallMs) / 60_000L).coerceAtLeast(1)
         return if (minutes < 60) "$minutes min" else "${minutes / 60} h"
+    }
+
+    /**
+     * A row's section caption goes right above it (bundle v9). It is a text block, so the
+     * selection, the trail and the hint count only the rows, exactly as without captions.
+     */
+    private fun withSections(rowBlocks: List<ScreenBlock>, rows: List<TypedRow>): List<ScreenBlock> {
+        val sections = rows.mapNotNull { row -> row.section?.takeIf { it.isNotBlank() }?.let { "row:${row.key}" to it } }.toMap()
+        if (sections.isEmpty()) return rowBlocks
+        return rowBlocks.flatMap { block ->
+            listOfNotNull(sections[block.key]?.let { ScreenBlock.Text("section:${block.key}", it, TextRole.SECTION) }, block)
+        }
     }
 
     private fun ScreenBlock.isSelected(): Boolean = when (this) {

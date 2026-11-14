@@ -2617,6 +2617,26 @@ applications to the root, under the activities, and orders them on the phone.
 - This is a hub-to-hub control under `/core/`. No plugin capability sends or
   reads it.
 
+### Row sections (bundle v9)
+
+Version 9 lets a row open a group of rows. Nothing here adds a capability, a
+path a plugin may send, or a new template.
+
+A row of any template with `items` may carry `section`: a string of at most 40
+UTF-16 code units. The glasses draw it as a section caption (mono, muted)
+directly above that row. The caption is not an entry: the selection, its
+`n/m` trail and the hint count only the rows, so a list whose first row opens
+`PINNED` still starts its selection on that row. A `section` that is not a
+string, or is longer than 40, is an invalid page; a blank one draws no caption.
+
+Both hubs announce `launcherInteractiveVersion: 9`; the pair runs the lower
+version. `ROW_SECTIONS_VERSION` is 9 and SDK `supportsRowSections()` checks
+that pair. The phone strips every row `section` from pages and result
+replacements before forwarding to glasses below v9; the SDK does the same
+before sending to a pair below v9, so such a page shows the same rows in the
+same order without captions. The glasses ignore `section` unless the
+negotiated version is at least 9. No exact-match tier version changes.
+
 ### Fresh contact
 
 An Enter that would cause an effect (a quick or confirmed plugin action, an

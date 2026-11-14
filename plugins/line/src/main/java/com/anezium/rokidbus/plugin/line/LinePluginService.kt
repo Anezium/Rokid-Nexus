@@ -128,7 +128,7 @@ class LinePluginService : NexusPluginService() {
         photo?.takeIf { it.pageId == pageId }?.let { return it.flow.page(revision, it.preview) }
         val client = nexusClient
         return LinePages.render(pageId, revision, LineSession.snapshot, client?.supportsLauncherInteractive() == true,
-            photoTool = client?.supportsComposerTools() == true && client.supportsImagePages()) { chat, message ->
+            photoTool = client?.supportsComposerTools() == true && client.supportsImagePages(), pins = LinePins.ids(this)) { chat, message ->
             if (client?.supportsComposerTools() == true) thumbnails[chat.id to message.id] else null
         }
     }
@@ -148,7 +148,7 @@ class LinePluginService : NexusPluginService() {
     private fun prefetchHistory() {
         val lease = owner ?: return
         if (historyPrefetching || LinePages.ROOT !in visible || LineSession.snapshot.state != "ready") return
-        val chat = LineSession.snapshot.chats.take(LinePages.PREFETCH_CHATS).firstOrNull { it.id !in loaded } ?: return
+        val chat = LinePages.listed(LineSession.snapshot, LinePins.ids(this)).take(LinePages.PREFETCH_CHATS).firstOrNull { it.id !in loaded } ?: return
         loaded += chat.id
         historyPrefetching = true
         LineSession.call(this, lease, { it.loadHistory(chat.id) }) {
@@ -159,7 +159,7 @@ class LinePluginService : NexusPluginService() {
     private fun loadMedia() {
         val lease = owner ?: return
         if (nexusClient?.supportsComposerTools() != true || LineSession.snapshot.state != "ready") return
-        val candidates = LinePages.mediaCandidates(visible, LineSession.snapshot).asSequence()
+        val candidates = LinePages.mediaCandidates(visible, LineSession.snapshot, LinePins.ids(this)).asSequence()
             .filter { (chat, message) -> (chat.id to message.id) !in mediaAsked }
         // Up to the engine's own bound in flight; the rest wait for a slot, newest and open conversations first.
         for ((chat, message) in candidates.take(LineSession.MEDIA_PARALLELISM - mediaInFlight)) {
@@ -368,7 +368,15 @@ class LinePluginService : NexusPluginService() {
         mediaInFlight = 0
     }
 
-    override fun onDestroy() { end(); main.removeCallbacksAndMessages(null); super.onDestroy() }
+    /** Pins changed on the phone reorder an open list at once. */
+    private var unobservePins: (() -> Unit)? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        unobservePins = LinePins.observe(this) { publish() }
+    }
+
+    override fun onDestroy() { unobservePins?.invoke(); end(); main.removeCallbacksAndMessages(null); super.onDestroy() }
 
     private companion object {
         const val NOT_SENT_TEXT = "Not sent · Letter Sealing or the connection is unavailable"

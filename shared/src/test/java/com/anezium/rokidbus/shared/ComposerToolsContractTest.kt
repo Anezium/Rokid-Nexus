@@ -213,7 +213,7 @@ class ComposerToolsContractTest {
 
     @Test
     fun `the bundle version announces composer tools`() {
-        assertEquals(8, LauncherInteractiveContract.VERSION)
+        assertEquals(9, LauncherInteractiveContract.VERSION)
         assertEquals(5, LauncherInteractiveContract.COMPOSER_TOOLS_VERSION)
         assertEquals(4, LauncherInteractiveContract.negotiated(5, 4))
         assertEquals("composer_tool", com.anezium.rokidbus.shared.plugin.PluginOpenTypes.COMPOSER_TOOL)
