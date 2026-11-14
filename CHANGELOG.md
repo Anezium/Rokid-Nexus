@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.5.0
+
+Update both Nexus hubs together for recovery through the phone. Older hubs keep
+their existing Wi-Fi repair behaviour. Plugins and SDK 0.26.0 are unchanged by
+this hub release.
+
+### Glasses hub
+
+- **Recover after a restart away from saved Wi-Fi.** With **Auto-repair at boot**
+  enabled, Nexus can temporarily join a local hotspot created by the phone to
+  restore its command bridge, used by Glasses sound in earbuds and other shell
+  features. Keep the phone hub running and Bluetooth connected. No Internet
+  connection or manual hotspot setup is needed; a known Wi-Fi network still uses
+  the usual repair path. Initial glasses setup and ADB pairing remain required.
+- Android's connection confirmation may appear briefly on the glasses. Nexus
+  handles the requested network, checks that the bridge is running, and releases
+  the temporary connection and hotspot. Automatic recovery makes one attempt per
+  boot, limited to three minutes; **Repair now** permits a fresh attempt.
+
+### Phone hub
+
+- Requests the Wi-Fi permission needed for phone-assisted recovery once when
+  opening or starting the enabled hub with automatic repair on. Denial leaves the
+  hub usable; enabling automatic repair or choosing **Repair now** can request it
+  again. On Android 12 and earlier this is a location permission; the glasses also
+  need precise location permission and location services enabled to join the
+  temporary network.
+- Recovery shares Nexus's existing hotspot with files and camera use, respects
+  cancellation and Bluetooth loss, and handles duplicate requests without
+  restarting the active attempt.
+- Dictation logs retain the speech engine's cause when recognition ends, with
+  the Android recognizer error code when glasses audio cannot be read, so support
+  can distinguish a microphone permission problem, an incompatible speech service
+  and a lost connection.
+
 ## 2.4.0
 
 Update both hubs together. LINE Messages 0.1.0 ships alongside and needs hubs
