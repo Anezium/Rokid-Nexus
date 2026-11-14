@@ -29,6 +29,8 @@ internal data class TypedRow(
     val actionId: String? = null,
     val checked: Boolean? = null,
     val icon: LauncherArtwork? = null,
+    /** The caption drawn above this row (bundle v9); never part of the selection. */
+    val section: String? = null,
 )
 
 /**
@@ -102,6 +104,7 @@ internal class TypedPageItems(
                 actionId = (row.target as? PageTarget.Action)?.actionId,
                 checked = row.checked.takeIf { marks },
                 icon = row.icon,
+                section = row.section,
             )
         }
         val extra = appendedActions(body, page.actions.filter { it.id !in targeted }).map { action ->
