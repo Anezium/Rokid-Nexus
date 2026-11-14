@@ -312,6 +312,10 @@ object GlassesHub {
     }
 
     fun onRemoteEnvelope(envelope: BusEnvelope) {
+        if (envelope.path == com.anezium.rokidbus.shared.GlassesRepairHotspotContract.PATH) {
+            SelfArmHotspotRecovery.onEnvelope(envelope)
+            return
+        }
         if (BusPaths.isAudioRelayPath(envelope.path)) {
             if (audioBusIngressLogged.compareAndSet(false, true)) log("Dropped audio relay traffic on bus ingress")
             return
@@ -441,6 +445,7 @@ object GlassesHub {
                 return
             }
             SelfArmBootRepairStore.setAutoRepairEnabled(context, enabled)
+            SelfArmHotspotRecovery.configured(context, envelope.payload)
             log("glassesRepairConfig autoRepair=$enabled")
             return
         }
@@ -452,7 +457,7 @@ object GlassesHub {
             }
             val pairingAware = GlassesRepairContract.requestIsPairingAware(envelope.payload)
             val mode = GlassesRepairContract.modeFromRequest(envelope.payload)
-            SelfArmBootRepairCoordinator.runOwnerRepair(context, mode = mode) { verdict ->
+            val onRepairResult: (String) -> Unit = { verdict ->
                 val result = GlassesRepairContract.resultForRequester(verdict, pairingAware)
                 // Read in the same call that started the pairing, so it names that run.
                 val pairingSessionId = SelfArmOnboardingStore.currentActiveSessionId(context)
@@ -473,6 +478,10 @@ object GlassesHub {
                     ),
                 )
                 log("glassesRepair result=$result verdict=$verdict replyError=${error ?: "none"}")
+            }
+            if (mode != GlassesRepairContract.MODE_REPAIR ||
+                !SelfArmHotspotRecovery.start(context, automatic = false, onRepairResult)) {
+                SelfArmBootRepairCoordinator.runOwnerRepair(context, mode = mode, onResult = onRepairResult)
             }
             return
         }
@@ -1512,10 +1521,28 @@ object GlassesHub {
             .onFailure { logError("glassesWifi serialized task rejected", it) }
             .isSuccess
 
+    internal fun sendRepairHotspot(envelope: BusEnvelope): String? = sendRemote(envelope)
+
+    internal fun acquireRecoveryWifi(context: Context, id: String) {
+        wifiRequestExecutor.execute {
+            if (!SelfArmHotspotRecovery.isCurrent(id)) return@execute
+            cancelPendingWifiDisable("hotspot_recovery")
+            handleGlassesWifiRequest(context, id)
+        }
+    }
+
     internal fun requestWifiOwnershipReconciliation(context: Context, trigger: String) {
         val applicationContext = context.applicationContext
         wifiRequestExecutor.execute {
             reconcileWifiOwnership(applicationContext, trigger, cameraGraceRequested = false)
+        }
+    }
+
+    internal fun releaseRecoveryWifi(context: Context) {
+        wifiRequestExecutor.execute {
+            if (!deferWifiDisableUntilAccessibilityEnableCompletes()) {
+                reconcileWifiOwnership(context, "hotspot_recovery_finished", cameraGraceRequested = false)
+            }
         }
     }
 
@@ -1607,6 +1634,7 @@ object GlassesHub {
     }
 
     private fun clearRemotePhoneCapabilities() {
+        SelfArmHotspotRecovery.onPeerLost()
         val previous = remotePhoneCapabilities
         phoneFilesHotspotSupported = false
         remotePhoneCapabilities = PhoneHubCapabilities(0, null)
@@ -1901,7 +1929,7 @@ object GlassesHub {
         cameraGraceSatisfied: Boolean = false,
     ) {
         val ownership = wifiOwnership ?: return
-        if (filesHotspotBatch != null) return
+        if (filesHotspotBatch != null || SelfArmHotspotRecovery.isActive) return
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         val wifiEnabled = wifiManager?.let { manager ->
             runCatching { manager.isWifiEnabled }

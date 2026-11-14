@@ -10,7 +10,7 @@ import org.json.JSONObject
  */
 internal object GlassesRepairStatusText {
     /** Long enough for the Wi-Fi popup, the arm and the radio restore; a pairing answers fast. */
-    const val REQUEST_TIMEOUT_MS = 150_000L
+    const val REQUEST_TIMEOUT_MS = com.anezium.rokidbus.shared.GlassesRepairHotspotContract.TIMEOUT_MS + 10_000L
 
     const val NO_ANSWER = "The glasses did not answer. Check the connection and try again."
 

@@ -53,6 +53,7 @@ internal object SelfArmWirelessAdbController {
 
     fun isWifiNetworkReady(context: Context): Boolean =
         runCatching {
+            if (SelfArmHotspotRecovery.ownsNetwork(context)) return@runCatching true
             val manager = context.getSystemService(ConnectivityManager::class.java)
             val network = manager.activeNetwork ?: return@runCatching false
             manager.getNetworkCapabilities(network)

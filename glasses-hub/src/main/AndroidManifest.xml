@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -63,6 +64,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.RokidBus.Glasses">
 
+        <activity android:name=".RecoveryNetworkActivity" android:exported="false"
+            android:screenOrientation="portrait" android:excludeFromRecents="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -72,6 +72,7 @@ internal object SelfArmBootRepairCoordinator {
     }
 
     private fun maybeRunBootRepair(context: Context) {
+        if (SelfArmHotspotRecovery.isActive) return
         val blocker = SelfArmBootRepairPolicy.bootAttemptBlocker(
             autoRepairEnabled = SelfArmBootRepairStore.isAutoRepairEnabled(context),
             alreadyAttemptedThisBoot = SelfArmBootRepairStore.hasAttemptedThisBoot(context),

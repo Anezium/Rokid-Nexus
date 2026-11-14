@@ -199,6 +199,7 @@ class RokidBusAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        SelfArmHotspotConsent.onEvent(this, event)
         displayStandbyWatchdog.noteAccessibilityEvent(event)
         AccessibilityWindowRoots.noteEvent(event, packageName)
         wirelessDebuggingAutomator?.onAccessibilityEvent(event)

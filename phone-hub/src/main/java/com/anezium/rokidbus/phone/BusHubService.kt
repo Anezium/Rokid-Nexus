@@ -537,6 +537,7 @@ class BusHubService : Service() {
     private lateinit var mediaSyncCoordinator: MediaSyncCoordinator
     private lateinit var coreRemoteBridge: PhoneCoreRemoteBridge
     private lateinit var glassesFiles: GlassesFilesController
+    private lateinit var repairHotspot: GlassesRepairHotspotBroker
     private lateinit var youtubeSetup: YoutubeSetupController
     private lateinit var redditSetup: YoutubeSetupController
     @Volatile private var youtubeUploadId: Long? = null
@@ -1102,6 +1103,7 @@ class BusHubService : Service() {
             )
             GlassesFilesHub.controller = it
         }
+        repairHotspot = GlassesRepairHotspotBroker(applicationContext, glassesFiles, ::sendRemote)
         val phoneSpeakerRouteProbe = PhoneSpeakerRouteProbe(applicationContext) {
             prefs().getString(PREF_LAST_GLASSES_ADDRESS, null)
         }
@@ -1555,6 +1557,7 @@ class BusHubService : Service() {
         if (::coreRemoteBridge.isInitialized) coreRemoteBridge.close()
         if (::glassesFiles.isInitialized) {
             if (GlassesFilesHub.controller === glassesFiles) GlassesFilesHub.controller = null
+            if (::repairHotspot.isInitialized) repairHotspot.close()
             glassesFiles.close()
         }
         runCatching { cxrLink?.disconnect() }
@@ -1907,6 +1910,10 @@ class BusHubService : Service() {
     }
 
     private fun routeRemote(envelope: BusEnvelope, renderedMapOrigin: PhoneRenderedMapNegotiation.Origin?) {
+        if (envelope.path == com.anezium.rokidbus.shared.GlassesRepairHotspotContract.PATH) {
+            if (::repairHotspot.isInitialized) repairHotspot.handle(envelope)
+            return
+        }
         if (BusPaths.isAudioRelayPath(envelope.path)) {
             if (audioRelayBusIngressLogged.compareAndSet(false, true)) log("Dropped audio relay traffic on bus ingress")
             return
@@ -4610,7 +4617,8 @@ class BusHubService : Service() {
         val error = sendRemote(
             BusEnvelope(
                 path = BusPaths.GLASSES_REPAIR_CONFIG,
-                payload = GlassesRepairContract.configToJson(enabled),
+                payload = GlassesRepairContract.configToJson(enabled).put(
+                    com.anezium.rokidbus.shared.GlassesRepairHotspotContract.CAPABILITY_FIELD, 1),
             ),
         )
         log("glassesRepairConfig push autoRepair=$enabled error=${error ?: "none"}")
