@@ -36,17 +36,45 @@ internal class GlassesFilesHotspotHost(
     private var idle: ScheduledFuture<*>? = null
     private var readiness: ScheduledFuture<*>? = null
     private var ready = false
+    private var repairId: String? = null
+    private var repairOffer: ((GlassesFilesHotspotCredentials) -> Unit)? = null
+    private var repairClosed: (() -> Unit)? = null
+
+    @Synchronized
+    fun acquireRepair(id: String, deadline: Long, offered: (GlassesFilesHotspotCredentials) -> Unit,
+        onClosed: () -> Unit): Boolean {
+        if (batchId != null) return false
+        repairId = id
+        repairOffer = offered
+        repairClosed = onClosed
+        acquire(id, deadline) { }
+        return true
+    }
+
+    @Synchronized
+    fun releaseRepair(id: String) {
+        if (repairId == id) close()
+    }
+
+    private fun offer(transferId: String, batch: String, credentials: GlassesFilesHotspotCredentials) {
+        if (repairId == transferId) repairOffer?.invoke(credentials)
+        else send(GlassesFilesRequest.HotspotOffer(transferId, batch, credentials, clientNetwork))
+    }
 
     @Synchronized
     @SuppressLint("MissingPermission")
     fun acquire(transferId: String, setupDeadline: Long, onFailed: () -> Unit) {
+        if (repairId != null && repairId != transferId) {
+            onFailed()
+            return
+        }
         idle?.cancel(false)
         activeId = transferId
         lastTransferId = transferId
         failed = onFailed
         val existing = batchId
         if (existing != null) {
-            if (ready) credentials?.let { send(GlassesFilesRequest.HotspotOffer(transferId, existing, it, clientNetwork)) }
+            if (ready) credentials?.let { offer(transferId, existing, it) }
             return
         }
         val batch = "files_" + UUID.randomUUID().toString().replace("-", "")
@@ -108,7 +136,7 @@ internal class GlassesFilesHotspotHost(
         } else if (GlassesFilesHotspotReadiness.isReady(before, GlassesFilesHotspotReadiness.snapshot(), clientNetwork)) {
             ready = true
             credentials?.let { offered -> activeId?.let {
-                send(GlassesFilesRequest.HotspotOffer(it, batch, offered, clientNetwork))
+                offer(it, batch, offered)
             } }
         } else {
             readiness = timers.schedule({ awaitReady(batch, before, deadline) }, 100L, TimeUnit.MILLISECONDS)
@@ -143,6 +171,11 @@ internal class GlassesFilesHotspotHost(
     @Synchronized
     override fun close() {
         val batch = batchId
+        val recovery = repairClosed
+        val wasRepair = repairId != null
+        repairId = null
+        repairOffer = null
+        repairClosed = null
         batchId = null
         activeId = null
         lastTransferId = null
@@ -154,12 +187,13 @@ internal class GlassesFilesHotspotHost(
         failed = null
         idle?.cancel(false)
         idle = null
-        if (batch != null) {
+        if (batch != null && !wasRepair) {
             send(GlassesFilesRequest.HotspotRelease(batch))
             android.util.Log.i("GlassesFiles", "files hotspot released")
         }
         runCatching { reservation?.close() }
         reservation = null
+        recovery?.invoke()
     }
 
     companion object {

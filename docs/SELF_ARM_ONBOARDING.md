@@ -274,6 +274,38 @@ The log names every request it completed or rejected, with the reason. `command 
 command=<name>` is the line to look for; `request rejected reason=command` means the running loop is
 older than the APK and has not handed over yet.
 
+## Recovery through the phone hotspot
+
+When the bridge was not armed this boot and no Wi-Fi network is available, updated
+hubs can use Nexus's existing local-only phone hotspot to reach the paired ADB
+session again. This does not need Internet access. The file controller owns the
+one hotspot reservation; file transfers and camera sessions take precedence.
+
+The phone requests its existing nearby Wi-Fi permission once when opening or
+starting the enabled hub with automatic repair on (location on Android 12 and
+earlier). Denial leaves the hub usable; enabling automatic repair or pressing
+Repair now can request it again explicitly. Recovery is advertised to the glasses
+only while that permission is granted. The glasses request precise
+location once if it was not already granted for the camera; Android also requires
+location services to be enabled for the network request. Missing permission or a
+busy reservation ends this attempt; it does not request another hotspot in a loop.
+
+The private recovery activity retains Android's temporary network until the
+existing paired TLS arm finishes. Accessibility confirms only the exact generated
+network in Android's network-request and wireless-debugging activities. It never
+accepts USB RSA prompts or enables permanent network trust. A new pairing is not
+part of recovery. Automatic recovery respects the existing setting and gets one
+attempt per boot while the display is interactive; Repair now permits an explicit
+new attempt. Both hubs bound the attempt to three minutes and release their own
+resources on link loss, cancellation, or setup/camera takeover.
+
+Observe `Hotspot recovery starting`, `Hotspot recovery network available`, and
+`Hotspot recovery finished result=...` in the glasses hub log. `repaired` requires
+the arm to have recorded the command bridge running, not just a Wi-Fi association
+or a watchdog-only `READY` result. The peer-to-peer network may not be Android's
+default network; the readiness check recognizes this one held network explicitly.
+See `BUSSPEC.md` for the private hub contract.
+
 ## ADB-user fallback
 
 ADB users can still grant the development permission directly. Grant before a cold launch:

@@ -204,6 +204,15 @@ internal class GlassesFilesController(
     @Volatile private var laneSupported = false
     @Volatile private var hotspotSupported = false
     private val hotspot = GlassesFilesHotspotHost(appContext, timers, ::send)
+
+    internal fun acquireRepairHotspot(id: String, deadline: Long,
+        offered: (com.anezium.rokidbus.shared.GlassesFilesHotspotCredentials) -> Unit,
+        onClosed: () -> Unit): Boolean = synchronized(lock) {
+        if (!connected || active != null || cameraActive() || !GlassesFilesHotspotHost.permitted(appContext)) false
+        else hotspot.acquireRepair(id, deadline, offered, onClosed)
+    }
+
+    internal fun releaseRepairHotspot(id: String) = hotspot.releaseRepair(id)
     private var workerRunning = false
     private var lastPublishAt = 0L
     private var publishScheduled = false

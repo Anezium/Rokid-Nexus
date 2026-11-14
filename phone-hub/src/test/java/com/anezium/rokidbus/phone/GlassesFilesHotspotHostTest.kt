@@ -72,6 +72,40 @@ class GlassesFilesHotspotHostTest {
         }
     }
 
+    @Test fun `repair cannot replace a file transfer reservation`() {
+        val timers = ManualTimers()
+        val host = GlassesFilesHotspotHost(RuntimeEnvironment.getApplication(), timers) { null }
+        try {
+            seed(host, "files_batch", "file_transfer")
+            assertEquals(false, host.acquireRepair("repair", 60_000L, {}, {}))
+            assertEquals("file_transfer", field(host, "activeId").get(host))
+            assertEquals("files_batch", field(host, "batchId").get(host))
+        } finally { host.close(); timers.shutdownNow() }
+    }
+
+    @Test fun `file request cannot replace repair and only its owner may release it`() {
+        val timers = ManualTimers()
+        val requests = mutableListOf<GlassesFilesRequest>()
+        val host = GlassesFilesHotspotHost(RuntimeEnvironment.getApplication(), timers) { requests += it; null }
+        var closed = 0
+        var refused = 0
+        try {
+            seed(host, "files_batch", "repair_owner")
+            field(host, "repairId").set(host, "repair_owner")
+            field(host, "repairClosed").set(host, { closed++; Unit })
+            host.acquire("file_transfer", 60_000L) { refused++ }
+            assertEquals(1, refused)
+            assertEquals("repair_owner", field(host, "activeId").get(host))
+            host.releaseRepair("stale_owner")
+            assertEquals(0, closed)
+            host.releaseRepair("repair_owner")
+            host.releaseRepair("repair_owner")
+            assertEquals(1, closed)
+            assertEquals(emptyList<GlassesFilesRequest>(), requests)
+            assertNull(field(host, "batchId").get(host))
+        } finally { host.close(); timers.shutdownNow() }
+    }
+
     private fun seed(host: GlassesFilesHotspotHost, batch: String, transfer: String) {
         field(host, "batchId").set(host, batch)
         field(host, "activeId").set(host, transfer)

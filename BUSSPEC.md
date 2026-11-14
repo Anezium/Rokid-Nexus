@@ -4475,6 +4475,42 @@ The phone uses its media volume. Its player checks that playback never routes
 back to the glasses. Local shell-to-app capture IPC is private implementation
 detail documented in `GlassesAudioRelayContract`, not a bus transport.
 
+## Hub recovery hotspot v1
+
+`/core/repair/hotspot` is authenticated hub-to-hub control. It is reserved under
+`/core`: no plugin may send, subscribe to, or receive these messages. Payloads
+and generated network identifiers or credentials must never enter logs, journals,
+preferences, the clipboard, or plugin callbacks.
+
+While the phone has its hotspot permission, it advertises `hotspotRecoveryVersion: 1` in its existing
+`/glasses/repair/config` payload. Absent or unknown versions disable this path.
+Each envelope uses a fresh 32-character lowercase hexadecimal `id`, shared by
+every message in that recovery attempt. Binary payloads are rejected.
+
+- Glasses to phone: `{version: 1, kind: "request", automatic: boolean}` asks for
+  the existing local-only hotspot reservation. Automatic requests obey the
+  owner's auto-repair setting on both hubs. A busy file/camera session or missing
+  phone permission returns `unavailable`, without replacing its reservation.
+  A duplicate request for the active id retains the same reservation and replays
+  its offer once ready, without extending the attempt's deadline.
+- Phone to glasses: `{version: 1, kind: "offer", ssid, passphrase, security}`
+  carries an in-memory WPA2/WPA3 offer. The glasses join through Android's
+  temporary network API, without using the command bridge.
+- Either direction: `{version: 1, kind: "release"}` from the glasses or
+  `{version: 1, kind: "unavailable"}` from the phone ends that attempt only.
+  Stale ids cannot close a later attempt.
+
+The attempt expires within three minutes, including hotspot startup, Android
+consent, association and re-arm. The foreground glasses activity is private and
+secure; it retains the exact requested `Network` until the existing paired TLS
+arm reports its bridge measurement. `READY` alone is insufficient: recovery
+succeeds only when that arm recorded the command bridge running. ADB credentials
+are reused, never paired again implicitly. Network loss, link loss, user Back,
+disabled automatic repair, or setup/camera takeover ends the attempt. Radio
+release uses the existing Wi-Fi ownership reconciliation, preserving another
+owner's active session. Automatic attempts are bounded to one per boot and never
+wake a sleeping display to start recovery.
+
 ## Appendix: historical protocol versions
 
 Everything in this appendix is historical and must not be implemented as the
