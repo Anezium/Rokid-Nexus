@@ -12,7 +12,7 @@ package com.anezium.rokidbus.shared
  * superset of the one before it. Nothing in the bundle is active unless [negotiated] is at least 1.
  */
 object LauncherInteractiveContract {
-    const val VERSION = 8
+    const val VERSION = 9
     const val ACTIVITY_EVENTS_VERSION = 4
     const val ARTWORK_VERSION = 2
     const val IMAGE_ARTWORK_VERSION = 3
@@ -28,6 +28,9 @@ object LauncherInteractiveContract {
 
     /** Launcher favourites: the owner's pinned applications on the root, set on the phone. */
     const val FAVOURITES_VERSION = 8
+
+    /** A row's `section`: a caption the glasses draw above it, never a selectable entry. */
+    const val ROW_SECTIONS_VERSION = 9
 
     /** The version field in both hubs' capability payloads and in a page provider's `/system/hub/capabilities`. */
     const val CAPABILITY_FIELD_VERSION = "launcherInteractiveVersion"

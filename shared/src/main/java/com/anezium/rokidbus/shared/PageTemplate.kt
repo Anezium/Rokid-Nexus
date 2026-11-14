@@ -16,6 +16,8 @@ sealed interface PageTarget {
  * a checkbox mark and is meant for a row whose target is an action typed `setChecked`. [icon]
  * (launcher bundle v7) is a small `mono1` mark drawn left of the label in the row's tone, at most
  * [PageTemplateContract.MAX_ROW_ICON_EDGE] pixels on each side; older pairs draw the row without it.
+ * [section] (launcher bundle v9) opens a group of rows: the glasses draw it as a caption above
+ * this row, outside the selection; older pairs draw the rows in the same order without it.
  */
 data class PageRow(
     val id: String,
@@ -25,6 +27,7 @@ data class PageRow(
     val target: PageTarget? = null,
     val checked: Boolean? = null,
     val icon: LauncherArtwork? = null,
+    val section: String? = null,
 )
 
 data class PageFact(val id: String, val label: String, val value: String)
@@ -296,6 +299,10 @@ object PageTemplateContract {
     /** A row icon is `mono1` only, so it takes the row's tone like a glyph; at most 32 px a side. */
     const val MAX_ROW_ICON_EDGE = 32
 
+    // Rows, launcher bundle v9: the caption that opens a group of rows.
+    const val FIELD_SECTION = "section"
+    const val MAX_SECTION_CHARS = 40
+
     // Conversation.
     const val MAX_CAPTION_CHARS = 64
     const val MAX_MESSAGES = 64
@@ -491,6 +498,7 @@ object PageTemplateContract {
             actions, namespace,
             composerTools = launcherVersion >= LauncherInteractiveContract.COMPOSER_TOOLS_VERSION,
             rowIcons = launcherVersion >= LauncherInteractiveContract.ROW_ICONS_VERSION,
+            rowSections = launcherVersion >= LauncherInteractiveContract.ROW_SECTIONS_VERSION,
         )
         PageSurfaceValidationResult.Valid(
             when (template) {
@@ -689,6 +697,18 @@ object PageTemplateContract {
         }
     }
 
+    /**
+     * Removes each row's `section` from [body] for a pair below
+     * [LauncherInteractiveContract.ROW_SECTIONS_VERSION], which draws the same rows, in the same
+     * order, without their captions. The phone and the SDK run it beside [stripRowIcons].
+     */
+    fun stripRowSections(body: JSONObject, negotiatedVersion: Int) {
+        if (negotiatedVersion >= LauncherInteractiveContract.ROW_SECTIONS_VERSION) return
+        body.optJSONArray("items")?.let { items ->
+            for (index in 0 until items.length()) items.optJSONObject(index)?.remove(FIELD_SECTION)
+        }
+    }
+
     fun stripConversationExtras(body: JSONObject, negotiatedVersion: Int) {
         if (negotiatedVersion >= LauncherInteractiveContract.COMPOSER_TOOLS_VERSION) return
         body.optJSONObject("composer")?.let { composer ->
@@ -725,6 +745,7 @@ object PageTemplateContract {
                     }
                     row.checked?.let { put(FIELD_CHECKED, it) }
                     row.icon?.let { put(FIELD_ICON, it.toJson()) }
+                    row.section?.let { put(FIELD_SECTION, it) }
                 },
             )
         }
@@ -737,6 +758,8 @@ object PageTemplateContract {
         private val composerTools: Boolean,
         /** Whether the pair negotiated row icons (v7); below it a row's `icon` is ignored, as an older hub would. */
         private val rowIcons: Boolean = false,
+        /** Whether the pair negotiated row sections (v9); below it a row's `section` is ignored, as an older hub would. */
+        private val rowSections: Boolean = false,
     ) {
         private val actionTypes: Map<String, PageActionType?> = actions.mapValues { it.value.typed }
 
@@ -753,6 +776,7 @@ object PageTemplateContract {
                     target = if (entry.has("target")) target(entry.opt("target")) else null,
                     checked = if (entry.has(FIELD_CHECKED)) entry.opt(FIELD_CHECKED) as? Boolean ?: fail("checked must be a boolean") else null,
                     icon = rowIcon(entry, index),
+                    section = if (rowSections) optionalText(entry, FIELD_SECTION, MAX_SECTION_CHARS) else null,
                 )
             }
             unique(rows.map(PageRow::id), "item")
