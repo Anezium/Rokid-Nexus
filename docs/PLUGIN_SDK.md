@@ -2694,6 +2694,13 @@ PageRow(
 )
 ```
 
+A plugin whose whole glasses UI is pages also declares
+`com.anezium.rokidbus.plugin.LAUNCHABLE` `false` (see the manifest above).
+From bundle v7 the glasses keep it in Applications as a row opening `<id>:main`
+and never append the hub's **Open app** to its pages or its activity card;
+`onNexusOpen` is then never called. Older glasses do not list it, so a plugin
+that must reach pre-v7 glasses keeps `LAUNCHABLE` true and a minimal immersion.
+
 ### Row sections (launcher bundle v9)
 
 `PageRow.section` opens a group of rows: the glasses draw it as a short mono
@@ -2720,13 +2727,6 @@ val rows = (pinned + recent).mapIndexed { index, chat ->
     )
 }
 ```
-
-A plugin whose whole glasses UI is pages also declares
-`com.anezium.rokidbus.plugin.LAUNCHABLE` `false` (see the manifest above).
-From bundle v7 the glasses keep it in Applications as a row opening `<id>:main`
-and never append the hub's **Open app** to its pages or its activity card;
-`onNexusOpen` is then never called. Older glasses do not list it, so a plugin
-that must reach pre-v7 glasses keeps `LAUNCHABLE` true and a minimal immersion.
 
 ### Visibility and live updates
 
