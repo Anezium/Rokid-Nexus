@@ -17,10 +17,11 @@ import android.os.Looper
 @Config(sdk = [32])
 class RecoveryNetworkActivityTest {
     @Test fun `an activity without the current recovery id cannot acquire a network`() {
-        val activity = Robolectric.buildActivity(RecoveryNetworkActivity::class.java).create().get()
+        val controller = Robolectric.buildActivity(RecoveryNetworkActivity::class.java).create()
+        val activity = controller.get()
         assertTrue(activity.isFinishing)
         assertFalse(SelfArmHotspotRecovery.isActive)
-        activity.onDestroy()
+        controller.destroy()
     }
 
     @Test fun `unsolicited and stale offers cannot open a recovery activity`() {
