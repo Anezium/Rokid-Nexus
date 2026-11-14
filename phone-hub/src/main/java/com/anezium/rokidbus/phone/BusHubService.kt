@@ -1103,7 +1103,8 @@ class BusHubService : Service() {
             )
             GlassesFilesHub.controller = it
         }
-        repairHotspot = GlassesRepairHotspotBroker(applicationContext, glassesFiles, ::sendRemote)
+        repairHotspot = GlassesRepairHotspotBroker(applicationContext,
+            acquire = glassesFiles::acquireRepairHotspot, release = glassesFiles::releaseRepairHotspot, send = ::sendRemote)
         val phoneSpeakerRouteProbe = PhoneSpeakerRouteProbe(applicationContext) {
             prefs().getString(PREF_LAST_GLASSES_ADDRESS, null)
         }
@@ -4618,7 +4619,8 @@ class BusHubService : Service() {
             BusEnvelope(
                 path = BusPaths.GLASSES_REPAIR_CONFIG,
                 payload = GlassesRepairContract.configToJson(enabled).put(
-                    com.anezium.rokidbus.shared.GlassesRepairHotspotContract.CAPABILITY_FIELD, 1),
+                    com.anezium.rokidbus.shared.GlassesRepairHotspotContract.CAPABILITY_FIELD,
+                    if (GlassesFilesHotspotHost.permitted(applicationContext)) 1 else 0),
             ),
         )
         log("glassesRepairConfig push autoRepair=$enabled error=${error ?: "none"}")

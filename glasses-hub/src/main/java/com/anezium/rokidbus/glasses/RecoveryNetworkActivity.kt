@@ -90,7 +90,7 @@ class RecoveryNetworkActivity : Activity() {
 
     override fun onDestroy() {
         releaseNetwork()
-        SelfArmHotspotRecovery.abandoned(id)
+        SelfArmHotspotRecovery.activityDestroyed(id, this)
         super.onDestroy()
     }
 }

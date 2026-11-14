@@ -44,6 +44,20 @@ private const val REPAIR_REQUEST_TIMEOUT_MS = 150_000L
 private const val REPAIR_STATUS_LINGER_MS = 12_000L
 
 class SettingsActivity : Activity() {
+    private var repairWaitingForPermission = false
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != GlassesRepairPermission.REQUEST_CODE) return
+        val resumeRepair = repairWaitingForPermission
+        repairWaitingForPermission = false
+        BusHubService.onGlassesRepairSettingChanged()
+        if (GlassesFilesHotspotHost.permitted(this)) {
+            if (resumeRepair) startGlassesRepair()
+        } else if (resumeRepair) {
+            showRepairStatus("Allow nearby Wi-Fi in Nexus app permissions to repair through this phone.")
+        }
+    }
     private val developerModeStore by lazy { DeveloperModeStore(this) }
     private val glassesControlsVisibility by lazy { GlassesControlsVisibilityStore(this) }
     private lateinit var updateSection: LinearLayout
@@ -675,6 +689,7 @@ class SettingsActivity : Activity() {
                     setOnCheckedChangeListener { _, enabled ->
                         store.setAutoRepairEnabled(enabled)
                         BusHubService.onGlassesRepairSettingChanged()
+                        if (enabled) GlassesRepairPermission.request(this@SettingsActivity, once = false)
                     }
                 },
             )
@@ -749,6 +764,14 @@ class SettingsActivity : Activity() {
         val transportBits = LinkStateBits.CXR_CONTROL_UP or LinkStateBits.SPP_DATA_UP
         if (lastLinkState and transportBits == 0) {
             showRepairStatus("The glasses are not connected.")
+            return
+        }
+        if (!GlassesFilesHotspotHost.permitted(this)) {
+            if (!repairWaitingForPermission) {
+                repairWaitingForPermission = true
+                showRepairStatus("Allow nearby Wi-Fi so Nexus can repair through this phone.", autoClear = false)
+                GlassesRepairPermission.request(this, once = false)
+            }
             return
         }
         repairInFlight = true

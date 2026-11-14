@@ -82,6 +82,11 @@ class GlassesFilesActivity : Activity() {
     private val listener: (GlassesFilesSnapshot) -> Unit = ::onSnapshot
     private val clearNotice = Runnable { if (::noticeHost.isInitialized) noticeHost.removeAllViews() }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_HOTSPOT_PERMISSION) BusHubService.onGlassesRepairSettingChanged()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         path = savedInstanceState?.getString(STATE_PATH)

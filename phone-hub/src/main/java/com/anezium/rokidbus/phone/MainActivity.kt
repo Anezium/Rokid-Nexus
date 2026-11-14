@@ -122,6 +122,7 @@ class MainActivity : Activity() {
         // then let the throttled network refresh pick up anything newer.
         PluginUpdateChecker.recomputeFromCachedRegistry(applicationContext, applyUpdates)
         PluginUpdateChecker.refreshIfStale(applicationContext, onResult = applyUpdates)
+        requestRepairPermissionIfReady()
     }
 
     override fun onStart() {
@@ -164,6 +165,9 @@ class MainActivity : Activity() {
             recordNotificationsAnswered()
             rebuildSetupSection()
         }
+        if (requestCode == GlassesRepairPermission.REQUEST_CODE) {
+            BusHubService.onGlassesRepairSettingChanged()
+        } else requestRepairPermissionIfReady()
     }
 
     override fun onDestroy() {
@@ -1291,6 +1295,14 @@ class MainActivity : Activity() {
             val startRequested = BusHubService.canRunHub(this)
             setToggle(enabled = startRequested)
             renderLinkState(hubEnabled = startRequested)
+            requestRepairPermissionIfReady()
+        }
+    }
+
+    private fun requestRepairPermissionIfReady() {
+        if (BusHubService.isEnabled(this) && BusHubService.canRunHub(this)) {
+            GlassesRepairPermission.request(this, once = true)
+            if (GlassesFilesHotspotHost.permitted(this)) BusHubService.onGlassesRepairSettingChanged()
         }
     }
 

@@ -281,8 +281,11 @@ hubs can use Nexus's existing local-only phone hotspot to reach the paired ADB
 session again. This does not need Internet access. The file controller owns the
 one hotspot reservation; file transfers and camera sessions take precedence.
 
-The phone needs its existing nearby Wi-Fi permission (location on Android 12 and
-earlier), available through the Files screen. The glasses request precise
+The phone requests its existing nearby Wi-Fi permission once when opening or
+starting the enabled hub with automatic repair on (location on Android 12 and
+earlier). Denial leaves the hub usable; enabling automatic repair or pressing
+Repair now can request it again explicitly. Recovery is advertised to the glasses
+only while that permission is granted. The glasses request precise
 location once if it was not already granted for the camera; Android also requires
 location services to be enabled for the network request. Missing permission or a
 busy reservation ends this attempt; it does not request another hotspot in a loop.

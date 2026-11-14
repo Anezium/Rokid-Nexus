@@ -4482,7 +4482,7 @@ detail documented in `GlassesAudioRelayContract`, not a bus transport.
 and generated network identifiers or credentials must never enter logs, journals,
 preferences, the clipboard, or plugin callbacks.
 
-The phone advertises `hotspotRecoveryVersion: 1` in its existing
+While the phone has its hotspot permission, it advertises `hotspotRecoveryVersion: 1` in its existing
 `/glasses/repair/config` payload. Absent or unknown versions disable this path.
 Each envelope uses a fresh 32-character lowercase hexadecimal `id`, shared by
 every message in that recovery attempt. Binary payloads are rejected.
@@ -4491,6 +4491,8 @@ every message in that recovery attempt. Binary payloads are rejected.
   the existing local-only hotspot reservation. Automatic requests obey the
   owner's auto-repair setting on both hubs. A busy file/camera session or missing
   phone permission returns `unavailable`, without replacing its reservation.
+  A duplicate request for the active id retains the same reservation and replays
+  its offer once ready, without extending the attempt's deadline.
 - Phone to glasses: `{version: 1, kind: "offer", ssid, passphrase, security}`
   carries an in-memory WPA2/WPA3 offer. The glasses join through Android's
   temporary network API, without using the command bridge.

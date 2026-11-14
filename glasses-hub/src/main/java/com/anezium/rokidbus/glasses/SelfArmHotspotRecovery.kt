@@ -66,6 +66,7 @@ internal object SelfArmHotspotRecovery {
             SelfArmBridgeLivenessStore.helperRecord(context) == SelfArmOwnerRepairPolicy.HelperRecord.ALIVE_THIS_BOOT ||
             SelfArmWirelessAdbController.isWifiNetworkReady(context)) return false
         main.post {
+            if (run != null) { callback(Result.RESULT_BUSY); return@post }
             if (!supported || !SelfArmLocalAdbBootstrapper.isBootstrapComplete(context)) {
                 callback(Result.RESULT_WIFI_UNAVAILABLE)
                 return@post
@@ -74,7 +75,7 @@ internal object SelfArmHotspotRecovery {
                 if (!automatic) SelfArmBootRepairCoordinator.runOwnerRepair(context, onResult = callback)
                 return@post
             }
-            if (run != null || SelfArmBootRepairCoordinator.isRepairRunning() ||
+            if (SelfArmBootRepairCoordinator.isRepairRunning() ||
                 SelfArmOnboardingStore.currentActiveSessionId(context).isNotBlank() || GlassesHub.isCameraSessionActive()) {
                 callback(Result.RESULT_BUSY)
                 return@post
@@ -202,6 +203,10 @@ internal object SelfArmHotspotRecovery {
 
     fun abandoned(id: String) {
         if (run?.id == id) finish(Result.RESULT_WIFI_UNAVAILABLE)
+    }
+
+    fun activityDestroyed(id: String, activity: RecoveryNetworkActivity) {
+        if (run?.id == id && run?.activity === activity) finish(Result.RESULT_WIFI_UNAVAILABLE)
     }
 
     fun onPeerLost() {
