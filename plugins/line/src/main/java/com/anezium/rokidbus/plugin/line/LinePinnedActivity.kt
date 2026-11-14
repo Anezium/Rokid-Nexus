@@ -335,5 +335,6 @@ class LinePinnedActivity : Activity() {
 
     private fun initials(title: String): String =
         title.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.take(2)
-            .joinToString("") { String(Character.toChars(it.codePointAt(0))) }.uppercase().ifEmpty { "?" }
+            .mapNotNull { word -> word.codePoints().filter { Character.isLetterOrDigit(it) }.findFirst().orElse(-1).takeIf { it >= 0 } }
+            .joinToString("") { String(Character.toChars(it)) }.uppercase().ifEmpty { "?" }
 }
