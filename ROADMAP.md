@@ -343,11 +343,36 @@ activity cards (2.2): plugins, the camera or apps installed on the glasses, each
 opening exactly as it does from Applications. The list is a hub-to-hub setting
 no plugin can read or change.
 
-### Fourteen plugins, none of them built in
+### Your conversations on the glasses
+
+Meta Messages brings WhatsApp, Instagram and Messenger (2.2), LINE Messages
+brings LINE (2.4), groups included: the latest messages in one scrolling
+column, a reply dictated or typed and sent only on a separate Send, and a photo
+from the glasses camera checked on a full-page preview first. Both are
+unofficial clients that connect only while their page is open; sign-in stays on
+the phone. A send the service refuses before anything left the phone keeps the
+draft sendable (2.4). Pinned contacts (2.6) come first, in the wearer's order,
+under a **Pinned** caption, then the most recent conversations under
+**Recent**; captions are real row sections the hub draws and never focuses.
+
+### Larger text on the launcher
+
+Normal, Large or Extra large, chosen on the phone (2.3). Every launcher page
+follows it and an open page redraws in place; notices, pins, activity islands
+and the Classic launcher keep their size.
+
+### Back after a restart away from Wi-Fi
+
+With Auto-repair at boot on, glasses restarted away from their saved Wi-Fi
+briefly join a local hotspot from the phone to restore the command bridge
+(2.5). One attempt per boot, three minutes at most; the temporary network is
+released afterwards.
+
+### Fifteen plugins, none of them built in
 
 Relay · Assistant · Navigation · Lens · Feeds · Transit · Lyrics · Media Deck
-· Meta Messages · Photos Sync (deprecated) · Patcher · Wireless ADB · Tasker
-· Sample
+· Meta Messages · LINE Messages · Photos Sync (deprecated) · Patcher · Wireless
+ADB · Tasker · Sample
 
 ---
 
