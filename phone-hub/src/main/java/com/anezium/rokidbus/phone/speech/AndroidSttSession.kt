@@ -95,6 +95,8 @@ internal class AndroidSttSession(
      */
     injectedAudioOnly: Boolean = false,
 ) : SttSession, SttStartFailureSource {
+    private val allTargetsEnvironment = environment
+    private val injectedAudioOnly = injectedAudioOnly
     private val environment: AndroidRecognizerEnvironment =
         if (injectedAudioOnly) InjectedAudioOnlyEnvironment(environment) else environment
     private val lock = Any()
@@ -205,7 +207,13 @@ internal class AndroidSttSession(
         }
     }
 
-    private fun preflightError(): SttError? =
+    private fun preflightError(): SttError? {
+        val error = preflightCheck() ?: return null
+        logPreflightFailure(error)
+        return error
+    }
+
+    private fun preflightCheck(): SttError? =
         when {
             environment.sdkInt < Build.VERSION_CODES.TIRAMISU ->
                 SttError(
@@ -229,10 +237,28 @@ internal class AndroidSttSession(
                 SttError(
                     SttErrorKind.SOURCE_UNAVAILABLE,
                     ANDROID_PROVIDER_LABEL,
-                    "Android speech recognition is unavailable",
+                    if (injectedAudioOnly && allTargetsEnvironment.recognitionTargets().isNotEmpty()) {
+                        NO_GLASSES_AUDIO_RECOGNIZER_DETAIL
+                    } else {
+                        "Android speech recognition is unavailable"
+                    },
                 )
             else -> null
         }
+
+    /** A reporter's console has to show which speech services this phone offered, and why none fit. */
+    private fun logPreflightFailure(error: SttError) {
+        val targets = runCatching { allTargetsEnvironment.recognitionTargets() }.getOrDefault(emptyList())
+        val described = targets.joinToString(",") { target ->
+            "${target.reportName}(injected=${target.honorsInjectedAudio})"
+        }.ifEmpty { "none" }
+        Log.w(
+            TAG,
+            "recognizer preflight failed sdk=${environment.sdkInt} " +
+                "available=${runCatching { environment.isRecognitionAvailable() }.getOrDefault(false)} " +
+                "glassesAudioOnly=$injectedAudioOnly targets=$described detail=${error.detail}",
+        )
+    }
 
     private fun startCurrentAttempt(): SttError? {
         val target: AndroidRecognizerTarget
@@ -739,6 +765,10 @@ internal class AndroidSttSession(
         private const val MAX_TRANSIENT_RETRIES = 1
         private const val DEFAULT_TARGET_ID = "default"
         private const val GOOGLE_PACKAGE_PREFIX = "com.google.android"
+        private const val NO_GLASSES_AUDIO_RECOGNIZER_DETAIL =
+            "No speech service on this phone is known to read glasses audio - install Speech " +
+                "Recognition & Synthesis from Google and pick it as the default voice input, or " +
+                "choose a cloud engine (OpenAI, ElevenLabs or Azure) in Speech settings"
         private const val NO_EXTERNAL_AUDIO_SUPPORT_DETAIL =
             "Your phone's speech service does not accept external audio - choose a cloud engine " +
                 "(OpenAI, ElevenLabs or Azure) in Speech settings"

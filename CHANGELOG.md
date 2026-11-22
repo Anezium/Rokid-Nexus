@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.6.1
+
+### Phone hub
+
+- **Dictation with the phone's own speech engine.** Glasses dictation, such as
+  a voice reply in Meta Messages, failed with the Android engine on phones
+  whose default voice input is the maker's own service, and installing
+  Google's speech service did not help. The hub could not see any installed
+  speech recognizer, so it never found Google's, the one that reads the glasses
+  microphone. It now finds it; install Speech Recognition & Synthesis from
+  Google if your phone does not already have it. When no recognizer fits, the
+  console says so and suggests Google's service or a cloud engine.
+
+Update the phone hub to receive this fix. Glasses hub 2.6.0 remains
+compatible; the 2.6.1 glasses APK has only a version bump. Plugins and SDK are
+unchanged.
+
 ## 2.6.0
 
 Update both hubs together for section captions on launcher pages. LINE Messages

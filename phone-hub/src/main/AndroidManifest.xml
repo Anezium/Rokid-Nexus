@@ -50,6 +50,11 @@
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
+        <!-- Without this, package visibility hides every speech recognizer: isRecognitionAvailable
+             reports false and Google's recognizer, the one that reads glasses audio, is never found. -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
     </queries>
 
     <application
