@@ -253,6 +253,28 @@ class SurfaceModelsTest {
         assertEquals("track-1", update.getString("contentKey"))
         assertTrue(update.has("anchor"))
         assertFalse(update.has("lines"))
+        assertFalse(update.has("placement"))
+        assertFalse(update.has("textSize"))
+    }
+
+    @Test
+    fun `timed lines omit default layout and emit chosen layout`() {
+        val anchor = NexusPlaybackAnchor(0, false, 0)
+        val lines = listOf(NexusTimedLine(0, "Line"))
+        val defaults = NexusTimedLines("Lyrics", "track-1", lines, anchor).toPayload("lyrics")
+        assertFalse(defaults.has("placement"))
+        assertFalse(defaults.has("textSize"))
+
+        val chosen = NexusTimedLines(
+            "Lyrics",
+            "track-1",
+            lines,
+            anchor,
+            placement = NexusTimedLinesPlacement.TOP,
+            textSize = NexusTimedLinesTextSize.SMALL,
+        ).toPayload("lyrics")
+        assertEquals("top", chosen.getString("placement"))
+        assertEquals("small", chosen.getString("textSize"))
     }
 
     @Test

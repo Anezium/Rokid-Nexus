@@ -240,6 +240,20 @@ data class NexusPlaybackAnchor(
         .put("sentAtElapsedRealtime", sentAtElapsedRealtime)
 }
 
+enum class NexusTimedLinesPlacement(val wireValue: String) {
+    /** The active line fills the middle of the HUD; the next line sits at the bottom. */
+    CENTER("center"),
+
+    /** The active line starts near the top, with the next line right below it. */
+    TOP("top"),
+}
+
+enum class NexusTimedLinesTextSize(val wireValue: String) {
+    SMALL("small"),
+    NORMAL("normal"),
+    LARGE("large"),
+}
+
 data class NexusTimedLines(
     val title: String,
     val contentKey: String,
@@ -247,6 +261,8 @@ data class NexusTimedLines(
     val anchor: NexusPlaybackAnchor,
     val subtitle: String? = null,
     val footer: String? = null,
+    val placement: NexusTimedLinesPlacement = NexusTimedLinesPlacement.CENTER,
+    val textSize: NexusTimedLinesTextSize = NexusTimedLinesTextSize.NORMAL,
 ) {
     init {
         require(title.isNotBlank() && title.length <= MAX_TITLE_CHARS)
@@ -266,6 +282,8 @@ data class NexusTimedLines(
         .apply {
             subtitle?.let { put("subtitle", it) }
             footer?.let { put("footer", it) }
+            if (placement != NexusTimedLinesPlacement.CENTER) put("placement", placement.wireValue)
+            if (textSize != NexusTimedLinesTextSize.NORMAL) put("textSize", textSize.wireValue)
         }
 }
 

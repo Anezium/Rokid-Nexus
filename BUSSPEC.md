@@ -383,7 +383,15 @@ Surface kinds v1:
   `segments` document, and an optional `readerAnchor`. The renderer owns
   wrapping and scrolling; see the reader contract below.
 - `timed-lines`: `title`, optional `subtitle`/`footer`, full `lines` as
-  `{ "timeMs": 1234, "text": "..." }`, and an `anchor`.
+  `{ "timeMs": 1234, "text": "..." }`, an `anchor`, and an optional layout.
+  `placement` is `center` (the default: the active line fills the middle and
+  the next line sits at the bottom) or `top` (the active line starts near the
+  top with the next line right under it). `textSize` is `small`, `normal` (the
+  default) or `large`; long lines still shrink to fit either way. Defaults are
+  omitted from the wire, and an absent or unrecognised value reads as the
+  default, so an older glasses hub keeps its centered layout. A payload that
+  carries `lines` states the whole layout; an anchor-only update inherits the
+  layout of the timed-lines surface it merges into.
 - `media`: `title`/`subtitle` shell labels, `mediaTitle`, optional
   `mediaArtist`/`mediaAlbum`, optional mono or binary `artwork`, and an `anchor`.
 - `image`: a real JPEG or PNG carried as an SPP binary frame. The binary-frame
