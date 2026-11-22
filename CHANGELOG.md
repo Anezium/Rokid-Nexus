@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.6.3
+
+Update the glasses hub to move synced lyrics higher or change their size, with
+Lyrics 1.0.4 on the phone. Both hubs move to 2.6.3 together; the phone hub has
+no change of its own. Plugin developers get SDK 0.28.0. Older hubs keep the
+centered layout and ignore the new settings. Asked for in #117.
+
+### Glasses hub
+
+- **Lyrics placement and size.** A timed-lines surface can ask for its active
+  line near the top of the HUD, with the next line right under it and the
+  footer kept at the bottom, and for a small, normal or large text size. Long
+  lines still shrink to fit. The default stays the centered layout.
+
+### SDK 0.28.0
+
+- `NexusTimedLines.placement` (`CENTER` or `TOP`) and
+  `NexusTimedLines.textSize` (`SMALL`, `NORMAL` or `LARGE`). Defaults are left
+  off the wire, so an older glasses hub keeps the centered layout. See
+  [Timed lines](docs/PLUGIN_SDK.md#timed-lines).
+
+### Plugins
+
+- **Lyrics 1.0.4**: **Position on glasses** (Middle or Higher) and **Text size**
+  (Small, Normal or Large) in the plugin settings. A change re-lays out the
+  lyrics already on the glasses. Its own changelog is in
+  `plugins/lyrics/CHANGELOG.md`.
+
 ## 2.6.2
 
 Update both hubs together to get the glasses check. The phone warning works

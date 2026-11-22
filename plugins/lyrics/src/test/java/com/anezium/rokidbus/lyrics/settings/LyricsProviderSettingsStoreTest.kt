@@ -69,7 +69,7 @@ class LyricsProviderSettingsStoreTest {
     }
 }
 
-private class InMemorySharedPreferences : SharedPreferences {
+internal class InMemorySharedPreferences : SharedPreferences {
     private val values = linkedMapOf<String, Any?>()
 
     override fun getAll(): MutableMap<String, *> = values.toMutableMap()

@@ -34,6 +34,29 @@ enum class ReaderAnchor {
     TOP,
 }
 
+enum class TimedPlacement(val wireValue: String) {
+    CENTER("center"),
+    TOP("top"),
+    ;
+
+    companion object {
+        fun fromWireValue(value: String): TimedPlacement =
+            entries.firstOrNull { it.wireValue == value } ?: CENTER
+    }
+}
+
+enum class TimedTextSize(val wireValue: String) {
+    SMALL("small"),
+    NORMAL("normal"),
+    LARGE("large"),
+    ;
+
+    companion object {
+        fun fromWireValue(value: String): TimedTextSize =
+            entries.firstOrNull { it.wireValue == value } ?: NORMAL
+    }
+}
+
 data class ReaderSegment(
     val kind: ReaderSegmentKind,
     val text: String,
@@ -218,6 +241,8 @@ data class NexusSurface(
     val imageBitmap: Bitmap? = null,
     val readerSegments: List<ReaderSegment> = emptyList(),
     val readerAnchor: ReaderAnchor = ReaderAnchor.BOTTOM,
+    val timedPlacement: TimedPlacement = TimedPlacement.CENTER,
+    val timedTextSize: TimedTextSize = TimedTextSize.NORMAL,
     val ink: InkSurfacePayload? = null,
     val ownerPluginId: String = "",
     val editable: EditableSurfaceField? = null,
@@ -398,6 +423,18 @@ data class NexusSurface(
                     !readerAnchorPresent && canMergePrevious -> previous?.readerAnchor ?: ReaderAnchor.BOTTOM
                     payload.optString("readerAnchor") == "top" -> ReaderAnchor.TOP
                     else -> ReaderAnchor.BOTTOM
+                },
+                // A full payload states its layout; only an anchor-only update inherits it,
+                // so a plugin returning to the defaults is not stuck with the old choice.
+                timedPlacement = when {
+                    kind != KIND_TIMED_LINES -> TimedPlacement.CENTER
+                    !linesPresent && canMergePrevious -> previous?.timedPlacement ?: TimedPlacement.CENTER
+                    else -> TimedPlacement.fromWireValue(payload.optString("placement"))
+                },
+                timedTextSize = when {
+                    kind != KIND_TIMED_LINES -> TimedTextSize.NORMAL
+                    !linesPresent && canMergePrevious -> previous?.timedTextSize ?: TimedTextSize.NORMAL
+                    else -> TimedTextSize.fromWireValue(payload.optString("textSize"))
                 },
                 ink = if (kind == KIND_INK) {
                     payload.optJSONObject("ink")?.let { ink ->

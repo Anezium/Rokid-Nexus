@@ -17,6 +17,9 @@ import android.text.TextWatcher
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.text.InputType
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
@@ -192,6 +195,8 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     private var insetUnsubscribe: (() -> Unit)? = null
     private var stopObservingReaderScroll: (() -> Unit)? = null
     private var hudTopInsetDp = 0
+    private var timedFitKey: Pair<String, Int>? = null
+    private var timedFitSp = 0
     private var inkPresentationSurfaceId: String? = null
     private var inkPresentationGeneration: Long? = null
     private var activeInkMorph: ActiveInkMorph? = null
@@ -249,7 +254,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
             topMargin = px(8)
         })
         addView(previousView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-            topMargin = px(30)
+            topMargin = px(TIMED_CENTER_PREVIOUS_GAP_DP)
         })
         addView(currentView, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f).apply {
             topMargin = px(8)
@@ -425,6 +430,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         footerView.visibility = visibleIf(surface.footer.isNotBlank())
 
         if (!surface.isInk) hideInk()
+        applyTimedPlacement(if (surface.isTimed) surface.timedPlacement else TimedPlacement.CENTER)
         if (surface.kind != NexusSurface.KIND_CARD || surface.editable == null) {
             editView.visibility = GONE
             // A bare card follows its owner's band too: keep that subscription rather than
@@ -825,20 +831,54 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         imageView.visibility = GONE
         boardView.visibility = GONE
         currentView.visibility = VISIBLE
+        val top = surface.timedPlacement == TimedPlacement.TOP
+        val sizes = surface.timedTextSize.sizes()
+        previousView.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizes.previousSp)
+        nextView.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizes.nextSp)
         // Long lyric lines must never lose their tail: shrink to fit instead of clipping.
         currentView.maxLines = TIMED_BODY_MAX_LINES
-        fitTimedBody()
-        currentView.gravity = Gravity.CENTER
+        currentView.gravity = if (top) Gravity.TOP or Gravity.CENTER_HORIZONTAL else Gravity.CENTER
         currentView.textAlignment = TEXT_ALIGNMENT_CENTER
         val index = currentTimedIndex(surface)
         previousView.text = surface.timedLines.getOrNull(index - 1)?.text.orEmpty()
         previousView.visibility = visibleIf(previousView.text.isNotBlank())
-        currentView.text = surface.timedLines.getOrNull(index)?.text
+        val current = surface.timedLines.getOrNull(index)?.text
             ?.takeIf { it.isNotBlank() }
             ?: surface.timedLines.firstOrNull()?.text
             ?: ""
+        if (top) fitTopTimedBody(current, sizes) else fitTimedBody(sizes)
+        currentView.text = current
         nextView.text = surface.timedLines.getOrNull(index + 1)?.text.orEmpty()
-        nextView.visibility = visibleIf(nextView.text.isNotBlank())
+        nextView.gravity = if (top) Gravity.TOP or Gravity.CENTER_HORIZONTAL else Gravity.CENTER
+        // Top placement keeps the next slot even when it is empty, so the footer stays put.
+        nextView.visibility = if (top) VISIBLE else visibleIf(nextView.text.isNotBlank())
+    }
+
+    /**
+     * Centered lines let the active line take the free height and sit in its middle.
+     * Top placement wraps the active line instead, so the next line follows right
+     * under it and the free height collects below, keeping the footer at the bottom.
+     * Every surface states its placement here: the views are shared with cards.
+     */
+    private fun applyTimedPlacement(placement: TimedPlacement) {
+        val top = placement == TimedPlacement.TOP
+        previousView.setLinearParams(
+            height = LayoutParams.WRAP_CONTENT,
+            weight = 0f,
+            topMargin = px(if (top) TIMED_TOP_PREVIOUS_GAP_DP else TIMED_CENTER_PREVIOUS_GAP_DP),
+        )
+        currentView.setLinearParams(height = if (top) LayoutParams.WRAP_CONTENT else 0, weight = if (top) 0f else 1f)
+        nextView.setLinearParams(height = if (top) 0 else LayoutParams.WRAP_CONTENT, weight = if (top) 1f else 0f)
+    }
+
+    private fun View.setLinearParams(height: Int, weight: Float, topMargin: Int? = null) {
+        val params = layoutParams as LayoutParams
+        val margin = topMargin ?: params.topMargin
+        if (params.height == height && params.weight == weight && params.topMargin == margin) return
+        params.height = height
+        params.weight = weight
+        params.topMargin = margin
+        layoutParams = params
     }
 
     private fun fitCardBody() {
@@ -854,17 +894,46 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         }
     }
 
-    private fun fitTimedBody() {
+    private fun fitTimedBody(sizes: TimedTextSizes) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             currentView.setAutoSizeTextTypeUniformWithConfiguration(
-                TIMED_BODY_MIN_SP,
-                TIMED_BODY_MAX_SP,
+                sizes.bodyMinSp,
+                sizes.bodyMaxSp,
                 TIMED_BODY_STEP_SP,
                 TypedValue.COMPLEX_UNIT_SP,
             )
         } else {
-            currentView.textSize = TIMED_BODY_SP
+            currentView.textSize = sizes.bodyMaxSp.toFloat()
         }
+    }
+
+    private fun fitTopTimedBody(text: String, sizes: TimedTextSizes) {
+        // Platform auto-size ignores setTextSize, and needs a fixed box this wrapped line lacks.
+        currentView.setAutoSizeTextTypeWithDefaults(TextView.AUTO_SIZE_TEXT_TYPE_NONE)
+        val available = ((width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels) -
+            paddingLeft - paddingRight -
+            currentView.compoundPaddingLeft - currentView.compoundPaddingRight).coerceAtLeast(1)
+        val key = "${sizes.bodyMinSp}:${sizes.bodyMaxSp}:$text" to available
+        if (key != timedFitKey) {
+            val paint = TextPaint(currentView.paint)
+            timedFitSp = fitTimedLineSp(sizes.bodyMaxSp, sizes.bodyMinSp, TIMED_BODY_MAX_LINES) { sp ->
+                paint.textSize = TypedValue.applyDimension(
+                    TypedValue.COMPLEX_UNIT_SP,
+                    sp.toFloat(),
+                    resources.displayMetrics,
+                )
+                StaticLayout.Builder.obtain(text, 0, text.length, paint, available)
+                    .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                    .setLineSpacing(currentView.lineSpacingExtra, currentView.lineSpacingMultiplier)
+                    .setIncludePad(currentView.includeFontPadding)
+                    .setBreakStrategy(currentView.breakStrategy)
+                    .setHyphenationFrequency(currentView.hyphenationFrequency)
+                    .build()
+                    .lineCount
+            }
+            timedFitKey = key
+        }
+        currentView.setTextSize(TypedValue.COMPLEX_UNIT_SP, timedFitSp.toFloat())
     }
 
     private fun renderCard(surface: NexusSurface) {
@@ -1337,13 +1406,13 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         private const val CARD_BODY_MAX_SP = 17
         private const val CARD_BODY_MIN_SP = 14
         private const val CARD_BODY_STEP_SP = 1
-        private const val TIMED_BODY_SP = 25f
         private const val TIMED_BODY_MAX_LINES = 5
 
         // Lyrics auto-fit: keep the big size for short lines, shrink long ones to fit.
-        private const val TIMED_BODY_MAX_SP = 25
-        private const val TIMED_BODY_MIN_SP = 14
+        // The size range itself comes from the surface's TimedTextSize.
         private const val TIMED_BODY_STEP_SP = 1
+        private const val TIMED_CENTER_PREVIOUS_GAP_DP = 30
+        private const val TIMED_TOP_PREVIOUS_GAP_DP = 6
 
         // Structured board rows: badge chip, destination, wait times.
         private const val BOARD_BADGE_SP = 15f

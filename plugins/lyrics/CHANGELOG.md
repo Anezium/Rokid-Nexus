@@ -1,5 +1,14 @@
 # Changelog — Lyrics
 
+## 1.0.4
+
+- Settings gain "Position on glasses" (Middle or Higher) and "Text size"
+  (Small, Normal or Large) for synced lyrics. Higher starts the active line
+  near the top with the next line right under it. The defaults keep the
+  previous layout, and a change re-lays out lyrics already on the glasses.
+  Needs a glasses hub that understands the timed-lines layout; older hubs keep
+  the centered layout.
+
 ## 1.0.3
 
 - Refresh the lightweight playback anchor at each timed-lyrics line boundary
