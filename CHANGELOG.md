@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.6.2
+
+Update both hubs together to get the glasses check. The phone warning works
+with glasses hub 2.6.1 and older; an older glasses hub simply does not report
+its animation settings. Plugins and SDK are unchanged.
+
+### Phone hub
+
+- **Warns when animations are turned off.** With the Developer options
+  animation scales set to 0, Hi Rokid's authorization screen closes by itself
+  and Rokid's assistant crashes right after "Hi Rokid". Settings, under
+  **Authorize Hi Rokid**, and the onboarding authorize step now say so and name
+  the scales to set back to 1x; the console repeats it when authorization comes
+  back canceled.
+- **Check accessibility services** also reports animation scales turned off on
+  the glasses, with the adb command that restores each one.
+
+### Glasses hub
+
+- Reports its animation scales to the phone's accessibility check.
+
 ## 2.6.1
 
 ### Phone hub
