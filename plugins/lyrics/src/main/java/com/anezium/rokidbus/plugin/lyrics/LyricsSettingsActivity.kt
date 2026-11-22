@@ -1,5 +1,7 @@
 package com.anezium.rokidbus.plugin.lyrics
 
+import com.anezium.rokidbus.client.plugin.NexusTimedLinesPlacement
+import com.anezium.rokidbus.client.plugin.NexusTimedLinesTextSize
 import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.client.ui.NexusUi
 import android.app.Activity
@@ -26,6 +28,8 @@ import com.anezium.rokidbus.client.ui.BusTheme
 import com.anezium.rokidbus.lyrics.LyricsRuntimeGraph
 import com.anezium.rokidbus.lyrics.lyrics.SpotifySpDcCookie
 import com.anezium.rokidbus.lyrics.media.MediaNotificationListenerService
+import com.anezium.rokidbus.lyrics.settings.LyricsDisplaySettings
+import com.anezium.rokidbus.lyrics.settings.LyricsDisplaySettingsStore
 import com.anezium.rokidbus.lyrics.settings.LyricsProviderSettingsStore
 
 class LyricsSettingsActivity : Activity() {
@@ -33,10 +37,14 @@ class LyricsSettingsActivity : Activity() {
     private lateinit var spotifyValue: TextView
     private lateinit var musixmatchValue: TextView
     private lateinit var providerStore: LyricsProviderSettingsStore
+    private lateinit var displayStore: LyricsDisplaySettingsStore
+    private lateinit var placementValue: TextView
+    private lateinit var textSizeValue: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         providerStore = LyricsProviderSettingsStore(applicationContext)
+        displayStore = LyricsDisplaySettingsStore(applicationContext)
         buildUi()
     }
 
@@ -114,6 +122,27 @@ class LyricsSettingsActivity : Activity() {
                     value = valueText("2 active"),
                     danger = false,
                 ) { Toast.makeText(this@LyricsSettingsActivity, "Coming soon", Toast.LENGTH_SHORT).show() },
+                NexusUi.block(),
+            )
+            val display = displayStore.load()
+            placementValue = valueText(placementLabel(display.placement))
+            addView(
+                settingRow(
+                    title = "Position on glasses",
+                    subtitle = "Higher keeps the next line close",
+                    value = placementValue,
+                    danger = false,
+                ) { cyclePlacement() },
+                NexusUi.block(),
+            )
+            textSizeValue = valueText(textSizeLabel(display.textSize))
+            addView(
+                settingRow(
+                    title = "Text size",
+                    subtitle = "Long lines still shrink to fit",
+                    value = textSizeValue,
+                    danger = false,
+                ) { cycleTextSize() },
                 NexusUi.block(),
             )
             addView(
@@ -230,6 +259,38 @@ class LyricsSettingsActivity : Activity() {
                 },
             )
         }
+
+    private fun cyclePlacement() {
+        val current = displayStore.load()
+        val placements = NexusTimedLinesPlacement.entries
+        val next = placements[(current.placement.ordinal + 1) % placements.size]
+        saveDisplay(current.copy(placement = next))
+        placementValue.text = "${placementLabel(next)} \u203A"
+    }
+
+    private fun cycleTextSize() {
+        val current = displayStore.load()
+        val sizes = NexusTimedLinesTextSize.entries
+        val next = sizes[(current.textSize.ordinal + 1) % sizes.size]
+        saveDisplay(current.copy(textSize = next))
+        textSizeValue.text = "${textSizeLabel(next)} \u203A"
+    }
+
+    private fun saveDisplay(settings: LyricsDisplaySettings) {
+        displayStore.save(settings)
+        LyricsRuntimeGraph.onDisplaySettingsChanged(settings)
+    }
+
+    private fun placementLabel(placement: NexusTimedLinesPlacement): String = when (placement) {
+        NexusTimedLinesPlacement.CENTER -> "Middle"
+        NexusTimedLinesPlacement.TOP -> "Higher"
+    }
+
+    private fun textSizeLabel(size: NexusTimedLinesTextSize): String = when (size) {
+        NexusTimedLinesTextSize.SMALL -> "Small"
+        NexusTimedLinesTextSize.NORMAL -> "Normal"
+        NexusTimedLinesTextSize.LARGE -> "Large"
+    }
 
     private fun valueText(label: String, color: Int = NexusUi.INK2): TextView =
         NexusUi.metaLabel(this, "$label \u203A", color).apply {

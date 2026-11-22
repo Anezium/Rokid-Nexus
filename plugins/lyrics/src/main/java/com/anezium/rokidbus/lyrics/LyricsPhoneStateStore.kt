@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import com.anezium.rokidbus.lyrics.contracts.DeviceStatus
 import com.anezium.rokidbus.lyrics.contracts.LyricsSnapshot
+import com.anezium.rokidbus.lyrics.settings.LyricsDisplaySettings
 
 class LyricsPhoneStateStore {
     private val lock = Any()
@@ -28,6 +29,10 @@ class LyricsPhoneStateStore {
 
     fun updateProviders(transform: (ProviderSettingsViewState) -> ProviderSettingsViewState) {
         update { current -> current.copy(providers = transform(current.providers)) }
+    }
+
+    fun updateDisplay(display: LyricsDisplaySettings) {
+        update { current -> current.copy(display = display) }
     }
 
     fun updateLyrics(snapshot: LyricsSnapshot) {

@@ -13,6 +13,8 @@ import com.anezium.rokidbus.lyrics.lyrics.ProviderAttemptSummary
 import com.anezium.rokidbus.lyrics.lyrics.SpotifyLyricsProvider
 import com.anezium.rokidbus.lyrics.media.MediaSessionMonitor
 import com.anezium.rokidbus.lyrics.media.MediaNotificationListenerService
+import com.anezium.rokidbus.lyrics.settings.LyricsDisplaySettings
+import com.anezium.rokidbus.lyrics.settings.LyricsDisplaySettingsStore
 import com.anezium.rokidbus.lyrics.settings.LyricsProviderSettingsStore
 
 object LyricsRuntimeGraph {
@@ -70,6 +72,7 @@ object LyricsRuntimeGraph {
     @Synchronized
     fun start(context: Context) {
         initialize(context)
+        stateStore.updateDisplay(LyricsDisplaySettingsStore(appContext).load())
         syncProviderSettingsState()
         syncNotificationAccessFlag()
         mediaSessionMonitor.start()
@@ -85,6 +88,11 @@ object LyricsRuntimeGraph {
 
     fun skipToPrevious() {
         if (initialized) mediaSessionMonitor.skipToPrevious()
+    }
+
+    /** Re-lays out the lyrics already on the glasses; the caller has persisted [settings]. */
+    fun onDisplaySettingsChanged(settings: LyricsDisplaySettings) {
+        stateStore.updateDisplay(settings)
     }
 
     fun onSpotifyCookieChanged() {

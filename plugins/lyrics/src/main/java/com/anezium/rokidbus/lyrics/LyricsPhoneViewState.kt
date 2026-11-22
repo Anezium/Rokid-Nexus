@@ -3,6 +3,7 @@ package com.anezium.rokidbus.lyrics
 import com.anezium.rokidbus.lyrics.contracts.ConnectionState
 import com.anezium.rokidbus.lyrics.contracts.DeviceStatus
 import com.anezium.rokidbus.lyrics.contracts.LyricsSnapshot
+import com.anezium.rokidbus.lyrics.settings.LyricsDisplaySettings
 
 data class ProviderSettingsViewState(
     val spotifyConfigured: Boolean = false,
@@ -22,4 +23,5 @@ data class LyricsPhoneViewState(
     ),
     val lyrics: LyricsSnapshot = LyricsSnapshot(),
     val providers: ProviderSettingsViewState = ProviderSettingsViewState(),
+    val display: LyricsDisplaySettings = LyricsDisplaySettings(),
 )

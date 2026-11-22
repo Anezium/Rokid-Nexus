@@ -8,6 +8,7 @@ import com.anezium.rokidbus.client.plugin.NexusTimedLine
 import com.anezium.rokidbus.client.plugin.NexusTimedLines
 import com.anezium.rokidbus.lyrics.contracts.LyricsSessionState
 import com.anezium.rokidbus.lyrics.contracts.LyricsSnapshot
+import com.anezium.rokidbus.lyrics.settings.LyricsDisplaySettings
 import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import java.security.MessageDigest
 import kotlin.math.abs
@@ -111,16 +112,19 @@ internal class LyricsRuntime(
                 positionDriftMs = lyrics.progressMs - it.predictedPosition(now),
             )
         } ?: true
-        val shouldSend = force || contentChanged || anchorChanged
+        val timed = lyrics.synced && lyrics.lines.isNotEmpty()
+        // Only a full timed-lines payload carries the layout, so a new one needs a resend.
+        val layoutChanged = timed && previous != null && previous.display != state.display
+        val shouldSend = force || contentChanged || anchorChanged || layoutChanged
         if (!shouldSend) return
 
         val show = previous == null || force
-        if (lyrics.synced && lyrics.lines.isNotEmpty()) {
+        if (timed) {
             val anchor = playbackAnchor(lyrics, playing, now)
-            if (!force && !contentChanged) {
+            if (!force && !contentChanged && !layoutChanged) {
                 host.updateTimedLinesAnchor(contentKey, anchor)
             } else {
-                host.sendTimedLines(timedLines(lyrics, contentKey, anchor), show)
+                host.sendTimedLines(timedLines(lyrics, contentKey, anchor, state.display), show)
             }
         } else {
             host.sendCard(card(lyrics, state.deviceStatus.statusLabel, contentKey), show)
@@ -131,6 +135,7 @@ internal class LyricsRuntime(
             playing = playing,
             currentLineIndex = lyrics.currentLineIndex,
             sentAtElapsedRealtime = now,
+            display = state.display,
         )
     }
 
@@ -138,6 +143,7 @@ internal class LyricsRuntime(
         lyrics: LyricsSnapshot,
         contentKey: String,
         anchor: NexusPlaybackAnchor,
+        display: LyricsDisplaySettings,
     ): NexusTimedLines = NexusTimedLines(
         title = titleFor(lyrics).take(MAX_TITLE_CHARS),
         contentKey = contentKey,
@@ -147,6 +153,8 @@ internal class LyricsRuntime(
         anchor = anchor,
         subtitle = subtitleFor(lyrics).take(MAX_LINE_CHARS).takeIf(String::isNotBlank),
         footer = footerFor(lyrics).take(MAX_LINE_CHARS).takeIf(String::isNotBlank),
+        placement = display.placement,
+        textSize = display.textSize,
     )
 
     private fun playbackAnchor(
@@ -261,6 +269,7 @@ internal class LyricsRuntime(
         val playing: Boolean,
         val currentLineIndex: Int,
         val sentAtElapsedRealtime: Long,
+        val display: LyricsDisplaySettings,
     ) {
         fun predictedPosition(now: Long): Long {
             if (!playing) return positionMs
