@@ -22,7 +22,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.27.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.28.0")
 }
 ```
 
@@ -30,10 +30,10 @@ For local development against a checkout, publish a snapshot instead:
 `.\gradlew.bat :shared:publishToMavenLocal :bus-client:publishToMavenLocal
 '-PversionName=0.1.0-SNAPSHOT'` and consume it from `mavenLocal()`.
 
-SDK `sdk-v0.27.0` includes the launcher-bundle APIs documented below: interactive
+SDK `sdk-v0.28.0` includes the launcher-bundle APIs documented below: interactive
 activity destinations, typed actions, conversation/media/route templates, artwork,
 user-owned Floating Activities settings, composer tools and message thumbnails,
-image pages, row icons and row sections. Update both hubs to Nexus 2.2.0 for the complete
+image pages, row icons, row sections and timed-lines layout. Update both hubs to Nexus 2.2.0 for the complete
 launcher experience; continue negotiating individual capabilities
 for older peers. Plugins built against 0.23.0 must be rebuilt against 0.24.0.
 
@@ -447,6 +447,38 @@ the previous offset. `TOP` suits an article, a recipe, a README, a saved note:
 the surface opens at the start and never follows the tail, so an update always
 restores where the wearer had scrolled to. Sending `TOP` needs glasses hub
 1.4.3 or newer; an older hub ignores it and opens at the bottom as before.
+
+### Timed lines
+
+Timed lines carry a script whose active line the glasses advance from a
+playback anchor, as Lyrics does. Send the whole script once per track with
+`showTimedLines`, then only `updateTimedLinesAnchor` on play, pause, seek or a
+line change.
+
+```kotlin
+enum class NexusTimedLinesPlacement { CENTER, TOP }
+enum class NexusTimedLinesTextSize { SMALL, NORMAL, LARGE }
+
+data class NexusTimedLines(
+    val title: String,
+    val contentKey: String,
+    val lines: List<NexusTimedLine>,
+    val anchor: NexusPlaybackAnchor,
+    val subtitle: String? = null,
+    val footer: String? = null,
+    val placement: NexusTimedLinesPlacement = NexusTimedLinesPlacement.CENTER,
+    val textSize: NexusTimedLinesTextSize = NexusTimedLinesTextSize.NORMAL,
+)
+```
+
+`placement` and `textSize` are the wearer's layout. `CENTER` lets the active
+line fill the middle of the HUD with the next line at the bottom; `TOP` starts
+the active line near the top with the next line right under it. Long lines
+shrink to fit at every size. Expose them as settings rather than choosing for
+the wearer. They travel only with a full payload, so resend the script with
+`updateTimedLines` when they change; an anchor-only update keeps the layout
+already on the glasses. Sending them needs glasses hub 2.6.3 or newer; an older
+hub ignores them and keeps the centered layout.
 
 ### Live activities
 

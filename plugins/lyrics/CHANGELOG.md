@@ -1,6 +1,6 @@
 # Changelog — Lyrics
 
-## Unreleased
+## 1.0.4
 
 - Settings gain "Position on glasses" (Middle or Higher) and "Text size"
   (Small, Normal or Large) for synced lyrics. Higher starts the active line
