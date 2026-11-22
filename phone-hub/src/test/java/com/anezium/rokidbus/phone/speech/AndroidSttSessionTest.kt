@@ -13,12 +13,15 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.w3c.dom.Element
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import javax.xml.parsers.DocumentBuilderFactory
 
 @RunWith(RobolectricTestRunner::class)
 class AndroidSttSessionTest {
@@ -391,6 +394,20 @@ class AndroidSttSessionTest {
         assertTrue(opened.isEmpty())
         assertEquals(0, foreground.acquireCalls)
         assertEquals(SttErrorKind.SOURCE_UNAVAILABLE, session.startFailure?.kind)
+        assertTrue(session.startFailure?.detail.orEmpty().contains("read glasses audio"))
+    }
+
+    @Test
+    fun hubManifestCanSeeInstalledSpeechRecognizers() {
+        val document = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+            .parse(File("src/main/AndroidManifest.xml"))
+        val queries = document.getElementsByTagName("queries")
+        val actions = (0 until queries.length).flatMap { index ->
+            val elements = (queries.item(index) as Element).getElementsByTagName("action")
+            (0 until elements.length).map { elements.item(it).attributes.getNamedItem("android:name").nodeValue }
+        }
+
+        assertTrue(actions.contains("android.speech.RecognitionService"))
     }
 
     @Test
