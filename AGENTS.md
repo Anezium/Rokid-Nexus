@@ -121,6 +121,37 @@ not.
 Never report a build or test result you did not actually observe. Paste the real tail of
 the command output. If you could not run it, say that plainly.
 
+## Releasing a plugin reaches no one until the registry is updated
+
+A `<plugin>-v<version>` tag only publishes the APK on this repository's GitHub
+release. The Store reads
+[RokidBrew-Registry](https://github.com/Anezium/RokidBrew-Registry), and nothing
+updates a plugin there automatically: the registry's maintenance job scans only
+`apps/` (which covers the hubs), never `plugins-nexus/`. A plugin release is not
+finished until a registry pull request for it is open. Lyrics 1.0.4 shipped with
+Nexus 2.6.3 without one, and users saw it in the hub changelog while the Store
+still offered 1.0.3.
+
+Once the plugin's release workflow has published the APK, in a worktree of the
+registry on a topic branch from `origin/main`:
+
+1. In `plugins-nexus/<id>.json`, add the new entry at the top of `releases`
+   (version, the release's publish date, notes taken from the plugin's
+   `CHANGELOG.md`), and set `artifact.url`, `artifact.versionCode` and
+   `artifact.versionName` to the new release.
+2. Run `node scripts/update-artifact-metadata.mjs --kind nexus-plugin --app <id> --force`.
+   It downloads the published APK and writes its sha256, size and signer. Never
+   type these by hand. Put the measured sha256 in the release notes' Artifact
+   block too.
+3. Raise `nexus.minHostVersionCode`, `nexus.apiVersion` or `nexus.capabilities`
+   only when the plugin's manifest actually changed them.
+4. Run `node scripts/build-registry.mjs`, `node --test tests/*.test.mjs` and
+   `node scripts/verify-nexus-plugin-apks.mjs --base origin/main --head HEAD`,
+   then commit the descriptor and `dist/` together and open the pull request.
+
+Do it for every plugin in a release wave, including those shipped alongside a
+hub release.
+
 ## Conventions
 
 - Code, comments, documentation, and commit messages are written in English.
