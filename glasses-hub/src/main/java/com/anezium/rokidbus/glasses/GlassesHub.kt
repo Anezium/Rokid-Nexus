@@ -22,6 +22,7 @@ import com.anezium.rokidbus.client.ui.NexusGlyphs
 import com.anezium.rokidbus.client.ui.NexusPluginIcons
 import com.anezium.rokidbus.shared.ActivitySurfaceContract
 import com.anezium.rokidbus.shared.AmbientPreferencesContract
+import com.anezium.rokidbus.shared.AnimationScales
 import com.anezium.rokidbus.shared.BusCapabilityBits
 import com.anezium.rokidbus.shared.BusConstants
 import com.anezium.rokidbus.shared.BusEnvelope
@@ -492,16 +493,22 @@ object GlassesHub {
                 return
             }
             val scan = scanAccessibilityServices(context)
+            val animationScales = AnimationScales.read(context.contentResolver)
             val error = sendRemote(
                 BusEnvelope(
                     path = BusPaths.GLASSES_ACCESSIBILITY_CHECK_REPLY,
                     id = envelope.id,
-                    payload = GlassesAccessibilityCheckContract.replyToJson(scan.foreign, scan.nexusEnabled),
+                    payload = GlassesAccessibilityCheckContract.replyToJson(
+                        scan.foreign,
+                        scan.nexusEnabled,
+                        animationScales,
+                    ),
                 ),
             )
             log(
                 "accessibilityCheck foreign=${scan.foreign.size} " +
-                    "nexusEnabled=${scan.nexusEnabled} replyError=${error ?: "none"}",
+                    "nexusEnabled=${scan.nexusEnabled} " +
+                    "animationScalesOff=${animationScales.disabled.size} replyError=${error ?: "none"}",
             )
             return
         }

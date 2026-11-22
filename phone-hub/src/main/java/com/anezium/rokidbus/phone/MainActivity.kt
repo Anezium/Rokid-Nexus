@@ -34,6 +34,7 @@ import androidx.core.content.ContextCompat
 import com.anezium.rokidbus.client.BusClient
 import com.anezium.rokidbus.client.BusEvent
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.shared.AnimationScales
 import com.anezium.rokidbus.shared.LinkStateBits
 import com.anezium.rokidbus.shared.SetupStage
 
@@ -190,7 +191,10 @@ class MainActivity : Activity() {
                 rebuildSetupSection()
             }
             is CxrLAuth.Result.Fail -> logLine("Authorization failed: ${result.reason}")
-            CxrLAuth.Result.Cancel -> logLine("Authorization canceled")
+            CxrLAuth.Result.Cancel -> {
+                logLine("Authorization canceled")
+                AnimationScaleWarning.phone(AnimationScales.read(contentResolver).disabled)?.let(::logLine)
+            }
         }
     }
 
@@ -949,11 +953,18 @@ class MainActivity : Activity() {
         val handoff = NexusPhoneState.glassesSetupHandoff
         val setupUnfinished = NexusPhoneState.glassesAppInstalled &&
             !NexusPhoneState.glassesSetupComplete
+        val authorized = savedToken().isNotBlank()
+        val animationWarning = if (authorized) {
+            null
+        } else {
+            AnimationScaleWarning.phone(AnimationScales.read(contentResolver).disabled)
+        }
         val steps = listOf(
             OnboardingStep(
                 title = getString(R.string.onb_authorize_title),
-                body = getString(R.string.onb_authorize_body),
-                done = savedToken().isNotBlank(),
+                body = listOfNotNull(getString(R.string.onb_authorize_body), animationWarning)
+                    .joinToString("\n\n"),
+                done = authorized,
                 actionLabel = getString(R.string.onb_authorize_action),
                 onAction = { startAuthorization() },
             ),

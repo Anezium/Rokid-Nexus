@@ -24,10 +24,19 @@ object GlassesAccessibilityCheckContract {
      * either way). Collapsing the two into "only Nexus's own service" would
      * tell the owner everything is fine in exactly the case it is not.
      */
-    fun replyToJson(foreignServices: List<String>, nexusEnabled: Boolean): JSONObject = JSONObject()
+    fun replyToJson(
+        foreignServices: List<String>,
+        nexusEnabled: Boolean,
+        animationScales: AnimationScales? = null,
+    ): JSONObject = JSONObject()
         .put("version", VERSION)
         .put("foreignServices", JSONArray(foreignServices))
         .put("nexusEnabled", nexusEnabled)
+        .apply {
+            if (animationScales != null) {
+                put("animationScalesOff", AnimationScales.disabledToJson(animationScales))
+            }
+        }
 
     /** Null for a reply this build cannot parse, so version skew reads as "no answer". */
     fun fromReply(payload: JSONObject?): AccessibilityCheckReply? {
@@ -40,8 +49,17 @@ object GlassesAccessibilityCheckContract {
         return AccessibilityCheckReply(
             foreignServices = foreign,
             nexusEnabled = json.optBoolean("nexusEnabled", true),
+            animationScalesOff = AnimationScales.disabledFromJson(json.optJSONArray("animationScalesOff")),
         )
     }
 }
 
-data class AccessibilityCheckReply(val foreignServices: List<String>, val nexusEnabled: Boolean)
+/**
+ * [animationScalesOff] is null when the glasses hub predates the field, which is
+ * "not checked", not "all animations on".
+ */
+data class AccessibilityCheckReply(
+    val foreignServices: List<String>,
+    val nexusEnabled: Boolean,
+    val animationScalesOff: List<String>? = null,
+)
