@@ -28,6 +28,7 @@ import com.anezium.rokidbus.phone.speech.SpeechReadiness
 import com.anezium.rokidbus.phone.speech.SpeechSettingsStore
 import com.anezium.rokidbus.shared.BusPaths
 import com.anezium.rokidbus.shared.AccessibilityCheckReply
+import com.anezium.rokidbus.shared.AnimationScales
 import com.anezium.rokidbus.shared.GlassesAccessibilityCheckContract
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.LinkStateBits
@@ -76,6 +77,7 @@ class SettingsActivity : Activity() {
     private val repairStatusClear = Runnable { repairStatus?.visibility = View.GONE }
     private var accessibilityCheckValue: TextView? = null
     private var accessibilityCheckStatus: TextView? = null
+    private var animationScaleWarning: TextView? = null
     private var accessibilityCheckInFlight = false
     private val accessibilityCheckStatusClear =
         Runnable { accessibilityCheckStatus?.visibility = View.GONE }
@@ -149,6 +151,8 @@ class SettingsActivity : Activity() {
         renderVoiceRow()
         renderAudioRelayStatus()
         renderDisplayRow()
+        // The owner may have just come back from Developer options.
+        renderAnimationScaleWarning()
         resumeRecoveredNexusUpdateInstall()
         if (lastLinkState and LinkStateBits.CXR_CONTROL_UP != 0) {
             BusHubService.queryGlassesApp(this)
@@ -175,7 +179,10 @@ class SettingsActivity : Activity() {
                 BusHubService.startWithToken(this, result.token)
             }
             is CxrLAuth.Result.Fail -> logLine("Authorization failed: ${result.reason}")
-            CxrLAuth.Result.Cancel -> logLine("Authorization canceled")
+            CxrLAuth.Result.Cancel -> {
+                logLine("Authorization canceled")
+                AnimationScaleWarning.phone(AnimationScales.read(contentResolver).disabled)?.let(::logLine)
+            }
         }
     }
 
@@ -195,6 +202,7 @@ class SettingsActivity : Activity() {
             addView(connectionCard(), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 10))
             addView(authorizeRow(), NexusUi.block())
+            addView(animationScaleWarningView(), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 28))
             addView(NexusUi.sectionRow(this@SettingsActivity, "Glasses"), NexusUi.block())
             addView(BusTheme.gap(this@SettingsActivity, 12))
@@ -467,6 +475,26 @@ class SettingsActivity : Activity() {
             value = "Open",
             danger = false,
         ) { startAuthorization() }
+
+    private fun animationScaleWarningView(): TextView =
+        NexusUi.rowSub(this, "").apply {
+            setTextColor(NexusUi.AMBER)
+            setPadding(
+                NexusUi.dp(this@SettingsActivity, 15),
+                NexusUi.dp(this@SettingsActivity, 8),
+                NexusUi.dp(this@SettingsActivity, 15),
+                0,
+            )
+            animationScaleWarning = this
+            renderAnimationScaleWarning()
+        }
+
+    private fun renderAnimationScaleWarning() {
+        val view = animationScaleWarning ?: return
+        val message = AnimationScaleWarning.phone(AnimationScales.read(contentResolver).disabled)
+        view.text = message.orEmpty()
+        view.visibility = if (message == null) View.GONE else View.VISIBLE
+    }
 
     private fun aboutCard(): LinearLayout =
         NexusUi.card(this).apply {
@@ -842,7 +870,8 @@ class SettingsActivity : Activity() {
             addView(
                 NexusUi.rowSub(
                     this@SettingsActivity,
-                    "Warn if another app's accessibility service is interfering with Nexus",
+                    "Warn if another app's accessibility service is interfering with Nexus, " +
+                        "or if animations are turned off on the glasses",
                 ),
                 NexusUi.block(),
             )
@@ -873,7 +902,12 @@ class SettingsActivity : Activity() {
                 onSuccess = { payload -> GlassesAccessibilityCheckContract.fromReply(payload) },
                 onFailure = { null },
             )
-            showAccessibilityCheckStatus(accessibilityCheckMessage(result.isSuccess, reply))
+            val glassesAnimationWarning = reply?.animationScalesOff?.let(AnimationScaleWarning::glasses)
+            showAccessibilityCheckStatus(
+                listOfNotNull(accessibilityCheckMessage(result.isSuccess, reply), glassesAnimationWarning)
+                    .joinToString("\n\n"),
+                autoClear = glassesAnimationWarning == null,
+            )
             if (!reply?.foreignServices.isNullOrEmpty() || reply?.nexusEnabled == false) {
                 offerOpenGlassesAccessibilitySettings()
             }
