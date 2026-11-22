@@ -265,7 +265,7 @@ class LyricsSettingsActivity : Activity() {
         val placements = NexusTimedLinesPlacement.entries
         val next = placements[(current.placement.ordinal + 1) % placements.size]
         saveDisplay(current.copy(placement = next))
-        placementValue.text = "${placementLabel(next)} \u203A"
+        placementValue.text = "${placementLabel(next).uppercase()} \u203A"
     }
 
     private fun cycleTextSize() {
@@ -273,7 +273,7 @@ class LyricsSettingsActivity : Activity() {
         val sizes = NexusTimedLinesTextSize.entries
         val next = sizes[(current.textSize.ordinal + 1) % sizes.size]
         saveDisplay(current.copy(textSize = next))
-        textSizeValue.text = "${textSizeLabel(next)} \u203A"
+        textSizeValue.text = "${textSizeLabel(next).uppercase()} \u203A"
     }
 
     private fun saveDisplay(settings: LyricsDisplaySettings) {
