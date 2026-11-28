@@ -20,6 +20,7 @@ import com.anezium.rokidbus.shared.plugin.NexusInputEvent
 import com.google.mlkit.vision.text.Text
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -165,6 +166,12 @@ internal class LensCameraSession(
     private val preferences = lensPreferences(appContext)
     private val translator: TranslationProvider = TranslationEngineRouter(appContext)
     private val frozenOcr = PhoneFrozenOcr()
+    private val geminiVision = GeminiVisionReader(
+        apiKeySupplier = { preferences.getString(LENS_TRANSLATION_PREF_GEMINI_API_KEY, "").orEmpty() },
+        modelSupplier = {
+            preferences.getString(LENS_TRANSLATION_PREF_GEMINI_MODEL, null) ?: LENS_GEMINI_MODEL_DEFAULT
+        },
+    )
     private val frozenExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "lens-frozen-pipeline").apply { isDaemon = true }
     }
@@ -187,6 +194,7 @@ internal class LensCameraSession(
     private val imageLink: PhoneLensImageLink
     private val firstFrameLogged = AtomicBoolean(false)
     @Volatile private var sessionId: String? = null
+    @Volatile private var latestVisionRequest: Pair<String, Long>? = null
     @Volatile private var sessionStartedAtMs = 0L
 
     init {
@@ -437,28 +445,10 @@ internal class LensCameraSession(
                         finishFrozenProcessing(bitmap, frozenWork)
                         return@execute
                     }
-                    frozenOcr.recognize(
-                        bitmap = bitmap,
-                        targetScriptPlan = listOf(targetScript),
-                    ) { recognized ->
-                        if (closed.get()) {
-                            finishFrozenProcessing(bitmap, frozenWork)
-                            return@recognize
-                        }
-                        recognized.fold(
-                            onSuccess = { result ->
-                                startFrozenTranslation(
-                                    activeSession = activeSession,
-                                    requestId = requestId,
-                                    bitmap = bitmap,
-                                    result = result,
-                                    frozenWork = frozenWork,
-                                )
-                            },
-                            onFailure = {
-                                failFrozenProcessing(requestId, "ocr", bitmap, frozenWork, it)
-                            },
-                        )
+                    if (geminiVisionEnabled()) {
+                        readFrozenWithGemini(activeSession, requestId, bitmap, targetScript, frozenWork)
+                    } else {
+                        recognizeFrozenOnDevice(activeSession, requestId, bitmap, targetScript, frozenWork)
                     }
                 }.onFailure {
                     failFrozenProcessing(requestId, "pipeline_start", bitmap, frozenWork, it)
@@ -467,6 +457,133 @@ internal class LensCameraSession(
         }.onFailure {
             failFrozenProcessing(requestId, "queue", null, frozenWork, it)
         }
+    }
+
+    private fun recognizeFrozenOnDevice(
+        activeSession: String,
+        requestId: Long,
+        bitmap: Bitmap,
+        targetScript: PhoneOcrScript,
+        frozenWork: FrozenProcessingGate.Lease,
+    ) {
+        frozenOcr.recognize(
+            bitmap = bitmap,
+            targetScriptPlan = listOf(targetScript),
+        ) { recognized ->
+            if (closed.get()) {
+                finishFrozenProcessing(bitmap, frozenWork)
+                return@recognize
+            }
+            recognized.fold(
+                onSuccess = { result ->
+                    startFrozenTranslation(
+                        activeSession = activeSession,
+                        requestId = requestId,
+                        bitmap = bitmap,
+                        result = result,
+                        frozenWork = frozenWork,
+                    )
+                },
+                onFailure = {
+                    failFrozenProcessing(requestId, "ocr", bitmap, frozenWork, it)
+                },
+            )
+        }
+    }
+
+    private fun geminiVisionEnabled(): Boolean =
+        preferences.getBoolean(LENS_PREF_GEMINI_VISION_FROZEN, false) &&
+            preferences.getString(LENS_TRANSLATION_PREF_GEMINI_API_KEY, "").orEmpty().isNotBlank() &&
+            !preferences.getString(LENS_TRANSLATION_PREF_ENGINE, null)
+                .equals(TranslationEngine.MLKIT_OFFLINE.name, ignoreCase = true)
+
+    /**
+     * Gemini reads and translates the photo in one call, covering scripts the bundled ML Kit
+     * recognizers cannot read (Thai, Arabic, Cyrillic...). Any failure, an empty reading
+     * included, falls back to the on-device path so a quota or network error never costs the
+     * user the frozen result they would have had without the option.
+     */
+    private fun readFrozenWithGemini(
+        activeSession: String,
+        requestId: Long,
+        bitmap: Bitmap,
+        targetScript: PhoneOcrScript,
+        frozenWork: FrozenProcessingGate.Lease,
+    ) {
+        val jpeg = runCatching { encodeGeminiVisionJpeg(bitmap) }.getOrElse {
+            logFrozenStage("frozen_vision_failed", requestId, "reason=encode fallback=on_device")
+            recognizeFrozenOnDevice(activeSession, requestId, bitmap, targetScript, frozenWork)
+            return
+        }
+        logFrozenStage("frozen_vision_start", requestId, "bytes=${jpeg.size}")
+        val requestKey = activeSession to requestId
+        latestVisionRequest = requestKey
+        // Only the newest freeze is still on the glasses; an older photo still queued here
+        // would hold live OCR paused and spend quota for a result nobody sees.
+        fun superseded() = latestVisionRequest != requestKey || sessionId != activeSession
+        lateinit var request: GeminiVisionReader.Request
+        request = geminiVision.newRequest(
+            jpeg = jpeg,
+            width = bitmap.width,
+            height = bitmap.height,
+            targetLanguage = targetLanguage(),
+            shouldSend = { !closed.get() && !superseded() && geminiVisionEnabled() },
+        ) { result ->
+            activeFrozenTranslations -= request
+            if (closed.get() || sessionId != activeSession || superseded()) {
+                finishFrozenProcessing(bitmap, frozenWork)
+                return@newRequest
+            }
+            val paragraphs = result.getOrNull().orEmpty()
+            if (paragraphs.isEmpty()) {
+                val reason = (result.exceptionOrNull() as? GeminiVisionException)?.reason ?: "empty"
+                logFrozenStage("frozen_vision_failed", requestId, "reason=$reason fallback=on_device")
+                runCatching {
+                    frozenExecutor.execute {
+                        if (closed.get() || sessionId != activeSession) {
+                            finishFrozenProcessing(bitmap, frozenWork)
+                            return@execute
+                        }
+                        runCatching {
+                            recognizeFrozenOnDevice(activeSession, requestId, bitmap, targetScript, frozenWork)
+                        }.onFailure { failFrozenProcessing(requestId, "vision_fallback", bitmap, frozenWork, it) }
+                    }
+                }.onFailure { failFrozenProcessing(requestId, "vision_fallback", bitmap, frozenWork, it) }
+                return@newRequest
+            }
+            try {
+                val overlay = geminiVisionOverlay(paragraphs)
+                val lines = overlay.paragraphs.map { paragraph ->
+                    val box = paragraph.bounds
+                    OcrLine(
+                        source = paragraph.source,
+                        box = Rect(box.left, box.top, box.right, box.bottom),
+                        medianLineHeight = box.height.toFloat() / paragraph.lineCount,
+                        // Frozen panels are budgeted viewport-wide on the glasses, so the
+                        // live-only growth and column hints stay neutral here.
+                        growDown = 0f,
+                        column = -1,
+                    )
+                }
+                logFrozenStage("frozen_vision_done", requestId, "items=${lines.size}")
+                sendOverlay(
+                    BusPaths.CAMERA_FREEZE_RESULT, activeSession, requestId,
+                    lines, overlay.translations, bitmap.width, bitmap.height,
+                )
+            } finally {
+                finishFrozenProcessing(bitmap, frozenWork)
+            }
+        }
+        activeFrozenTranslations += request
+        // close() may have snapshotted the active calls between the caller's closed check and
+        // the registration above; it would never cancel this upload.
+        if (closed.get()) {
+            activeFrozenTranslations -= request
+            request.cancel()
+            finishFrozenProcessing(bitmap, frozenWork)
+            return
+        }
+        request.start()
     }
 
     private fun startFrozenTranslation(
@@ -786,6 +903,29 @@ internal class LensCameraSession(
         OcrScript.DEVANAGARI -> PhoneOcrScript.DEVANAGARI
     }
 
+    private fun encodeGeminiVisionJpeg(bitmap: Bitmap): ByteArray {
+        val longEdge = maxOf(bitmap.width, bitmap.height)
+        val scaled = if (longEdge > GEMINI_VISION_MAX_IMAGE_EDGE) {
+            val factor = GEMINI_VISION_MAX_IMAGE_EDGE.toFloat() / longEdge
+            Bitmap.createScaledBitmap(
+                bitmap,
+                (bitmap.width * factor).toInt().coerceAtLeast(1),
+                (bitmap.height * factor).toInt().coerceAtLeast(1),
+                true,
+            )
+        } else {
+            bitmap
+        }
+        return try {
+            ByteArrayOutputStream().use { output ->
+                check(scaled.compress(Bitmap.CompressFormat.JPEG, GEMINI_VISION_JPEG_QUALITY, output))
+                output.toByteArray()
+            }
+        } finally {
+            if (scaled !== bitmap) scaled.recycle()
+        }
+    }
+
     private fun recycleFrozen(bitmap: Bitmap) {
         activeFrozenBitmaps -= bitmap
         if (!bitmap.isRecycled) bitmap.recycle()
@@ -806,6 +946,7 @@ internal class LensCameraSession(
         activeFrozenTranslations.clear()
         frozenExecutor.shutdownNow()
         frozenOcr.close()
+        geminiVision.close()
         translator.close()
         activeFrozenBitmaps.toList().forEach(::recycleFrozen)
         holder.close()

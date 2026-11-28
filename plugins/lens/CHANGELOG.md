@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- New opt-in "Read frozen photos with Gemini" setting: with a Gemini key, Lens sends the frozen photo to Gemini, which reads and translates it in one call. This reads scripts the on-device recognizer cannot, such as Thai, Arabic, Cyrillic, Greek and Hebrew. Frozen photos only, never the live overlay, and never while the On-device engine is selected; if Gemini fails, Lens falls back to reading the photo on the phone.
+- Thai is now available as a translation target language.
+- The default Gemini model is now "Gemini 3.5 Flash Lite": it answered in about a second and a half where the larger flash models took up to 45 seconds or were overloaded. Google refuses Gemini 2.5 Flash to new API keys, so a freshly created key could not translate with the old default; it stays selectable for keys that still have access.
+- When the chosen Gemini model is unavailable to the key or overloaded, Lens retries once on Gemini's latest lite model before giving up.
+- Settings now say which scripts Lens reads on the phone.
+
 ## 1.1.2
 
 - Android 11 support: the plugin now installs on Android 11 (API 30) phones. Declares ACCESS_COARSE_LOCATION alongside FINE for the Wi-Fi Direct link.
