@@ -115,6 +115,7 @@ class LensSettingsActivity : Activity() {
         LanguageChoice("ar", "\u0627\u0644\u0639\u0631\u0628\u064a\u0629"),
         LanguageChoice("tr", "T\u00fcrk\u00e7e"),
         LanguageChoice("hi", "\u0939\u093f\u0928\u094d\u0926\u0940"),
+        LanguageChoice("th", "\u0e44\u0e17\u0e22"),
     ).filter { TranslateLanguage.fromLanguageTag(it.code) != null }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -139,6 +140,11 @@ class LensSettingsActivity : Activity() {
             addView(NexusUi.sectionRow(this@LensSettingsActivity, "Output language"), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 12))
             addView(outputLanguageCard(), NexusUi.block())
+            addView(BusTheme.gap(this@LensSettingsActivity, 8))
+            addView(
+                NexusUi.cardBody(this@LensSettingsActivity, lensReadableScriptsCaption()),
+                NexusUi.block(),
+            )
             addView(BusTheme.gap(this@LensSettingsActivity, 22))
             addView(NexusUi.sectionRow(this@LensSettingsActivity, "Translation engine"), NexusUi.block())
             addView(BusTheme.gap(this@LensSettingsActivity, 12))
@@ -374,6 +380,27 @@ class LensSettingsActivity : Activity() {
                 addView(modelRow(choice), NexusUi.block())
             }
             renderModelSelection()
+            addView(NexusUi.divider(this@LensSettingsActivity))
+            addView(BusTheme.gap(this@LensSettingsActivity, 4))
+            addView(
+                NexusUi.switchRow(
+                    context = this@LensSettingsActivity,
+                    label = GEMINI_VISION_SETTING_LABEL,
+                    sub = "Sends the frozen photo to Google to read and translate it in one " +
+                        "call, including scripts the phone cannot read such as Thai or Arabic. " +
+                        "Frozen photos only; needs internet and the key above. If Gemini fails, " +
+                        "Lens reads the photo on the phone instead.",
+                    control = NexusUi.switch(this@LensSettingsActivity).apply {
+                        isChecked = translationPrefs.getBoolean(LENS_PREF_GEMINI_VISION_FROZEN, false)
+                        contentDescription = GEMINI_VISION_SETTING_LABEL
+                        setOnCheckedChangeListener { _, checked ->
+                            translationPrefs.edit().putBoolean(LENS_PREF_GEMINI_VISION_FROZEN, checked).apply()
+                        }
+                    },
+                    wrapSub = true,
+                ),
+                NexusUi.block(),
+            )
         }
 
     private fun modelRow(choice: ModelChoice): LinearLayout =
