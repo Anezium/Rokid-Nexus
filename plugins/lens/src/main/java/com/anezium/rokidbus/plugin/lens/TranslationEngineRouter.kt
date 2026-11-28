@@ -17,19 +17,28 @@ const val LENS_TRANSLATION_PREF_GEMINI_MODEL = "gemini_model"
 const val LENS_TRANSLATION_PREF_TARGET_LANG = "target_lang"
 const val LENS_TRANSLATION_TARGET_LANG_DEFAULT = "fr"
 
-// The alias always points at a served flash model. gemini-2.5-flash, the previous default,
-// now 404s ("no longer available to new users") for keys that never called it, so a fresh key
-// following the setup hint could not translate at all.
-const val LENS_GEMINI_MODEL_DEFAULT = "gemini-flash-latest"
+// Measured on 2026-11-28 with the frozen-photo request: the lite model answered in ~1.5s every
+// time, while every full flash model (gemini-flash-latest was gemini-3.8-flash) took 7-45s or
+// returned 503. gemini-2.5-flash, the previous default, 404s ("no longer available to new
+// users") for keys that never called it. A pinned id, not an alias, so Google moving an alias
+// to a freshly launched, congested model cannot slow every user down at once.
+const val LENS_GEMINI_MODEL_DEFAULT = "gemini-3.5-flash-lite"
 
-// Free-tier models verified against the Gemini API on 2026-07-10; "pro" models 429 with
-// a zero free-tier quota, and retired models (gemini-2.0-flash) do too. Unknown stored
-// values fall back to the default so a removed model can never brick translation again.
-// gemini-2.5-flash stays selectable for keys that still have access to it.
+// Retried once when the chosen model is gone for this key (404) or overloaded (5xx, timeout).
+// The alias outlives any pinned id, so it also covers the day the default is retired.
+const val LENS_GEMINI_RESCUE_MODEL = "gemini-flash-lite-latest"
+
+internal fun geminiStatusRetriesOnRescue(status: Int): Boolean = status == 404 || status in 500..599
+
+// Free-tier models; "pro" models 429 with a zero free-tier quota, and retired models
+// (gemini-2.0-flash) do too. Unknown stored values fall back to the default so a removed
+// model can never brick translation again. gemini-2.5-flash stays selectable for keys that
+// still have access to it.
 val LENS_GEMINI_MODELS: List<String> = listOf(
     LENS_GEMINI_MODEL_DEFAULT,
-    "gemini-2.5-flash",
+    "gemini-flash-latest",
     "gemini-3-flash-preview",
+    "gemini-2.5-flash",
 )
 
 enum class TranslationEngine {

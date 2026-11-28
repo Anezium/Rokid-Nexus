@@ -4,6 +4,7 @@ import com.anezium.rokidbus.shared.CameraOverlayContract
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.Base64
 import java.util.Locale
@@ -28,9 +29,6 @@ private const val GEMINI_VISION_CONNECT_TIMEOUT_MS = 5_000
 // never hears that the user left the frozen view, so this also bounds how long live OCR stays
 // paused behind an abandoned photo.
 private const val GEMINI_VISION_READ_TIMEOUT_MS = 20_000
-// A model the user picked can stop being served to their key (gemini-2.5-flash now 404s for
-// keys that never used it); the default alias is the one we know Google keeps serving.
-internal const val GEMINI_VISION_FALLBACK_MODEL = LENS_GEMINI_MODEL_DEFAULT
 private const val GEMINI_VISION_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 internal data class GeminiVisionParagraph(
@@ -205,6 +203,11 @@ internal fun geminiVisionHttpReason(status: Int): String = when (status) {
     else -> "http_$status"
 }
 
+internal fun geminiVisionRetriesOnRescue(failure: Throwable): Boolean =
+    failure is SocketTimeoutException ||
+        (failure is GeminiVisionException &&
+            (failure.reason == "model_unavailable" || failure.reason.startsWith("server_")))
+
 /**
  * Reads and translates a frozen photo in a single Gemini call. Only the frozen path uses it: a
  * network round trip per frame and the free tier's per-minute quota rule out the live overlay.
@@ -262,9 +265,9 @@ internal class GeminiVisionReader(
             val body = buildGeminiVisionRequestBody(jpeg, targetLanguage)
             return try {
                 post(apiKey, model, body)
-            } catch (failure: GeminiVisionException) {
-                if (failure.reason != "model_unavailable" || model == GEMINI_VISION_FALLBACK_MODEL) throw failure
-                post(apiKey, GEMINI_VISION_FALLBACK_MODEL, body)
+            } catch (failure: Exception) {
+                if (model == LENS_GEMINI_RESCUE_MODEL || !geminiVisionRetriesOnRescue(failure)) throw failure
+                post(apiKey, LENS_GEMINI_RESCUE_MODEL, body)
             }
         }
 

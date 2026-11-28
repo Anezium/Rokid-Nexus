@@ -1,5 +1,6 @@
 package com.anezium.rokidbus.plugin.lens
 
+import java.net.SocketTimeoutException
 import java.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
@@ -181,6 +182,22 @@ class GeminiVisionReaderTest {
         assertEquals("quota", geminiVisionHttpReason(429))
         assertEquals("key_rejected", geminiVisionHttpReason(403))
         assertEquals("server_503", geminiVisionHttpReason(503))
+    }
+
+    @Test
+    fun `retries on the rescue model only when the chosen one is gone or overloaded`() {
+        assertTrue(geminiVisionRetriesOnRescue(GeminiVisionException("model_unavailable")))
+        assertTrue(geminiVisionRetriesOnRescue(GeminiVisionException("server_503")))
+        assertTrue(geminiVisionRetriesOnRescue(SocketTimeoutException()))
+        assertFalse(geminiVisionRetriesOnRescue(GeminiVisionException("quota")))
+        assertFalse(geminiVisionRetriesOnRescue(GeminiVisionException("key_rejected")))
+        assertFalse(geminiVisionRetriesOnRescue(GeminiVisionException(GEMINI_VISION_SKIPPED)))
+        assertFalse(geminiVisionRetriesOnRescue(GeminiVisionException("canceled")))
+        assertTrue(geminiStatusRetriesOnRescue(404))
+        assertTrue(geminiStatusRetriesOnRescue(503))
+        assertFalse(geminiStatusRetriesOnRescue(429))
+        assertFalse(geminiStatusRetriesOnRescue(403))
+        assertTrue(LENS_GEMINI_MODEL_DEFAULT in LENS_GEMINI_MODELS)
     }
 
     @Test

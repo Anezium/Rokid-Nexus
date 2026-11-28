@@ -508,16 +508,28 @@ class GeminiTranslationProvider(
             )
             .toString()
             .toByteArray(Charsets.UTF_8)
-        val response = readResponse(
+        var failedStatus = 0
+        fun post(target: String): String = readResponse(
             operation = operation,
             url = URL(
                 "https://generativelanguage.googleapis.com/v1beta/models/" +
-                    "$model:generateContent?key=${urlEncode(apiKey)}",
+                    "$target:generateContent?key=${urlEncode(apiKey)}",
             ),
             method = "POST",
             headers = mapOf("Content-Type" to "application/json; charset=utf-8"),
             body = body,
+            mapHttpError = { status ->
+                failedStatus = status
+                defaultHttpError(status)
+            },
         )
+        val response = try {
+            post(model)
+        } catch (failure: Exception) {
+            val overloadedOrGone = failure is SocketTimeoutException || geminiStatusRetriesOnRescue(failedStatus)
+            if (model == LENS_GEMINI_RESCUE_MODEL || !overloadedOrGone || !operation.isActive()) throw failure
+            post(LENS_GEMINI_RESCUE_MODEL)
+        }
         val parsed = OnlineTranslationResponseParser.parseGemini(response, request.strings.size)
         return parsed.mapIndexed { index, item ->
             val source = request.strings[index]
