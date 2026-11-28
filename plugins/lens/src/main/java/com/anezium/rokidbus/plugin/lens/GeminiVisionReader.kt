@@ -28,9 +28,9 @@ private const val GEMINI_VISION_CONNECT_TIMEOUT_MS = 5_000
 // never hears that the user left the frozen view, so this also bounds how long live OCR stays
 // paused behind an abandoned photo.
 private const val GEMINI_VISION_READ_TIMEOUT_MS = 20_000
-// Google stopped serving gemini-2.5-flash to keys that never used it (404 "no longer available
-// to new users"), yet it is the Lens default. The alias always points at a served flash model.
-internal const val GEMINI_VISION_FALLBACK_MODEL = "gemini-flash-latest"
+// A model the user picked can stop being served to their key (gemini-2.5-flash now 404s for
+// keys that never used it); the default alias is the one we know Google keeps serving.
+internal const val GEMINI_VISION_FALLBACK_MODEL = LENS_GEMINI_MODEL_DEFAULT
 private const val GEMINI_VISION_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 internal data class GeminiVisionParagraph(

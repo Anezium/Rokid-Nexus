@@ -86,9 +86,9 @@ class LensSettingsActivity : Activity() {
 
     // Free-tier models only; the router whitelist (LENS_GEMINI_MODELS) is the source of truth.
     private val modelChoices = listOf(
-        ModelChoice("gemini-2.5-flash", "Gemini 2.5 Flash", "Stable, recommended"),
+        ModelChoice("gemini-flash-latest", "Gemini Flash Latest", "Always the newest flash, recommended"),
+        ModelChoice("gemini-2.5-flash", "Gemini 2.5 Flash", "Older keys only - new keys are refused"),
         ModelChoice("gemini-3-flash-preview", "Gemini 3 Flash", "Smarter - preview, may vanish"),
-        ModelChoice("gemini-flash-latest", "Gemini Flash Latest", "Always the newest flash"),
     )
 
     private data class LanguageChoice(

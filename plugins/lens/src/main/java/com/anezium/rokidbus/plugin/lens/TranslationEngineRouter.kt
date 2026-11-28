@@ -17,15 +17,19 @@ const val LENS_TRANSLATION_PREF_GEMINI_MODEL = "gemini_model"
 const val LENS_TRANSLATION_PREF_TARGET_LANG = "target_lang"
 const val LENS_TRANSLATION_TARGET_LANG_DEFAULT = "fr"
 
-const val LENS_GEMINI_MODEL_DEFAULT = "gemini-2.5-flash"
+// The alias always points at a served flash model. gemini-2.5-flash, the previous default,
+// now 404s ("no longer available to new users") for keys that never called it, so a fresh key
+// following the setup hint could not translate at all.
+const val LENS_GEMINI_MODEL_DEFAULT = "gemini-flash-latest"
 
 // Free-tier models verified against the Gemini API on 2026-07-10; "pro" models 429 with
 // a zero free-tier quota, and retired models (gemini-2.0-flash) do too. Unknown stored
 // values fall back to the default so a removed model can never brick translation again.
+// gemini-2.5-flash stays selectable for keys that still have access to it.
 val LENS_GEMINI_MODELS: List<String> = listOf(
     LENS_GEMINI_MODEL_DEFAULT,
+    "gemini-2.5-flash",
     "gemini-3-flash-preview",
-    "gemini-flash-latest",
 )
 
 enum class TranslationEngine {
