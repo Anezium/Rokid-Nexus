@@ -118,6 +118,30 @@ class GeminiVisionReaderTest {
     }
 
     @Test
+    fun `names a token cutoff even when partial text came back`() {
+        val truncated = JSONObject()
+            .put(
+                "candidates",
+                JSONArray().put(
+                    JSONObject()
+                        .put("finishReason", "MAX_TOKENS")
+                        .put(
+                            "content",
+                            JSONObject().put("parts", JSONArray().put(JSONObject().put("text", "[{\"text\":\"Ex"))),
+                        ),
+                ),
+            )
+            .toString()
+
+        assertEquals(
+            "max_tokens",
+            assertThrows(GeminiVisionException::class.java) {
+                GeminiVisionResponseParser.parse(truncated, 100, 100)
+            }.reason,
+        )
+    }
+
+    @Test
     fun `caps the paragraph count`() {
         val entries = JSONArray().apply {
             repeat(GEMINI_VISION_MAX_PARAGRAPHS + 5) { index ->

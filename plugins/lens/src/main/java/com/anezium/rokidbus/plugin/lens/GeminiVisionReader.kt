@@ -56,10 +56,10 @@ internal object GeminiVisionResponseParser {
         val root = strictJsonValue(response) as? JSONObject ?: throw GeminiVisionException("malformed")
         val candidate = (root.opt("candidates") as? JSONArray)?.opt(0) as? JSONObject
             ?: throw GeminiVisionException(blockedReason(root))
+        val finishReason = candidate.optString("finishReason").lowercase(Locale.ROOT)
+        val failureReason = finishReason.takeIf { it.isNotBlank() && it != "stop" } ?: "malformed"
         val parts = ((candidate.opt("content") as? JSONObject)?.opt("parts") as? JSONArray)
-            ?: throw GeminiVisionException(
-                candidate.optString("finishReason").lowercase(Locale.ROOT).ifBlank { "malformed" },
-            )
+            ?: throw GeminiVisionException(failureReason)
         val replyText = buildString {
             for (index in 0 until parts.length()) {
                 val part = parts.opt(index) as? JSONObject ?: continue
@@ -67,7 +67,9 @@ internal object GeminiVisionResponseParser {
                 (part.opt("text") as? String)?.let(::append)
             }
         }
-        val entries = strictJsonValue(replyText) as? JSONArray ?: throw GeminiVisionException("malformed")
+        // A MAX_TOKENS cutoff still carries thought or partial JSON parts; name the cutoff.
+        val entries = runCatching { strictJsonValue(replyText) }.getOrNull() as? JSONArray
+            ?: throw GeminiVisionException(failureReason)
         return (0 until entries.length())
             .mapNotNull { index -> paragraph(entries.opt(index), width, height) }
             .take(GEMINI_VISION_MAX_PARAGRAPHS)
@@ -160,7 +162,7 @@ internal fun buildGeminiVisionRequestBody(jpeg: ByteArray, targetLanguage: Strin
                             JSONObject().put("type", "ARRAY").put("items", JSONObject().put("type", "INTEGER")),
                         ),
                 )
-                .put("required", JSONArray(listOf("text", "translation", "box_2d"))),
+                .put("required", JSONArray(listOf("text", "translation", "lines", "box_2d"))),
         )
     return JSONObject()
         .put(
@@ -232,7 +234,7 @@ internal class GeminiVisionReader(
         }
 
         override fun cancel() {
-            if (terminal.cancel()) connection.getAndSet(null)?.disconnect()
+            if (terminal.cancel()) connection.getAndSet(null)?.let { runCatching { it.disconnect() } }
         }
 
         private fun run() {
@@ -241,7 +243,9 @@ internal class GeminiVisionReader(
                 Result.success(execute())
             } catch (failure: GeminiVisionException) {
                 Result.failure(failure)
-            } catch (failure: Exception) {
+            } catch (failure: Throwable) {
+                // An Error (OOM while encoding a photo) must still reach the callback, or the
+                // frozen lease and bitmap it owns would never be released.
                 Result.failure(GeminiVisionException(failure.javaClass.simpleName.ifBlank { "failure" }))
             }
             complete(result)

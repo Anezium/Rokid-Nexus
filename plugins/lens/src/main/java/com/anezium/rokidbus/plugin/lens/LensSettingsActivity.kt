@@ -388,8 +388,9 @@ class LensSettingsActivity : Activity() {
                     label = GEMINI_VISION_SETTING_LABEL,
                     sub = "Sends the frozen photo to Google to read and translate it in one " +
                         "call, including scripts the phone cannot read such as Thai or Arabic. " +
-                        "Frozen photos only; needs internet and the key above. If Gemini fails, " +
-                        "Lens reads the photo on the phone instead.",
+                        "Frozen photos only; needs internet and the key above, and stays off " +
+                        "while the On-device engine is selected. If Gemini fails, Lens reads the " +
+                        "photo on the phone instead.",
                     control = NexusUi.switch(this@LensSettingsActivity).apply {
                         isChecked = translationPrefs.getBoolean(LENS_PREF_GEMINI_VISION_FROZEN, false)
                         contentDescription = GEMINI_VISION_SETTING_LABEL

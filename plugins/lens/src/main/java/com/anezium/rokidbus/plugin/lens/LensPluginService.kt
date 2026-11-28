@@ -493,7 +493,9 @@ internal class LensCameraSession(
 
     private fun geminiVisionEnabled(): Boolean =
         preferences.getBoolean(LENS_PREF_GEMINI_VISION_FROZEN, false) &&
-            preferences.getString(LENS_TRANSLATION_PREF_GEMINI_API_KEY, "").orEmpty().isNotBlank()
+            preferences.getString(LENS_TRANSLATION_PREF_GEMINI_API_KEY, "").orEmpty().isNotBlank() &&
+            !preferences.getString(LENS_TRANSLATION_PREF_ENGINE, null)
+                .equals(TranslationEngine.MLKIT_OFFLINE.name, ignoreCase = true)
 
     /**
      * Gemini reads and translates the photo in one call, covering scripts the bundled ML Kit
@@ -538,7 +540,13 @@ internal class LensCameraSession(
                 logFrozenStage("frozen_vision_failed", requestId, "reason=$reason fallback=on_device")
                 runCatching {
                     frozenExecutor.execute {
-                        recognizeFrozenOnDevice(activeSession, requestId, bitmap, targetScript, frozenWork)
+                        if (closed.get() || sessionId != activeSession) {
+                            finishFrozenProcessing(bitmap, frozenWork)
+                            return@execute
+                        }
+                        runCatching {
+                            recognizeFrozenOnDevice(activeSession, requestId, bitmap, targetScript, frozenWork)
+                        }.onFailure { failFrozenProcessing(requestId, "vision_fallback", bitmap, frozenWork, it) }
                     }
                 }.onFailure { failFrozenProcessing(requestId, "vision_fallback", bitmap, frozenWork, it) }
                 return@newRequest
