@@ -24,8 +24,13 @@ internal const val GEMINI_VISION_JPEG_QUALITY = 85
 private const val GEMINI_VISION_BOX_SCALE = 1_000
 private const val GEMINI_VISION_CONNECT_TIMEOUT_MS = 5_000
 // One call reads and translates a whole photo; field-measured text-only Gemini calls already
-// take ~3s, so the text path's 4s read timeout would cut most vision replies short.
-private const val GEMINI_VISION_READ_TIMEOUT_MS = 30_000
+// take ~3s, so the text path's 4s read timeout would cut most vision replies short. The phone
+// never hears that the user left the frozen view, so this also bounds how long live OCR stays
+// paused behind an abandoned photo.
+private const val GEMINI_VISION_READ_TIMEOUT_MS = 20_000
+// Google stopped serving gemini-2.5-flash to keys that never used it (404 "no longer available
+// to new users"), yet it is the Lens default. The alias always points at a served flash model.
+internal const val GEMINI_VISION_FALLBACK_MODEL = "gemini-flash-latest"
 private const val GEMINI_VISION_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 internal data class GeminiVisionParagraph(
@@ -37,6 +42,8 @@ internal data class GeminiVisionParagraph(
 )
 
 internal class GeminiVisionException(val reason: String) : Exception(reason)
+
+internal const val GEMINI_VISION_SKIPPED = "skipped"
 
 internal object GeminiVisionResponseParser {
     /**
@@ -213,6 +220,7 @@ internal class GeminiVisionReader(
         private val width: Int,
         private val height: Int,
         private val targetLanguage: String,
+        private val shouldSend: () -> Boolean,
         private val callback: (Result<List<GeminiVisionParagraph>>) -> Unit,
     ) : TranslationCall {
         private val terminal = TranslationTerminal()
@@ -248,6 +256,18 @@ internal class GeminiVisionReader(
             if (apiKey.isEmpty()) throw GeminiVisionException("no_key")
             val model = modelSupplier().trim().takeIf { it in LENS_GEMINI_MODELS } ?: LENS_GEMINI_MODEL_DEFAULT
             val body = buildGeminiVisionRequestBody(jpeg, targetLanguage)
+            return try {
+                post(apiKey, model, body)
+            } catch (failure: GeminiVisionException) {
+                if (failure.reason != "model_unavailable" || model == GEMINI_VISION_FALLBACK_MODEL) throw failure
+                post(apiKey, GEMINI_VISION_FALLBACK_MODEL, body)
+            }
+        }
+
+        private fun post(apiKey: String, model: String, body: ByteArray): List<GeminiVisionParagraph> {
+            // Consent is re-read at the last moment: a photo queued behind another request
+            // must not leave the phone after the user turned the setting off.
+            if (!shouldSend()) throw GeminiVisionException(GEMINI_VISION_SKIPPED)
             val http = (
                 URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
                     .openConnection() as HttpURLConnection
@@ -287,8 +307,9 @@ internal class GeminiVisionReader(
         width: Int,
         height: Int,
         targetLanguage: String,
+        shouldSend: () -> Boolean,
         callback: (Result<List<GeminiVisionParagraph>>) -> Unit,
-    ): Request = Request(jpeg, width, height, targetLanguage, callback)
+    ): Request = Request(jpeg, width, height, targetLanguage, shouldSend, callback)
 
     override fun close() {
         executor.shutdownNow()

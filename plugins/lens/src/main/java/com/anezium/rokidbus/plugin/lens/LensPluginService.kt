@@ -194,6 +194,7 @@ internal class LensCameraSession(
     private val imageLink: PhoneLensImageLink
     private val firstFrameLogged = AtomicBoolean(false)
     @Volatile private var sessionId: String? = null
+    @Volatile private var latestVisionRequest: Pair<String, Long>? = null
     @Volatile private var sessionStartedAtMs = 0L
 
     init {
@@ -513,15 +514,21 @@ internal class LensCameraSession(
             return
         }
         logFrozenStage("frozen_vision_start", requestId, "bytes=${jpeg.size}")
+        val requestKey = activeSession to requestId
+        latestVisionRequest = requestKey
+        // Only the newest freeze is still on the glasses; an older photo still queued here
+        // would hold live OCR paused and spend quota for a result nobody sees.
+        fun superseded() = latestVisionRequest != requestKey || sessionId != activeSession
         lateinit var request: GeminiVisionReader.Request
         request = geminiVision.newRequest(
             jpeg = jpeg,
             width = bitmap.width,
             height = bitmap.height,
             targetLanguage = targetLanguage(),
+            shouldSend = { !closed.get() && !superseded() && geminiVisionEnabled() },
         ) { result ->
             activeFrozenTranslations -= request
-            if (closed.get() || sessionId != activeSession) {
+            if (closed.get() || sessionId != activeSession || superseded()) {
                 finishFrozenProcessing(bitmap, frozenWork)
                 return@newRequest
             }
@@ -560,6 +567,14 @@ internal class LensCameraSession(
             }
         }
         activeFrozenTranslations += request
+        // close() may have snapshotted the active calls between the caller's closed check and
+        // the registration above; it would never cancel this upload.
+        if (closed.get()) {
+            activeFrozenTranslations -= request
+            request.cancel()
+            finishFrozenProcessing(bitmap, frozenWork)
+            return
+        }
         request.start()
     }
 
